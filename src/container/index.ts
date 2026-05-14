@@ -36,6 +36,12 @@ import { PayslipPdfService } from '../services/payslip-pdf.service';
 import { SalaryStatementService } from '../services/salary-statement.service';
 import { TaxSalaryContextService } from '../services/tax-salary-context.service';
 import { CommunicationService } from '../services/communication.service';
+import { PmsTemplateService } from '../services/pms-template.service';
+import { CycleService } from '../services/cycle.service';
+import { AssignmentService } from '../services/assignment.service';
+import { ObjectiveService } from '../services/objective.service';
+import { QuarterReviewService } from '../services/quarterReview.service';
+import { AnnualDecisionService } from '../services/annualDecision.service';
 
 export class Container {
   private static instance: Container;
@@ -94,6 +100,12 @@ export class Container {
       salaryStatementService: new SalaryStatementService(context),
       taxSalaryContextService: new TaxSalaryContextService(context),
       communicationService: new CommunicationService(context),
+      pmsTemplateService: new PmsTemplateService(context),
+      cycleService: new CycleService(context),
+      assignmentService: new AssignmentService(context),
+      objectiveService: new ObjectiveService(context),
+      quarterReviewService: new QuarterReviewService(context),
+      annualDecisionService: new AnnualDecisionService(context),
     };
   }
 

@@ -1,0 +1,79 @@
+import { FastifyInstance, FastifyReply } from 'fastify';
+import { authenticate } from '../middleware/auth';
+import { RouteHandler } from '../types/routes';
+import { errorResponse, successResponse } from '../utilis/apiResponse';
+import type {
+  SaveDecisionDraftInput,
+  UpdateVisibilityInput,
+} from '../services/annualDecision.service';
+
+export const annualDecisionRoutes: RouteHandler = async (
+  fastify: FastifyInstance,
+): Promise<void> => {
+  fastify.get(
+    '/:id/summary',
+    { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const summary = await request.container!.annualDecisionService.getSummary(id);
+        return reply.send(successResponse('Annual assignment summary fetched successfully', summary));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/:id/decision/draft',
+    { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const decision = await request.container!.annualDecisionService.saveDecisionDraft(
+          id,
+          request.body as SaveDecisionDraftInput,
+        );
+        return reply.send(successResponse('Annual decision draft saved successfully', decision));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/decision/freeze',
+    { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const decision = await request.container!.annualDecisionService.freezeDecision(id);
+        return reply.send(successResponse('Annual decision frozen successfully', decision));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/visibility',
+    { onRequest: [authenticate], schema: { tags: ['PMS Visibility Governance'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const annualAssignment = await request.container!.annualDecisionService.updateVisibility(
+          id,
+          request.body as UpdateVisibilityInput,
+        );
+        return reply.send(successResponse('Annual visibility updated successfully', annualAssignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+};
+
+function sendRouteError(reply: FastifyReply, error: unknown) {
+  const message = error instanceof Error ? error.message : 'Unexpected error';
+  return reply.status(400).send(errorResponse('PMS_ANNUAL_DECISION_ERROR', message));
+}

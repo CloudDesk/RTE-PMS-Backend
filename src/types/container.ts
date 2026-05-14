@@ -35,6 +35,12 @@ import { PayslipPdfService } from '../services/payslip-pdf.service';
 import { SalaryStatementService } from '../services/salary-statement.service';
 import { TaxSalaryContextService } from '../services/tax-salary-context.service';
 import { CommunicationService } from '../services/communication.service';
+import { PmsTemplateService } from '../services/pms-template.service';
+import { CycleService } from '../services/cycle.service';
+import { AssignmentService } from '../services/assignment.service';
+import { ObjectiveService } from '../services/objective.service';
+import { QuarterReviewService } from '../services/quarterReview.service';
+import { AnnualDecisionService } from '../services/annualDecision.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -74,4 +80,10 @@ export interface ServiceContainer {
   salaryStatementService: SalaryStatementService;
   taxSalaryContextService: TaxSalaryContextService;
   communicationService: CommunicationService;
+  pmsTemplateService: PmsTemplateService;
+  cycleService: CycleService;
+  assignmentService: AssignmentService;
+  objectiveService: ObjectiveService;
+  quarterReviewService: QuarterReviewService;
+  annualDecisionService: AnnualDecisionService;
 } 

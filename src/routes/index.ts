@@ -7,6 +7,13 @@ import { userRoutes } from "./user.routes";
 // import { leaveSummaryRoutes } from "./leave-summary.routes";
 // import { overtimeRoutes } from "./overtime.routes";
 import { lovRoutes } from "./lov.routes";
+import { pmsTemplateRoutes } from "./pms-template.routes";
+import { cycleRoutes } from "./cycle.routes";
+import { assignmentRoutes } from "./assignment.routes";
+import { objectiveRoutes } from "./objective.routes";
+import { quarterReviewRoutes } from "./quarterReview.routes";
+import { quarterAssignmentRoutes } from "./quarterAssignment.routes";
+import { annualDecisionRoutes } from "./annualDecision.routes";
 // import { shiftRoutes } from "./shift.routes";
 // import { trainingRoutes } from "./training.routes";
 // import { trainingAttendanceRoutes } from "./training-attendance.routes";
@@ -68,6 +75,13 @@ export async function routes(fastify: FastifyInstance) {
   // fastify.register(overtimeRoutes, { prefix: "/overtime" });
   // fastify.register(payrollRoutes, { prefix: "/payroll" });
   fastify.register(lovRoutes, { prefix: "/lovs" });
+  fastify.register(pmsTemplateRoutes, { prefix: "/pms/templates" });
+  fastify.register(cycleRoutes, { prefix: "/pms/cycles" });
+  fastify.register(assignmentRoutes, { prefix: "/pms/cycles" });
+  fastify.register(objectiveRoutes, { prefix: "/pms/objectives" });
+  fastify.register(quarterReviewRoutes, { prefix: "/pms/quarter-reviews" });
+  fastify.register(quarterAssignmentRoutes, { prefix: "/pms/quarter-assignments" });
+  fastify.register(annualDecisionRoutes, { prefix: "/pms/annual-assignments" });
   // fastify.register(shiftRoutes, { prefix: "/shifts" });
   // fastify.register(trainingRoutes, { prefix: "/trainings" });
   // fastify.register(trainingAttendanceRoutes, {
