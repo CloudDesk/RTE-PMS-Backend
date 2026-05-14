@@ -1,7 +1,36 @@
 # PMS v2 - Complete Implementation Tracking Checklist
 
-> Source priority: `PMS_FSD_v2.md` is the primary source of truth. The 3-day execution plan and module prompts are used only as supporting execution context.  
+> Source priority: `PMS_FSD_v2.md` is the primary source of truth. `PMS_Scope_v2.docx`, `Approved_Baseline_v2.md`, `Discussion_Notes_v2.md`, `Master_Prompt_v2.md`, `Module_Prompt_v2.md`, `QA_Prompt_v2.md`, `BA_Prompt_v2.md`, and `Consistency_Audit_Prompt_v2.md` are used as secondary/supporting scope and alignment controls.
 > Tracking rule: `Final Confirmation Done` must remain unchecked until API, UI, validation, integration, edge cases, QA review, audit/security review, and source traceability are complete for that feature.
+
+---
+
+# 0. Approved Module Execution Order
+
+## 0.1 Source-Aligned Module Order
+
+### Functional Description
+This index prevents module visibility gaps during planning. The detailed sections below remain screen-wise, but execution should start with Template Builder/Template Management before Annual Cycle setup because cycles and assignments depend on active, locked template versions.
+
+### Final Confirmation
+| Module / Screen | Detailed Checklist Section | Status |
+|---|---|---|
+| Template Builder & Template Management | 3.0, 3.1, 3.2 | [ ] |
+| Annual Cycle Setup / Cycle Management | 2.1, 2.2 | [ ] |
+| Assignment Management / Quarter Assignment | 4.1, 4.2 | [ ] |
+| Workflow Engine / Foundation | 1.1 | [ ] |
+| Dynamic Access Engine / Role & Permission | 1.2, 11.1, 11.2 | [ ] |
+| Objective Management | 5.1, 5.2, 6.1 | [ ] |
+| Manager Quarterly Review Management | 7.1, 7.2 | [ ] |
+| Annual Appraisal Decision Management | 8.1, 8.2 | [ ] |
+| Visibility Governance | 9.1 | [ ] |
+| Communication Dispatch / Dynamic Letter Generator | 3.2, 10.1 | [ ] |
+| History & Audit Compliance | 1.3, 14.0 | [ ] |
+| SLA & Notification Management | 13.1, 13.2 | [ ] |
+| Delegation & Reassignment | 4.2 | [ ] |
+| Dashboard & Reporting | 12.1, 12.2, 12.3, 12.4, 12.5, 14.1 | [ ] |
+| Bulk Operations | 15.1 | [ ] |
+| Module order reviewed against Scope, Baseline, and Module Prompt | 18.2 | [ ] |
 
 ---
 
@@ -262,6 +291,7 @@ Workflow Engine, SLA & Escalation, Annual Cycle Setup, Dashboard.
 | Parent annual appraisal window configuration implemented | [ ] |
 | Fixed date appraisal window support implemented | [ ] |
 | Relative offset rule support implemented, including quarter dependency logic | [ ] |
+| Expand/extend parent appraisal decision window implemented for Management/HR/Admin with mandatory reason and audit history | [ ] |
 | Window sequence validation implemented to prevent conflicting objective/review/finalization windows | [ ] |
 | Parent appraisal window blocked until applicable quarters are finalized or closed | [ ] |
 | Cycle launch, close, archive, and cancel where allowed implemented through approved workflow states | [ ] |
@@ -274,6 +304,7 @@ Workflow Engine, SLA & Escalation, Annual Cycle Setup, Dashboard.
 |---|---|
 | Milestone window configuration UI implemented inside Annual Cycle Setup Screen | [ ] |
 | Fixed date and relative offset entry controls implemented | [ ] |
+| Appraisal window extension UI implemented with mandatory reason and extension history for authorized users | [ ] |
 | Window conflict warnings shown before save/launch | [ ] |
 | Launch cycle action visible only to authorized HR/Admin users | [ ] |
 | Close, archive, and cancel controls follow permission and workflow visibility | [ ] |
@@ -288,6 +319,7 @@ Workflow Engine, SLA & Escalation, Annual Cycle Setup, Dashboard.
 | Objective and review windows do not conflict within same quarter | [ ] |
 | Appraisal window cannot open before applicable quarter completion | [ ] |
 | Relative offsets are stored and audited | [ ] |
+| Parent appraisal SLA extension stores original due date, revised due date, actor, timestamp, and reason | [ ] |
 | Invalid transition attempts from launch/close/archive/cancel are rejected | [ ] |
 | SLA due dates derive consistently from milestone windows | [ ] |
 
@@ -302,14 +334,98 @@ Workflow Engine, SLA & Escalation, Annual Cycle Setup, Dashboard.
 ### Final Confirmation
 | Task | Status |
 |---|---|
-| Edge Cases Tested for fixed dates, relative offsets, Q4 completion + N days, window overlap, cancelled cycle, archived cycle | [ ] |
+| Edge Cases Tested for fixed dates, relative offsets, Q4 completion + N days, appraisal window extension, missing extension reason, window overlap, cancelled cycle, archived cycle | [ ] |
 | QA Review Completed | [ ] |
 | Source Traceability Verified Against FR-CYC-04, FR-CYC-05, FR-SLA-01, FR-SLA-02 | [ ] |
 | Final Confirmation Done | [ ] |
 
 ---
 
-# 3. Template Management Screen
+# 3. Template Builder & Template Management Screen
+
+## 3.0 Dynamic PMS Form Template Builder
+
+### Functional Description
+Allows HR/Admin to build dynamic PMS form templates that define PMS sections, fields, validations, role/state behavior, quarter-aware repetition, scoring participation, visibility, editability, preview, and runtime rendering. This is the explicit Template Builder module from the Scope Document and Template Management prompt.
+
+### Dependencies
+Dynamic Access Engine, Workflow Engine, Visibility Governance, Annual Cycle Setup, Assignment Management, Audit Governance.
+
+### API Checklist
+| Task | Status |
+|---|---|
+| Template Builder configuration APIs implemented for draft creation, draft update, preview/test render, publish/activate, clone, deactivate, archive where supported | [ ] |
+| Builder metadata persistence implemented for unique name, code, description, active status, effective date, version number, schema version, and locked assignment mapping | [ ] |
+| Builder supports PMS section types from Scope: Objectives, Competencies, KPIs, Behavioural Traits, Development Plan, Quarter Review, Annual Summary, Final Grade, Merit, Appraisal Communication, Overall Feedback | [ ] |
+| Builder supports annual-level and quarter-level sections | [ ] |
+| Quarter-level sections repeat separately for Q1, Q2, Q3, and Q4 | [ ] |
+| Builder field model supports key, label, type, required flag, placeholder, help text, validation rules, default value, weightage, visibility roles, editability roles, editable states, read-only roles, scoring participation | [ ] |
+| Builder field type registry supports Short Text, Long Text, Numeric Input, Dropdown, Radio, Checkbox, Date, Rating Scale, Weighted Score, Currency, Percentage, Attachment, Rich Text, Formula, Comment Box | [ ] |
+| Conditional section rendering rules implemented where configured by template | [ ] |
+| Conditional field rendering rules implemented where configured by template | [ ] |
+| Runtime template rendering engine implemented for Objective Entry, Quarterly Review, Annual Appraisal, Visibility, History, and Communication preview contexts | [ ] |
+| Runtime field resolution engine applies role, hierarchy scope, workflow state, quarter, final decision status, and publish flag | [ ] |
+| Runtime scoring evaluation applies configured weightage and scoring participation rules | [ ] |
+| Builder publish validation implemented for required sections, invalid field keys, duplicate field keys, invalid field types, invalid validation rules, invalid conditional expressions, invalid scoring rules, and hidden field exposure risk | [ ] |
+| Builder version snapshot created on activation/publish | [ ] |
+| Builder assigned-version rollback/edit restrictions implemented | [ ] |
+| Template builder audit logging implemented for draft save, publish, activate, deactivate, clone, archive, section changes, field changes, permission changes, and preview/test render where required | [ ] |
+| API Unit Testing Completed | [ ] |
+| API Tested via Postman | [ ] |
+| API Error Responses Verified for duplicate template code, duplicate field key, invalid field type, invalid conditional expression, invalid scoring config, locked version edit, inactive template assignment, unauthorized access | [ ] |
+
+### UI Checklist
+| Task | Status |
+|---|---|
+| Dynamic PMS Form Template Builder Screen implemented for HR/Admin | [ ] |
+| Template metadata form implemented with unique code/name, description, status, effective date, and version metadata | [ ] |
+| Section builder implemented for annual and quarter-level sections | [ ] |
+| Quarter-aware section builder shows Q1/Q2/Q3/Q4 repetition behavior clearly | [ ] |
+| Field builder implemented with supported field types and field properties | [ ] |
+| Validation rule configuration UI implemented | [ ] |
+| Scoring/weightage configuration UI implemented | [ ] |
+| Role-based visibility/editability/required configuration UI implemented | [ ] |
+| Workflow-stage field behavior configuration UI implemented | [ ] |
+| Conditional section and field rendering UI implemented | [ ] |
+| Preview/test render UI implemented for Employee, Manager, HR/Admin, Management, and Director contexts where permissions allow | [ ] |
+| Draft save, clone, activate, deactivate, archive where supported, cancel/reset, and locked-version read-only flows implemented | [ ] |
+| Builder tables/lists support search, filter, sorting, pagination, row actions, empty states, and performance handling | [ ] |
+| Required validation, regex/configured validation, min/max validation, duplicate prevention, success/error messages implemented | [ ] |
+| Loader, empty, error, retry, and network failure states implemented | [ ] |
+| Responsive UI Verified | [ ] |
+| Manual UI Testing Completed | [ ] |
+
+### Validation Checklist
+| Task | Status |
+|---|---|
+| Template code is unique | [ ] |
+| Structural changes create a new Template Version | [ ] |
+| Assigned template versions cannot be structurally edited | [ ] |
+| Only active template versions can be selected during cycle setup/assignment | [ ] |
+| Hidden builder fields do not render in UI or API responses for unauthorized users | [ ] |
+| Required field rules are enforced on downstream Objective, Review, and Annual Decision submission | [ ] |
+| Weightage/scoring configuration validates correctly before publish | [ ] |
+| Formula/rich field behavior does not bypass permission or visibility rules | [ ] |
+
+### Integration Checklist
+| Task | Status |
+|---|---|
+| Annual Cycle Setup lists only active Template Versions | [ ] |
+| Assignment Management locks selected Template Version at Annual Assignment creation | [ ] |
+| Objective Entry renders builder-defined objective fields | [ ] |
+| Quarterly Review renders builder-defined manager review fields | [ ] |
+| Annual Appraisal renders builder-defined final grade/merit/decision sections | [ ] |
+| Visibility Governance uses builder field/section visibility rules | [ ] |
+| Audit and History render historical records using locked builder version | [ ] |
+
+### Final Confirmation
+| Task | Status |
+|---|---|
+| Edge Cases Tested for locked version edit, concurrent activation, active old assignments, invalid field/section config, invalid scoring, hidden field leak, and template used by active cycle | [ ] |
+| QA Review Completed | [ ] |
+| Architect Review Completed | [ ] |
+| Source Traceability Verified Against Scope FR-TMB-01 through FR-TMB-06, FSD FR-HR-01, Module Prompt Template Management | [ ] |
+| Final Confirmation Done | [ ] |
 
 ## 3.1 PMS Template, Versioning, Sections, and Fields
 
@@ -322,14 +438,14 @@ Annual Cycle Setup, Assignment Management, Dynamic Access Engine, Visibility Gov
 ### API Checklist
 | Task | Status |
 |---|---|
-| Create Template API implemented | [ ] |
-| Update Template metadata API implemented | [ ] |
-| Create Template Version API implemented | [ ] |
-| Clone Template Version API implemented | [ ] |
-| Activate Template Version API implemented | [ ] |
-| Deactivate Template Version API implemented | [ ] |
+| Create Template API implemented, e.g. `POST /pms/templates` or approved route equivalent | [ ] |
+| Update Template metadata API implemented, e.g. `PUT /pms/templates/{templateId}` | [ ] |
+| Create Template Version API implemented, e.g. `POST /pms/templates/{templateId}/versions` | [ ] |
+| Clone Template Version API implemented, e.g. `POST /pms/templates/{templateId}/versions/{versionId}/clone` | [ ] |
+| Activate Template Version API implemented, e.g. `POST /pms/templates/{templateId}/versions/{versionId}/activate` | [ ] |
+| Deactivate Template Version API implemented, e.g. `POST /pms/templates/{templateId}/versions/{versionId}/deactivate` | [ ] |
 | Get Template and Get Template Version APIs implemented | [ ] |
-| Configure Sections API implemented for quarter-aware, annual-level, objective, quarter review, and final appraisal decision sections | [ ] |
+| Configure Sections API implemented for quarter-aware, annual-level, objective, competency, KPI, behavioural trait, development plan, quarter review, annual summary, final grade, merit, appraisal communication, and overall feedback sections | [ ] |
 | Configure Fields API implemented for field type, required rules, visibility rules, editability rules, mandatory rules, scoring participation, and workflow-stage editability | [ ] |
 | Template code uniqueness validation implemented | [ ] |
 | Assigned template versions locked from structural edits | [ ] |
@@ -347,6 +463,7 @@ Annual Cycle Setup, Assignment Management, Dynamic Access Engine, Visibility Gov
 | Section builder supports Q1-Q4 quarter-aware repetition | [ ] |
 | Section builder supports annual appraisal and communication-related sections | [ ] |
 | Field builder supports required, field type, scoring, visibility, editability, mandatory, and workflow-stage settings | [ ] |
+| Supported field type selection includes Short Text, Long Text, Numeric Input, Dropdown, Radio, Checkbox, Date, Rating Scale, Weighted Score, Currency, Percentage, Attachment, Rich Text, Formula, and Comment Box where supported by the template builder | [ ] |
 | Clone version action implemented | [ ] |
 | Activate/deactivate controls implemented with permission handling | [ ] |
 | Locked assigned template versions display read-only state | [ ] |
@@ -382,7 +499,7 @@ Annual Cycle Setup, Assignment Management, Dynamic Access Engine, Visibility Gov
 |---|---|
 | Edge Cases Tested for active old assignments, inactive template, locked version edit, hidden field leak, and template used by active cycle | [ ] |
 | QA Review Completed | [ ] |
-| Source Traceability Verified Against FR-HR-01, FR-AUD-04, Template requirements in FSD and prompts | [ ] |
+| Source Traceability Verified Against FR-HR-01, FR-AUD-04, Scope FR-TMB-01 through FR-TMB-06, Template requirements in FSD and prompts | [ ] |
 | Final Confirmation Done | [ ] |
 
 ## 3.2 Letter Template Builder and Template Preview
@@ -396,12 +513,16 @@ Annual Appraisal Decision, Communication Dispatch, Visibility Governance, Audit 
 ### API Checklist
 | Task | Status |
 |---|---|
-| Create Letter Template API implemented | [ ] |
-| Preview Letter Template API implemented | [ ] |
+| Create Letter Template API implemented, e.g. `POST /pms/letter-templates` | [ ] |
+| Preview Letter Template API implemented, e.g. `POST /pms/letter-templates/{templateId}/preview` | [ ] |
 | Activate Letter Template API implemented | [ ] |
+| Letter template statuses implemented: draft, active, inactive, archived | [ ] |
 | Outcome mapping implemented for BOTH, MERIT_ONLY, GRADE_ONLY, NIL | [ ] |
-| Placeholder resolution implemented for employeeName, finalGrade, meritAmount, quarterSummary | [ ] |
+| Outcome-to-template mapping API implemented, e.g. `PUT /pms/cycles/{cycleId}/communication-rules` | [ ] |
+| Placeholder resolution implemented for FSD placeholders employeeName, finalGrade, meritAmount, quarterSummary | [ ] |
+| Extended Scope placeholders supported where approved: employeeCode, designation, department, managerName, cycleName, appraisalYear, meritPercentage, currency, meritEffectiveDate, gradeEffectiveDate, finalScore, quarterScores, decisionRemarks, companyName, authorizedSignatory | [ ] |
 | Conditional block syntax validation implemented | [ ] |
+| Conditional blocks supported where approved: ifMeritApplied, ifGradeApplied, ifBothApplied, ifNilOutcome, ifPromotionApplied, ifVisibilityEnabled | [ ] |
 | Missing required placeholder validation implemented before activation | [ ] |
 | Letter template version locked when communication is generated or sent | [ ] |
 | Historical communication templates protected from changes after dispatch | [ ] |
@@ -414,6 +535,7 @@ Annual Appraisal Decision, Communication Dispatch, Visibility Governance, Audit 
 |---|---|
 | Letter Template Builder UI implemented | [ ] |
 | Outcome mapping UI implemented for BOTH, MERIT_ONLY, GRADE_ONLY, NIL | [ ] |
+| Letter channel/type UI supports email, PDF, or document templates where configured | [ ] |
 | Placeholder insertion/validation support implemented | [ ] |
 | Conditional block entry/validation support implemented | [ ] |
 | Preview rendered communication before activation and dispatch | [ ] |
@@ -429,6 +551,7 @@ Annual Appraisal Decision, Communication Dispatch, Visibility Governance, Audit 
 | Letter placeholders validated before activation | [ ] |
 | Conditional blocks syntactically valid before activation | [ ] |
 | Missing outcome template mapping prevents communication generation | [ ] |
+| NIL outcome supports no communication or generic communication based on configuration | [ ] |
 | Historical communication output remains immutable after dispatch | [ ] |
 
 ### Integration Checklist
@@ -443,7 +566,7 @@ Annual Appraisal Decision, Communication Dispatch, Visibility Governance, Audit 
 |---|---|
 | Edge Cases Tested for NIL outcome, missing finalGrade, missing meritAmount, missing quarterSummary, invalid conditional block, duplicate dispatch | [ ] |
 | QA Review Completed | [ ] |
-| Source Traceability Verified Against FR-COM-01 through FR-COM-09 | [ ] |
+| Source Traceability Verified Against FSD FR-COM-01 through FR-COM-09 and Scope FR-LTR-01 through FR-LTR-07 | [ ] |
 | Final Confirmation Done | [ ] |
 
 ---
@@ -464,7 +587,10 @@ Annual Cycle Setup, Dynamic Access Engine, Workflow Engine, Audit Governance.
 | Assignment API implemented for assigning employees to annual cycle and Q1-Q4 quarter assignments | [ ] |
 | Bulk assignment API implemented with configurable batching for large-volume assignment | [ ] |
 | Assigned manager persisted for each annual/quarter assignment | [ ] |
+| Annual Assignment fields persisted: employee, assigned manager, cycle, locked template version, current annual status, quarter statuses, final decision status, isMeritApplied, isGradeApplied, appraisalOutcomeType, visibility flags, communication status | [ ] |
 | Due dates, objective status, quarter review status, and current workflow state initialized | [ ] |
+| Assignment Exception Queue implemented for employees without eligible manager or incomplete master data | [ ] |
+| Assignment exception records include failure reason, employee, cycle, missing manager/master-data fields, correction status, and audit reference | [ ] |
 | Mid-year onboarding supported by assigning remaining applicable quarters only | [ ] |
 | Employee exit supported by closing future quarter assignments | [ ] |
 | Assignment ownership and hierarchy authorization enforced server-side | [ ] |
@@ -479,6 +605,7 @@ Annual Cycle Setup, Dynamic Access Engine, Workflow Engine, Audit Governance.
 | Quarter Assignment Screen implemented for HR/Admin | [ ] |
 | Individual employee assignment flow implemented | [ ] |
 | Bulk assignment flow implemented with batch progress, success count, failure count, and downloadable/reviewable error results | [ ] |
+| Assignment Exception Queue UI implemented for invalid employees, missing manager, and incomplete master data correction before cycle launch or during active assignment | [ ] |
 | Manager selection and reassignment-ready assignment context displayed | [ ] |
 | Annual cycle, quarter name, assigned manager, due dates, objective status, review status, and workflow state shown in assignment table | [ ] |
 | Assignment table supports search, filters, sorting, pagination, row actions, empty state, and performance handling | [ ] |
@@ -494,6 +621,7 @@ Annual Cycle Setup, Dynamic Access Engine, Workflow Engine, Audit Governance.
 | Employees see only assigned quarterly performance assignments | [ ] |
 | Managers only see employees within direct-report, configured hierarchy, delegated, or reassigned scope | [ ] |
 | Bulk assignment validates every row without silently skipping failed rows | [ ] |
+| Employees with missing manager or incomplete master data are routed to exception queue instead of being assigned incorrectly | [ ] |
 | Mid-year onboarding creates only applicable remaining quarter assignments | [ ] |
 | Employee exit closes future quarter assignments without altering historical quarters | [ ] |
 
@@ -506,13 +634,14 @@ Annual Cycle Setup, Dynamic Access Engine, Workflow Engine, Audit Governance.
 | Dashboard reads assignment status and completion progress | [ ] |
 | Access Engine evaluates manager assignment ownership | [ ] |
 | Audit History shows assignment and bulk assignment events | [ ] |
+| Exception queue corrections integrate with assignment creation/retry flow and audit history | [ ] |
 
 ### Final Confirmation
 | Task | Status |
 |---|---|
-| Edge Cases Tested for duplicate assignment, mid-year joiner, exit during cycle, partial batch failure, unauthorized manager, and large batch | [ ] |
+| Edge Cases Tested for duplicate assignment, mid-year joiner, exit during cycle, partial batch failure, missing manager, incomplete master data, exception correction, unauthorized manager, and large batch | [ ] |
 | QA Review Completed | [ ] |
-| Source Traceability Verified Against FR-HR-03, FR-EMP-01, FR-MGR-06, FR-CYC-02, FR-DSH-04 | [ ] |
+| Source Traceability Verified Against FR-HR-03, FR-EMP-01, FR-MGR-06, FR-CYC-02, FR-DSH-04, Scope FR-ASN-01 through FR-ASN-04 | [ ] |
 | Final Confirmation Done | [ ] |
 
 ## 4.2 Reassignment, Delegation, Force Close, and Reopen Entry Points
@@ -943,6 +1072,9 @@ Finalized/Closed Quarter Assignments, Workflow Engine, Dynamic Access Engine, Vi
 | Appraisal readiness indicator displayed | [ ] |
 | Grade decision entry implemented | [ ] |
 | Merit decision entry implemented | [ ] |
+| Grade details capture implemented when grade is applied: grade value, grade scale, grade effective date, grade remarks, approved by, approved date, grade visibility configuration | [ ] |
+| Merit details capture implemented when merit is applied: merit type, merit amount/percentage, currency, merit effective date, payroll effective date where applicable, merit remarks, approved by, approved date, merit visibility configuration | [ ] |
+| NIL reason / management remarks capture implemented when neither grade nor merit is applied | [ ] |
 | Independent grade and merit applied flags implemented | [ ] |
 | Confidential sections hidden from employees until publication | [ ] |
 | Save draft flow implemented with success/error messages | [ ] |
@@ -954,6 +1086,9 @@ Finalized/Closed Quarter Assignments, Workflow Engine, Dynamic Access Engine, Vi
 | Task | Status |
 |---|---|
 | Annual decision draft blocked until all applicable quarters are finalized or closed | [ ] |
+| Grade fields are required only when isGradeApplied is true | [ ] |
+| Merit amount/percentage/currency/effective-date fields are required according to configured merit type only when isMeritApplied is true | [ ] |
+| NIL reason or communication policy is validated when both flags are false | [ ] |
 | Confidential annual appraisal data hidden by default | [ ] |
 | HR/Admin and Management access verified | [ ] |
 | Director has no final decision access unless future permission config explicitly allows read-only visibility | [ ] |
@@ -987,7 +1122,11 @@ Annual Summary, Workflow Engine, Visibility Governance, Communication Dispatch, 
 | Task | Status |
 |---|---|
 | Annual decision submission implemented according to MANAGEMENT_DECISION_DRAFT to MANAGEMENT_DECISION_SUBMITTED flow | [ ] |
+| Save decision draft endpoint implemented, e.g. `PUT /pms/annual-assignments/{id}/decision/draft` or approved equivalent | [ ] |
+| Submit decision endpoint implemented, e.g. `POST /pms/annual-assignments/{id}/decision/submit` or approved equivalent | [ ] |
 | POST `/pms/annual-assignments/{id}/freeze` implemented | [ ] |
+| Reopen decision endpoint implemented, e.g. `POST /pms/annual-assignments/{id}/decision/reopen` | [ ] |
+| Decision audit endpoint implemented, e.g. `GET /pms/annual-assignments/{id}/decision/audit` | [ ] |
 | Outcome derivation implemented: BOTH when grade and merit applied, MERIT_ONLY when only merit applied, GRADE_ONLY when only grade applied, NIL when neither applied | [ ] |
 | Annual decision freeze required before visibility publication | [ ] |
 | Annual finalization makes decision immutable except controlled reopen | [ ] |
@@ -1053,6 +1192,10 @@ Annual Appraisal Finalization/Freeze, Dynamic Access Engine, Communication Dispa
 | Task | Status |
 |---|---|
 | POST `/pms/annual-assignments/{id}/visibility` implemented | [ ] |
+| Disable visibility endpoint implemented where allowed, e.g. `POST /pms/annual-assignments/{id}/visibility/disable` | [ ] |
+| Get Visibility Settings API implemented | [ ] |
+| Evaluate Visibility API implemented for runtime UI/API masking checks | [ ] |
+| Get Visibility Audit API implemented | [ ] |
 | Visibility controls implemented: employeeGradeVisible, employeeMeritVisible, employeeReviewVisible, managerGradeVisible, managerMeritVisible | [ ] |
 | Visibility publication requires explicit HR/Admin or Management action | [ ] |
 | Visibility publication blocked before annual finalization/freeze according to workflow | [ ] |
@@ -1074,6 +1217,7 @@ Annual Appraisal Finalization/Freeze, Dynamic Access Engine, Communication Dispa
 | Manager grade visibility toggle/control implemented | [ ] |
 | Manager merit visibility toggle/control implemented | [ ] |
 | Publish visibility action implemented with confirmation | [ ] |
+| Disable visibility action implemented with mandatory reason where required and without changing historical audit | [ ] |
 | Confidential-by-default state clearly reflected before publication | [ ] |
 | Visibility status shown for each annual assignment or batch context | [ ] |
 | Success/error messages implemented for visibility publish | [ ] |
@@ -1126,8 +1270,10 @@ Annual Appraisal Decision, Visibility Governance, Letter Template Builder, Workf
 | Task | Status |
 |---|---|
 | POST `/pms/communications/preview` implemented | [ ] |
+| POST `/pms/communications/resolve` implemented for dispatch list/template resolution where bulk/manual selection is supported | [ ] |
 | POST `/pms/communications/send` implemented | [ ] |
 | POST `/pms/communications/resend` implemented | [ ] |
+| Skip Communication with Reason API implemented where communication policy permits skip/no-mail | [ ] |
 | GET `/pms/communications/history` implemented | [ ] |
 | Preview resolves dynamic template based on appraisalOutcomeType | [ ] |
 | Preview resolves placeholders employeeName, finalGrade, meritAmount, quarterSummary according to visibility and outcome rules | [ ] |
@@ -1136,6 +1282,8 @@ Annual Appraisal Decision, Visibility Governance, Letter Template Builder, Workf
 | Send transitions COMMUNICATION_READY to COMMUNICATION_SENT according to workflow | [ ] |
 | Dispatch captures actor, timestamp, template version, rendered output, and delivery status | [ ] |
 | Resend supported for authorized users without modifying historical records | [ ] |
+| Manual template override supported only for authorized HR/Admin users and audited | [ ] |
+| Send channels supported according to configuration: email, PDF/document generation, or approved platform channels | [ ] |
 | Communication dispatched notification generated for Employees | [ ] |
 | API Unit Testing Completed | [ ] |
 | API Tested via Postman | [ ] |
@@ -1148,6 +1296,9 @@ Annual Appraisal Decision, Visibility Governance, Letter Template Builder, Workf
 | Communication preview UI implemented before dispatch | [ ] |
 | Preview displays resolved letter content and locked template version metadata | [ ] |
 | Send/dispatch action implemented with confirmation | [ ] |
+| Employee selection and dispatch list resolution UI implemented | [ ] |
+| Manual template override UI implemented where authorized | [ ] |
+| Skip/no-mail action implemented with mandatory reason where policy allows | [ ] |
 | Resend action implemented without changing historical rendered communication | [ ] |
 | Communication history table shows actor, timestamp, template version, delivery status, outcome type, and resend entries | [ ] |
 | Communication history table supports search, filters, sorting, pagination, row actions, empty state, and performance handling | [ ] |
@@ -1162,7 +1313,9 @@ Annual Appraisal Decision, Visibility Governance, Letter Template Builder, Workf
 |---|---|
 | Communication cannot dispatch before visibility enablement | [ ] |
 | Communication cannot generate without outcome template mapping | [ ] |
+| Letter preview confirmation required before send where configured | [ ] |
 | Placeholder values follow visibility governance and do not leak hidden grade/merit data | [ ] |
+| Communication sent with wrong template can be corrected only by authorized resend/correction flow with reason and audit | [ ] |
 | Duplicate dispatch attempt preserves previous dispatch audit | [ ] |
 | Resend does not alter original rendered communication or template version | [ ] |
 | Bulk communication retry policy marked Pending Business Clarification where needed | [ ] |
@@ -1201,7 +1354,12 @@ Dynamic Access Engine, Permission Simulation, Audit Governance.
 | Task | Status |
 |---|---|
 | POST `/pms/access/roles` implemented | [ ] |
-| PUT `/pms/access/permissions` implemented | [ ] |
+| Update Role API implemented where approved | [ ] |
+| PUT `/pms/access/permissions` or `PUT /pms/access/roles/{roleId}/permissions` implemented | [ ] |
+| Configure section access API implemented, e.g. `PUT /pms/access/templates/{templateId}/section-permissions` | [ ] |
+| Configure field access API implemented, e.g. `PUT /pms/access/templates/{templateId}/field-permissions` | [ ] |
+| Evaluate Access API implemented for runtime permission decisions | [ ] |
+| Get Effective Permissions API implemented for UI permission hydration | [ ] |
 | Custom role creation implemented without code deployment | [ ] |
 | Hierarchy scope configuration implemented for direct-report, department, business-unit, region, global | [ ] |
 | Section permission configuration implemented for visible, hidden, editable, read-only | [ ] |
@@ -1271,6 +1429,7 @@ Dynamic Access Engine, Role & Permission Screen, Audit Governance.
 | Task | Status |
 |---|---|
 | POST `/pms/access/simulate` implemented | [ ] |
+| Payload Permission Validation API implemented or covered by simulate/evaluate API contract | [ ] |
 | Simulation accepts role, user/actor context, assignment, hierarchy scope, workflow state, section, field, and action | [ ] |
 | Simulation returns effective allow/deny result with reason trace | [ ] |
 | Simulation applies DENY priority over ALLOW | [ ] |
@@ -1498,6 +1657,126 @@ Objective Entry, Quarterly Review Visibility, Visibility Governance, Audit/Histo
 | Source Traceability Verified Against FR-EMP-01, FR-EMP-04, FR-EMP-05, FR-DSH-03 | [ ] |
 | Final Confirmation Done | [ ] |
 
+## 12.4 Management Dashboard
+
+### Functional Description
+Allows Management users to monitor annual appraisal readiness, pending annual decisions, grade/merit decision progress, outcome distribution, visibility status, and communication readiness while respecting confidentiality and workflow rules.
+
+### Dependencies
+Annual Appraisal Decision, Visibility Governance, Communication Dispatch, Dynamic Access Engine, Dashboard & Reporting.
+
+### API Checklist
+| Task | Status |
+|---|---|
+| Management dashboard API/service implemented | [ ] |
+| Annual appraisal pending metrics returned | [ ] |
+| All-quarters-finalized/appraisal-ready metrics returned | [ ] |
+| Grade/merit decision draft, submitted, frozen, and finalized metrics returned | [ ] |
+| Outcome distribution returned for BOTH, MERIT_ONLY, GRADE_ONLY, NIL | [ ] |
+| Visibility enabled/pending metrics returned | [ ] |
+| Communication ready/sent/failed/skipped metrics returned where authorized | [ ] |
+| Dashboard data permission-filtered server-side for Management scope | [ ] |
+| API Unit Testing Completed | [ ] |
+| API Tested via Postman | [ ] |
+| API Error Responses Verified for unauthorized access, hidden field access, invalid filters | [ ] |
+
+### UI Checklist
+| Task | Status |
+|---|---|
+| Management Dashboard implemented | [ ] |
+| Appraisal readiness widget/table implemented | [ ] |
+| Annual decision pending/submitted/frozen metrics implemented | [ ] |
+| Grade/merit outcome distribution view implemented | [ ] |
+| Visibility readiness and communication readiness widgets implemented | [ ] |
+| Drilldowns route to Annual Appraisal, Visibility Governance, and Communication Dispatch screens without mutating state directly | [ ] |
+| Tables support search, filters, sorting, pagination, export where permitted, empty states, and performance handling | [ ] |
+| Loading, error, retry, and network failure states implemented | [ ] |
+| Responsive UI Verified | [ ] |
+| Manual UI Testing Completed | [ ] |
+
+### Validation Checklist
+| Task | Status |
+|---|---|
+| Management dashboard does not expose employee data outside configured scope | [ ] |
+| Frozen decisions are displayed without recalculation | [ ] |
+| NIL, grade-only, merit-only, and both outcomes counted correctly | [ ] |
+| Visibility and communication readiness follow workflow dependencies | [ ] |
+
+### Integration Checklist
+| Task | Status |
+|---|---|
+| Dashboard refreshes after annual decision draft, submit, freeze, reopen, visibility publish, communication send/resend | [ ] |
+| Dashboard metrics use same annual dependency validation as Annual Appraisal Screen | [ ] |
+| Reporting exports apply Management permission and visibility rules | [ ] |
+
+### Final Confirmation
+| Task | Status |
+|---|---|
+| Edge Cases Tested for incomplete quarters, NIL outcome, frozen decision, visibility disabled, communication failed, reopened annual decision | [ ] |
+| QA Review Completed | [ ] |
+| Source Traceability Verified Against Scope FR-DSH-04 and Module Prompt Dashboard Management Dashboard | [ ] |
+| Final Confirmation Done | [ ] |
+
+## 12.5 Director / Hierarchy Performance View
+
+### Functional Description
+Allows Director or hierarchy-authorized users to view hierarchy-level quarterly and annual performance visibility, uploaded document visibility, quarter completion, finalization status, and history within approved hierarchy scope. Director access remains read-only unless explicitly configured through the Dynamic Access Engine.
+
+### Dependencies
+Dynamic Access Engine, Visibility Governance, Dashboard & Reporting, History & Audit Governance.
+
+### API Checklist
+| Task | Status |
+|---|---|
+| Director hierarchy dashboard/API view implemented | [ ] |
+| Hierarchy performance status returned only for approved hierarchy scope | [ ] |
+| Uploaded objective attachment visibility evaluated through field/section permissions and hierarchy scope | [ ] |
+| Manager review attachment visibility evaluated through field/section permissions and hierarchy scope | [ ] |
+| Appraisal communication status returned according to role, hierarchy, and visibility configuration | [ ] |
+| Quarter completion and finalization summaries returned | [ ] |
+| Director history view returned only for scoped and visible records | [ ] |
+| API Unit Testing Completed | [ ] |
+| API Tested via Postman | [ ] |
+| API Error Responses Verified for out-of-scope hierarchy access, hidden attachment access, unauthorized write attempt | [ ] |
+
+### UI Checklist
+| Task | Status |
+|---|---|
+| Director / Hierarchy Performance View implemented | [ ] |
+| Hierarchy filters implemented for configured department/business-unit/region/global scopes | [ ] |
+| Quarter completion and finalization status displayed | [ ] |
+| Uploaded document/attachment indicators displayed only when visible | [ ] |
+| Appraisal communication status displayed only when visible | [ ] |
+| Read-only state enforced across all Director views unless explicitly configured otherwise | [ ] |
+| Tables support search, filters, sorting, pagination, export where permitted, empty states, and performance handling | [ ] |
+| Loading, error, retry, and network failure states implemented | [ ] |
+| Responsive UI Verified | [ ] |
+| Manual UI Testing Completed | [ ] |
+
+### Validation Checklist
+| Task | Status |
+|---|---|
+| Director cannot mutate PMS records by default | [ ] |
+| Partial hierarchy access restricts unauthorized employee visibility | [ ] |
+| Hidden grade, merit, confidential decisions, and restricted attachments remain hidden | [ ] |
+| Scoped history access follows configured visibility rules | [ ] |
+
+### Integration Checklist
+| Task | Status |
+|---|---|
+| Dynamic Access Engine evaluates Director hierarchy scope | [ ] |
+| Visibility Governance masks confidential fields in hierarchy views | [ ] |
+| History module supplies scoped historical records | [ ] |
+| Reporting exports apply Director scope and hidden field masking | [ ] |
+
+### Final Confirmation
+| Task | Status |
+|---|---|
+| Edge Cases Tested for partial hierarchy access, hidden attachments, hidden annual decision fields, read-only enforcement, cross-region hierarchy clarification | [ ] |
+| QA Review Completed | [ ] |
+| Source Traceability Verified Against FSD FR-DIR-01 and Scope FR-DIR-01, FR-DIR-02, FR-DSH-05 | [ ] |
+| Final Confirmation Done | [ ] |
+
 ---
 
 # 13. SLA, Escalation, and Notification Management
@@ -1634,6 +1913,73 @@ Workflow Engine, SLA Engine, Objective, Review, Annual Decision, Visibility, Com
 
 # 14. Reporting and Export
 
+## 14.0 Appraisal History Screen and History APIs
+
+### Functional Description
+Supports permission-controlled historical appraisal records for employees, managers, HR/Admin, Management, and Director/hierarchy viewers, including historical quarter summaries, final decisions, visibility, communication, audit details, immutable snapshots, and downloadable finalized appraisal history where approved.
+
+### Dependencies
+Audit & Compliance, Visibility Governance, Dynamic Access Engine, Template Version Locking, Communication Dispatch, Reporting.
+
+### API Checklist
+| Task | Status |
+|---|---|
+| Employee history API implemented, e.g. `GET /pms/history/me` | [ ] |
+| Manager team history API implemented, e.g. `GET /pms/history/team` | [ ] |
+| HR/Admin history API implemented, e.g. `GET /pms/history` with filters for cycle, employee, outcome, grade, merit, status | [ ] |
+| History detail API implemented, e.g. `GET /pms/history/{historyId}` | [ ] |
+| Download appraisal history API implemented where approved, e.g. `GET /pms/history/{historyId}/download` | [ ] |
+| History APIs return quarter summary, final decision, visibility, communication, and audit details based on permission | [ ] |
+| Historical record creation implemented after annual finalization and communication dispatch | [ ] |
+| Last year appraisal view implemented with permission-controlled grade/merit/history fields | [ ] |
+| Historical records render using locked PMS Template Version and Letter Template Version | [ ] |
+| Hidden history fields excluded from unauthorized API responses and exports | [ ] |
+| API Unit Testing Completed | [ ] |
+| API Tested via Postman | [ ] |
+| API Error Responses Verified for unauthorized history access, hidden field probing, missing snapshot, invalid download request | [ ] |
+
+### UI Checklist
+| Task | Status |
+|---|---|
+| Appraisal History Screen implemented | [ ] |
+| Employee historical appraisal view implemented according to visibility rules | [ ] |
+| Manager team historical appraisal view implemented according to scope and visibility rules | [ ] |
+| HR/Admin historical search/filter view implemented | [ ] |
+| Director hierarchy history view implemented according to hierarchy scope | [ ] |
+| History detail view shows quarter summary, final decision, visibility, communication, and audit details only where permitted | [ ] |
+| Download finalized appraisal snapshot action implemented where approved | [ ] |
+| History tables support search, filters, sorting, pagination, export where permitted, empty states, and performance handling | [ ] |
+| Loader, empty, error, retry, and network failure states implemented | [ ] |
+| Responsive UI Verified | [ ] |
+| Manual UI Testing Completed | [ ] |
+
+### Validation Checklist
+| Task | Status |
+|---|---|
+| Employee history fields are visible only when enabled for employee visibility | [ ] |
+| Manager history fields are visible only when enabled for manager visibility and assignment/hierarchy scope | [ ] |
+| HR/Admin and Management full history access follows configured permissions | [ ] |
+| Director history access is scoped and read-only | [ ] |
+| Downloaded history snapshot does not recalculate frozen decision values | [ ] |
+| Historical communication content remains immutable after template changes and resend | [ ] |
+
+### Integration Checklist
+| Task | Status |
+|---|---|
+| Annual Finalization creates or updates historical appraisal snapshot | [ ] |
+| Communication Dispatch preserves generated/sent communication history | [ ] |
+| Visibility Governance controls history field visibility | [ ] |
+| Audit History links historical snapshot, correction layer, and communication dispatch audit | [ ] |
+| Reporting exports use history-safe visibility filtering | [ ] |
+
+### Final Confirmation
+| Task | Status |
+|---|---|
+| Edge Cases Tested for visibility disabled history, template changed after historical dispatch, communication resent after correction, scoped Director history, download hidden fields | [ ] |
+| QA Review Completed | [ ] |
+| Source Traceability Verified Against Scope FR-HIS-01 through FR-HIS-07, FSD FR-EMP-05, FR-AUD-03, FR-AUD-04 | [ ] |
+| Final Confirmation Done | [ ] |
+
 ## 14.1 Spreadsheet-Compatible Reporting Exports
 
 ### Functional Description
@@ -1697,9 +2043,80 @@ Dashboard, Access Engine, Visibility Governance, Audit Governance, Transactional
 
 ---
 
-# 15. Technical Infrastructure and Data Compatibility
+# 15. Bulk Operations
 
-## 15.1 MongoDB and Future Azure Cosmos DB Compatibility
+## 15.1 Bulk Assignment, Visibility, Communication, and Operational Batching
+
+### Functional Description
+Supports large-volume PMS operations with preview, validation, configurable batching, asynchronous execution where required, per-record result tracking, partial failure handling, audit integration, and permission-safe execution.
+
+### Dependencies
+Assignment Management, Cycle Management, Visibility Governance, Communication Dispatch, Dynamic Access Engine, Audit Governance, SLA/Notification Management.
+
+### API Checklist
+| Task | Status |
+|---|---|
+| Bulk assignment preview API implemented | [ ] |
+| Bulk assignment execution API implemented with per-record success/failure results | [ ] |
+| Bulk visibility preview API implemented | [ ] |
+| Bulk visibility execution API implemented | [ ] |
+| Bulk communication preview API implemented | [ ] |
+| Bulk communication dispatch API implemented | [ ] |
+| Bulk result/status API implemented for async job tracking where required | [ ] |
+| Batch size configuration supported without hardcoding final business limits | [ ] |
+| Partial failure handling implemented without rolling back successful unrelated records unless transaction scope requires it | [ ] |
+| Bulk operations enforce role, assignment, hierarchy, workflow, visibility, and template mapping validation server-side | [ ] |
+| Bulk operations generate audit events and per-record traceability | [ ] |
+| API Unit Testing Completed | [ ] |
+| API Tested via Postman or batch test harness | [ ] |
+| API Error Responses Verified for invalid file/payload, unauthorized bulk action, hidden field exposure, missing template mapping, invalid visibility state, partial failure, retry failure | [ ] |
+
+### UI Checklist
+| Task | Status |
+|---|---|
+| Bulk operation screens/actions implemented in Assignment, Visibility, and Communication modules where applicable | [ ] |
+| Bulk preview UI shows eligible records, ineligible records, warnings, and expected action outcome | [ ] |
+| Bulk execution UI shows progress, completed count, failed count, skipped count, and retry options where approved | [ ] |
+| Per-record result table supports search, filters, sorting, pagination, export, empty states, and performance handling | [ ] |
+| Partial failure report displayed/downloadable where applicable | [ ] |
+| Retry/reload handling implemented without duplicate dispatch or duplicate assignment side effects | [ ] |
+| Loader, empty, error, retry, and network failure states implemented | [ ] |
+| Responsive UI Verified | [ ] |
+| Manual UI Testing Completed | [ ] |
+
+### Validation Checklist
+| Task | Status |
+|---|---|
+| Bulk assignment prevents duplicates and routes invalid employees to exception queue | [ ] |
+| Bulk visibility prevents publishing before annual finalization/freeze | [ ] |
+| Bulk communication prevents dispatch before visibility governance and before preview confirmation where required | [ ] |
+| Bulk communication retry policy marked Pending Business Clarification until approved | [ ] |
+| Maximum batch processing limits marked Pending Business Clarification until approved | [ ] |
+| Concurrent bulk communication while visibility changes is handled safely | [ ] |
+| Concurrent bulk close while manager submits review is handled safely | [ ] |
+
+### Integration Checklist
+| Task | Status |
+|---|---|
+| Bulk Assignment integrates with Assignment Exception Queue | [ ] |
+| Bulk Visibility integrates with Visibility Governance and Audit History | [ ] |
+| Bulk Communication integrates with Letter Template mapping, Communication Dispatch, and immutable history | [ ] |
+| SLA/Notification engine handles bulk reminders and event notifications without duplicate noise | [ ] |
+| Dashboard and Reporting reflect bulk operation outcomes | [ ] |
+
+### Final Confirmation
+| Task | Status |
+|---|---|
+| Edge Cases Tested for mixed valid/invalid records, large batch, async timeout, retry, duplicate action, visibility change during batch, failed communication, audit consistency | [ ] |
+| QA Review Completed | [ ] |
+| Source Traceability Verified Against Module Prompt Bulk Operations, QA Bulk Prompt, NFR scalability/performance requirements | [ ] |
+| Final Confirmation Done | [ ] |
+
+---
+
+# 16. Technical Infrastructure and Data Compatibility
+
+## 16.1 MongoDB and Future Azure Cosmos DB Compatibility
 
 ### Functional Description
 Ensures PMS persistence remains compatible with MongoDB now and future Azure Cosmos DB MongoDB API / Azure DocumentDB-compatible deployment.
@@ -1745,9 +2162,9 @@ All persistence models, repositories, indexes, queries, batch jobs, reports.
 
 ---
 
-# 16. Cross-Module QA, Security, and Release Readiness
+# 17. Cross-Module QA, Security, and Release Readiness
 
-## 16.1 End-to-End PMS v2 Workflow
+## 17.1 End-to-End PMS v2 Workflow
 
 ### Functional Description
 Validates the approved high-level PMS v2 workflow from annual parent cycle setup through historical snapshot preservation.
@@ -1805,7 +2222,7 @@ All modules.
 | FSD Coverage Review Completed | [ ] |
 | Final Confirmation Done | [ ] |
 
-## 16.2 Pending Business Clarification Tracker
+## 17.2 Pending Business Clarification Tracker
 
 ### Functional Description
 Tracks FSD-approved clarification items that must not be invented during implementation.
@@ -1834,9 +2251,9 @@ Product Owner / Business Owner confirmation.
 
 ---
 
-# 17. FSD Source Coverage Matrix
+# 18. Source Coverage Matrix
 
-## 17.1 Requirement Traceability Index
+## 18.1 FSD Requirement Traceability Index
 
 ### Functional Description
 Provides a reviewer-friendly index to confirm every explicit FSD functional requirement has a checklist home. This matrix is not a replacement for the detailed screen checklists above; it is a source coverage control.
@@ -1874,7 +2291,7 @@ Provides a reviewer-friendly index to confirm every explicit FSD functional requ
 | FR-WF-01 Quarter State Enforcement | 1.1 | [ ] |
 | FR-WF-02 Supported Quarter States | 1.1 | [ ] |
 | FR-WF-03 Supported Annual States | 1.1 | [ ] |
-| FR-WF-04 Revised Workflow Model | 1.1, 16.1 | [ ] |
+| FR-WF-04 Revised Workflow Model | 1.1, 17.1 | [ ] |
 | FR-OBJ-01 Objective Entry | 5.1, 5.2 | [ ] |
 | FR-OBJ-02 Objective Editability | 5.1 | [ ] |
 | FR-OBJ-03 Objective Submission | 5.1 | [ ] |
@@ -1908,7 +2325,7 @@ Provides a reviewer-friendly index to confirm every explicit FSD functional requ
 | FR-VIS-02 Manager Visibility Control | 9.1 | [ ] |
 | FR-VIS-03 API-Level Masking | 1.2, 9.1 | [ ] |
 | FR-VIS-04 Visibility Publish Workflow | 9.1 | [ ] |
-| FR-VIS-05 Confidentiality by Default | 9.1, 16.1 | [ ] |
+| FR-VIS-05 Confidentiality by Default | 9.1, 17.1 | [ ] |
 | FR-COM-01 Dynamic Letter Templates | 3.2, 10.1 | [ ] |
 | FR-COM-02 Outcome Mapping | 3.2, 10.1 | [ ] |
 | FR-COM-03 Placeholder Resolution | 3.2, 10.1 | [ ] |
@@ -1936,12 +2353,63 @@ Provides a reviewer-friendly index to confirm every explicit FSD functional requ
 | FR-DSH-02 Manager Dashboard | 12.2 | [ ] |
 | FR-DSH-03 Employee Dashboard | 12.3 | [ ] |
 | FR-DSH-04 Reporting Export | 12.1, 14.1 | [ ] |
-| FR-VAL-01 Required Field Validation | 5.1, 7.1, 16.1 | [ ] |
+| FR-VAL-01 Required Field Validation | 5.1, 7.1, 17.1 | [ ] |
 | FR-VAL-02 Weightage Validation | 5.1 | [ ] |
 | FR-VAL-03 Quarter Dependency Validation | 7.2, 8.1 | [ ] |
 | FR-VAL-04 Outcome Validation | 8.2 | [ ] |
 | FR-VAL-05 Finalized Record Protection | 1.3, 7.2, 8.2 | [ ] |
 | FR-VAL-06 Visibility Protection | 1.2, 9.1, 10.1, 14.1 | [ ] |
-| FR-VAL-07 State Transition Enforcement | 1.1, 16.1 | [ ] |
-| Final FSD coverage reviewed by QA Lead / Architect | 16.1, 17.1 | [ ] |
-| Final Confirmation Done | 16.1, 17.1 | [ ] |
+| FR-VAL-07 State Transition Enforcement | 1.1, 17.1 | [ ] |
+| Final FSD coverage reviewed by QA Lead / Architect | 17.1, 18.1 | [ ] |
+| Final Confirmation Done | 17.1, 18.1 | [ ] |
+
+## 18.2 Scope, Baseline, and Prompt Alignment Coverage Index
+
+### Functional Description
+Tracks modules and requirement families that appear in the Functional Scope Document, Approved Baseline, Master Prompt, Module Prompt, QA Prompt, BA Prompt, and Consistency Audit Prompt. These supplement the FSD and make sure execution does not miss secondary approved modules.
+
+### Final Confirmation
+| Scope / Alignment Requirement Family | Checklist Coverage Section | Status |
+|---|---|---|
+| Template Builder FR-TMB-01 Template Creation and Versioning | 3.0, 3.1 | [ ] |
+| Template Builder FR-TMB-02 Supported PMS Sections | 3.0, 3.1 | [ ] |
+| Template Builder FR-TMB-03 Quarter-Aware Sections | 3.0, 3.1 | [ ] |
+| Template Builder FR-TMB-04 Field Configuration | 3.0, 3.1 | [ ] |
+| Template Builder FR-TMB-05 Supported Field Types | 3.0, 3.1 | [ ] |
+| Template Builder FR-TMB-06 Field and Section Visibility | 3.0, 1.2, 9.1, 11.1 | [ ] |
+| Letter Generator FR-LTR-01 Letter Template Builder | 3.2, 10.1 | [ ] |
+| Letter Generator FR-LTR-02 Template Placeholders | 3.2, 10.1 | [ ] |
+| Letter Generator FR-LTR-03 Conditional Content Blocks | 3.2, 10.1 | [ ] |
+| Letter Generator FR-LTR-04 Outcome-to-Template Mapping | 3.2, 10.1 | [ ] |
+| Letter Generator FR-LTR-05 Template Preview and Test Render | 3.2, 10.1 | [ ] |
+| Letter Generator FR-LTR-06 Letter Template Version Lock | 3.2, 1.3, 10.1 | [ ] |
+| Letter Generator FR-LTR-07 Template Approval and Activation | 3.2 | [ ] |
+| Cycle Management FR-CYC-01 through FR-CYC-05 from Scope | 2.1, 2.2 | [ ] |
+| Quarter Management FR-QTR-01 Quarter Status Management | 1.1, 7.2 | [ ] |
+| Quarter Management FR-QTR-02 Quarter Independence | 2.1, 4.1, 7.1, 7.2 | [ ] |
+| Quarter Management FR-QTR-03 Annual Dependency | 7.2, 8.1, 8.2 | [ ] |
+| Assignment Management FR-ASN-01 Assignment Creation | 4.1 | [ ] |
+| Assignment Management FR-ASN-02 Assignment Fields | 4.1, 8.1, 9.1, 10.1 | [ ] |
+| Assignment Management FR-ASN-03 Manager Reassignment | 4.2 | [ ] |
+| Assignment Management FR-ASN-04 Assignment Exception Queue | 4.1, 15.1 | [ ] |
+| Decision Tracking FR-DEC-01 through FR-DEC-07 | 8.1, 8.2, 9.1, 10.1 | [ ] |
+| Objective attachments / attachment references | 5.1, 12.5, 18.2 clarification tracker | [ ] |
+| Manager review attachments and quarter score storage | 7.1, 12.5, 14.0 | [ ] |
+| Communication dispatch employee selection, manual override, skip/correction, send channels | 10.1, 15.1, 18.2 clarification tracker | [ ] |
+| History FR-HIS-01 through FR-HIS-07 | 1.3, 12.3, 12.5, 14.0 | [ ] |
+| Access Control FR-AC-01 through FR-AC-07 | 1.2, 9.1, 10.1, 11.1, 11.2, 17.1 | [ ] |
+| Dynamic Access Engine prompt APIs: evaluate access, get effective permissions, simulate access | 1.2, 11.1, 11.2 | [ ] |
+| Notification FR-NOT-01 and FR-NOT-02 | 13.2 | [ ] |
+| SLA FR-SLA-01 through FR-SLA-03 and Escalation FR-ESC-01 | 13.1, 13.2 | [ ] |
+| Delegation and Reassignment FR-DEL-01 and FR-RAS-01 | 4.2 | [ ] |
+| Dashboard FR-DSH-01 HR/Admin Dashboard | 12.1 | [ ] |
+| Dashboard FR-DSH-02 Manager Dashboard | 12.2 | [ ] |
+| Dashboard FR-DSH-03 Employee Dashboard | 12.3 | [ ] |
+| Dashboard FR-DSH-04 Management Dashboard | 12.4 | [ ] |
+| Dashboard FR-DSH-05 Director View | 12.5 | [ ] |
+| Bulk Operations module from Module/QA/BA prompts | 15.1 | [ ] |
+| API groups from Master Prompt: Template, Cycle, Assignment, Objective, Quarter Review, Annual Decision, Visibility, Communication, Access, Audit, Dashboard | 3.0-14.1, 17.1 | [ ] |
+| Approved Baseline module names and naming consistency | 1.1, 3.0-15.1, 17.1 | [ ] |
+| Out-of-scope enforcement from FSD, Baseline, BA, and Consistency Audit prompts | 1.1, 17.1 | [ ] |
+| Final scope/alignment coverage reviewed by QA Lead / BA / Architect | 17.1, 18.2 | [ ] |
+| Final Confirmation Done | 17.1, 18.2 | [ ] |

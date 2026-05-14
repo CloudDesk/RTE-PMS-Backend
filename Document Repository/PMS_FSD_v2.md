@@ -53,6 +53,119 @@ The PMS module covers:
 | Delegation & Reassignment | Temporary delegation and future ownership reassignment |
 | Dashboard & Reporting | Dashboard visibility, monitoring, exports, and reporting |
 
+
+# 2A. Template Builder and Runtime Rendering Architecture
+
+## 2A.1 Template Builder Philosophy
+
+### FR-TMP-01: Dynamic Template Builder
+
+The system shall support a metadata-driven template builder framework for PMS configuration.
+
+The Template Builder shall support:
+
+* dynamic section configuration
+* dynamic field configuration
+* workflow-stage field behavior
+* configurable scoring participation
+* conditional rendering
+* field-level visibility
+* field-level editability
+* role-aware rendering
+* quarter-aware rendering
+* annual-level rendering
+* configurable validation rules
+* communication placeholders
+* conditional communication content blocks
+* template preview rendering
+* template version governance
+
+---
+
+## 2A.2 Runtime Rendering Engine
+
+### FR-TMP-02: Runtime Template Resolution
+
+The system shall dynamically render PMS forms, sections, fields, validations, scoring rules, and visibility behavior using template metadata without requiring code changes.
+
+Runtime rendering shall support:
+
+* workflow-state evaluation
+* role evaluation
+* hierarchy-aware visibility
+* field-level visibility
+* field-level editability
+* conditional rendering evaluation
+* scoring rule evaluation
+* visibility governance integration
+* Dynamic Access Engine integration
+
+---
+
+## 2A.3 Template Version Governance
+
+### FR-TMP-03: Template Version Locking
+
+Annual Assignments and generated communication shall preserve locked template versions.
+
+Changes to newer template versions shall not alter:
+
+* historical assignments
+* finalized records
+* generated communication
+* audit snapshots
+* historical rendering
+
+---
+
+## 2A.4 Communication Template Builder
+
+### FR-TMP-04: Dynamic Communication Template Rendering
+
+The system shall support dynamic communication template rendering using:
+
+* placeholders
+* conditional blocks
+* appraisal outcome mapping
+* visibility-aware rendering
+* version-locked template snapshots
+
+---
+
+## 2A.5 Template Builder Validation
+
+### FR-TMP-05: Template Builder Validation
+
+The system shall validate:
+
+* placeholder syntax
+* conditional block syntax
+* scoring configuration
+* required field configuration
+* workflow-stage behavior configuration
+* visibility configuration
+* field permission configuration
+* template activation integrity
+
+Invalid template configurations shall be rejected before activation.
+
+---
+
+## 2A.6 Runtime Governance
+
+### FR-TMP-06: Runtime Governance Enforcement
+
+Runtime template rendering shall enforce:
+
+* Dynamic Access Engine
+* Visibility Governance
+* workflow-state validation
+* immutable template version preservation
+* confidential field masking
+* audit traceability
+
+Frontend-only enforcement shall not be permitted.
+
 ---
 
 # 3. System Roles and Actors
