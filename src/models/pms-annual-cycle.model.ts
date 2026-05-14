@@ -5,10 +5,10 @@ import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constant
 export interface IAnnualCycle extends Document {
   name: string;
   code: string;
-  year: number;
+  appraisalYear: number;
   startDate: Date;
   endDate: Date;
-  workflowState: AnnualWorkflowStateType;
+  status: AnnualWorkflowStateType;
   templateVersionId?: Types.ObjectId;
   quarterCycleIds: Types.ObjectId[];
   createdAt: Date;
@@ -29,14 +29,14 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
       trim: true,
       maxlength: 50,
     },
-    year: {
+    appraisalYear: {
       type: Number,
       required: true,
       index: true,
     },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
-    workflowState: {
+    status: {
       type: String,
       required: true,
       enum: Object.values(AnnualWorkflowState),

@@ -8,12 +8,13 @@ interface IDateWindow {
 }
 
 export interface IQuarterCycle extends Document {
-  annualCycleId: Types.ObjectId;
-  quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  cycleId: Types.ObjectId;
+  quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   startDate: Date;
   endDate: Date;
-  objectiveWindow?: IDateWindow;
-  reviewWindow?: IDateWindow;
+  objectiveSettingWindow?: IDateWindow;
+  objectiveApprovalWindow?: IDateWindow;
+  managerReviewWindow?: IDateWindow;
   status: QuarterWorkflowStateType;
   createdAt: Date;
   updatedAt: Date;
@@ -29,21 +30,22 @@ const dateWindowSchema = new Schema<IDateWindow>(
 
 const quarterCycleSchema = new Schema<IQuarterCycle>(
   {
-    annualCycleId: {
+    cycleId: {
       type: Schema.Types.ObjectId,
       required: true,
       ref: 'AnnualCycle',
       index: true,
     },
-    quarter: {
+    quarterCode: {
       type: String,
       required: true,
       enum: ['Q1', 'Q2', 'Q3', 'Q4'],
     },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
-    objectiveWindow: dateWindowSchema,
-    reviewWindow: dateWindowSchema,
+    objectiveSettingWindow: dateWindowSchema,
+    objectiveApprovalWindow: dateWindowSchema,
+    managerReviewWindow: dateWindowSchema,
     status: {
       type: String,
       required: true,
@@ -59,7 +61,7 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
 );
 
 quarterCycleSchema.index(
-  { annualCycleId: 1, quarter: 1 },
+  { cycleId: 1, quarterCode: 1 },
   { unique: true, name: 'idx_annual_cycle_quarter' },
 );
 

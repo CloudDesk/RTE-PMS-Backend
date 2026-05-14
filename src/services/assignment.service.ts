@@ -1,7 +1,12 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { AnnualWorkflowState, PmsTemplateStatus, QuarterWorkflowState } from '../constants/pms.enums';
+import {
+  AnnualDecisionStatus,
+  AnnualWorkflowState,
+  PmsTemplateStatus,
+  QuarterWorkflowState,
+} from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
@@ -16,6 +21,8 @@ type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
 export interface AssignEmployeeInput {
   employeeId: string;
   managerId: string;
+  applicableQuarters?: QuarterCode[];
+  assignmentReason?: string;
 }
 
 export interface AssignEmployeeResult {
@@ -45,7 +52,7 @@ export class AssignmentService extends BaseService {
 
     const existingAssignment = await AnnualAssignment.findOne({
       employeeId: employeeObjectId,
-      annualCycleId: annualCycle._id,
+      cycleId: annualCycle._id,
     });
 
     if (existingAssignment) {
@@ -54,15 +61,23 @@ export class AssignmentService extends BaseService {
 
     const annualAssignment = await AnnualAssignment.create({
       employeeId: employeeObjectId,
-      managerId: managerObjectId,
-      annualCycleId: annualCycle._id,
+      assignedManagerId: managerObjectId,
+      cycleId: annualCycle._id,
       templateVersionId: annualCycle.templateVersionId,
-      workflowState: AnnualWorkflowState.DRAFT,
-      finalDecisionStatus: AnnualWorkflowState.DRAFT,
+      annualState: AnnualWorkflowState.DRAFT,
+      finalDecisionStatus: AnnualDecisionStatus.DRAFT,
+      applicableQuarters: input.applicableQuarters ?? ['Q1', 'Q2', 'Q3', 'Q4'],
+      assignmentReason: input.assignmentReason ?? 'FULL_YEAR',
     });
 
     const quarterAssignments = await QuarterAssignment.insertMany(
-      this.buildQuarterAssignments(annualAssignment._id, employeeObjectId, managerObjectId),
+      this.buildQuarterAssignments(
+        annualAssignment._id,
+        annualCycle._id,
+        employeeObjectId,
+        managerObjectId,
+        annualAssignment.applicableQuarters,
+      ),
     );
 
     annualAssignment.quarterAssignmentIds = quarterAssignments.map(
@@ -90,21 +105,25 @@ export class AssignmentService extends BaseService {
 
   private buildQuarterAssignments(
     annualAssignmentId: Types.ObjectId,
+    cycleId: Types.ObjectId,
     employeeId: Types.ObjectId,
     managerId: Types.ObjectId,
+    applicableQuarters: QuarterCode[],
   ): Array<{
     annualAssignmentId: Types.ObjectId;
+    cycleId: Types.ObjectId;
     employeeId: Types.ObjectId;
-    managerId: Types.ObjectId;
-    quarter: QuarterCode;
-    workflowState: QuarterWorkflowState;
+    assignedManagerId: Types.ObjectId;
+    quarterCode: QuarterCode;
+    quarterState: QuarterWorkflowState;
   }> {
-    return (['Q1', 'Q2', 'Q3', 'Q4'] as QuarterCode[]).map((quarter) => ({
+    return applicableQuarters.map((quarterCode) => ({
       annualAssignmentId,
+      cycleId,
       employeeId,
-      managerId,
-      quarter,
-      workflowState: QuarterWorkflowState.NOT_STARTED,
+      assignedManagerId: managerId,
+      quarterCode,
+      quarterState: QuarterWorkflowState.NOT_STARTED,
     }));
   }
 

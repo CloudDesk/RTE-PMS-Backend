@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { QuarterWorkflowState } from '../constants/pms.enums';
+import { QuarterReviewStatus, QuarterWorkflowState } from '../constants/pms.enums';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
 import { accessService } from './access.service';
@@ -54,7 +54,7 @@ export class QuarterReviewService extends BaseService {
     this.assertManagerAccess('quarterReview.submit', quarterAssignment);
     this.validateReviewInput(input);
 
-    if (quarterAssignment.workflowState !== QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
       throw new Error('Quarter review can be submitted only when manager review is open');
     }
 
@@ -68,8 +68,11 @@ export class QuarterReviewService extends BaseService {
 
     const reviewPayload = {
       quarterAssignmentId: quarterAssignment._id,
+      annualAssignmentId: quarterAssignment.annualAssignmentId,
+      cycleId: quarterAssignment.cycleId,
       employeeId: quarterAssignment.employeeId,
-      managerId: quarterAssignment.managerId,
+      managerId: quarterAssignment.assignedManagerId,
+      reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
       ratings: this.normalizeRatings(input.ratings),
       comments: input.comments,
       score: input.score,
@@ -115,7 +118,7 @@ export class QuarterReviewService extends BaseService {
     const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
     this.assertAdmin('quarterAssignment.finalize');
 
-    if (quarterAssignment.workflowState !== QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED) {
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED) {
       throw new Error('Quarter can be finalized only after manager review submission');
     }
 
@@ -127,7 +130,12 @@ export class QuarterReviewService extends BaseService {
 
     await QuarterReview.findOneAndUpdate(
       { quarterAssignmentId: quarterAssignment._id },
-      { $set: { finalizedAt: new Date() } },
+      {
+        $set: {
+          finalizedAt: new Date(),
+          reviewStatus: QuarterReviewStatus.FINALIZED,
+        },
+      },
       { new: true },
     );
 
@@ -135,8 +143,8 @@ export class QuarterReviewService extends BaseService {
       'PMS_QUARTER_ASSIGNMENT_FINALIZED',
       'QUARTER_ASSIGNMENT',
       updatedQuarterAssignment._id.toString(),
-      { workflowState: quarterAssignment.workflowState },
-      { workflowState: updatedQuarterAssignment.workflowState },
+      { quarterState: quarterAssignment.quarterState },
+      { quarterState: updatedQuarterAssignment.quarterState },
     );
 
     return { quarterAssignment: updatedQuarterAssignment };
@@ -184,7 +192,7 @@ export class QuarterReviewService extends BaseService {
       action,
       resource: {
         employeeId: quarterAssignment.employeeId.toString(),
-        managerId: quarterAssignment.managerId.toString(),
+        managerId: quarterAssignment.assignedManagerId.toString(),
       },
     });
 

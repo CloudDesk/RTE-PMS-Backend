@@ -1,7 +1,7 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { AnnualWorkflowState, AppraisalOutcomeType } from '../constants/pms.enums';
+import { AnnualDecisionStatus, AppraisalOutcomeType } from '../constants/pms.enums';
 import type {
-  AnnualWorkflowState as AnnualWorkflowStateType,
+  AnnualDecisionStatus as AnnualDecisionStatusType,
   AppraisalOutcomeType as AppraisalOutcomeTypeType,
 } from '../constants/pms.enums';
 
@@ -13,9 +13,19 @@ export interface IAnnualDecision extends Document {
   gradeDetails?: Record<string, unknown>;
   meritDetails?: Record<string, unknown>;
   nilReason?: string;
-  status: AnnualWorkflowStateType;
+  managementRemarks?: string;
+  finalScore?: number;
+  finalRating?: string;
+  decisionStatus: AnnualDecisionStatusType;
+  decidedBy?: Types.ObjectId;
+  submittedBy?: Types.ObjectId;
+  submittedAt?: Date;
   frozenAt?: Date;
   frozenBy?: Types.ObjectId;
+  isDeleted: boolean;
+  createdBy?: Types.ObjectId;
+  updatedBy?: Types.ObjectId;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -36,18 +46,28 @@ const annualDecisionSchema = new Schema<IAnnualDecision>(
     gradeDetails: Schema.Types.Mixed,
     meritDetails: Schema.Types.Mixed,
     nilReason: String,
-    status: {
+    managementRemarks: String,
+    finalScore: { type: Number, min: 0 },
+    finalRating: String,
+    decisionStatus: {
       type: String,
       required: true,
-      enum: Object.values(AnnualWorkflowState),
-      default: AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+      enum: Object.values(AnnualDecisionStatus),
+      default: AnnualDecisionStatus.DRAFT,
       index: true,
     },
+    decidedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    submittedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    submittedAt: Date,
     frozenAt: Date,
     frozenBy: {
       type: Schema.Types.ObjectId,
       ref: 'User',
     },
+    isDeleted: { type: Boolean, default: false, index: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    version: { type: Number, default: 1 },
   },
   {
     collection: 'annualDecisions',
@@ -59,6 +79,7 @@ annualDecisionSchema.index(
   { annualAssignmentId: 1 },
   { unique: true, name: 'idx_annual_decision_assignment' },
 );
+annualDecisionSchema.index({ decisionStatus: 1 });
 
 export const AnnualDecision = mongoose.model<IAnnualDecision>(
   'AnnualDecision',

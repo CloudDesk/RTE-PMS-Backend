@@ -22,15 +22,15 @@ export async function transitionQuarterAssignmentState(
   const transition = workflowService.transition({
     entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
     entityId: quarterAssignment._id.toString(),
-    currentState: quarterAssignment.workflowState,
+    currentState: quarterAssignment.quarterState,
     nextState,
     actorId: actorContext.actorId,
     actorRole: actorContext.actorRole,
     reason,
   });
 
-  quarterAssignment.previousWorkflowState = transition.previousState;
-  quarterAssignment.workflowState = transition.currentState;
+  quarterAssignment.previousQuarterState = transition.previousState;
+  quarterAssignment.quarterState = transition.currentState;
   quarterAssignment.lastTransitionAt = transition.transitionedAt;
   quarterAssignment.lastTransitionBy = new Types.ObjectId(actorContext.actorId);
   quarterAssignment.lastTransitionRole = actorContext.actorRole;
@@ -44,8 +44,8 @@ export async function transitionQuarterAssignmentState(
     action: 'QUARTER_ASSIGNMENT_STATE_TRANSITIONED',
     entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
     entityId: quarterAssignment._id.toString(),
-    previousValue: { workflowState: transition.previousState },
-    newValue: { workflowState: transition.currentState },
+    previousValue: { quarterState: transition.previousState },
+    newValue: { quarterState: transition.currentState },
     reason,
   });
 

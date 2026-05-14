@@ -1,8 +1,8 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { ObjectiveSource, QuarterWorkflowState } from '../constants/pms.enums';
+import { ObjectiveSource, ObjectiveStatus } from '../constants/pms.enums';
 import type {
   ObjectiveSource as ObjectiveSourceType,
-  QuarterWorkflowState as QuarterWorkflowStateType,
+  ObjectiveStatus as ObjectiveStatusType,
 } from '../constants/pms.enums';
 
 interface IPmsAttachment {
@@ -15,21 +15,30 @@ interface IPmsAttachment {
 
 export interface IObjective extends Document {
   quarterAssignmentId: Types.ObjectId;
+  annualAssignmentId?: Types.ObjectId;
+  cycleId?: Types.ObjectId;
+  quarterCode?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   employeeId: Types.ObjectId;
-  managerId: Types.ObjectId;
+  assignedManagerId: Types.ObjectId;
+  objectiveNo?: number;
   source: ObjectiveSourceType;
   title: string;
   description?: string;
   targetMetric?: string;
+  targetValue?: string;
   targetDate?: Date;
   weightage?: number;
   successCriteria?: string;
-  workflowState: QuarterWorkflowStateType;
+  status: ObjectiveStatusType;
   attachments: IPmsAttachment[];
   createdBy: Types.ObjectId;
+  updatedBy?: Types.ObjectId;
   submittedAt?: Date;
   approvedAt?: Date;
+  approvedBy?: Types.ObjectId;
   returnedReason?: string;
+  isDeleted: boolean;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,18 +61,34 @@ const objectiveSchema = new Schema<IObjective>(
       required: true,
       ref: 'QuarterAssignment',
     },
+    annualAssignmentId: {
+      type: Schema.Types.ObjectId,
+      ref: 'AnnualAssignment',
+      index: true,
+    },
+    cycleId: {
+      type: Schema.Types.ObjectId,
+      ref: 'AnnualCycle',
+      index: true,
+    },
+    quarterCode: {
+      type: String,
+      enum: ['Q1', 'Q2', 'Q3', 'Q4'],
+      index: true,
+    },
     employeeId: {
       type: Schema.Types.ObjectId,
       required: true,
       ref: 'User',
       index: true,
     },
-    managerId: {
+    assignedManagerId: {
       type: Schema.Types.ObjectId,
       required: true,
       ref: 'User',
       index: true,
     },
+    objectiveNo: Number,
     source: {
       type: String,
       required: true,
@@ -77,14 +102,16 @@ const objectiveSchema = new Schema<IObjective>(
     },
     description: { type: String, trim: true },
     targetMetric: { type: String, trim: true },
+    targetValue: { type: String, trim: true },
     targetDate: Date,
     weightage: { type: Number, min: 0, max: 100 },
     successCriteria: { type: String, trim: true },
-    workflowState: {
+    status: {
       type: String,
       required: true,
-      enum: Object.values(QuarterWorkflowState),
-      default: QuarterWorkflowState.OBJECTIVE_DRAFT,
+      enum: Object.values(ObjectiveStatus),
+      default: ObjectiveStatus.OBJECTIVE_DRAFT,
+      index: true,
     },
     attachments: {
       type: [attachmentSchema],
@@ -95,9 +122,13 @@ const objectiveSchema = new Schema<IObjective>(
       required: true,
       ref: 'User',
     },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     submittedAt: Date,
     approvedAt: Date,
+    approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     returnedReason: String,
+    isDeleted: { type: Boolean, default: false, index: true },
+    version: { type: Number, default: 1 },
   },
   {
     collection: 'objectives',
@@ -109,5 +140,8 @@ objectiveSchema.index(
   { quarterAssignmentId: 1 },
   { name: 'idx_objective_quarter_assignment' },
 );
+objectiveSchema.index({ annualAssignmentId: 1, quarterCode: 1 });
+objectiveSchema.index({ employeeId: 1, cycleId: 1 });
+objectiveSchema.index({ assignedManagerId: 1, status: 1 });
 
 export const Objective = mongoose.model<IObjective>('Objective', objectiveSchema);

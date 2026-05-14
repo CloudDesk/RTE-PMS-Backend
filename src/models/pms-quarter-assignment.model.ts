@@ -4,15 +4,24 @@ import type { QuarterWorkflowState as QuarterWorkflowStateType } from '../consta
 
 export interface IQuarterAssignment extends Document {
   annualAssignmentId: Types.ObjectId;
+  cycleId?: Types.ObjectId;
+  cycleQuarterId?: Types.ObjectId;
   employeeId: Types.ObjectId;
-  managerId: Types.ObjectId;
-  quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4';
-  workflowState: QuarterWorkflowStateType;
-  previousWorkflowState?: QuarterWorkflowStateType;
+  assignedManagerId: Types.ObjectId;
+  quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterState: QuarterWorkflowStateType;
+  previousQuarterState?: QuarterWorkflowStateType;
   lastTransitionAt?: Date;
   lastTransitionBy?: Types.ObjectId;
   lastTransitionRole?: string;
   lastTransitionReason?: string;
+  quarterScore?: number;
+  quarterRating?: string;
+  quarterSummary?: Record<string, unknown>;
+  isDeleted: boolean;
+  createdBy?: Types.ObjectId;
+  updatedBy?: Types.ObjectId;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,30 +34,40 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
       index: true,
       ref: 'AnnualAssignment',
     },
+    cycleId: {
+      type: Schema.Types.ObjectId,
+      ref: 'AnnualCycle',
+      index: true,
+    },
+    cycleQuarterId: {
+      type: Schema.Types.ObjectId,
+      ref: 'QuarterCycle',
+      index: true,
+    },
     employeeId: {
       type: Schema.Types.ObjectId,
       required: true,
       index: true,
       ref: 'User',
     },
-    managerId: {
+    assignedManagerId: {
       type: Schema.Types.ObjectId,
       required: true,
       index: true,
       ref: 'User',
     },
-    quarter: {
+    quarterCode: {
       type: String,
       required: true,
       enum: ['Q1', 'Q2', 'Q3', 'Q4'],
     },
-    workflowState: {
+    quarterState: {
       type: String,
       required: true,
       enum: Object.values(QuarterWorkflowState),
       default: QuarterWorkflowState.NOT_STARTED,
     },
-    previousWorkflowState: {
+    previousQuarterState: {
       type: String,
       enum: Object.values(QuarterWorkflowState),
     },
@@ -59,6 +78,13 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
     },
     lastTransitionRole: String,
     lastTransitionReason: String,
+    quarterScore: { type: Number, min: 0 },
+    quarterRating: String,
+    quarterSummary: { type: Schema.Types.Mixed, default: {} },
+    isDeleted: { type: Boolean, default: false, index: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    version: { type: Number, default: 1 },
   },
   {
     collection: 'quarterAssignments',
@@ -67,9 +93,12 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
 );
 
 quarterAssignmentSchema.index(
-  { annualAssignmentId: 1, quarter: 1 },
+  { annualAssignmentId: 1, quarterCode: 1 },
   { unique: true, name: 'idx_annual_assignment_quarter' },
 );
+quarterAssignmentSchema.index({ cycleQuarterId: 1, quarterState: 1 });
+quarterAssignmentSchema.index({ assignedManagerId: 1, quarterState: 1 });
+quarterAssignmentSchema.index({ employeeId: 1, cycleId: 1, quarterCode: 1 });
 
 export const QuarterAssignment = mongoose.model<IQuarterAssignment>(
   'QuarterAssignment',

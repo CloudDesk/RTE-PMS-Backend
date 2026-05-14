@@ -36,6 +36,36 @@ export const AnnualWorkflowState = {
 export type AnnualWorkflowState =
   (typeof AnnualWorkflowState)[keyof typeof AnnualWorkflowState];
 
+export const AnnualDecisionStatus = {
+  DRAFT: 'DRAFT',
+  SUBMITTED: 'SUBMITTED',
+  FROZEN: 'FROZEN',
+  VISIBILITY_ENABLED: 'VISIBILITY_ENABLED',
+  CLOSED: 'CLOSED',
+} as const;
+
+export type AnnualDecisionStatus =
+  (typeof AnnualDecisionStatus)[keyof typeof AnnualDecisionStatus];
+
+export const QuarterReviewStatus = {
+  MANAGER_REVIEW_OPEN: 'MANAGER_REVIEW_OPEN',
+  MANAGER_REVIEW_SUBMITTED: 'MANAGER_REVIEW_SUBMITTED',
+  FINALIZED: 'FINALIZED',
+} as const;
+
+export type QuarterReviewStatus =
+  (typeof QuarterReviewStatus)[keyof typeof QuarterReviewStatus];
+
+export const ObjectiveStatus = {
+  OBJECTIVE_DRAFT: QuarterWorkflowState.OBJECTIVE_DRAFT,
+  OBJECTIVE_SUBMITTED: QuarterWorkflowState.OBJECTIVE_SUBMITTED,
+  OBJECTIVE_REVISION_REQUIRED: QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+  OBJECTIVE_APPROVED: QuarterWorkflowState.OBJECTIVE_APPROVED,
+} as const;
+
+export type ObjectiveStatus =
+  (typeof ObjectiveStatus)[keyof typeof ObjectiveStatus];
+
 export const ObjectiveSource = {
   EMPLOYEE_CREATED: 'EMPLOYEE_CREATED',
   MANAGER_CREATED: 'MANAGER_CREATED',
@@ -104,6 +134,7 @@ export const PmsTemplateFieldType = {
   RICH_TEXT: 'RICH_TEXT',
   FORMULA: 'FORMULA',
   COMMENT_BOX: 'COMMENT_BOX',
+  BOOLEAN: 'BOOLEAN',
 } as const;
 
 export type PmsTemplateFieldType =
@@ -154,6 +185,9 @@ export type WorkflowAction = (typeof WorkflowAction)[keyof typeof WorkflowAction
 
 const quarterWorkflowStates = Object.values(QuarterWorkflowState) as string[];
 const annualWorkflowStates = Object.values(AnnualWorkflowState) as string[];
+const annualDecisionStatuses = Object.values(AnnualDecisionStatus) as string[];
+const quarterReviewStatuses = Object.values(QuarterReviewStatus) as string[];
+const objectiveStatuses = Object.values(ObjectiveStatus) as string[];
 
 export function isQuarterWorkflowState(
   value: string,
@@ -165,4 +199,20 @@ export function isAnnualWorkflowState(
   value: string,
 ): value is AnnualWorkflowState {
   return annualWorkflowStates.includes(value);
+}
+
+export function isAnnualDecisionStatus(
+  value: string,
+): value is AnnualDecisionStatus {
+  return annualDecisionStatuses.includes(value);
+}
+
+export function isQuarterReviewStatus(
+  value: string,
+): value is QuarterReviewStatus {
+  return quarterReviewStatuses.includes(value);
+}
+
+export function isObjectiveStatus(value: string): value is ObjectiveStatus {
+  return objectiveStatuses.includes(value);
 }

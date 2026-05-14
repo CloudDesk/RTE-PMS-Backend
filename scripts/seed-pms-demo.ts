@@ -1,11 +1,18 @@
 import 'dotenv/config';
 import mongoose, { Types } from 'mongoose';
 import { connectDB } from '../src/config/database';
-import { AnnualWorkflowState, ObjectiveSource, QuarterWorkflowState } from '../src/constants/pms.enums';
+import {
+  AnnualDecisionStatus,
+  AnnualWorkflowState,
+  ObjectiveSource,
+  ObjectiveStatus,
+  QuarterWorkflowState,
+} from '../src/constants/pms.enums';
 import { AnnualAssignment } from '../src/models/pms-annual-assignment.model';
 import { AnnualCycle } from '../src/models/pms-annual-cycle.model';
 import { Objective } from '../src/models/pms-objective.model';
 import { QuarterAssignment } from '../src/models/pms-quarter-assignment.model';
+import type { IQuarterAssignment } from '../src/models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../src/models/pms-quarter-cycle.model';
 import { User } from '../src/models/user.model';
 
@@ -33,6 +40,7 @@ async function seedPmsDemo(): Promise<void> {
   );
   const quarterAssignments = await upsertQuarterAssignments(
     annualAssignment._id,
+    annualCycle._id,
     employeeId,
     managerId,
   );
@@ -45,19 +53,19 @@ async function seedPmsDemo(): Promise<void> {
   );
   await annualAssignment.save();
 
-  const q1Assignment = quarterAssignments.find((item) => item.quarter === 'Q1');
+  const q1Assignment = quarterAssignments.find((item) => item.quarterCode === 'Q1');
   if (q1Assignment) {
-    await upsertQ1Objective(q1Assignment._id, employeeId, managerId);
+    await upsertQ1Objective(q1Assignment, employeeId, managerId);
   }
 
   printSeedSummary({
     adminId,
     managerId,
     employeeId,
-    annualCycleId: annualCycle._id,
+    cycleId: annualCycle._id,
     annualAssignmentId: annualAssignment._id,
     quarterAssignmentIds: quarterAssignments.map((quarterAssignment) => ({
-      quarter: quarterAssignment.quarter,
+      quarter: quarterAssignment.quarterCode,
       id: quarterAssignment._id,
     })),
   });
@@ -88,14 +96,14 @@ async function upsertAnnualCycle() {
   return AnnualCycle.create({
     name: 'PMS Demo Cycle 2026',
     code: DEMO_CYCLE_CODE,
-    year: DEMO_YEAR,
+    appraisalYear: DEMO_YEAR,
     startDate: new Date('2026-01-01T00:00:00.000Z'),
     endDate: new Date('2026-12-31T23:59:59.999Z'),
-    workflowState: AnnualWorkflowState.DRAFT,
+    status: AnnualWorkflowState.DRAFT,
   });
 }
 
-async function upsertQuarterCycles(annualCycleId: Types.ObjectId) {
+async function upsertQuarterCycles(cycleId: Types.ObjectId) {
   const quarterInputs: Array<{
     quarter: QuarterCode;
     startDate: Date;
@@ -126,20 +134,20 @@ async function upsertQuarterCycles(annualCycleId: Types.ObjectId) {
   for (const quarterInput of quarterInputs) {
     await QuarterCycle.updateOne(
       {
-        annualCycleId,
-        quarter: quarterInput.quarter,
+        cycleId,
+        quarterCode: quarterInput.quarter,
       },
       {
         $setOnInsert: {
-          annualCycleId,
-          quarter: quarterInput.quarter,
+          cycleId,
+          quarterCode: quarterInput.quarter,
           startDate: quarterInput.startDate,
           endDate: quarterInput.endDate,
-          objectiveWindow: {
+          objectiveSettingWindow: {
             startDate: quarterInput.startDate,
             endDate: quarterInput.endDate,
           },
-          reviewWindow: {
+          managerReviewWindow: {
             startDate: quarterInput.startDate,
             endDate: quarterInput.endDate,
           },
@@ -150,31 +158,34 @@ async function upsertQuarterCycles(annualCycleId: Types.ObjectId) {
     );
   }
 
-  return QuarterCycle.find({ annualCycleId }).sort({ quarter: 1 });
+  return QuarterCycle.find({ cycleId }).sort({ quarterCode: 1 });
 }
 
 async function upsertAnnualAssignment(
-  annualCycleId: Types.ObjectId,
+  cycleId: Types.ObjectId,
   employeeId: Types.ObjectId,
   managerId: Types.ObjectId,
 ) {
   const existing = await AnnualAssignment.findOne({
-    annualCycleId,
+    cycleId,
     employeeId,
   });
   if (existing) return existing;
 
   return AnnualAssignment.create({
-    annualCycleId,
+    cycleId,
     employeeId,
-    managerId,
-    workflowState: AnnualWorkflowState.DRAFT,
-    finalDecisionStatus: AnnualWorkflowState.DRAFT,
+    assignedManagerId: managerId,
+    annualState: AnnualWorkflowState.DRAFT,
+    finalDecisionStatus: AnnualDecisionStatus.DRAFT,
+    applicableQuarters: ['Q1', 'Q2', 'Q3', 'Q4'],
+    assignmentReason: 'FULL_YEAR',
   });
 }
 
 async function upsertQuarterAssignments(
   annualAssignmentId: Types.ObjectId,
+  cycleId: Types.ObjectId,
   employeeId: Types.ObjectId,
   managerId: Types.ObjectId,
 ) {
@@ -184,40 +195,44 @@ async function upsertQuarterAssignments(
     await QuarterAssignment.updateOne(
       {
         annualAssignmentId,
-        quarter,
+        quarterCode: quarter,
       },
       {
         $setOnInsert: {
           annualAssignmentId,
+          cycleId,
           employeeId,
-          managerId,
-          quarter,
-          workflowState: QuarterWorkflowState.NOT_STARTED,
+          assignedManagerId: managerId,
+          quarterCode: quarter,
+          quarterState: QuarterWorkflowState.NOT_STARTED,
         },
       },
       { upsert: true },
     );
   }
 
-  return QuarterAssignment.find({ annualAssignmentId }).sort({ quarter: 1 });
+  return QuarterAssignment.find({ annualAssignmentId }).sort({ quarterCode: 1 });
 }
 
 async function upsertQ1Objective(
-  quarterAssignmentId: Types.ObjectId,
+  quarterAssignment: IQuarterAssignment,
   employeeId: Types.ObjectId,
   managerId: Types.ObjectId,
 ): Promise<void> {
   const existing = await Objective.findOne({
-    quarterAssignmentId,
+    quarterAssignmentId: quarterAssignment._id,
     title: 'Demo Q1 Objective',
   });
 
   if (existing) return;
 
   await Objective.create({
-    quarterAssignmentId,
+    quarterAssignmentId: quarterAssignment._id,
+    annualAssignmentId: quarterAssignment.annualAssignmentId,
+    cycleId: quarterAssignment.cycleId,
+    quarterCode: quarterAssignment.quarterCode,
     employeeId,
-    managerId,
+    assignedManagerId: managerId,
     source: ObjectiveSource.EMPLOYEE_CREATED,
     title: 'Demo Q1 Objective',
     description: 'Seeded objective for PMS Day 1 local testing.',
@@ -225,7 +240,7 @@ async function upsertQ1Objective(
     targetDate: new Date('2026-03-31T23:59:59.999Z'),
     weightage: 100,
     successCriteria: 'Objective can be submitted, approved, reviewed, and finalized.',
-    workflowState: QuarterWorkflowState.OBJECTIVE_DRAFT,
+    status: ObjectiveStatus.OBJECTIVE_DRAFT,
     attachments: [],
     createdBy: employeeId,
   });
@@ -248,7 +263,7 @@ function printSeedSummary(summary: {
   adminId: Types.ObjectId;
   managerId: Types.ObjectId;
   employeeId: Types.ObjectId;
-  annualCycleId: Types.ObjectId;
+  cycleId: Types.ObjectId;
   annualAssignmentId: Types.ObjectId;
   quarterAssignmentIds: Array<{ quarter: QuarterCode; id: Types.ObjectId }>;
 }): void {
@@ -256,7 +271,7 @@ function printSeedSummary(summary: {
   console.log(`adminId: ${summary.adminId.toString()}`);
   console.log(`managerId: ${summary.managerId.toString()}`);
   console.log(`employeeId: ${summary.employeeId.toString()}`);
-  console.log(`annualCycleId: ${summary.annualCycleId.toString()}`);
+  console.log(`cycleId: ${summary.cycleId.toString()}`);
   console.log(`annualAssignmentId: ${summary.annualAssignmentId.toString()}`);
   console.log('quarterAssignmentIds:');
   for (const quarterAssignment of summary.quarterAssignmentIds) {

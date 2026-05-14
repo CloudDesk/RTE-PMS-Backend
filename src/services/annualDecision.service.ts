@@ -1,7 +1,12 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { AnnualWorkflowState, AppraisalOutcomeType, QuarterWorkflowState } from '../constants/pms.enums';
+import {
+  AnnualDecisionStatus,
+  AnnualWorkflowState,
+  AppraisalOutcomeType,
+  QuarterWorkflowState,
+} from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { Objective } from '../models/pms-objective.model';
@@ -51,7 +56,8 @@ export class AnnualDecisionService extends BaseService {
 
     const quarterAssignments = await QuarterAssignment.find({
       annualAssignmentId: annualAssignment._id,
-    }).sort({ quarter: 1 });
+      quarterCode: { $in: annualAssignment.applicableQuarters },
+    }).sort({ quarterCode: 1 });
 
     const quarterAssignmentIds = quarterAssignments.map((quarterAssignment) => quarterAssignment._id);
 
@@ -82,7 +88,7 @@ export class AnnualDecisionService extends BaseService {
       annualAssignmentId: annualAssignment._id,
     });
 
-    if (existingDecision?.frozenAt || existingDecision?.status === AnnualWorkflowState.ANNUAL_FINALIZED) {
+    if (existingDecision?.frozenAt || existingDecision?.decisionStatus === AnnualDecisionStatus.FROZEN) {
       throw new Error('Frozen annual decision cannot be edited');
     }
 
@@ -99,7 +105,9 @@ export class AnnualDecisionService extends BaseService {
       gradeDetails: input.gradeDetails,
       meritDetails: input.meritDetails,
       nilReason: appraisalOutcomeType === AppraisalOutcomeType.NIL ? input.nilReason : undefined,
-      status: AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+      decisionStatus: AnnualDecisionStatus.DRAFT,
+      updatedBy: this.actorIdObject(),
+      createdBy: existingDecision ? existingDecision.createdBy : this.actorIdObject(),
     };
 
     const decision = existingDecision
@@ -113,7 +121,8 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Unable to save annual decision draft');
     }
 
-    annualAssignment.finalDecisionStatus = AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
+    annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
+    annualAssignment.finalDecisionStatus = AnnualDecisionStatus.DRAFT;
     await annualAssignment.save();
 
     await this.audit(
@@ -140,18 +149,22 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Annual decision draft must exist before freeze');
     }
 
-    if (decision.frozenAt || decision.status === AnnualWorkflowState.ANNUAL_FINALIZED) {
+    if (decision.frozenAt || decision.decisionStatus === AnnualDecisionStatus.FROZEN) {
       throw new Error('Annual decision is already frozen');
     }
 
     const previousValue = decision.toObject();
-    decision.status = AnnualWorkflowState.ANNUAL_FINALIZED;
+    decision.decisionStatus = AnnualDecisionStatus.FROZEN;
     decision.frozenAt = new Date();
     decision.frozenBy = this.actorIdObject();
+    decision.updatedBy = this.actorIdObject();
     await decision.save();
 
-    annualAssignment.workflowState = AnnualWorkflowState.ANNUAL_FINALIZED;
-    annualAssignment.finalDecisionStatus = AnnualWorkflowState.ANNUAL_FINALIZED;
+    annualAssignment.annualState = AnnualWorkflowState.ANNUAL_FINALIZED;
+    annualAssignment.finalDecisionStatus = AnnualDecisionStatus.FROZEN;
+    annualAssignment.isGradeApplied = decision.isGradeApplied;
+    annualAssignment.isMeritApplied = decision.isMeritApplied;
+    annualAssignment.appraisalOutcomeType = decision.appraisalOutcomeType;
     await annualAssignment.save();
 
     await this.audit(
@@ -173,11 +186,16 @@ export class AnnualDecisionService extends BaseService {
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
     const previousValue = annualAssignment.toObject();
 
-    annualAssignment.employeeGradeVisible = input.employeeGradeVisible ?? annualAssignment.employeeGradeVisible;
-    annualAssignment.employeeMeritVisible = input.employeeMeritVisible ?? annualAssignment.employeeMeritVisible;
-    annualAssignment.managerGradeVisible = input.managerGradeVisible ?? annualAssignment.managerGradeVisible;
-    annualAssignment.managerMeritVisible = input.managerMeritVisible ?? annualAssignment.managerMeritVisible;
-    annualAssignment.workflowState = AnnualWorkflowState.VISIBILITY_ENABLED;
+    annualAssignment.visibility.employeeGradeVisible =
+      input.employeeGradeVisible ?? annualAssignment.visibility.employeeGradeVisible;
+    annualAssignment.visibility.employeeMeritVisible =
+      input.employeeMeritVisible ?? annualAssignment.visibility.employeeMeritVisible;
+    annualAssignment.visibility.managerGradeVisible =
+      input.managerGradeVisible ?? annualAssignment.visibility.managerGradeVisible;
+    annualAssignment.visibility.managerMeritVisible =
+      input.managerMeritVisible ?? annualAssignment.visibility.managerMeritVisible;
+    annualAssignment.annualState = AnnualWorkflowState.VISIBILITY_ENABLED;
+    annualAssignment.finalDecisionStatus = AnnualDecisionStatus.VISIBILITY_ENABLED;
     await annualAssignment.save();
 
     await this.audit(
@@ -202,15 +220,23 @@ export class AnnualDecisionService extends BaseService {
   }
 
   private async assertAllQuartersComplete(annualAssignmentId: Types.ObjectId): Promise<void> {
-    const quarterAssignments = await QuarterAssignment.find({ annualAssignmentId });
+    const annualAssignment = await AnnualAssignment.findById(annualAssignmentId);
+    if (!annualAssignment) {
+      throw new Error('Annual assignment not found');
+    }
+
+    const quarterAssignments = await QuarterAssignment.find({
+      annualAssignmentId,
+      quarterCode: { $in: annualAssignment.applicableQuarters },
+    });
     if (quarterAssignments.length === 0) {
       throw new Error('No quarter assignments found for annual assignment');
     }
 
     const incompleteQuarter = quarterAssignments.find(
       (quarterAssignment) =>
-        quarterAssignment.workflowState !== QuarterWorkflowState.QUARTER_FINALIZED &&
-        quarterAssignment.workflowState !== QuarterWorkflowState.CLOSED_BY_ADMIN,
+        quarterAssignment.quarterState !== QuarterWorkflowState.QUARTER_FINALIZED &&
+        quarterAssignment.quarterState !== QuarterWorkflowState.CLOSED_BY_ADMIN,
     );
 
     if (incompleteQuarter) {
@@ -226,10 +252,10 @@ export class AnnualDecisionService extends BaseService {
       decision.toObject() as Record<string, unknown>,
       {
         actorRole: this.requireActor().actorRole,
-        employeeGradeVisible: annualAssignment.employeeGradeVisible,
-        employeeMeritVisible: annualAssignment.employeeMeritVisible,
-        managerGradeVisible: annualAssignment.managerGradeVisible,
-        managerMeritVisible: annualAssignment.managerMeritVisible,
+        employeeGradeVisible: annualAssignment.visibility.employeeGradeVisible,
+        employeeMeritVisible: annualAssignment.visibility.employeeMeritVisible,
+        managerGradeVisible: annualAssignment.visibility.managerGradeVisible,
+        managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
       },
     );
   }
@@ -240,7 +266,7 @@ export class AnnualDecisionService extends BaseService {
       action,
       resource: {
         employeeId: annualAssignment.employeeId.toString(),
-        managerId: annualAssignment.managerId.toString(),
+        managerId: annualAssignment.assignedManagerId.toString(),
       },
     });
 

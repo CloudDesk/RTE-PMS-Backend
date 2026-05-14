@@ -28,7 +28,8 @@ interface QuarterCycleInput {
 export interface CreateCycleInput {
   name: string;
   code: string;
-  year: number;
+  appraisalYear?: number;
+  year?: number;
   startDate: Date | string;
   endDate: Date | string;
   templateVersionId?: string;
@@ -55,10 +56,10 @@ export class CycleService extends BaseService {
     const annualCycle = await AnnualCycle.create({
       name: input.name,
       code: input.code.trim().toUpperCase(),
-      year: input.year,
+      appraisalYear: input.appraisalYear ?? input.year,
       startDate: new Date(input.startDate),
       endDate: new Date(input.endDate),
-      workflowState: AnnualWorkflowState.DRAFT,
+      status: AnnualWorkflowState.DRAFT,
       templateVersionId,
     });
 
@@ -84,14 +85,14 @@ export class CycleService extends BaseService {
 
   private buildQuarterPayloads(
     input: CreateCycleInput,
-    annualCycleId: Types.ObjectId,
+    cycleId: Types.ObjectId,
   ): Array<{
-    annualCycleId: Types.ObjectId;
-    quarter: QuarterCode;
+    cycleId: Types.ObjectId;
+    quarterCode: QuarterCode;
     startDate: Date;
     endDate: Date;
-    objectiveWindow?: { startDate?: Date; endDate?: Date };
-    reviewWindow?: { startDate?: Date; endDate?: Date };
+    objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
+    managerReviewWindow?: { startDate?: Date; endDate?: Date };
     status: QuarterWorkflowState;
   }> {
     const quarters = input.quarters ?? this.createDefaultQuarterDates(input.startDate, input.endDate);
@@ -111,12 +112,12 @@ export class CycleService extends BaseService {
       }
 
       return {
-        annualCycleId,
-        quarter,
+        cycleId,
+        quarterCode: quarter,
         startDate: new Date(quarterInput.startDate),
         endDate: new Date(quarterInput.endDate),
-        objectiveWindow: this.normalizeWindow(quarterInput.objectiveWindow),
-        reviewWindow: this.normalizeWindow(quarterInput.reviewWindow),
+        objectiveSettingWindow: this.normalizeWindow(quarterInput.objectiveWindow),
+        managerReviewWindow: this.normalizeWindow(quarterInput.reviewWindow),
         status: QuarterWorkflowState.NOT_STARTED,
       };
     });

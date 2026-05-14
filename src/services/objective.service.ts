@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { ObjectiveSource, QuarterWorkflowState } from '../constants/pms.enums';
+import { ObjectiveSource, ObjectiveStatus, QuarterWorkflowState } from '../constants/pms.enums';
 import { Objective } from '../models/pms-objective.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { accessService } from './access.service';
@@ -49,13 +49,13 @@ export class ObjectiveService extends BaseService {
     if (source === ObjectiveSource.EMPLOYEE_CREATED) {
       await this.ensureQuarterState(
         quarterAssignment._id.toString(),
-        quarterAssignment.workflowState,
+        quarterAssignment.quarterState,
         QuarterWorkflowState.OBJECTIVE_DRAFT,
       );
     } else {
       await this.ensureQuarterState(
         quarterAssignment._id.toString(),
-        quarterAssignment.workflowState,
+        quarterAssignment.quarterState,
         QuarterWorkflowState.OBJECTIVE_APPROVED,
       );
       await this.openManagerReview(quarterAssignment._id.toString());
@@ -63,8 +63,11 @@ export class ObjectiveService extends BaseService {
 
     const objective = await Objective.create({
       quarterAssignmentId: quarterAssignment._id,
+      annualAssignmentId: quarterAssignment.annualAssignmentId,
+      cycleId: quarterAssignment.cycleId,
+      quarterCode: quarterAssignment.quarterCode,
       employeeId: quarterAssignment.employeeId,
-      managerId: quarterAssignment.managerId,
+      assignedManagerId: quarterAssignment.assignedManagerId,
       source,
       title: input.title,
       description: input.description,
@@ -72,12 +75,15 @@ export class ObjectiveService extends BaseService {
       targetDate: input.targetDate ? new Date(input.targetDate) : undefined,
       weightage: input.weightage,
       successCriteria: input.successCriteria,
-      workflowState: source === ObjectiveSource.MANAGER_CREATED
-        ? QuarterWorkflowState.OBJECTIVE_APPROVED
-        : QuarterWorkflowState.OBJECTIVE_DRAFT,
+      status: source === ObjectiveSource.MANAGER_CREATED
+        ? ObjectiveStatus.OBJECTIVE_APPROVED
+        : ObjectiveStatus.OBJECTIVE_DRAFT,
       attachments: this.normalizeAttachments(input.attachments ?? []),
       createdBy: this.toObjectId(actor.actorId, 'actorId'),
       approvedAt: source === ObjectiveSource.MANAGER_CREATED ? new Date() : undefined,
+      approvedBy: source === ObjectiveSource.MANAGER_CREATED
+        ? this.toObjectId(actor.actorId, 'actorId')
+        : undefined,
     });
 
     await this.audit(
@@ -102,8 +108,8 @@ export class ObjectiveService extends BaseService {
     }
 
     if (
-      objective.workflowState !== QuarterWorkflowState.OBJECTIVE_DRAFT &&
-      objective.workflowState !== QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED
+      objective.status !== ObjectiveStatus.OBJECTIVE_DRAFT &&
+      objective.status !== ObjectiveStatus.OBJECTIVE_REVISION_REQUIRED
     ) {
       throw new Error('Only draft or revision-required objectives can be submitted');
     }
@@ -114,8 +120,8 @@ export class ObjectiveService extends BaseService {
       this.requireActor(),
     );
 
-    const previousState = objective.workflowState;
-    objective.workflowState = QuarterWorkflowState.OBJECTIVE_SUBMITTED;
+    const previousState = objective.status;
+    objective.status = ObjectiveStatus.OBJECTIVE_SUBMITTED;
     objective.submittedAt = new Date();
     objective.returnedReason = undefined;
     await objective.save();
@@ -124,8 +130,8 @@ export class ObjectiveService extends BaseService {
       'PMS_OBJECTIVE_SUBMITTED',
       'OBJECTIVE',
       objective._id.toString(),
-      { workflowState: previousState },
-      { workflowState: objective.workflowState },
+      { status: previousState },
+      { status: objective.status },
     );
 
     return objective;
@@ -135,7 +141,7 @@ export class ObjectiveService extends BaseService {
     const objective = await this.getObjective(objectiveId);
     this.assertObjectiveAccess('objective.approve', objective, false);
 
-    if (objective.workflowState !== QuarterWorkflowState.OBJECTIVE_SUBMITTED) {
+    if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
       throw new Error('Only submitted objectives can be approved');
     }
 
@@ -146,17 +152,18 @@ export class ObjectiveService extends BaseService {
     );
     await this.openManagerReview(objective.quarterAssignmentId.toString());
 
-    const previousState = objective.workflowState;
-    objective.workflowState = QuarterWorkflowState.OBJECTIVE_APPROVED;
+    const previousState = objective.status;
+    objective.status = ObjectiveStatus.OBJECTIVE_APPROVED;
     objective.approvedAt = new Date();
+    objective.approvedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
     await objective.save();
 
     await this.audit(
       'PMS_OBJECTIVE_APPROVED',
       'OBJECTIVE',
       objective._id.toString(),
-      { workflowState: previousState },
-      { workflowState: objective.workflowState },
+      { status: previousState },
+      { status: objective.status },
     );
 
     return objective;
@@ -171,7 +178,7 @@ export class ObjectiveService extends BaseService {
     const objective = await this.getObjective(objectiveId);
     this.assertObjectiveAccess('objective.return', objective, false);
 
-    if (objective.workflowState !== QuarterWorkflowState.OBJECTIVE_SUBMITTED) {
+    if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
       throw new Error('Only submitted objectives can be returned for revision');
     }
 
@@ -182,8 +189,8 @@ export class ObjectiveService extends BaseService {
       reason,
     );
 
-    const previousState = objective.workflowState;
-    objective.workflowState = QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED;
+    const previousState = objective.status;
+    objective.status = ObjectiveStatus.OBJECTIVE_REVISION_REQUIRED;
     objective.returnedReason = reason;
     await objective.save();
 
@@ -191,8 +198,8 @@ export class ObjectiveService extends BaseService {
       'PMS_OBJECTIVE_RETURNED_FOR_REVISION',
       'OBJECTIVE',
       objective._id.toString(),
-      { workflowState: previousState },
-      { workflowState: objective.workflowState, returnedReason: reason },
+      { status: previousState },
+      { status: objective.status, returnedReason: reason },
       reason,
     );
 
@@ -215,7 +222,7 @@ export class ObjectiveService extends BaseService {
     }
 
     const refreshedQuarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    if (refreshedQuarterAssignment.workflowState === targetState) return;
+    if (refreshedQuarterAssignment.quarterState === targetState) return;
 
     await transitionQuarterAssignmentState(
       quarterAssignmentId,
@@ -226,7 +233,7 @@ export class ObjectiveService extends BaseService {
 
   private async openManagerReview(quarterAssignmentId: string): Promise<void> {
     const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    if (quarterAssignment.workflowState !== QuarterWorkflowState.OBJECTIVE_APPROVED) {
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_APPROVED) {
       return;
     }
 
@@ -253,7 +260,7 @@ export class ObjectiveService extends BaseService {
       action,
       resource: {
         employeeId: quarterAssignment.employeeId.toString(),
-        managerId: quarterAssignment.managerId.toString(),
+        managerId: quarterAssignment.assignedManagerId.toString(),
       },
     });
 
@@ -278,7 +285,7 @@ export class ObjectiveService extends BaseService {
       action,
       resource: {
         employeeId: objective.employeeId.toString(),
-        managerId: objective.managerId.toString(),
+        managerId: objective.assignedManagerId.toString(),
       },
     });
 

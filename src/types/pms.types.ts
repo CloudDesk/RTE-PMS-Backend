@@ -1,11 +1,17 @@
 import type {
   AnnualWorkflowState as AnnualWorkflowStateEnum,
+  AnnualDecisionStatus as AnnualDecisionStatusEnum,
+  ObjectiveStatus as ObjectiveStatusEnum,
+  QuarterReviewStatus as QuarterReviewStatusEnum,
   QuarterWorkflowState as QuarterWorkflowStateEnum,
   WorkflowEntityType,
 } from '../constants/pms.enums';
 
 export type QuarterWorkflowState = QuarterWorkflowStateEnum;
 export type AnnualWorkflowState = AnnualWorkflowStateEnum;
+export type AnnualDecisionStatus = AnnualDecisionStatusEnum;
+export type ObjectiveStatus = ObjectiveStatusEnum;
+export type QuarterReviewStatus = QuarterReviewStatusEnum;
 
 export interface WorkflowTransitionInput {
   entityType: WorkflowEntityType;
