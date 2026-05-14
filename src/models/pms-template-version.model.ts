@@ -10,92 +10,84 @@ import type {
   PmsTemplateSectionLevel as PmsTemplateSectionLevelType,
   PmsTemplateSectionType as PmsTemplateSectionTypeType,
   PmsTemplateStatus as PmsTemplateStatusType,
-  QuarterWorkflowState,
 } from '../constants/pms.enums';
 
-interface ITemplatePermissionRule {
-  roleCode: string;
-  visible?: boolean;
-  editable?: boolean;
-  required?: boolean;
-  workflowStates?: QuarterWorkflowState[];
-  hierarchyScope?: string;
-  publishFlagRequired?: boolean;
+export interface ITemplateOption {
+  label: string;
+  value: string;
 }
 
-interface ITemplateField {
-  key: string;
-  label: string;
-  type: PmsTemplateFieldTypeType;
-  required?: boolean;
+export interface ITemplateField {
+  fieldKey: string;
+  fieldLabel: string;
+  fieldType: PmsTemplateFieldTypeType;
+  isRequired?: boolean;
+  displayOrder?: number;
   placeholder?: string;
   helpText?: string;
   validationRules?: Record<string, unknown>;
+  visibilityRules?: Record<string, unknown>;
+  editabilityRules?: Record<string, unknown>;
+  optionConfig?: Record<string, unknown>;
+  scoringConfig?: Record<string, unknown>;
   defaultValue?: unknown;
-  weightage?: number;
-  options?: Array<{ label: string; value: string }>;
-  scoringParticipation?: boolean;
-  formula?: string;
-  permissions?: ITemplatePermissionRule[];
-  order?: number;
+  options?: ITemplateOption[];
 }
 
-interface ITemplateSection {
-  key: string;
-  label: string;
-  type: PmsTemplateSectionTypeType;
+export interface ITemplateSection {
+  sectionKey: string;
+  sectionLabel: string;
+  sectionType: PmsTemplateSectionTypeType;
   level: PmsTemplateSectionLevelType;
-  applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
   repeatable?: boolean;
-  order?: number;
+  displayOrder?: number;
+  visibilityRules?: Record<string, unknown>;
+  editabilityRules?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   fields: ITemplateField[];
-  permissions?: ITemplatePermissionRule[];
 }
 
 export interface IPmsTemplateVersion extends Document {
   templateId: Types.ObjectId;
-  versionNumber: number;
+  versionNo: number;
   status: PmsTemplateStatusType;
   sections: ITemplateSection[];
-  placeholders: string[];
-  conditionalBlocks: string[];
+  themeConfig?: Record<string, unknown>;
+  scoringConfig?: Record<string, unknown>;
+  effectiveFrom?: Date;
+  effectiveTo?: Date;
   isLocked: boolean;
+  lockedAt?: Date;
   activatedAt?: Date;
   deactivatedAt?: Date;
+  isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const permissionRuleSchema = new Schema<ITemplatePermissionRule>(
-  {
-    roleCode: { type: String, required: true, trim: true },
-    visible: Boolean,
-    editable: Boolean,
-    required: Boolean,
-    workflowStates: [{ type: String }],
-    hierarchyScope: String,
-    publishFlagRequired: Boolean,
-  },
-  { _id: false },
-);
-
 const templateFieldSchema = new Schema<ITemplateField>(
   {
-    key: { type: String, required: true, trim: true },
-    label: { type: String, required: true, trim: true },
-    type: {
+    fieldKey: { type: String, required: true, trim: true },
+    fieldLabel: { type: String, required: true, trim: true },
+    fieldType: {
       type: String,
       required: true,
       enum: Object.values(PmsTemplateFieldType),
     },
-    required: Boolean,
+    isRequired: { type: Boolean, default: false },
+    displayOrder: { type: Number, default: 0 },
     placeholder: String,
     helpText: String,
     validationRules: Schema.Types.Mixed,
+    visibilityRules: Schema.Types.Mixed,
+    editabilityRules: Schema.Types.Mixed,
+    optionConfig: Schema.Types.Mixed,
+    scoringConfig: Schema.Types.Mixed,
     defaultValue: Schema.Types.Mixed,
-    weightage: { type: Number, min: 0, max: 100 },
     options: {
       type: [
         {
@@ -106,19 +98,15 @@ const templateFieldSchema = new Schema<ITemplateField>(
       ],
       default: [],
     },
-    scoringParticipation: { type: Boolean, default: false },
-    formula: String,
-    permissions: { type: [permissionRuleSchema], default: [] },
-    order: { type: Number, default: 0 },
   },
   { _id: false },
 );
 
 const templateSectionSchema = new Schema<ITemplateSection>(
   {
-    key: { type: String, required: true, trim: true },
-    label: { type: String, required: true, trim: true },
-    type: {
+    sectionKey: { type: String, required: true, trim: true },
+    sectionLabel: { type: String, required: true, trim: true },
+    sectionType: {
       type: String,
       required: true,
       enum: Object.values(PmsTemplateSectionType),
@@ -128,14 +116,16 @@ const templateSectionSchema = new Schema<ITemplateSection>(
       required: true,
       enum: Object.values(PmsTemplateSectionLevel),
     },
-    applicableQuarters: {
+    repeatFor: {
       type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
       default: [],
     },
     repeatable: { type: Boolean, default: false },
-    order: { type: Number, default: 0 },
+    displayOrder: { type: Number, default: 0 },
+    visibilityRules: Schema.Types.Mixed,
+    editabilityRules: Schema.Types.Mixed,
+    metadata: Schema.Types.Mixed,
     fields: { type: [templateFieldSchema], default: [] },
-    permissions: { type: [permissionRuleSchema], default: [] },
   },
   { _id: false },
 );
@@ -148,7 +138,7 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
       ref: 'PmsTemplate',
       index: true,
     },
-    versionNumber: { type: Number, required: true },
+    versionNo: { type: Number, required: true },
     status: {
       type: String,
       required: true,
@@ -157,22 +147,27 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
       index: true,
     },
     sections: { type: [templateSectionSchema], default: [] },
-    placeholders: { type: [String], default: [] },
-    conditionalBlocks: { type: [String], default: [] },
+    themeConfig: { type: Schema.Types.Mixed, default: {} },
+    scoringConfig: { type: Schema.Types.Mixed, default: {} },
+    effectiveFrom: Date,
+    effectiveTo: Date,
     isLocked: { type: Boolean, default: false, index: true },
+    lockedAt: Date,
     activatedAt: Date,
     deactivatedAt: Date,
+    isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    version: { type: Number, default: 1 },
   },
   {
-    collection: 'pmsTemplateVersions',
+    collection: 'pms_template_versions',
     timestamps: true,
   },
 );
 
 pmsTemplateVersionSchema.index(
-  { templateId: 1, versionNumber: 1 },
+  { templateId: 1, versionNo: 1 },
   { unique: true, name: 'idx_pms_template_version' },
 );
 

@@ -9,8 +9,10 @@ export interface IPmsTemplate extends Document {
   status: PmsTemplateStatusType;
   effectiveDate?: Date;
   currentVersionId?: Types.ObjectId;
+  isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,11 +44,13 @@ const pmsTemplateSchema = new Schema<IPmsTemplate>(
       type: Schema.Types.ObjectId,
       ref: 'PmsTemplateVersion',
     },
+    isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    version: { type: Number, default: 1 },
   },
   {
-    collection: 'pmsTemplates',
+    collection: 'pms_templates',
     timestamps: true,
   },
 );
