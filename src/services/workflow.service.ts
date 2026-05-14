@@ -117,12 +117,12 @@ Example usage from another service:
 const transition = workflowService.transition({
   entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
   entityId: quarterAssignment._id.toString(),
-  currentState: quarterAssignment.workflowState,
+  currentState: quarterAssignment.quarterState,
   nextState: QuarterWorkflowState.OBJECTIVE_SUBMITTED,
   actorId: context.user._id.toString(),
   actorRole: context.user.role,
 });
 
-quarterAssignment.workflowState = transition.currentState;
+quarterAssignment.quarterState = transition.currentState;
 await quarterAssignment.save();
 */
