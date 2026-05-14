@@ -1,0 +1,23 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2>New Leave Request</h2>
+  <p>Dear {{managerName}},</p>
+
+  <p>{{employeeName}} has applied for leave.</p>
+
+  <ul>
+    <li><strong>Leave Type:</strong> {{leaveType}}</li>
+    <li><strong>From:</strong> {{fromDate}}</li>
+    <li><strong>To:</strong> {{toDate}}</li>
+    <li><strong>Total Days:</strong> {{totalDays}}</li>
+    <li><strong>Reason:</strong> {{reason}}</li>
+  </ul>
+
+  <p>Please log in to the Zuno HR portal to approve or reject this request.</p>
+
+  <div style="text-align: center; margin-top: 20px;">
+    <a href="{{approvalLink}}" style="background-color: #4a90e2; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px;">Review Leave Request</a>
+  </div>
+
+  <p>Thank you,</p>
+  <p>{{companyName}} Zuno HR</p>
+</div>

@@ -1,0 +1,17 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2>Your Resignation Has Been Rejected</h2>
+  <p>Dear {{employeeName}},</p>
+
+  <p>Your resignation request has been <strong>rejected</strong> by {{approverName}}.</p>
+
+  <ul>
+    <li><strong>Rejected On:</strong> {{rejectedAt}}</li>
+    {{#if remarks}}
+      <li><strong>Remarks:</strong> {{remarks}}</li>
+    {{/if}}
+  </ul>
+
+  <p>Please contact your HR department for further clarification.</p>
+
+  <p>Regards,<br />{{companyName}} Zuno HR</p>
+</div>

@@ -1,0 +1,22 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2>Your Attendance Regularization has been {{status}}</h2>
+
+  <p>Dear {{employeeName}},</p>
+
+  <p>Your attendance regularization request has been <strong>{{status}}</strong> by {{approverName}}.</p>
+
+  <ul>
+    <li><strong>Date:</strong> {{shiftDay}}</li>
+    <li><strong>Requested In Time:</strong> {{fromTime}}</li>
+    <li><strong>Requested Out Time:</strong> {{toTime}}</li>
+    <li><strong>Reason:</strong> {{reason}}</li>
+    {{#if comments}}
+      <li><strong>Approver's Comments:</strong> {{comments}}</li>
+    {{/if}}
+  </ul>
+
+  <p>You can log in to the Zuno HR portal to view the full details.</p>
+
+  <p>Best regards,</p>
+  <p>{{companyName}} Zuno HR</p>
+</div>

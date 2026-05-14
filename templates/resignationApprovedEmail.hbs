@@ -1,0 +1,19 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2>Your Resignation Has Been Approved</h2>
+  <p>Dear {{employeeName}},</p>
+
+  <p>Your resignation has been <strong>approved</strong> by {{approverName}}.</p>
+
+  <ul>
+    <li><strong>Approved On:</strong> {{approvedDate}}</li>
+    <li><strong>Last Working Day:</strong> {{approvedLastWorkingDay}}</li>
+    <li><strong>Notice Period:</strong> {{noticePeriodDays}} days</li>
+    {{#if remarks}}
+      <li><strong>Remarks:</strong> {{remarks}}</li>
+    {{/if}}
+  </ul>
+
+  <p>We thank you for your service and wish you all the best.</p>
+
+  <p>Regards,<br />{{companyName}} Zuno HR</p>
+</div>

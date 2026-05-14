@@ -1,0 +1,22 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2>Welcome to {{companyName}}!</h2>
+  <p>Hello {{userName}},</p>
+  <p>Your account has been created. You can log in below:</p>
+  <ul>
+    <li><strong>Email:</strong> {{email}}</li>
+    <li><strong>Role:</strong> {{role}}</li>
+    {{#if password}}
+    <li><strong>Default Password:</strong> {{password}}</li>
+    {{/if}}
+  </ul>
+  {{#if password}}
+  <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0; border-radius: 4px;">
+    <p style="margin: 0; color: #856404;"><strong>⚠️ Important:</strong> Please change your password after first login for security.</p>
+  </div>
+  {{/if}}
+  <div style="text-align: center; margin: 30px 0;">
+    <a href="{{loginUrl}}" style="background-color: #4a90e2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px;">Log In</a>
+  </div>
+  <p>Best regards,</p>
+  <p>{{companyName}} Team</p>
+</div>

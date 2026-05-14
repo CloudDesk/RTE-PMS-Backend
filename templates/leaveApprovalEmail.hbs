@@ -1,0 +1,21 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <h2>Your Leave Request has been {{status}}</h2>
+  <p>Dear {{employeeName}},</p>
+
+  <p>Your leave request has been <strong>{{status}}</strong> by {{approverName}}.</p>
+
+  <ul>
+    <li><strong>Leave Type:</strong> {{leaveType}}</li>
+    <li><strong>From:</strong> {{fromDate}}</li>
+    <li><strong>To:</strong> {{toDate}}</li>
+    <li><strong>Total Days:</strong> {{totalDays}}</li>
+    {{#if remarks}}
+      <li><strong>Remarks:</strong> {{remarks}}</li>
+    {{/if}}
+  </ul>
+
+  <p>You can log in to the Zuno HR portal to view details.</p>
+
+  <p>Regards,</p>
+  <p>{{companyName}} Zuno HR</p>
+</div>

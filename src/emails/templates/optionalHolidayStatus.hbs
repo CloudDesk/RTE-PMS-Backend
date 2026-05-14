@@ -1,0 +1,19 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <h2 style="color: #333;">Optional Holiday Request {{status}}</h2>
+  <p>Hello {{employeeName}},</p>
+  <p>Your optional holiday request has been <strong style="color: {{#if (eq status 'Approved')}}#28a745{{else}}#dc3545{{/if}};">{{status}}</strong>.</p>
+  <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+    <p><strong>Holiday:</strong> {{holidayName}}</p>
+    <p><strong>Date:</strong> {{holidayDate}}</p>
+    {{#if remarks}}
+    <p><strong>Remarks:</strong> {{remarks}}</p>
+    {{/if}}
+  </div>
+  {{#if (eq status 'Approved')}}
+  <p style="color: #28a745;">✅ Your optional holiday has been approved. This day will be counted as a holiday in your payroll.</p>
+  {{else if (eq status 'Rejected')}}
+  <p style="color: #dc3545;">❌ Your optional holiday request has been rejected. This day will be treated as a working day.</p>
+  {{/if}}
+  <p>Best regards,<br>Zuno HR System</p>
+</div>
+

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Final Settlement</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            font-size: 11px;
+            margin: 0;
+            padding: 30px;
+            /* Reduced from 40 for better fit */
+            color: #000;
+            line-height: 1.4;
+        }
+
+        /* Using a table for the header to prevent overlap and ensure stable alignment */
+        .header-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .header-table td {
+            vertical-align: middle;
+            border: none;
+            padding: 0;
+        }
+
+        .logo-col {
+            width: 150px;
+            text-align: left;
+        }
+
+        .info-col {
+            text-align: center;
+        }
+
+        .spacer-col {
+            width: 150px;
+            /* Mirrors logo column for perfect centering of info */
+        }
+
+        .logo-img {
+            width: 130px;
+            height: auto;
+            display: block;
+        }
+
+        .company-name {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+
+        .company-address {
+            font-size: 10px;
+            color: #333;
+            max-width: 350px;
+            margin: 0 auto;
+        }
+
+        .document-name {
+            text-align: center;
+            font-size: 12px;
+            font-weight: bold;
+            margin-top: 15px;
+            letter-spacing: 0.5px;
+            width: 100%;
+        }
+
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 25px;
+            margin-top: 10px;
+        }
+
+        .info-table td {
+            padding: 2px 0;
+            vertical-align: top;
+            font-size: 11px;
+            border: none;
+        }
+
+        .info-label {
+            width: 250px;
+            text-align: left;
+        }
+
+        .info-colon {
+            width: 20px;
+            text-align: center;
+        }
+
+        .info-value {
+            text-align: left;
+        }
+
+        .main-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1.5px solid #000;
+        }
+
+        .main-table th {
+            background-color: #cccccc;
+            border: 1px solid #000;
+            padding: 6px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .main-table td {
+            border: 1px solid #000;
+            padding: 4px 10px;
+            vertical-align: top;
+        }
+
+        .col-label {
+            width: 35%;
+            text-align: left;
+        }
+
+        .col-amount {
+            width: 15%;
+            text-align: right;
+        }
+
+        .row-total {
+            font-weight: bold;
+        }
+
+        .net-pay-section {
+            margin-top: 25px;
+            font-size: 11px;
+        }
+
+        .net-pay-amount {
+            font-weight: bold;
+            margin-right: 5px;
+        }
+
+        .signature-section {
+            margin-top: 70px;
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            font-size: 10px;
+            padding: 0 10px;
+        }
+
+        .remarks-section {
+            margin-top: 45px;
+            font-size: 11px;
+        }
+
+        .data-row {
+            height: 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header with a stable 3-column table approach to fix logo positioning -->
+    <table class="header-table">
+        <tr>
+            <td class="logo-col">
+                <img src="https://storage.googleapis.com/tendlylogo/cd_logo_2%20(1).png" class="logo-img" />
+            </td>
+            <td class="info-col">
+                <div class="company-name">Cloud Desk Technology Private Limited</div>
+                <div class="company-address">No: 51, TEK Meadows, Old Mahabalipuram Rd, Solinganallur, Chennai,
+                    Tamilnadu - 600119</div>
+            </td>
+            <td class="spacer-col"></td>
+        </tr>
+    </table>
+
+    <div class="document-name">FINAL SETTLEMENT</div>
+
+    <!-- Employee Information -->
+    <table class="info-table">
+        <tr>
+            <td class="info-label">Employee No</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{empNo}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Name</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{empName}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Department</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{empDept}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Designation</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{empDesig}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Location</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{empLocation}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Date of Joining</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{joiningDate}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Submission date of resignation</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{resignDate}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Last Date of Working</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{leavingDate}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Last salary paid</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{lastPaidMonth}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Notice period as per offer letter</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{noticePeriod}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Notice period adjustable</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{noticeAdjustable}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">PL days payable</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{plDays}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Number of days salary payable</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{salaryDays}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Number of days in the month</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{monthDays}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Lop Days</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{lopDays}}</td>
+        </tr>
+        <tr>
+            <td class="info-label">Effective Workdays</td>
+            <td class="info-colon">:</td>
+            <td class="info-value">{{effectiveWorkdays}}</td>
+        </tr>
+    </table>
+
+    <!-- Payout Details -->
+    <table class="main-table">
+        <thead>
+            <tr>
+                <th colspan="2">Income</th>
+                <th colspan="2">Deduction</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each combinedRows}}
+            <tr class="data-row">
+                <td class="col-label">{{this.income.label}}</td>
+                <td class="col-amount">{{this.income.amount}}</td>
+                <td class="col-label">{{this.deduction.label}}</td>
+                <td class="col-amount">{{this.deduction.amount}}</td>
+            </tr>
+            {{/each}}
+            <tr class="row-total">
+                <td class="col-label">Total Income :</td>
+                <td class="col-amount">{{totalIncome}}</td>
+                <td class="col-label">Total Deductions :</td>
+                <td class="col-amount">{{totalDeductions}}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="net-pay-section">
+        Net Pay: INR <span class="net-pay-amount">{{netAmount}}</span> <span
+            class="net-pay-words">{{netPayWords}}</span>
+    </div>
+
+    <div class="signature-section">
+        <div>CHECKED BY</div>
+        <div>AUTHORIZED BY</div>
+        <div>RECEIVED AND SIGNED</div>
+    </div>
+
+    <div class="remarks-section">
+        <span class="remarks-label">Remarks :</span> {{remarks}}
+    </div>
+
+</body>
+
+</html>

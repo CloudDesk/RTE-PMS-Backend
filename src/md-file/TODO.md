@@ -1,0 +1,96 @@
+# HRMS API Server - TODO List
+
+## Completed Tasks
+- [x] Set up project structure and configuration
+- [x] Create MongoDB models
+  - [x] User model
+  - [x] Attendance model
+  - [x] Leave model
+  - [x] Overtime model
+  - [x] Payslip model
+  - [x] LoV (List of Values) model
+  - [x] Audit Log model
+- [x] Create type definitions
+  - [x] Fastify request/response types
+  - [x] Environment variables types
+  - [x] Route handler types
+- [x] Implement authentication
+  - [x] Authentication middleware
+  - [x] Login route
+  - [x] Forgot password route
+  - [x] Reset password route
+- [x] Create service layer
+  - [x] User service
+  - [x] Attendance service
+  - [x] Leave service
+  - [x] Overtime service
+  - [x] Payslip service
+  - [x] LoV service
+- [x] Implement API routes
+  - [x] User routes (CRUD)
+  - [x] Attendance routes (Check-in/out)
+  - [x] Leave routes (Apply/Approve/Reject)
+  - [x] Overtime routes (Log/Approve/Reject)
+  - [x] Payslip routes (Generate/Export)
+  - [x] LoV routes (Manage dropdowns)
+
+## Pending Tasks
+- [ ] Role-Based Access Control (RBAC)
+  - [ ] Create role definitions
+  - [ ] Implement permission middleware
+  - [ ] Add role checks to routes
+  - [ ] Add role-based UI elements
+- [ ] Audit Logging
+  - [ ] Implement audit logging middleware
+  - [ ] Track all data changes
+  - [ ] Add audit log viewer
+  - [ ] Add audit log filters
+- [ ] File Storage Integration
+  - [ ] Set up GCP Storage
+  - [ ] Implement file upload service
+  - [ ] Add document attachments to leaves
+  - [ ] Add profile picture upload
+- [ ] Email Integration
+  - [ ] Set up email service
+  - [ ] Implement email templates
+  - [ ] Add email notifications
+- [ ] Validation and Error Handling
+  - [ ] Add request validation schemas
+  - [ ] Implement global error handler
+  - [ ] Add validation messages
+- [ ] Testing
+  - [ ] Set up testing framework
+  - [ ] Write unit tests
+  - [ ] Write integration tests
+  - [ ] Add test coverage reporting
+- [ ] Documentation
+  - [ ] API documentation
+  - [ ] Code documentation
+  - [ ] Setup guide
+  - [ ] User guide
+- [ ] Security
+  - [ ] Add rate limiting
+  - [ ] Implement request validation
+  - [ ] Add security headers
+  - [ ] Add API key authentication
+- [ ] Performance
+  - [ ] Add caching
+  - [ ] Optimize database queries
+  - [ ] Add pagination to all list endpoints
+- [ ] Deployment
+  - [ ] Set up CI/CD pipeline
+  - [ ] Configure production environment
+  - [ ] Add health check endpoints
+  - [ ] Set up monitoring
+
+## Future Enhancements
+- [ ] Biometric integration
+- [ ] Mobile app support
+- [ ] Real-time notifications
+- [ ] Advanced reporting
+- [ ] Calendar integration
+- [ ] Multi-language support
+- [ ] Shift management
+- [ ] Performance reviews
+- [ ] Training management
+- [ ] Asset management 

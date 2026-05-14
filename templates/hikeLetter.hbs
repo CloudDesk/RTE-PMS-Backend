@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            width: 100%;
+            margin: auto;
+            padding: 0;
+        }
+
+        .header {
+            text-align: right;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            width: 220px;
+            float: right;
+        }
+
+        .clear {
+            clear: both;
+        }
+
+        .title {
+            text-align: center;
+            font-size: 20px;
+            font-weight: bold;
+            text-decoration: underline;
+            margin-bottom: 40px;
+            margin-top: 10px;
+        }
+
+        .date {
+            text-align: right;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .salutation {
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .body-text {
+            margin-bottom: 15px;
+            text-align: justify;
+            font-size: 14px;
+        }
+
+        .signature-block {
+            margin-top: 30px;
+            font-size: 14px;
+            text-align: left;
+        }
+        .signature-image {
+            max-width: 180px;
+            height: auto;
+            display: block;
+            margin: 5px 0;
+            margin-left: -18px; /* Pulled further left to match text margin */
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            border: 1px solid #000;
+            padding: 8px 12px;
+            text-align: left;
+            font-size: 13px;
+        }
+
+        .bg-grey {
+            background-color: #e9ecef;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .font-bold {
+            font-weight: bold;
+        }
+
+        .page-break {
+            page-break-before: always;
+        }
+
+        .annexure-header {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            text-decoration: underline;
+            margin-top: 10px;
+            margin-bottom: 30px;
+        }
+
+        /* Footer handled by Puppeteer */
+        .footer-contact img {
+            width: 12px;
+            height: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Page 1: Increment Letter -->
+        <div class="header">
+            {{#if companyLogo}}
+            <img src="{{companyLogo}}" alt="Company Logo" class="logo">
+            {{else}}
+            <div style="height: 60px;"></div>
+            {{/if}}
+            <div class="clear"></div>
+        </div>
+
+        <div class="title">Salary Increment Letter</div>
+
+        <div class="date">{{generatedDate}}</div>
+
+        <div class="salutation">
+            <strong>Dear {{employeeName}},</strong><br>
+            Employee Code: {{employeeCode}}.
+        </div>
+
+        <div class="body-text">
+            <strong>Congratulations!!</strong>
+        </div>
+
+        <div class="body-text">
+            We are pleased to inform you that your Annual Salary has been revised effective
+            <strong>{{effectiveDate}}</strong>.
+        </div>
+
+        <div class="body-text">
+            A detailed breakup of your revised compensation is attached. We would take this opportunity to wish you
+            success in your career with us and look forward to your continued contribution towards meeting our goals.
+        </div>
+
+        <div class="body-text">
+            <i>Wishing you all success and rewarding career at {{companyName}}</i>
+        </div>
+
+        <div class="signature-block">
+            Sincerely,<br>
+            {{#if signatureImage}}
+            <img src="{{signatureImage}}" alt="Signature" class="signature-image">
+            {{/if}}
+            <strong>{{signatoryName}},</strong><br>
+            {{signatoryDesignation}}.
+        </div>
+
+        <!-- Footer Page 1 Handled by Puppeteer -->
+
+        <!-- Page 2: Revised Salary Annexure -->
+        <div class="page-break"></div>
+
+        <div class="annexure-header">Revised Salary Annexure</div>
+
+        <table>
+            <thead>
+                <tr class="bg-grey">
+                    <th colspan="3" class="text-center font-bold">Annexure A: Annual Salary on Cost to Company basis
+                    </th>
+                </tr>
+                <tr class="bg-grey">
+                    <th class="text-center font-bold" style="width: 50%;">Monthly Fixed Components (D)</th>
+                    <th class="text-center font-bold">SALARY P.M (in INR)</th>
+                    <th class="text-center font-bold">SALARY P. A (in INR)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr class="bg-grey text-center font-bold">
+                    <td colspan="3">Monthly Fixed Components (D)</td>
+                </tr>
+                <tr>
+                    <td><span style="display: inline-block; width: 30px;">A</span> BASIC</td>
+                    <td class="text-right">{{formatCurrency monthlyBasic}}</td>
+                    <td class="text-right">{{formatCurrency annualBasic}}</td>
+                </tr>
+                {{#if monthlyHra}}
+                <tr>
+                    <td><span style="display: inline-block; width: 30px;">B</span> HRA</td>
+                    <td class="text-right">{{formatCurrency monthlyHra}}</td>
+                    <td class="text-right">{{formatCurrency annualHra}}</td>
+                </tr>
+                {{/if}}
+                {{#if monthlyOtherAllowance}}
+                <tr>
+                    <td><span style="display: inline-block; width: 30px;">C</span> Other Allowance</td>
+                    <td class="text-right">{{formatCurrency monthlyOtherAllowance}}</td>
+                    <td class="text-right">{{formatCurrency annualOtherAllowance}}</td>
+                </tr>
+                {{/if}}
+                <tr class="bg-grey font-bold">
+                    <td><span style="display: inline-block; width: 80px;">D= A{{#if monthlyHra}}+B{{/if}}{{#if monthlyOtherAllowance}}+C{{/if}}</span> Subtotal Fixed (D)</td>
+                    <td class="text-right">{{formatCurrency monthlySubtotalFixed}}</td>
+                    <td class="text-right">{{formatCurrency annualSubtotalFixed}}</td>
+                </tr>
+
+                {{#if hasAnnualComponents}}
+                <tr class="bg-grey text-center font-bold">
+                    <td colspan="3">Annual Components (G)</td>
+                </tr>
+                {{#if annualInsurance}}
+                <tr>
+                    <td><span style="display: inline-block; width: 30px;">E</span> Medical Insurance</td>
+                    <td></td>
+                    <td class="text-right">{{formatCurrency annualInsurance}}</td>
+                </tr>
+                {{/if}}
+                {{#if annualEmployerPf}}
+                <tr>
+                    <td><span style="display: inline-block; width: 30px;">F</span> Company's Contribution of PF</td>
+                    <td></td>
+                    <td class="text-right">{{formatCurrency annualEmployerPf}}</td>
+                </tr>
+                {{/if}}
+                <tr class="bg-grey font-bold">
+                    <td><span style="display: inline-block; width: 80px;">G</span> Subtotal Annual (G)</td>
+                    <td></td>
+                    <td class="text-right">{{formatCurrency annualSubtotalG}}</td>
+                </tr>
+                {{/if}}
+
+                <tr class="bg-grey font-bold">
+                    <td><span style="display: inline-block; width: 80px;">H= {{#if hasAnnualComponents}}G+{{/if}}D</span> CTC(H)</td>
+                    <td></td>
+                    <td class="text-right">{{formatCurrency totalCtc}}</td>
+                </tr>
+                <tr>
+                    <td class="font-bold">Total CTC in words</td>
+                    <td colspan="2" class="font-bold">{{totalCtcWords}}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="body-text" style="margin-top: 30px; font-size: 13px;">
+            All other terms and conditions in the employment offer remains unchanged.
+        </div>
+
+        <!-- Footer Page 2 Handled by Puppeteer -->
+    </div>
+</body>
+
+</html>

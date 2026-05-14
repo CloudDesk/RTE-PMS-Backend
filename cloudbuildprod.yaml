@@ -1,0 +1,77 @@
+steps:
+
+  # Step 1: Set GCP project
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'config'
+      - 'set'
+      - 'project'
+      - 'zuno-hr-2025'
+
+  # Step 2: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/zuno-hr-2025/zuno-cd-hr-india-prod:latest'
+      - '.'
+
+  # Step 3: Push the Docker image to Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/zuno-hr-2025/zuno-cd-hr-india-prod:latest'
+
+  # Step 4: Deploy the image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'zuno-cd-hr-india-prod'
+      - '--image'
+      - 'gcr.io/zuno-hr-2025/zuno-cd-hr-india-prod:latest'
+      - '--region'
+      - 'asia-south1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--service-account'
+      - 'zunoprod@zuno-hr-2025.iam.gserviceaccount.com'
+      - '--execution-environment'
+      - 'gen2'
+      - '--memory'
+      - '512Mi'
+      - '--cpu'
+      - '1'
+      - '--set-env-vars'
+      - 'MONGODB_URI=${_MONGODB_URI},NODE_ENV=${_NODE_ENV},API_URL=${_API_URL},HOST=${_HOST},JWT_SECRET=${_JWT_SECRET},CORS_ORIGINS=${_CORS_ORIGINS},GCP_STORAGE_BUCKET=${_GCP_STORAGE_BUCKET},COOKIE_SECRET=${_COOKIE_SECRET},APP_URL=${_APP_URL},COMPANY_NAME=${_COMPANY_NAME},PROTOCOL=${_PROTOCOL},GMAIL_SERVICE=${_GMAIL_SERVICE},GMAIL_HOST=${_GMAIL_HOST},GMAIL_PORT=${_GMAIL_PORT},GMAIL_AUTH_USER=${_GMAIL_AUTH_USER},GMAIL_AUTH_PASSWORD=${_GMAIL_AUTH_PASSWORD},OLD_REBATE_THRESHHOLD=${_OLD_REBATE_THRESHHOLD},NEW_REBATE_THRESHHOLD=${_NEW_REBATE_THRESHHOLD},OLD_RELIEF_BASE=${_OLD_RELIEF_BASE},NEW_RELIEF_BASE=${_NEW_RELIEF_BASE},PROJECT_ID=${_PROJECT_ID},LOGO_URL=${_LOGO_URL}'
+
+# Substitution variables matched exactly to env
+substitutions:
+  _MONGODB_URI: '${MONGODB_URI}'
+  _NODE_ENV: '${NODE_ENV}'
+  _API_URL: '${API_URL}'
+  _HOST: '${HOST}'
+  _JWT_SECRET: '${JWT_SECRET}'
+  _CORS_ORIGINS: '${CORS_ORIGINS}'
+  _GCP_STORAGE_BUCKET: '${GCP_STORAGE_BUCKET}'
+  _COOKIE_SECRET: '${COOKIE_SECRET}'
+  _APP_URL: '${APP_URL}'
+  _COMPANY_NAME: '${COMPANY_NAME}'
+  _PROTOCOL: '${PROTOCOL}'
+  _GMAIL_SERVICE: '${GMAIL_SERVICE}'
+  _GMAIL_HOST: '${GMAIL_HOST}'
+  _GMAIL_PORT: '${GMAIL_PORT}'
+  _GMAIL_AUTH_USER: '${GMAIL_AUTH_USER}'
+  _GMAIL_AUTH_PASSWORD: '${GMAIL_AUTH_PASSWORD}'
+  _OLD_REBATE_THRESHHOLD: '${OLD_REBATE_THRESHHOLD}'
+  _NEW_REBATE_THRESHHOLD: '${NEW_REBATE_THRESHHOLD}'
+  _OLD_RELIEF_BASE: '${OLD_RELIEF_BASE}'
+  _NEW_RELIEF_BASE: '${NEW_RELIEF_BASE}'
+  _PROJECT_ID: '${PROJECT_ID}'
+  _LOGO_URL: '${LOGO_URL}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

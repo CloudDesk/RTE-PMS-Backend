@@ -1,0 +1,17 @@
+<p>Hello {{userName}},</p>
+
+<p>Your leave {{#if isNew}}allotment for the year {{year}} has been created{{else}}balance has been updated for the year {{year}}{{/if}} in {{companyName}}.</p>
+
+<table style="border-collapse: collapse; margin-top: 10px;">
+  <tr><td><strong>Annual Leaves:</strong></td><td>{{annual}}</td></tr>
+  <tr><td><strong>Sick Leaves:</strong></td><td>{{sick}}</td></tr>
+  <tr><td><strong>Comp Off:</strong></td><td>{{compOff}}</td></tr>
+  <tr><td><strong>Other Paid Leaves:</strong></td><td>{{otherPaid}}</td></tr>
+  <tr><td><strong>Other Unpaid Leaves:</strong></td><td>{{otherUnpaid}}</td></tr>
+  <tr><td><strong>Maternity Leave:</strong></td><td>{{maternity}}</td></tr>
+  <tr><td><strong>Work From Home:</strong></td><td>{{workFromHome}}</td></tr>
+</table>
+
+<p>If you believe this is incorrect or have questions, please contact HR.</p>
+
+<p>Thank you,<br />{{companyName}} Team</p>
