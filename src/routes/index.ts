@@ -1,32 +1,32 @@
 import { FastifyInstance } from "fastify";
 import { authRoutes } from "./auth.routes";
 import { userRoutes } from "./user.routes";
-import { userProfileRoutes } from "./user-profile.routes";
-import { biometricAttendanceRoutes } from "./biometric-attendance.routes";
-import { leaveRoutes } from "./leave.routes";
-import { leaveSummaryRoutes } from "./leave-summary.routes";
-import { overtimeRoutes } from "./overtime.routes";
+// import { userProfileRoutes } from "./user-profile.routes";
+// import { biometricAttendanceRoutes } from "./biometric-attendance.routes";
+// import { leaveRoutes } from "./leave.routes";
+// import { leaveSummaryRoutes } from "./leave-summary.routes";
+// import { overtimeRoutes } from "./overtime.routes";
 import { lovRoutes } from "./lov.routes";
-import { shiftRoutes } from "./shift.routes";
-import { trainingRoutes } from "./training.routes";
-import { trainingAttendanceRoutes } from "./training-attendance.routes";
-import { organizationRoutes } from "./organization.routes";
-import { salaryStructureRoutes } from "./salary-structure";
-import { salaryAssignmentRoutes } from "./salary-assignment";
-import { taxSlabRoutes } from "./tax-slab.routes";
-import { taxDeclarationRoutes } from "./tax-declaration";
-import { payrollRoutes } from "./payroll.routes";
-import { dataUnitRoutes } from "./data-unit.routes";
-import { collectionRoutes } from "./collections.routes";
-import { payslipRoutes } from "./payslip.routes";
-import { reportRoutes } from "./reports.routes";
-import { timesheetRoutes } from "./timesheet.routes";
-import { holidayCalendarRoutes } from "./holiday-calendar.routes";
-import { weekendCalendarRoutes } from "./weekend-calendar.routes";
-import { userResignationRoutes } from "./user-resignation.routes";
+// import { shiftRoutes } from "./shift.routes";
+// import { trainingRoutes } from "./training.routes";
+// import { trainingAttendanceRoutes } from "./training-attendance.routes";
+// import { organizationRoutes } from "./organization.routes";
+// import { salaryStructureRoutes } from "./salary-structure";
+// import { salaryAssignmentRoutes } from "./salary-assignment";
+// import { taxSlabRoutes } from "./tax-slab.routes";
+// import { taxDeclarationRoutes } from "./tax-declaration";
+// import { payrollRoutes } from "./payroll.routes";
+// import { dataUnitRoutes } from "./data-unit.routes";
+// import { collectionRoutes } from "./collections.routes";
+// import { payslipRoutes } from "./payslip.routes";
+// import { reportRoutes } from "./reports.routes";
+// import { timesheetRoutes } from "./timesheet.routes";
+// import { holidayCalendarRoutes } from "./holiday-calendar.routes";
+// import { weekendCalendarRoutes } from "./weekend-calendar.routes";
+// import { userResignationRoutes } from "./user-resignation.routes";
 import { updateShiftAssignmentStatuses } from "../utilis/updateShiftAssignmentStatuses";
-import { attendanceRegularizeRoutes } from "./attendance-regularization.routes";
-import { attendanceOverrideRoutes } from "./attendance-override.routes";
+// import { attendanceRegularizeRoutes } from "./attendance-regularization.routes";
+// import { attendanceOverrideRoutes } from "./attendance-override.routes";
 import {
   AttendanceRecord,
   Leave,
@@ -39,64 +39,64 @@ import {
 } from "../models";
 import { TaxDeclaration } from "../models/tax-declaration";
 import { TimesheetFile } from "../models/timesheet-file.model";
-import { documentRoutes } from "./document.routes";
-import { bulkAttendanceUploadRoutes } from "./bulk-attendance-upload.routes";
+// import { documentRoutes } from "./document.routes";
+// import { bulkAttendanceUploadRoutes } from "./bulk-attendance-upload.routes";
 import { dashboardRoutes } from "./dashboard.routes";
-import { dataMigrationRoutes } from "./data-migration.routes";
-import { permissionRoutes } from "./permission.routes";
-import { wfhRoutes } from "./wfh.routes";
-import { permissionSummaryRoutes } from "./permission-summary.routes";
-import { wfhSummaryRoutes } from "./wfh-summary.routes";
-import { shiftChangeRoutes } from "./shift-change.routes";
-import { optionalHolidayRoutes } from "./optional-holiday.routes";
-import finalSettlementRoutes from "./final-settlement.routes";
-import { communicationRoutes } from "./communication.routes";
+// import { dataMigrationRoutes } from "./data-migration.routes";
+// import { permissionRoutes } from "./permission.routes";
+// import { wfhRoutes } from "./wfh.routes";
+// import { permissionSummaryRoutes } from "./permission-summary.routes";
+// import { wfhSummaryRoutes } from "./wfh-summary.routes";
+// import { shiftChangeRoutes } from "./shift-change.routes";
+// import { optionalHolidayRoutes } from "./optional-holiday.routes";
+// import finalSettlementRoutes from "./final-settlement.routes";
+// import { communicationRoutes } from "./communication.routes";
 import mongoose from "mongoose";
 
 export async function routes(fastify: FastifyInstance) {
   fastify.register(authRoutes, { prefix: "/auth" });
   fastify.register(userRoutes, { prefix: "/users" });
-  fastify.register(userProfileRoutes, { prefix: "/user-profile" });
-  fastify.register(userResignationRoutes, { prefix: "/users-resignations" });
-  fastify.register(biometricAttendanceRoutes, { prefix: "/attendance" });
-  fastify.register(attendanceRegularizeRoutes, {
-    prefix: "/attendance-regularizations",
-  });
-  fastify.register(attendanceOverrideRoutes);
-  fastify.register(leaveRoutes, { prefix: "/leaves" });
-  fastify.register(leaveSummaryRoutes, { prefix: "/leave-summary" });
-  fastify.register(overtimeRoutes, { prefix: "/overtime" });
-  fastify.register(payrollRoutes, { prefix: "/payroll" });
+  // fastify.register(userProfileRoutes, { prefix: "/user-profile" });
+  // fastify.register(userResignationRoutes, { prefix: "/users-resignations" });
+  // fastify.register(biometricAttendanceRoutes, { prefix: "/attendance" });
+  // fastify.register(attendanceRegularizeRoutes, {
+  //   prefix: "/attendance-regularizations",
+  // });
+  // fastify.register(attendanceOverrideRoutes);
+  // fastify.register(leaveRoutes, { prefix: "/leaves" });
+  // fastify.register(leaveSummaryRoutes, { prefix: "/leave-summary" });
+  // fastify.register(overtimeRoutes, { prefix: "/overtime" });
+  // fastify.register(payrollRoutes, { prefix: "/payroll" });
   fastify.register(lovRoutes, { prefix: "/lovs" });
-  fastify.register(shiftRoutes, { prefix: "/shifts" });
-  fastify.register(trainingRoutes, { prefix: "/trainings" });
-  fastify.register(trainingAttendanceRoutes, {
-    prefix: "/training-attendance",
-  });
-  fastify.register(organizationRoutes, { prefix: "/organizations" });
-  fastify.register(salaryStructureRoutes, { prefix: "/salary-structure" });
-  fastify.register(salaryAssignmentRoutes, { prefix: "/salary-assignment" });
-  fastify.register(taxSlabRoutes, { prefix: "/tax-slab" });
-  fastify.register(taxDeclarationRoutes, { prefix: "/tax-declaration" });
-  fastify.register(dataUnitRoutes, { prefix: "/data-units" });
-  fastify.register(collectionRoutes, { prefix: "/collections" });
-  fastify.register(payslipRoutes, { prefix: "/payslip" });
-  fastify.register(reportRoutes, { prefix: "/reports" });
-  fastify.register(timesheetRoutes, { prefix: "/timesheet" });
-  fastify.register(holidayCalendarRoutes, { prefix: "/holiday-calendar" });
-  fastify.register(weekendCalendarRoutes, { prefix: "/weekend-calendar" });
-  fastify.register(documentRoutes, { prefix: "/documents" });
-  fastify.register(bulkAttendanceUploadRoutes, { prefix: "/bulk-upload" });
+  // fastify.register(shiftRoutes, { prefix: "/shifts" });
+  // fastify.register(trainingRoutes, { prefix: "/trainings" });
+  // fastify.register(trainingAttendanceRoutes, {
+  //   prefix: "/training-attendance",
+  // });
+  // fastify.register(organizationRoutes, { prefix: "/organizations" });
+  // fastify.register(salaryStructureRoutes, { prefix: "/salary-structure" });
+  // fastify.register(salaryAssignmentRoutes, { prefix: "/salary-assignment" });
+  // fastify.register(taxSlabRoutes, { prefix: "/tax-slab" });
+  // fastify.register(taxDeclarationRoutes, { prefix: "/tax-declaration" });
+  // fastify.register(dataUnitRoutes, { prefix: "/data-units" });
+  // fastify.register(collectionRoutes, { prefix: "/collections" });
+  // fastify.register(payslipRoutes, { prefix: "/payslip" });
+  // fastify.register(reportRoutes, { prefix: "/reports" });
+  // fastify.register(timesheetRoutes, { prefix: "/timesheet" });
+  // fastify.register(holidayCalendarRoutes, { prefix: "/holiday-calendar" });
+  // fastify.register(weekendCalendarRoutes, { prefix: "/weekend-calendar" });
+  // fastify.register(documentRoutes, { prefix: "/documents" });
+  // fastify.register(bulkAttendanceUploadRoutes, { prefix: "/bulk-upload" });
   fastify.register(dashboardRoutes, { prefix: "/dashboard" });
-  fastify.register(dataMigrationRoutes, { prefix: "/data-migration" });
-  fastify.register(permissionRoutes, { prefix: "/permissions" });
-  fastify.register(wfhRoutes, { prefix: "/wfh" });
-  fastify.register(permissionSummaryRoutes, { prefix: "/permission-summary" });
-  fastify.register(wfhSummaryRoutes, { prefix: "/wfh-summary" });
-  fastify.register(shiftChangeRoutes, { prefix: "/shift-changes" });
-  fastify.register(optionalHolidayRoutes, { prefix: "/optional-holidays" });
-  fastify.register(finalSettlementRoutes, { prefix: "/" });
-  fastify.register(communicationRoutes, { prefix: "/communications" });
+  // fastify.register(dataMigrationRoutes, { prefix: "/data-migration" });
+  // fastify.register(permissionRoutes, { prefix: "/permissions" });
+  // fastify.register(wfhRoutes, { prefix: "/wfh" });
+  // fastify.register(permissionSummaryRoutes, { prefix: "/permission-summary" });
+  // fastify.register(wfhSummaryRoutes, { prefix: "/wfh-summary" });
+  // fastify.register(shiftChangeRoutes, { prefix: "/shift-changes" });
+  // fastify.register(optionalHolidayRoutes, { prefix: "/optional-holidays" });
+  // fastify.register(finalSettlementRoutes, { prefix: "/" });
+  // fastify.register(communicationRoutes, { prefix: "/communications" });
 
   fastify.get("/dev/run-shift-cron", async (_request, reply) => {
     await updateShiftAssignmentStatuses();
