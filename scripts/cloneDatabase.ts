@@ -1,10 +1,12 @@
+import 'dotenv/config';
 import mongoose from 'mongoose';
 
-// Database connection strings
-const OLD_DB_URI = 'mongodb+srv://sachioncloud:Maples7123456789@cluster0.0ktur.mongodb.net/hrms_production?retryWrites=true&w=majority&appName=Cluster0';
-const NEW_DB_URI = 'mongodb+srv://sachioncloud:Maples7123456789@cluster0.0ktur.mongodb.net/zuno-hr-india?retryWrites=true&w=majority&appName=Cluster0';
+const OLD_DB_URI: string = 'mongodb+srv://non-prod:K6AeK5VkhrpOBAlU@cluster0.0ktur.mongodb.net/zuno-hr-india?retryWrites=true&w=majority&appName=Cluster0';
+const NEW_DB_URI: string = 'mongodb+srv://user:Maples7@cluster0.q5p99zw.mongodb.net/rte_sit?appName=Cluster0';
+const CLEAR_TARGET = process.env.CLONE_CLEAR_TARGET === 'true';
+const BATCH_SIZE = Math.max(1, Number(process.env.CLONE_BATCH_SIZE || 1000));
+const BATCH_DELAY_MS = Math.max(0, Number(process.env.CLONE_BATCH_DELAY_MS || 100));
 
-// Connection instances
 let oldConnection: mongoose.Connection;
 let newConnection: mongoose.Connection;
 
@@ -27,36 +29,55 @@ interface CloneResult {
     duration: number;
 }
 
+function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getDatabaseName(uri: string): string {
+    const withoutQuery = uri.split('?')[0];
+    const segments = withoutQuery.split('/');
+    return segments[segments.length - 1] || 'unknown';
+}
+
+function maskMongoUri(uri: string): string {
+    return uri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:***@');
+}
+
+function getRequiredConfig(): { oldDbUri: string; newDbUri: string } {
+    if (OLD_DB_URI === NEW_DB_URI) {
+        throw new Error('Source and target database URIs are identical. Aborting to prevent data loss.');
+    }
+
+    return {
+        oldDbUri: OLD_DB_URI,
+        newDbUri: NEW_DB_URI
+    };
+}
+
 class DatabaseCloner {
     private stats: CloneStats[] = [];
     private totalStartTime: Date = new Date();
 
     async connectToDatabases(): Promise<void> {
-        console.log('🔌 Connecting to databases...');
+        const { oldDbUri, newDbUri } = getRequiredConfig();
+
+        console.log('Connecting to databases...');
+        console.log(`  Source DB: ${getDatabaseName(oldDbUri)} (${maskMongoUri(oldDbUri)})`);
+        console.log(`  Target DB: ${getDatabaseName(newDbUri)} (${maskMongoUri(newDbUri)})`);
+        console.log(`  Clear target collections: ${CLEAR_TARGET ? 'YES' : 'NO'}`);
+        console.log(`  Batch size: ${BATCH_SIZE}`);
+        console.log(`  Batch delay: ${BATCH_DELAY_MS}ms`);
 
         try {
-            // Connect to old database
-            oldConnection = mongoose.createConnection(OLD_DB_URI);
-            await new Promise((resolve, reject) => {
-                oldConnection.once('connected', () => {
-                    console.log('✅ Connected to OLD database (hrms_production)');
-                    resolve(true);
-                });
-                oldConnection.once('error', (err) => reject(err));
-            });
+            oldConnection = mongoose.createConnection(oldDbUri);
+            await oldConnection.asPromise();
+            console.log(`Connected to SOURCE database (${getDatabaseName(oldDbUri)})`);
 
-            // Connect to new database
-            newConnection = mongoose.createConnection(NEW_DB_URI);
-            await new Promise((resolve, reject) => {
-                newConnection.once('connected', () => {
-                    console.log('✅ Connected to NEW database (zuno-hr-india)');
-                    resolve(true);
-                });
-                newConnection.once('error', (err) => reject(err));
-            });
-
+            newConnection = mongoose.createConnection(newDbUri);
+            await newConnection.asPromise();
+            console.log(`Connected to TARGET database (${getDatabaseName(newDbUri)})`);
         } catch (error) {
-            console.error('❌ Database connection failed:', error);
+            console.error('Database connection failed:', error);
             throw error;
         }
     }
@@ -64,15 +85,54 @@ class DatabaseCloner {
     async getAllCollections(): Promise<string[]> {
         try {
             const collections = await oldConnection.db.listCollections().toArray();
-            const collectionNames = collections.map(col => col.name);
+            const collectionNames = collections.map((col) => col.name);
 
-            console.log(`📋 Found ${collectionNames.length} collections:`);
-            collectionNames.forEach(name => console.log(`   - ${name}`));
+            console.log(`Found ${collectionNames.length} collections:`);
+            collectionNames.forEach((name) => console.log(`  - ${name}`));
 
             return collectionNames;
         } catch (error) {
-            console.error('❌ Failed to get collections:', error);
+            console.error('Failed to get collections:', error);
             throw error;
+        }
+    }
+
+    private async flushBatch(
+        collectionName: string,
+        newCollection: mongoose.mongo.Collection,
+        documents: any[],
+        batchNumber: number,
+        stats: CloneStats
+    ): Promise<void> {
+        if (documents.length === 0) {
+            return;
+        }
+
+        try {
+            const result = await newCollection.insertMany(documents, {
+                ordered: false,
+                writeConcern: { w: 'majority' }
+            });
+
+            stats.clonedDocuments += result.insertedCount;
+            console.log(`  Batch ${batchNumber} for ${collectionName}: ${result.insertedCount}/${documents.length} inserted`);
+        } catch (batchError: any) {
+            const writeErrors = Array.isArray(batchError?.writeErrors) ? batchError.writeErrors.length : 0;
+            const insertedCount = Number(batchError?.result?.insertedCount ?? batchError?.insertedCount ?? 0);
+            const failedCount = Math.max(documents.length - insertedCount, writeErrors);
+
+            stats.clonedDocuments += insertedCount;
+            stats.errors += failedCount;
+
+            if (batchError?.code === 11000 || writeErrors > 0) {
+                console.warn(
+                    `  Batch ${batchNumber} for ${collectionName}: partial insert (${insertedCount}/${documents.length}), failed=${failedCount}`
+                );
+                return;
+            }
+
+            console.error(`  Batch ${batchNumber} for ${collectionName} failed:`, batchError.message);
+            throw batchError;
         }
     }
 
@@ -87,84 +147,63 @@ class DatabaseCloner {
         };
 
         try {
-            console.log(`\n🔄 Cloning collection: ${collectionName}`);
+            console.log(`\nCloning collection: ${collectionName}`);
 
-            // Get the collection from old database
             const oldCollection = oldConnection.db.collection(collectionName);
             const newCollection = newConnection.db.collection(collectionName);
 
-            // Count total documents
             stats.totalDocuments = await oldCollection.countDocuments();
-            console.log(`   📊 Total documents: ${stats.totalDocuments}`);
+            console.log(`  Total documents: ${stats.totalDocuments}`);
 
             if (stats.totalDocuments === 0) {
-                console.log(`   ⚠️  Collection ${collectionName} is empty, skipping...`);
+                console.log(`  Collection ${collectionName} is empty, skipping`);
                 stats.endTime = new Date();
                 return stats;
             }
 
-            // Clear existing data in new collection (optional - remove if you want to append)
-            console.log(`   🗑️  Clearing existing data in new collection...`);
-            await newCollection.deleteMany({});
+            if (CLEAR_TARGET) {
+                console.log('  Clearing existing data in target collection...');
+                await newCollection.deleteMany({});
+            }
 
-            // Clone documents in batches
-            const batchSize = 1000;
             let processed = 0;
             let batchNumber = 1;
+            let batch: any[] = [];
+            const cursor = oldCollection.find({}).sort({ _id: 1 }).batchSize(BATCH_SIZE);
 
-            while (processed < stats.totalDocuments) {
-                console.log(`   📦 Processing batch ${batchNumber} (${processed + 1}-${Math.min(processed + batchSize, stats.totalDocuments)})`);
+            for await (const document of cursor as any) {
+                batch.push(document);
 
-                const documents = await oldCollection
-                    .find({})
-                    .skip(processed)
-                    .limit(batchSize)
-                    .toArray();
+                if (batch.length === BATCH_SIZE) {
+                    console.log(`  Processing batch ${batchNumber} (${processed + 1}-${processed + batch.length})`);
+                    await this.flushBatch(collectionName, newCollection, batch, batchNumber, stats);
+                    processed += batch.length;
+                    batch = [];
+                    batchNumber += 1;
 
-                if (documents.length === 0) break;
-
-                try {
-                    // Insert documents with same IDs
-                    const result = await newCollection.insertMany(documents, {
-                        ordered: false, // Continue on duplicate key errors
-                        writeConcern: { w: 'majority' }
-                    });
-
-                    stats.clonedDocuments += result.insertedCount;
-                    processed += documents.length;
-
-                    console.log(`   ✅ Batch ${batchNumber}: ${result.insertedCount}/${documents.length} documents cloned`);
-
-                } catch (batchError: any) {
-                    // Handle batch errors (like duplicate keys)
-                    if (batchError.code === 11000) {
-                        console.log(`   ⚠️  Batch ${batchNumber}: Some documents already exist (duplicate keys)`);
-                        stats.clonedDocuments += documents.length; // Assume all were "cloned" if they already exist
-                    } else {
-                        console.error(`   ❌ Batch ${batchNumber} error:`, batchError.message);
-                        stats.errors += documents.length;
+                    if (BATCH_DELAY_MS > 0) {
+                        await wait(BATCH_DELAY_MS);
                     }
-                    processed += documents.length;
                 }
+            }
 
-                batchNumber++;
-
-                // Small delay to prevent overwhelming the database
-                await new Promise(resolve => setTimeout(resolve, 100));
+            if (batch.length > 0) {
+                console.log(`  Processing batch ${batchNumber} (${processed + 1}-${processed + batch.length})`);
+                await this.flushBatch(collectionName, newCollection, batch, batchNumber, stats);
+                processed += batch.length;
             }
 
             stats.endTime = new Date();
             const duration = stats.endTime.getTime() - stats.startTime.getTime();
 
-            console.log(`   ✅ Collection ${collectionName} completed:`);
-            console.log(`      📊 Total: ${stats.totalDocuments}`);
-            console.log(`      ✅ Cloned: ${stats.clonedDocuments}`);
-            console.log(`      ❌ Errors: ${stats.errors}`);
-            console.log(`      ⏱️  Duration: ${(duration / 1000).toFixed(2)}s`);
-
+            console.log(`  Collection ${collectionName} completed`);
+            console.log(`    Total: ${stats.totalDocuments}`);
+            console.log(`    Cloned: ${stats.clonedDocuments}`);
+            console.log(`    Errors: ${stats.errors}`);
+            console.log(`    Duration: ${(duration / 1000).toFixed(2)}s`);
         } catch (error) {
-            console.error(`❌ Failed to clone collection ${collectionName}:`, error);
-            stats.errors = stats.totalDocuments; // Mark all as errors
+            console.error(`Failed to clone collection ${collectionName}:`, error);
+            stats.errors = Math.max(stats.errors, stats.totalDocuments - stats.clonedDocuments);
             stats.endTime = new Date();
         }
 
@@ -173,7 +212,7 @@ class DatabaseCloner {
 
     async cloneAllCollections(): Promise<CloneResult> {
         try {
-            console.log('🚀 Starting database cloning process...\n');
+            console.log('Starting database cloning process...\n');
 
             const collections = await this.getAllCollections();
 
@@ -184,21 +223,19 @@ class DatabaseCloner {
 
             const endTime = new Date();
             const totalDuration = endTime.getTime() - this.totalStartTime.getTime();
+            const totalErrors = this.stats.reduce((sum, stat) => sum + stat.errors, 0);
 
-            const result: CloneResult = {
-                success: true,
+            return {
+                success: totalErrors === 0,
                 stats: this.stats,
                 totalCollections: collections.length,
                 totalDocuments: this.stats.reduce((sum, stat) => sum + stat.totalDocuments, 0),
                 totalCloned: this.stats.reduce((sum, stat) => sum + stat.clonedDocuments, 0),
-                totalErrors: this.stats.reduce((sum, stat) => sum + stat.errors, 0),
+                totalErrors,
                 duration: totalDuration
             };
-
-            return result;
-
         } catch (error) {
-            console.error('❌ Database cloning failed:', error);
+            console.error('Database cloning failed:', error);
             return {
                 success: false,
                 stats: this.stats,
@@ -215,46 +252,50 @@ class DatabaseCloner {
         try {
             if (oldConnection) {
                 await oldConnection.close();
-                console.log('🔌 Disconnected from OLD database');
+                console.log('Disconnected from SOURCE database');
             }
             if (newConnection) {
                 await newConnection.close();
-                console.log('🔌 Disconnected from NEW database');
+                console.log('Disconnected from TARGET database');
             }
         } catch (error) {
-            console.error('❌ Error disconnecting:', error);
+            console.error('Error disconnecting:', error);
         }
     }
 
     printSummary(result: CloneResult): void {
         console.log('\n' + '='.repeat(60));
-        console.log('📊 CLONING SUMMARY');
+        console.log('CLONING SUMMARY');
         console.log('='.repeat(60));
-        console.log(`✅ Success: ${result.success ? 'YES' : 'NO'}`);
-        console.log(`📁 Total Collections: ${result.totalCollections}`);
-        console.log(`📄 Total Documents: ${result.totalDocuments}`);
-        console.log(`✅ Cloned Documents: ${result.totalCloned}`);
-        console.log(`❌ Errors: ${result.totalErrors}`);
-        console.log(`⏱️  Total Duration: ${(result.duration / 1000).toFixed(2)}s`);
+        console.log(`Success: ${result.success ? 'YES' : 'NO'}`);
+        console.log(`Total Collections: ${result.totalCollections}`);
+        console.log(`Total Documents: ${result.totalDocuments}`);
+        console.log(`Cloned Documents: ${result.totalCloned}`);
+        console.log(`Errors: ${result.totalErrors}`);
+        console.log(`Total Duration: ${(result.duration / 1000).toFixed(2)}s`);
 
-        console.log('\n📋 Collection Details:');
+        console.log('\nCollection Details:');
         console.log('-'.repeat(60));
-        result.stats.forEach(stat => {
-            const duration = stat.endTime ?
-                ((stat.endTime.getTime() - stat.startTime.getTime()) / 1000).toFixed(2) : 'N/A';
-            console.log(`${stat.collection.padEnd(30)} | ${stat.totalDocuments.toString().padStart(6)} | ${stat.clonedDocuments.toString().padStart(6)} | ${stat.errors.toString().padStart(6)} | ${duration}s`);
+        result.stats.forEach((stat) => {
+            const duration = stat.endTime
+                ? ((stat.endTime.getTime() - stat.startTime.getTime()) / 1000).toFixed(2)
+                : 'N/A';
+            console.log(
+                `${stat.collection.padEnd(30)} | ${stat.totalDocuments.toString().padStart(6)} | ${stat.clonedDocuments
+                    .toString()
+                    .padStart(6)} | ${stat.errors.toString().padStart(6)} | ${duration}s`
+            );
         });
 
         console.log('='.repeat(60));
     }
 }
 
-// Global cloner instance for process handlers
 let cloner: DatabaseCloner | null = null;
 
-// Main execution function
 async function main() {
     cloner = new DatabaseCloner();
+    let exitCode = 0;
 
     try {
         await cloner.connectToDatabases();
@@ -262,26 +303,24 @@ async function main() {
         cloner.printSummary(result);
 
         if (result.success) {
-            console.log('\n🎉 Database cloning completed successfully!');
-            process.exit(0);
+            console.log('\nDatabase cloning completed successfully');
         } else {
-            console.log('\n❌ Database cloning failed!');
-            process.exit(1);
+            console.log('\nDatabase cloning completed with errors');
+            exitCode = 1;
         }
-
     } catch (error) {
-        console.error('💥 Fatal error:', error);
-        process.exit(1);
+        console.error('Fatal error:', error);
+        exitCode = 1;
     } finally {
         if (cloner) {
             await cloner.disconnect();
         }
+        process.exit(exitCode);
     }
 }
 
-// Handle process termination
 process.on('SIGINT', async () => {
-    console.log('\n⚠️  Process interrupted. Cleaning up...');
+    console.log('\nProcess interrupted. Cleaning up...');
     if (cloner) {
         await cloner.disconnect();
     }
@@ -289,14 +328,13 @@ process.on('SIGINT', async () => {
 });
 
 process.on('SIGTERM', async () => {
-    console.log('\n⚠️  Process terminated. Cleaning up...');
+    console.log('\nProcess terminated. Cleaning up...');
     if (cloner) {
         await cloner.disconnect();
     }
     process.exit(0);
 });
 
-// Run the script
 if (require.main === module) {
     main().catch(console.error);
 }
