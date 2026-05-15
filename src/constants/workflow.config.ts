@@ -1,5 +1,8 @@
-import { QuarterWorkflowState } from './pms.enums';
-import type { QuarterWorkflowState as QuarterWorkflowStateType } from './pms.enums';
+import { AnnualWorkflowState, QuarterWorkflowState } from './pms.enums';
+import type {
+  AnnualWorkflowState as AnnualWorkflowStateType,
+  QuarterWorkflowState as QuarterWorkflowStateType,
+} from './pms.enums';
 
 const activeClosableQuarterStates: readonly QuarterWorkflowStateType[] = [
   QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
@@ -110,4 +113,55 @@ export const quarterTransitions: Record<
     QuarterWorkflowState.CLOSED_BY_ADMIN,
     quarterTransitionsBase[QuarterWorkflowState.CLOSED_BY_ADMIN],
   ),
+};
+
+export const annualTransitions: Record<
+  AnnualWorkflowStateType,
+  readonly AnnualWorkflowStateType[]
+> = {
+  [AnnualWorkflowState.DRAFT]: [
+    AnnualWorkflowState.SCHEDULED,
+    AnnualWorkflowState.CANCELLED,
+  ],
+  [AnnualWorkflowState.SCHEDULED]: [
+    AnnualWorkflowState.ACTIVE,
+    AnnualWorkflowState.CANCELLED,
+  ],
+  [AnnualWorkflowState.ACTIVE]: [
+    AnnualWorkflowState.IN_PROGRESS,
+    AnnualWorkflowState.CANCELLED,
+  ],
+  [AnnualWorkflowState.IN_PROGRESS]: [
+    AnnualWorkflowState.ALL_QUARTERS_FINALIZED,
+    AnnualWorkflowState.CANCELLED,
+  ],
+  [AnnualWorkflowState.ALL_QUARTERS_FINALIZED]: [
+    AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+  ],
+  [AnnualWorkflowState.APPRAISAL_WINDOW_OPEN]: [
+    AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+  ],
+  [AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT]: [
+    AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+  ],
+  [AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED]: [
+    AnnualWorkflowState.ANNUAL_FINALIZED,
+  ],
+  [AnnualWorkflowState.ANNUAL_FINALIZED]: [
+    AnnualWorkflowState.VISIBILITY_ENABLED,
+  ],
+  [AnnualWorkflowState.VISIBILITY_ENABLED]: [
+    AnnualWorkflowState.COMMUNICATION_READY,
+  ],
+  [AnnualWorkflowState.COMMUNICATION_READY]: [
+    AnnualWorkflowState.COMMUNICATION_SENT,
+  ],
+  [AnnualWorkflowState.COMMUNICATION_SENT]: [
+    AnnualWorkflowState.CLOSED,
+  ],
+  [AnnualWorkflowState.CLOSED]: [
+    AnnualWorkflowState.ARCHIVED,
+  ],
+  [AnnualWorkflowState.ARCHIVED]: [],
+  [AnnualWorkflowState.CANCELLED]: [],
 };

@@ -15,6 +15,7 @@ export interface IQuarterCycle extends Document {
   objectiveSettingWindow?: IDateWindow;
   objectiveApprovalWindow?: IDateWindow;
   managerReviewWindow?: IDateWindow;
+  quarterFinalizationWindow?: IDateWindow;
   status: QuarterWorkflowStateType;
   slaConfig?: Record<string, unknown>;
   closureRules?: Record<string, unknown>;
@@ -52,6 +53,7 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
     objectiveSettingWindow: dateWindowSchema,
     objectiveApprovalWindow: dateWindowSchema,
     managerReviewWindow: dateWindowSchema,
+    quarterFinalizationWindow: dateWindowSchema,
     slaConfig: { type: Schema.Types.Mixed, default: {} },
     closureRules: { type: Schema.Types.Mixed, default: {} },
     status: {

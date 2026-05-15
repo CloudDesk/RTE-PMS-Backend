@@ -38,8 +38,8 @@ export interface WorkflowValidationResult {
 export interface WorkflowTransitionResult {
   entityType: WorkflowEntityType;
   entityId: string;
-  previousState: QuarterWorkflowState;
-  currentState: QuarterWorkflowState;
+  previousState: QuarterWorkflowState | AnnualWorkflowState;
+  currentState: QuarterWorkflowState | AnnualWorkflowState;
   actorId: string;
   actorRole: string;
   reason?: string;

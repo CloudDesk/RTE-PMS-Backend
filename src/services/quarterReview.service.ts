@@ -58,6 +58,10 @@ export interface FinalizeQuarterAssignmentResult {
   quarterAssignment: IQuarterAssignment;
 }
 
+export interface ReopenQuarterAssignmentInput {
+  reason: string;
+}
+
 export class QuarterReviewService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
@@ -140,8 +144,11 @@ export class QuarterReviewService extends BaseService {
     const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
     this.assertAdmin('quarterAssignment.finalize');
 
-    if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED) {
-      throw new Error('Quarter can be finalized only after manager review submission');
+    if (
+      quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED &&
+      quarterAssignment.quarterState !== QuarterWorkflowState.REOPENED_BY_ADMIN
+    ) {
+      throw new Error('Quarter can be finalized only after manager review submission or admin reopen');
     }
 
     const updatedQuarterAssignment = await transitionQuarterAssignmentState(
@@ -167,6 +174,40 @@ export class QuarterReviewService extends BaseService {
       updatedQuarterAssignment._id.toString(),
       { quarterState: quarterAssignment.quarterState },
       { quarterState: updatedQuarterAssignment.quarterState },
+    );
+
+    return { quarterAssignment: updatedQuarterAssignment };
+  }
+
+  async reopenQuarterAssignment(
+    quarterAssignmentId: string,
+    input: ReopenQuarterAssignmentInput,
+  ): Promise<FinalizeQuarterAssignmentResult> {
+    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    this.assertAdmin('quarterAssignment.reopen');
+
+    if (!input.reason?.trim()) {
+      throw new Error('Reopen reason is required');
+    }
+
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.QUARTER_FINALIZED) {
+      throw new Error('Only finalized quarters can be reopened');
+    }
+
+    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
+      quarterAssignment._id.toString(),
+      QuarterWorkflowState.REOPENED_BY_ADMIN,
+      this.requireActor(),
+      input.reason,
+    );
+
+    await this.audit(
+      'PMS_QUARTER_ASSIGNMENT_REOPENED',
+      'QUARTER_ASSIGNMENT',
+      updatedQuarterAssignment._id.toString(),
+      { quarterState: quarterAssignment.quarterState },
+      { quarterState: updatedQuarterAssignment.quarterState },
+      input.reason,
     );
 
     return { quarterAssignment: updatedQuarterAssignment };

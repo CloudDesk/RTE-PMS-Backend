@@ -30,8 +30,8 @@ export async function transitionQuarterAssignmentState(
     reason,
   });
 
-  quarterAssignment.previousQuarterState = transition.previousState;
-  quarterAssignment.quarterState = transition.currentState;
+  quarterAssignment.previousQuarterState = transition.previousState as QuarterWorkflowState;
+  quarterAssignment.quarterState = transition.currentState as QuarterWorkflowState;
   quarterAssignment.lastTransitionAt = transition.transitionedAt;
   quarterAssignment.lastTransitionBy = new Types.ObjectId(actorContext.actorId);
   quarterAssignment.lastTransitionRole = actorContext.actorRole;

@@ -2,11 +2,30 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
-import type { CreateCycleInput } from '../services/cycle.service';
+import type {
+  CreateCycleInput,
+  CycleListQuery,
+  UpdateCycleInput,
+} from '../services/cycle.service';
 
 export const cycleRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
+  fastify.get(
+    '/',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.cycleService.listCycles(
+          request.query as CycleListQuery,
+        );
+        return reply.send(successResponse('PMS cycles fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/',
     { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
@@ -16,6 +35,51 @@ export const cycleRoutes: RouteHandler = async (
           request.body as CreateCycleInput,
         );
         return reply.status(201).send(successResponse('PMS cycle created successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/:id',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.cycleService.getCycleDetail(id);
+        return reply.send(successResponse('PMS cycle fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/:id',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.cycleService.updateCycle(
+          id,
+          request.body as UpdateCycleInput,
+        );
+        return reply.send(successResponse('PMS cycle updated successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/schedule',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const cycle = await request.container!.cycleService.scheduleCycle(id);
+        return reply.send(successResponse('PMS cycle scheduled successfully', cycle));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

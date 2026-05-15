@@ -163,6 +163,8 @@ export type LetterTemplateChannel =
 
 export const WorkflowEntityType = {
   QUARTER_ASSIGNMENT: 'QUARTER_ASSIGNMENT',
+  ANNUAL_CYCLE: 'ANNUAL_CYCLE',
+  ANNUAL_ASSIGNMENT: 'ANNUAL_ASSIGNMENT',
 } as const;
 
 export type WorkflowEntityType =

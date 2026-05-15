@@ -2,7 +2,9 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import { AnnualWorkflowState, PmsTemplateStatus, QuarterWorkflowState } from '../constants/pms.enums';
+import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
+import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { accessService } from './access.service';
@@ -27,6 +29,7 @@ interface QuarterCycleInput {
   objectiveApprovalWindow?: DateWindowInput;
   reviewWindow?: DateWindowInput;
   managerReviewWindow?: DateWindowInput;
+  quarterFinalizationWindow?: DateWindowInput;
   slaConfig?: Record<string, unknown>;
   closureRules?: Record<string, unknown>;
 }
@@ -49,9 +52,90 @@ export interface CreateCycleResult {
   quarterCycles: IQuarterCycle[];
 }
 
+export interface UpdateCycleInput {
+  name?: string;
+  code?: string;
+  appraisalYear?: number;
+  year?: number;
+  startDate?: Date | string;
+  endDate?: Date | string;
+  templateVersionId?: string;
+  quarters?: QuarterCycleInput[];
+  appraisalWindowConfig?: Record<string, unknown>;
+  communicationRuleConfig?: Record<string, unknown>;
+}
+
+export interface CycleListQuery {
+  status?: string;
+  appraisalYear?: string | number;
+  search?: string;
+  page?: string | number;
+  limit?: string | number;
+}
+
+export interface CycleDetailResult {
+  annualCycle: IAnnualCycle;
+  quarterCycles: IQuarterCycle[];
+}
+
+export interface CycleListResult {
+  items: IAnnualCycle[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 export class CycleService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
+  }
+
+  async listCycles(query: CycleListQuery = {}): Promise<CycleListResult> {
+    this.assertAdmin('cycle.list');
+    const page = this.normalizePositiveInteger(query.page, 1);
+    const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
+    const filter: Record<string, unknown> = { isDeleted: false };
+
+    if (query.status) {
+      filter.status = query.status;
+    }
+
+    if (query.appraisalYear !== undefined) {
+      const appraisalYear = Number(query.appraisalYear);
+      if (Number.isNaN(appraisalYear)) {
+        throw new Error('appraisalYear must be a number');
+      }
+      filter.appraisalYear = appraisalYear;
+    }
+
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      AnnualCycle.find(filter)
+        .sort({ appraisalYear: -1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      AnnualCycle.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
+  }
+
+  async getCycleDetail(cycleId: string): Promise<CycleDetailResult> {
+    this.assertAdmin('cycle.detail');
+    const annualCycle = await this.getCycleForAction(cycleId);
+    const quarterCycles = await QuarterCycle.find({
+      cycleId: annualCycle._id,
+      isDeleted: false,
+    }).sort({ quarterCode: 1 });
+
+    return { annualCycle, quarterCycles };
   }
 
   async createCycle(input: CreateCycleInput): Promise<CreateCycleResult> {
@@ -98,15 +182,89 @@ export class CycleService extends BaseService {
     return { annualCycle, quarterCycles };
   }
 
-  async launchCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.launch');
+  async updateCycle(cycleId: string, input: UpdateCycleInput): Promise<CycleDetailResult> {
+    this.assertAdmin('cycle.update');
     const cycle = await this.getCycleForAction(cycleId);
     if (
       cycle.status !== AnnualWorkflowState.DRAFT &&
       cycle.status !== AnnualWorkflowState.SCHEDULED
     ) {
-      throw new Error('Only DRAFT or SCHEDULED cycles can be launched');
+      throw new Error('Only DRAFT or SCHEDULED cycles can be updated');
     }
+
+    const existingQuarters = await QuarterCycle.find({
+      cycleId: cycle._id,
+      isDeleted: false,
+    }).sort({ quarterCode: 1 });
+    const mergedInput = await this.buildMergedUpdateInput(cycle, existingQuarters, input);
+    this.validateCycleInput(mergedInput);
+
+    const previousValue = {
+      annualCycle: cycle.toObject(),
+      quarterCycles: existingQuarters.map((quarter) => quarter.toObject()),
+    };
+
+    if (input.code?.trim()) {
+      const code = input.code.trim().toUpperCase();
+      const existingCycle = await AnnualCycle.exists({
+        code,
+        _id: { $ne: cycle._id },
+      });
+      if (existingCycle) {
+        throw new Error('Cycle code already exists');
+      }
+      cycle.code = code;
+    }
+
+    if (input.templateVersionId) {
+      cycle.templateVersionId = await this.validateTemplateVersion(input.templateVersionId);
+    }
+
+    if (input.name !== undefined) cycle.name = input.name;
+    if (input.appraisalYear !== undefined || input.year !== undefined) {
+      cycle.appraisalYear = input.appraisalYear ?? input.year!;
+    }
+    if (input.startDate !== undefined) cycle.startDate = new Date(input.startDate);
+    if (input.endDate !== undefined) cycle.endDate = new Date(input.endDate);
+    if (input.appraisalWindowConfig !== undefined) {
+      cycle.appraisalWindowConfig = input.appraisalWindowConfig;
+    }
+    if (input.communicationRuleConfig !== undefined) {
+      cycle.communicationRuleConfig = input.communicationRuleConfig;
+    }
+    cycle.updatedBy = this.actorIdObject();
+
+    let quarterCycles = existingQuarters;
+    if (input.quarters) {
+      await QuarterCycle.deleteMany({ cycleId: cycle._id });
+      const quarterPayload = this.buildQuarterPayloads(mergedInput, cycle._id);
+      quarterCycles = await QuarterCycle.insertMany(quarterPayload);
+      cycle.quarterCycleIds = quarterCycles.map((quarterCycle) => quarterCycle._id);
+    }
+
+    await cycle.save();
+
+    await this.audit(
+      'PMS_CYCLE_UPDATED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      previousValue,
+      {
+        annualCycle: cycle,
+        quarterCycles,
+      },
+    );
+
+    return { annualCycle: cycle, quarterCycles };
+  }
+
+  async launchCycle(cycleId: string): Promise<IAnnualCycle> {
+    this.assertAdmin('cycle.launch');
+    const cycle = await this.getCycleForAction(cycleId);
+    if (cycle.status !== AnnualWorkflowState.SCHEDULED) {
+      throw new Error('Only SCHEDULED cycles can be launched');
+    }
+    await this.assertLaunchReady(cycle);
 
     const previousStatus = cycle.status;
     cycle.status = AnnualWorkflowState.ACTIVE;
@@ -115,6 +273,28 @@ export class CycleService extends BaseService {
     await cycle.save();
 
     await this.audit('PMS_CYCLE_LAUNCHED', 'ANNUAL_CYCLE', cycle._id.toString(), { status: previousStatus }, { status: cycle.status });
+    return cycle;
+  }
+
+  async scheduleCycle(cycleId: string): Promise<IAnnualCycle> {
+    this.assertAdmin('cycle.schedule');
+    const cycle = await this.getCycleForAction(cycleId);
+    if (cycle.status !== AnnualWorkflowState.DRAFT) {
+      throw new Error('Only DRAFT cycles can be scheduled');
+    }
+
+    const previousStatus = cycle.status;
+    cycle.status = AnnualWorkflowState.SCHEDULED;
+    cycle.updatedBy = this.actorIdObject();
+    await cycle.save();
+
+    await this.audit(
+      'PMS_CYCLE_SCHEDULED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      { status: previousStatus },
+      { status: cycle.status },
+    );
     return cycle;
   }
 
@@ -184,6 +364,7 @@ export class CycleService extends BaseService {
     objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
     objectiveApprovalWindow?: { startDate?: Date; endDate?: Date };
     managerReviewWindow?: { startDate?: Date; endDate?: Date };
+    quarterFinalizationWindow?: { startDate?: Date; endDate?: Date };
     slaConfig?: Record<string, unknown>;
     closureRules?: Record<string, unknown>;
     status: QuarterWorkflowState;
@@ -217,6 +398,7 @@ export class CycleService extends BaseService {
         managerReviewWindow: this.normalizeWindow(
           quarterInput.managerReviewWindow ?? quarterInput.reviewWindow,
         ),
+        quarterFinalizationWindow: this.normalizeWindow(quarterInput.quarterFinalizationWindow),
         slaConfig: quarterInput.slaConfig ?? {},
         closureRules: quarterInput.closureRules ?? {},
         status: QuarterWorkflowState.NOT_STARTED,
@@ -246,6 +428,45 @@ export class CycleService extends BaseService {
         endDate: quarterEnd,
       };
     });
+  }
+
+  private async buildMergedUpdateInput(
+    cycle: IAnnualCycle,
+    existingQuarters: IQuarterCycle[],
+    input: UpdateCycleInput,
+  ): Promise<CreateCycleInput> {
+    const templateVersionId = input.templateVersionId
+      ?? cycle.templateVersionId?.toString();
+    if (!templateVersionId) {
+      throw new Error('Active templateVersionId is required for cycle setup');
+    }
+
+    return {
+      name: input.name ?? cycle.name,
+      code: input.code ?? cycle.code,
+      appraisalYear: input.appraisalYear ?? input.year ?? cycle.appraisalYear,
+      startDate: input.startDate ?? cycle.startDate,
+      endDate: input.endDate ?? cycle.endDate,
+      templateVersionId,
+      quarters: input.quarters ?? this.quarterCyclesToInput(existingQuarters),
+      appraisalWindowConfig: input.appraisalWindowConfig ?? cycle.appraisalWindowConfig ?? {},
+      communicationRuleConfig:
+        input.communicationRuleConfig ?? cycle.communicationRuleConfig ?? {},
+    };
+  }
+
+  private quarterCyclesToInput(quarterCycles: IQuarterCycle[]): QuarterCycleInput[] {
+    return quarterCycles.map((quarterCycle) => ({
+      quarterCode: quarterCycle.quarterCode,
+      startDate: quarterCycle.startDate,
+      endDate: quarterCycle.endDate,
+      objectiveSettingWindow: quarterCycle.objectiveSettingWindow,
+      objectiveApprovalWindow: quarterCycle.objectiveApprovalWindow,
+      managerReviewWindow: quarterCycle.managerReviewWindow,
+      quarterFinalizationWindow: quarterCycle.quarterFinalizationWindow,
+      slaConfig: quarterCycle.slaConfig,
+      closureRules: quarterCycle.closureRules,
+    }));
   }
 
   private normalizeWindow(
@@ -329,6 +550,13 @@ export class CycleService extends BaseService {
         endDate,
         `${quarterCode} manager review window`,
       );
+      this.validateWindowWithinQuarter(
+        quarter.quarterFinalizationWindow,
+        startDate,
+        endDate,
+        `${quarterCode} quarter finalization window`,
+      );
+      this.validateQuarterWindowSequence(quarter, quarterCode);
 
       return { quarterCode, startDate, endDate };
     });
@@ -373,6 +601,47 @@ export class CycleService extends BaseService {
     }
   }
 
+  private validateQuarterWindowSequence(
+    quarter: QuarterCycleInput,
+    quarterCode: QuarterCode,
+  ): void {
+    const sequence = [
+      {
+        label: 'objective setting window',
+        window: quarter.objectiveSettingWindow ?? quarter.objectiveWindow,
+      },
+      {
+        label: 'objective approval window',
+        window: quarter.objectiveApprovalWindow,
+      },
+      {
+        label: 'manager review window',
+        window: quarter.managerReviewWindow ?? quarter.reviewWindow,
+      },
+      {
+        label: 'quarter finalization window',
+        window: quarter.quarterFinalizationWindow,
+      },
+    ]
+      .filter((item) => item.window)
+      .map((item) => ({
+        label: item.label,
+        startDate: new Date(item.window!.startDate as Date | string),
+        endDate: new Date(item.window!.endDate as Date | string),
+      }));
+
+    for (let index = 1; index < sequence.length; index += 1) {
+      const previous = sequence[index - 1];
+      const current = sequence[index];
+
+      if (current.startDate <= previous.endDate) {
+        throw new Error(
+          `${quarterCode} ${current.label} must start after ${previous.label} ends`,
+        );
+      }
+    }
+  }
+
   private assertValidDateRange(startDate: Date, endDate: Date, label: string): void {
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
       throw new Error(`${label} has invalid dates`);
@@ -385,6 +654,11 @@ export class CycleService extends BaseService {
 
   private getQuarterCode(quarter: QuarterCycleInput): QuarterCode {
     return (quarter.quarterCode ?? quarter.quarter) as QuarterCode;
+  }
+
+  private normalizePositiveInteger(value: string | number | undefined, fallback: number): number {
+    const normalized = Number(value ?? fallback);
+    return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
   }
 
   private async validateTemplateVersion(templateVersionId: string): Promise<Types.ObjectId> {
@@ -419,6 +693,63 @@ export class CycleService extends BaseService {
     }
 
     return cycle;
+  }
+
+  private async assertLaunchReady(cycle: IAnnualCycle): Promise<void> {
+    const expectedQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const quarterCycles = await QuarterCycle.find({
+      cycleId: cycle._id,
+      isDeleted: false,
+    }).select('quarterCode');
+    const configuredQuarters = new Set(
+      quarterCycles.map((quarterCycle) => quarterCycle.quarterCode),
+    );
+
+    for (const quarter of expectedQuarters) {
+      if (!configuredQuarters.has(quarter)) {
+        throw new Error(`Cycle cannot be launched because ${quarter} cycle setup is missing`);
+      }
+    }
+
+    const annualAssignments = await AnnualAssignment.find({
+      cycleId: cycle._id,
+      isDeleted: false,
+    }).select('applicableQuarters quarterAssignmentIds employeeId');
+    if (annualAssignments.length === 0) {
+      throw new Error('Cycle cannot be launched without annual assignments');
+    }
+
+    const annualAssignmentIds = annualAssignments.map((assignment) => assignment._id);
+    const quarterAssignments = await QuarterAssignment.find({
+      annualAssignmentId: { $in: annualAssignmentIds },
+      isDeleted: false,
+    }).select('annualAssignmentId quarterCode');
+
+    const quarterAssignmentsByAnnualAssignment = new Map<string, Set<QuarterCode>>();
+    for (const quarterAssignment of quarterAssignments) {
+      const key = quarterAssignment.annualAssignmentId.toString();
+      const quarters = quarterAssignmentsByAnnualAssignment.get(key) ?? new Set<QuarterCode>();
+      quarters.add(quarterAssignment.quarterCode);
+      quarterAssignmentsByAnnualAssignment.set(key, quarters);
+    }
+
+    for (const assignment of annualAssignments) {
+      if (!assignment.applicableQuarters.length) {
+        throw new Error(
+          `Cycle cannot be launched because assignment ${assignment._id.toString()} has no applicable quarters`,
+        );
+      }
+
+      const linkedQuarters = quarterAssignmentsByAnnualAssignment.get(assignment._id.toString())
+        ?? new Set<QuarterCode>();
+      for (const applicableQuarter of assignment.applicableQuarters) {
+        if (!linkedQuarters.has(applicableQuarter)) {
+          throw new Error(
+            `Cycle cannot be launched because assignment ${assignment._id.toString()} is missing ${applicableQuarter} quarter assignment`,
+          );
+        }
+      }
+    }
   }
 
   private actorIdObject(): Types.ObjectId | undefined {

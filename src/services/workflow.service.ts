@@ -1,10 +1,13 @@
 import {
+  AnnualWorkflowState,
   QuarterWorkflowState,
   WorkflowEntityType,
+  isAnnualWorkflowState,
   isQuarterWorkflowState,
 } from '../constants/pms.enums';
-import { quarterTransitions } from '../constants/workflow.config';
+import { annualTransitions, quarterTransitions } from '../constants/workflow.config';
 import type {
+  AnnualWorkflowState as AnnualWorkflowStateType,
   QuarterWorkflowState as QuarterWorkflowStateType,
   WorkflowTransitionInput,
   WorkflowTransitionResult,
@@ -24,7 +27,19 @@ export class WorkflowTransitionError extends Error {
 export class WorkflowService {
   getAllowedNextStates(
     currentState: string,
-  ): readonly QuarterWorkflowStateType[] {
+    entityType: WorkflowEntityType = WorkflowEntityType.QUARTER_ASSIGNMENT,
+  ): readonly (QuarterWorkflowStateType | AnnualWorkflowStateType)[] {
+    if (
+      entityType === WorkflowEntityType.ANNUAL_CYCLE ||
+      entityType === WorkflowEntityType.ANNUAL_ASSIGNMENT
+    ) {
+      if (!isAnnualWorkflowState(currentState)) {
+        return [];
+      }
+
+      return annualTransitions[currentState];
+    }
+
     if (!isQuarterWorkflowState(currentState)) {
       return [];
     }
@@ -33,15 +48,19 @@ export class WorkflowService {
   }
 
   validateTransition(input: WorkflowTransitionInput): WorkflowValidationResult {
-    if (input.entityType !== WorkflowEntityType.QUARTER_ASSIGNMENT) {
+    if (
+      input.entityType !== WorkflowEntityType.QUARTER_ASSIGNMENT &&
+      input.entityType !== WorkflowEntityType.ANNUAL_CYCLE &&
+      input.entityType !== WorkflowEntityType.ANNUAL_ASSIGNMENT
+    ) {
       return {
         allowed: false,
         errorCode: 'INVALID_ENTITY_TYPE',
-        message: 'Workflow transitions are currently supported only for Quarter Assignment records.',
+        message: `Unsupported workflow entity type: ${input.entityType}.`,
       };
     }
 
-    if (!isQuarterWorkflowState(input.currentState)) {
+    if (!this.isKnownWorkflowState(input.currentState, input.entityType)) {
       return {
         allowed: false,
         errorCode: 'UNKNOWN_CURRENT_STATE',
@@ -49,7 +68,7 @@ export class WorkflowService {
       };
     }
 
-    if (!isQuarterWorkflowState(input.nextState)) {
+    if (!this.isKnownWorkflowState(input.nextState, input.entityType)) {
       return {
         allowed: false,
         errorCode: 'UNKNOWN_NEXT_STATE',
@@ -57,7 +76,7 @@ export class WorkflowService {
       };
     }
 
-    if (this.requiresReason(input.nextState) && !input.reason?.trim()) {
+    if (this.requiresReason(input.nextState, input.entityType) && !input.reason?.trim()) {
       return {
         allowed: false,
         errorCode: 'REASON_REQUIRED',
@@ -65,8 +84,12 @@ export class WorkflowService {
       };
     }
 
-    const allowedNextStates = this.getAllowedNextStates(input.currentState);
-    if (!allowedNextStates.includes(input.nextState)) {
+    const allowedNextStates = this.getAllowedNextStates(input.currentState, input.entityType);
+    if (
+      !allowedNextStates.includes(
+        input.nextState as QuarterWorkflowStateType | AnnualWorkflowStateType,
+      )
+    ) {
       return {
         allowed: false,
         errorCode: 'INVALID_TRANSITION',
@@ -89,8 +112,8 @@ export class WorkflowService {
     return {
       entityType: input.entityType,
       entityId: input.entityId,
-      previousState: input.currentState as QuarterWorkflowStateType,
-      currentState: input.nextState as QuarterWorkflowStateType,
+      previousState: input.currentState as QuarterWorkflowStateType | AnnualWorkflowStateType,
+      currentState: input.nextState as QuarterWorkflowStateType | AnnualWorkflowStateType,
       actorId: input.actorId,
       actorRole: input.actorRole,
       reason: input.reason,
@@ -99,13 +122,38 @@ export class WorkflowService {
     };
   }
 
-  private requiresReason(nextState: QuarterWorkflowStateType): boolean {
+  private isKnownWorkflowState(
+    state: string,
+    entityType: WorkflowEntityType,
+  ): boolean {
+    if (
+      entityType === WorkflowEntityType.ANNUAL_CYCLE ||
+      entityType === WorkflowEntityType.ANNUAL_ASSIGNMENT
+    ) {
+      return isAnnualWorkflowState(state);
+    }
+
+    return isQuarterWorkflowState(state);
+  }
+
+  private requiresReason(nextState: string, entityType: WorkflowEntityType): boolean {
+    if (
+      entityType === WorkflowEntityType.ANNUAL_CYCLE ||
+      entityType === WorkflowEntityType.ANNUAL_ASSIGNMENT
+    ) {
+      const reasonRequiredStates: readonly AnnualWorkflowStateType[] = [
+        AnnualWorkflowState.CANCELLED,
+      ];
+
+      return isAnnualWorkflowState(nextState) && reasonRequiredStates.includes(nextState);
+    }
+
     const reasonRequiredStates: readonly QuarterWorkflowStateType[] = [
       QuarterWorkflowState.REOPENED_BY_ADMIN,
       QuarterWorkflowState.CLOSED_BY_ADMIN,
     ];
 
-    return reasonRequiredStates.includes(nextState);
+    return isQuarterWorkflowState(nextState) && reasonRequiredStates.includes(nextState);
   }
 }
 
