@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
+  PmsTemplateFieldType,
   PmsTemplateSectionLevel,
   PmsTemplateSectionType,
   PmsTemplateStatus,
@@ -34,6 +35,13 @@ export interface CreateTemplateInput {
   code: string;
   description?: string;
   effectiveDate?: Date;
+}
+
+export interface TemplateListQuery {
+  status?: string;
+  search?: string;
+  page?: string | number;
+  limit?: string | number;
 }
 
 export interface UpdateTemplateInput {
@@ -78,6 +86,40 @@ export interface CreateLetterTemplateInput {
 export class PmsTemplateService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
+  }
+
+  async listTemplates(query: TemplateListQuery = {}): Promise<{
+    items: IPmsTemplate[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    this.assertAdmin('template.list');
+    const page = this.normalizePositiveInteger(query.page, 1);
+    const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
+    const filter: Record<string, unknown> = { isDeleted: false };
+
+    if (query.status?.trim()) {
+      filter.status = query.status.trim();
+    }
+
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      PmsTemplate.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      PmsTemplate.countDocuments(filter),
+    ]);
+
+    return { items, total, page, limit };
   }
 
   async createTemplate(input: CreateTemplateInput): Promise<IPmsTemplate> {
@@ -578,6 +620,8 @@ export class PmsTemplateService extends BaseService {
       scoringConfig,
       defaultValue: field.defaultValue,
       options: field.options ?? [],
+      matrixConfig: field.matrixConfig as ITemplateField['matrixConfig'],
+      gridConfig: field.gridConfig as ITemplateField['gridConfig'],
     };
   }
 
@@ -683,7 +727,86 @@ export class PmsTemplateService extends BaseService {
           throw new Error(`Duplicate field key ${field.fieldKey} in section ${section.sectionKey}`);
         }
         fieldKeys.add(field.fieldKey);
+
+        if (!Object.values(PmsTemplateFieldType).includes(field.fieldType)) {
+          throw new Error(
+            `Invalid field type ${field.fieldType} in section ${section.sectionKey}`,
+          );
+        }
+
+        if (field.fieldType === PmsTemplateFieldType.MATRIX) {
+          const matrixConfig = field.matrixConfig;
+          if (!matrixConfig) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires matrixConfig`,
+            );
+          }
+
+          if (!Array.isArray(matrixConfig.rows) || matrixConfig.rows.length === 0) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires matrixConfig.rows`,
+            );
+          }
+
+          if (!Array.isArray(matrixConfig.columns) || matrixConfig.columns.length === 0) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires matrixConfig.columns`,
+            );
+          }
+
+          this.assertUniqueKeys(
+            matrixConfig.rows.map((row) => row.key),
+            `Duplicate matrix row key in ${field.fieldKey}`,
+          );
+          this.assertUniqueKeys(
+            matrixConfig.columns.map((column) => column.key),
+            `Duplicate matrix column key in ${field.fieldKey}`,
+          );
+        }
+
+        if (field.fieldType === PmsTemplateFieldType.DATA_GRID) {
+          const gridConfig = field.gridConfig;
+          if (!gridConfig) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires gridConfig`,
+            );
+          }
+
+          if (!Array.isArray(gridConfig.columns) || gridConfig.columns.length === 0) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires gridConfig.columns`,
+            );
+          }
+
+          this.assertUniqueKeys(
+            gridConfig.columns.map((column) => column.key),
+            `Duplicate grid column key in ${field.fieldKey}`,
+          );
+
+          if (
+            gridConfig.minRows !== undefined &&
+            gridConfig.maxRows !== undefined &&
+            gridConfig.minRows > gridConfig.maxRows
+          ) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} has invalid gridConfig row limits`,
+            );
+          }
+        }
       }
+    }
+  }
+
+  private assertUniqueKeys(keys: string[], errorMessage: string): void {
+    const seen = new Set<string>();
+    for (const key of keys) {
+      if (!key?.trim()) {
+        throw new Error(`${errorMessage}: empty key`);
+      }
+      if (seen.has(key)) {
+        throw new Error(errorMessage);
+      }
+      seen.add(key);
     }
   }
 
@@ -735,6 +858,11 @@ export class PmsTemplateService extends BaseService {
     if (!access.allowed) {
       throw new Error(access.message ?? 'Access denied');
     }
+  }
+
+  private normalizePositiveInteger(value: string | number | undefined, fallback: number): number {
+    const normalized = Number(value ?? fallback);
+    return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
   }
 
   private async audit(

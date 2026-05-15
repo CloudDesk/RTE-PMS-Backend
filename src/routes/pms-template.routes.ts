@@ -7,6 +7,7 @@ import type {
   CreateTemplateInput,
   CreateTemplateVersionInput,
   TemplateField,
+  TemplateListQuery,
   TemplatePermission,
   TemplateSection,
   UpdateTemplateInput,
@@ -15,6 +16,21 @@ import type {
 export const pmsTemplateRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
+  fastify.get(
+    '/',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const templates = await request.container!.pmsTemplateService.listTemplates(
+          request.query as TemplateListQuery,
+        );
+        return reply.send(successResponse('PMS templates fetched successfully', templates));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/',
     { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },

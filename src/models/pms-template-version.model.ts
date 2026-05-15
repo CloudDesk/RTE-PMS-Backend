@@ -32,7 +32,47 @@ export interface ITemplateField {
   scoringConfig?: Record<string, unknown>;
   defaultValue?: unknown;
   options?: ITemplateOption[];
+  matrixConfig?: {
+    rows: Array<{ key: string; label: string }>;
+    columns: Array<{ key: string; label: string }>;
+    allowComments?: boolean;
+  };
+  gridConfig?: {
+    columns: Array<{ key: string; label: string; type: string; required?: boolean }>;
+    minRows?: number;
+    maxRows?: number;
+  };
 }
+
+interface IMatrixItem {
+  key: string;
+  label: string;
+}
+
+interface IGridColumn {
+  key: string;
+  label: string;
+  type: string;
+  required?: boolean;
+}
+
+const matrixItemSchema = new Schema<IMatrixItem>(
+  {
+    key: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+  },
+  { _id: false },
+);
+
+const gridColumnSchema = new Schema<IGridColumn>(
+  {
+    key: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    type: { type: String, required: true, trim: true },
+    required: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
 
 export interface ITemplateSection {
   sectionKey: string;
@@ -97,6 +137,45 @@ const templateFieldSchema = new Schema<ITemplateField>(
         },
       ],
       default: [],
+    },
+    matrixConfig: {
+      type: new Schema<{
+        rows: IMatrixItem[];
+        columns: IMatrixItem[];
+        allowComments?: boolean;
+      }>(
+        {
+          rows: {
+            type: [matrixItemSchema],
+            default: [],
+          },
+          columns: {
+            type: [matrixItemSchema],
+            default: [],
+          },
+          allowComments: { type: Boolean, default: false },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
+    gridConfig: {
+      type: new Schema<{
+        columns: IGridColumn[];
+        minRows?: number;
+        maxRows?: number;
+      }>(
+        {
+          columns: {
+            type: [gridColumnSchema],
+            default: [],
+          },
+          minRows: { type: Number, min: 0 },
+          maxRows: { type: Number, min: 0 },
+        },
+        { _id: false },
+      ),
+      default: undefined,
     },
   },
   { _id: false },

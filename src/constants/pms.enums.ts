@@ -135,6 +135,8 @@ export const PmsTemplateFieldType = {
   FORMULA: 'FORMULA',
   COMMENT_BOX: 'COMMENT_BOX',
   BOOLEAN: 'BOOLEAN',
+  MATRIX: 'MATRIX',
+  DATA_GRID: 'DATA_GRID',
 } as const;
 
 export type PmsTemplateFieldType =
