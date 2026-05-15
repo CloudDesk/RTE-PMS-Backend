@@ -37,7 +37,8 @@ const auditLogSchema = new Schema<IAuditLog>(
     createdAt: { type: Date, default: Date.now },
   },
   {
-    timestamps: false, // We'll use the timestamp field instead
+    collection: 'audit_logs',
+    timestamps: false,
   },
 );
 

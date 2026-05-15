@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { WorkflowEvent } from '../models/pms-workflow-event.model';
 import { WorkflowEntityType } from '../constants/pms.enums';
 import { auditService } from './audit.service';
 import { workflowService } from './workflow.service';
@@ -37,6 +38,27 @@ export async function transitionQuarterAssignmentState(
   quarterAssignment.lastTransitionReason = reason;
 
   const updatedQuarterAssignment = await quarterAssignment.save();
+
+  await WorkflowEvent.create({
+    entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
+    entityId: quarterAssignment._id,
+    annualAssignmentId: quarterAssignment.annualAssignmentId,
+    quarterAssignmentId: quarterAssignment._id,
+    cycleId: quarterAssignment.cycleId,
+    fromState: transition.previousState,
+    toState: transition.currentState,
+    action: `TRANSITION_${transition.previousState}_TO_${transition.currentState}`,
+    actorUserId: Types.ObjectId.isValid(actorContext.actorId)
+      ? new Types.ObjectId(actorContext.actorId)
+      : actorContext.actorId,
+    actorRole: actorContext.actorRole,
+    reason,
+    metadata: transition.metadata ?? {},
+    createdBy: Types.ObjectId.isValid(actorContext.actorId)
+      ? new Types.ObjectId(actorContext.actorId)
+      : actorContext.actorId,
+    createdAt: transition.transitionedAt,
+  });
 
   await auditService.createAuditLog({
     actorId: actorContext.actorId,

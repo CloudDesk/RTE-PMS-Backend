@@ -3,6 +3,7 @@ import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import { ObjectiveSource, ObjectiveStatus, QuarterWorkflowState } from '../constants/pms.enums';
 import { Objective } from '../models/pms-objective.model';
+import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
@@ -14,9 +15,13 @@ import type { ObjectiveSource as ObjectiveSourceType } from '../constants/pms.en
 interface ObjectiveAttachmentInput {
   fileName?: string;
   fileUrl?: string;
+  fileType?: string;
+  fileSize?: number;
   documentId?: string;
   uploadedBy?: string;
+  uploadedByRole?: string;
   uploadedAt?: Date | string;
+  visibilityRules?: Record<string, unknown>;
 }
 
 export interface CreateObjectiveInput {
@@ -24,6 +29,7 @@ export interface CreateObjectiveInput {
   title: string;
   description?: string;
   targetMetric?: string;
+  targetValue?: string;
   targetDate?: Date | string;
   weightage?: number;
   successCriteria?: string;
@@ -45,6 +51,8 @@ export class ObjectiveService extends BaseService {
     const source = this.resolveObjectiveSource(actor.actorRole);
 
     this.assertAssignmentAccess('objective.create', quarterAssignment);
+    this.validateObjectiveInput(input);
+    await this.validateQuarterObjectiveRules(quarterAssignment, input.weightage);
 
     if (source === ObjectiveSource.EMPLOYEE_CREATED) {
       await this.ensureQuarterState(
@@ -61,6 +69,7 @@ export class ObjectiveService extends BaseService {
       await this.openManagerReview(quarterAssignment._id.toString());
     }
 
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
     const objective = await Objective.create({
       quarterAssignmentId: quarterAssignment._id,
       annualAssignmentId: quarterAssignment.annualAssignmentId,
@@ -68,10 +77,12 @@ export class ObjectiveService extends BaseService {
       quarterCode: quarterAssignment.quarterCode,
       employeeId: quarterAssignment.employeeId,
       assignedManagerId: quarterAssignment.assignedManagerId,
+      objectiveNo: await this.getNextObjectiveNo(quarterAssignment._id),
       source,
       title: input.title,
       description: input.description,
       targetMetric: input.targetMetric,
+      targetValue: input.targetValue,
       targetDate: input.targetDate ? new Date(input.targetDate) : undefined,
       weightage: input.weightage,
       successCriteria: input.successCriteria,
@@ -79,10 +90,12 @@ export class ObjectiveService extends BaseService {
         ? ObjectiveStatus.OBJECTIVE_APPROVED
         : ObjectiveStatus.OBJECTIVE_DRAFT,
       attachments: this.normalizeAttachments(input.attachments ?? []),
-      createdBy: this.toObjectId(actor.actorId, 'actorId'),
+      createdByRole: actor.actorRole,
+      createdByUserId: actorObjectId,
+      createdBy: actorObjectId,
       approvedAt: source === ObjectiveSource.MANAGER_CREATED ? new Date() : undefined,
       approvedBy: source === ObjectiveSource.MANAGER_CREATED
-        ? this.toObjectId(actor.actorId, 'actorId')
+        ? actorObjectId
         : undefined,
     });
 
@@ -95,6 +108,8 @@ export class ObjectiveService extends BaseService {
       undefined,
       objective.toObject(),
     );
+
+    await this.createObjectiveAttachments(objective, input.attachments ?? [], actor.actorRole);
 
     return objective;
   }
@@ -124,6 +139,9 @@ export class ObjectiveService extends BaseService {
     objective.status = ObjectiveStatus.OBJECTIVE_SUBMITTED;
     objective.submittedAt = new Date();
     objective.returnedReason = undefined;
+    objective.returnedAt = undefined;
+    objective.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    objective.version += 1;
     await objective.save();
 
     await this.audit(
@@ -156,6 +174,8 @@ export class ObjectiveService extends BaseService {
     objective.status = ObjectiveStatus.OBJECTIVE_APPROVED;
     objective.approvedAt = new Date();
     objective.approvedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    objective.updatedBy = objective.approvedBy;
+    objective.version += 1;
     await objective.save();
 
     await this.audit(
@@ -192,6 +212,9 @@ export class ObjectiveService extends BaseService {
     const previousState = objective.status;
     objective.status = ObjectiveStatus.OBJECTIVE_REVISION_REQUIRED;
     objective.returnedReason = reason;
+    objective.returnedAt = new Date();
+    objective.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    objective.version += 1;
     await objective.save();
 
     await this.audit(
@@ -204,6 +227,66 @@ export class ObjectiveService extends BaseService {
     );
 
     return objective;
+  }
+
+  private validateObjectiveInput(input: CreateObjectiveInput): void {
+    if (!input.title?.trim()) {
+      throw new Error('Objective title is required');
+    }
+
+    if (input.title.trim().length > 200) {
+      throw new Error('Objective title cannot exceed 200 characters');
+    }
+
+    if (input.weightage !== undefined && (input.weightage < 0 || input.weightage > 100)) {
+      throw new Error('Objective weightage must be between 0 and 100');
+    }
+
+    if (input.targetDate) {
+      const targetDate = new Date(input.targetDate);
+      if (Number.isNaN(targetDate.getTime())) {
+        throw new Error('Invalid targetDate');
+      }
+    }
+  }
+
+  private async validateQuarterObjectiveRules(
+    quarterAssignment: IQuarterAssignment,
+    newWeightage?: number,
+  ): Promise<void> {
+    if (
+      quarterAssignment.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
+      quarterAssignment.quarterState === QuarterWorkflowState.CLOSED_BY_ADMIN
+    ) {
+      throw new Error('Cannot create objectives for finalized or closed quarters');
+    }
+
+    if (newWeightage === undefined) return;
+
+    const existingObjectives = await Objective.find({
+      quarterAssignmentId: quarterAssignment._id,
+      isDeleted: false,
+    }).select('weightage').lean();
+    const currentWeightage = existingObjectives.reduce(
+      (total, objective) => total + (objective.weightage ?? 0),
+      0,
+    );
+
+    if (currentWeightage + newWeightage > 100) {
+      throw new Error('Total objective weightage for the quarter cannot exceed 100');
+    }
+  }
+
+  private async getNextObjectiveNo(quarterAssignmentId: Types.ObjectId): Promise<number> {
+    const lastObjective = await Objective.findOne({
+      quarterAssignmentId,
+      isDeleted: false,
+    })
+      .sort({ objectiveNo: -1 })
+      .select('objectiveNo')
+      .lean();
+
+    return (lastObjective?.objectiveNo ?? 0) + 1;
   }
 
   private async ensureQuarterState(
@@ -330,6 +413,32 @@ export class ObjectiveService extends BaseService {
         : undefined,
       uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
     }));
+  }
+
+  private async createObjectiveAttachments(
+    objective: IObjective,
+    attachments: ObjectiveAttachmentInput[],
+    actorRole: string,
+  ): Promise<void> {
+    if (attachments.length === 0) return;
+
+    await ObjectiveAttachment.insertMany(
+      attachments.map((attachment) => ({
+        objectiveId: objective._id,
+        fileName: attachment.fileName,
+        fileUrl: attachment.fileUrl,
+        fileType: attachment.fileType,
+        fileSize: attachment.fileSize,
+        uploadedBy: attachment.uploadedBy && Types.ObjectId.isValid(attachment.uploadedBy)
+          ? new Types.ObjectId(attachment.uploadedBy)
+          : objective.createdByUserId,
+        uploadedByRole: attachment.uploadedByRole ?? actorRole,
+        visibilityRules: attachment.visibilityRules ?? {},
+        versionNo: 1,
+        uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : new Date(),
+        createdBy: objective.createdByUserId,
+      })),
+    );
   }
 
   private requireActor() {

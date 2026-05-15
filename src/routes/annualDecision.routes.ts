@@ -42,6 +42,20 @@ export const annualDecisionRoutes: RouteHandler = async (
   );
 
   fastify.post(
+    '/:id/decision/submit',
+    { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const decision = await request.container!.annualDecisionService.submitDecision(id);
+        return reply.send(successResponse('Annual decision submitted successfully', decision));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
     '/:id/decision/freeze',
     { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
     async (request, reply) => {

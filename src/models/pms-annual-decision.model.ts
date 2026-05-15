@@ -7,6 +7,8 @@ import type {
 
 export interface IAnnualDecision extends Document {
   annualAssignmentId: Types.ObjectId;
+  cycleId: Types.ObjectId;
+  employeeId: Types.ObjectId;
   isGradeApplied?: boolean;
   isMeritApplied?: boolean;
   appraisalOutcomeType?: AppraisalOutcomeTypeType;
@@ -36,6 +38,18 @@ const annualDecisionSchema = new Schema<IAnnualDecision>(
       type: Schema.Types.ObjectId,
       required: true,
       ref: 'AnnualAssignment',
+    },
+    cycleId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+      ref: 'AnnualCycle',
+      index: true,
+    },
+    employeeId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+      ref: 'User',
+      index: true,
     },
     isGradeApplied: Boolean,
     isMeritApplied: Boolean,
@@ -70,7 +84,7 @@ const annualDecisionSchema = new Schema<IAnnualDecision>(
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'annualDecisions',
+    collection: 'annual_decisions',
     timestamps: true,
   },
 );
@@ -79,6 +93,8 @@ annualDecisionSchema.index(
   { annualAssignmentId: 1 },
   { unique: true, name: 'idx_annual_decision_assignment' },
 );
+annualDecisionSchema.index({ employeeId: 1, cycleId: 1 });
+annualDecisionSchema.index({ cycleId: 1, appraisalOutcomeType: 1 });
 annualDecisionSchema.index({ decisionStatus: 1 });
 
 export const AnnualDecision = mongoose.model<IAnnualDecision>(

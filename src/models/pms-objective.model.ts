@@ -31,12 +31,15 @@ export interface IObjective extends Document {
   successCriteria?: string;
   status: ObjectiveStatusType;
   attachments: IPmsAttachment[];
+  createdByRole: string;
+  createdByUserId: Types.ObjectId;
   createdBy: Types.ObjectId;
   updatedBy?: Types.ObjectId;
   submittedAt?: Date;
   approvedAt?: Date;
   approvedBy?: Types.ObjectId;
   returnedReason?: string;
+  returnedAt?: Date;
   isDeleted: boolean;
   version: number;
   createdAt: Date;
@@ -117,6 +120,17 @@ const objectiveSchema = new Schema<IObjective>(
       type: [attachmentSchema],
       default: [],
     },
+    createdByRole: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    createdByUserId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+      ref: 'User',
+      index: true,
+    },
     createdBy: {
       type: Schema.Types.ObjectId,
       required: true,
@@ -127,6 +141,7 @@ const objectiveSchema = new Schema<IObjective>(
     approvedAt: Date,
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     returnedReason: String,
+    returnedAt: Date,
     isDeleted: { type: Boolean, default: false, index: true },
     version: { type: Number, default: 1 },
   },
@@ -143,5 +158,6 @@ objectiveSchema.index(
 objectiveSchema.index({ annualAssignmentId: 1, quarterCode: 1 });
 objectiveSchema.index({ employeeId: 1, cycleId: 1 });
 objectiveSchema.index({ assignedManagerId: 1, status: 1 });
+objectiveSchema.index({ status: 1 });
 
 export const Objective = mongoose.model<IObjective>('Objective', objectiveSchema);

@@ -9,6 +9,7 @@ import {
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
+import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { Objective } from '../models/pms-objective.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
@@ -27,6 +28,7 @@ export interface AnnualSummaryResult {
   quarterAssignments: IQuarterAssignment[];
   objectives: IObjective[];
   quarterReviews: IQuarterReview[];
+  visibilityConfiguration: Record<string, unknown> | null;
   annualDecision: Record<string, unknown> | null;
 }
 
@@ -36,13 +38,19 @@ export interface SaveDecisionDraftInput {
   gradeDetails?: Record<string, unknown>;
   meritDetails?: Record<string, unknown>;
   nilReason?: string;
+  managementRemarks?: string;
+  finalScore?: number;
+  finalRating?: string;
 }
 
 export interface UpdateVisibilityInput {
+  employeeReviewVisible?: boolean;
   employeeGradeVisible?: boolean;
   employeeMeritVisible?: boolean;
   managerGradeVisible?: boolean;
   managerMeritVisible?: boolean;
+  visibleFrom?: Date | string;
+  reason?: string;
 }
 
 export class AnnualDecisionService extends BaseService {
@@ -61,10 +69,11 @@ export class AnnualDecisionService extends BaseService {
 
     const quarterAssignmentIds = quarterAssignments.map((quarterAssignment) => quarterAssignment._id);
 
-    const [objectives, quarterReviews, annualDecision] = await Promise.all([
+    const [objectives, quarterReviews, annualDecision, visibilityConfiguration] = await Promise.all([
       Objective.find({ quarterAssignmentId: { $in: quarterAssignmentIds } }),
       QuarterReview.find({ quarterAssignmentId: { $in: quarterAssignmentIds } }),
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
+      VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
     ]);
 
     return {
@@ -72,8 +81,12 @@ export class AnnualDecisionService extends BaseService {
       quarterAssignments,
       objectives,
       quarterReviews,
+      visibilityConfiguration: visibilityConfiguration?.toObject() ?? null,
       annualDecision: annualDecision
-        ? this.maskDecision(annualDecision, annualAssignment)
+        ? this.maskDecision(
+          annualDecision,
+          visibilityConfiguration ?? annualAssignment.visibility,
+        )
         : null,
     };
   }
@@ -96,22 +109,32 @@ export class AnnualDecisionService extends BaseService {
       input.isGradeApplied,
       input.isMeritApplied,
     );
+    this.validateDecisionInput(input, appraisalOutcomeType);
 
     const payload = {
       annualAssignmentId: annualAssignment._id,
+      cycleId: annualAssignment.cycleId,
+      employeeId: annualAssignment.employeeId,
       isGradeApplied: input.isGradeApplied,
       isMeritApplied: input.isMeritApplied,
       appraisalOutcomeType,
       gradeDetails: input.gradeDetails,
       meritDetails: input.meritDetails,
       nilReason: appraisalOutcomeType === AppraisalOutcomeType.NIL ? input.nilReason : undefined,
+      managementRemarks: input.managementRemarks,
+      finalScore: input.finalScore,
+      finalRating: input.finalRating,
       decisionStatus: AnnualDecisionStatus.DRAFT,
+      decidedBy: this.actorIdObject(),
       updatedBy: this.actorIdObject(),
       createdBy: existingDecision ? existingDecision.createdBy : this.actorIdObject(),
     };
 
     const decision = existingDecision
-      ? await AnnualDecision.findByIdAndUpdate(existingDecision._id, payload, {
+      ? await AnnualDecision.findByIdAndUpdate(existingDecision._id, {
+        $set: payload,
+        $inc: { version: 1 },
+      }, {
         new: true,
         runValidators: true,
       })
@@ -123,6 +146,7 @@ export class AnnualDecisionService extends BaseService {
 
     annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.DRAFT;
+    annualAssignment.version += 1;
     await annualAssignment.save();
 
     await this.audit(
@@ -130,6 +154,45 @@ export class AnnualDecisionService extends BaseService {
       'ANNUAL_DECISION',
       decision._id.toString(),
       existingDecision?.toObject(),
+      decision.toObject(),
+    );
+
+    return decision;
+  }
+
+  async submitDecision(annualAssignmentId: string): Promise<IAnnualDecision> {
+    this.assertAdmin('annualDecision.submit');
+    const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    const decision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+    });
+
+    if (!decision) {
+      throw new Error('Annual decision draft must exist before submit');
+    }
+
+    if (decision.decisionStatus !== AnnualDecisionStatus.DRAFT) {
+      throw new Error('Only draft annual decisions can be submitted');
+    }
+
+    const previousValue = decision.toObject();
+    decision.decisionStatus = AnnualDecisionStatus.SUBMITTED;
+    decision.submittedBy = this.actorIdObject();
+    decision.submittedAt = new Date();
+    decision.updatedBy = this.actorIdObject();
+    decision.version += 1;
+    await decision.save();
+
+    annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED;
+    annualAssignment.finalDecisionStatus = AnnualDecisionStatus.SUBMITTED;
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+
+    await this.audit(
+      'PMS_ANNUAL_DECISION_SUBMITTED',
+      'ANNUAL_DECISION',
+      decision._id.toString(),
+      previousValue,
       decision.toObject(),
     );
 
@@ -153,11 +216,16 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Annual decision is already frozen');
     }
 
+    if (decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
+      throw new Error('Annual decision must be submitted before freeze');
+    }
+
     const previousValue = decision.toObject();
     decision.decisionStatus = AnnualDecisionStatus.FROZEN;
     decision.frozenAt = new Date();
     decision.frozenBy = this.actorIdObject();
     decision.updatedBy = this.actorIdObject();
+    decision.version += 1;
     await decision.save();
 
     annualAssignment.annualState = AnnualWorkflowState.ANNUAL_FINALIZED;
@@ -165,6 +233,7 @@ export class AnnualDecisionService extends BaseService {
     annualAssignment.isGradeApplied = decision.isGradeApplied;
     annualAssignment.isMeritApplied = decision.isMeritApplied;
     annualAssignment.appraisalOutcomeType = decision.appraisalOutcomeType;
+    annualAssignment.version += 1;
     await annualAssignment.save();
 
     await this.audit(
@@ -184,26 +253,86 @@ export class AnnualDecisionService extends BaseService {
   ): Promise<IAnnualAssignment> {
     this.assertAdmin('annualDecision.visibility');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
-    const previousValue = annualAssignment.toObject();
+    const decision = await AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id });
+    if (!decision || decision.decisionStatus !== AnnualDecisionStatus.FROZEN) {
+      throw new Error('Visibility can be updated only after annual decision is frozen');
+    }
 
+    const previousAssignmentValue = annualAssignment.toObject();
+    const visibilityConfig = await this.ensureVisibilityConfiguration(annualAssignment);
+    const previousVisibilityValue = visibilityConfig.toObject();
+
+    visibilityConfig.employeeReviewVisible =
+      input.employeeReviewVisible ?? visibilityConfig.employeeReviewVisible;
+    visibilityConfig.employeeGradeVisible =
+      input.employeeGradeVisible ?? visibilityConfig.employeeGradeVisible;
+    visibilityConfig.employeeMeritVisible =
+      input.employeeMeritVisible ?? visibilityConfig.employeeMeritVisible;
+    visibilityConfig.managerGradeVisible =
+      input.managerGradeVisible ?? visibilityConfig.managerGradeVisible;
+    visibilityConfig.managerMeritVisible =
+      input.managerMeritVisible ?? visibilityConfig.managerMeritVisible;
+    visibilityConfig.visibleFrom = input.visibleFrom ? new Date(input.visibleFrom) : visibilityConfig.visibleFrom;
+    visibilityConfig.reason = input.reason ?? visibilityConfig.reason;
+    visibilityConfig.updatedBy = this.actorIdObject();
+    visibilityConfig.version += 1;
+
+    const anyVisible = [
+      visibilityConfig.employeeReviewVisible,
+      visibilityConfig.employeeGradeVisible,
+      visibilityConfig.employeeMeritVisible,
+      visibilityConfig.managerGradeVisible,
+      visibilityConfig.managerMeritVisible,
+    ].some(Boolean);
+
+    if (anyVisible) {
+      visibilityConfig.enabledBy = this.actorIdObject();
+      visibilityConfig.enabledAt = new Date();
+      visibilityConfig.disabledBy = undefined;
+      visibilityConfig.disabledAt = undefined;
+    } else {
+      visibilityConfig.disabledBy = this.actorIdObject();
+      visibilityConfig.disabledAt = new Date();
+    }
+
+    await visibilityConfig.save();
+
+    annualAssignment.visibility.employeeReviewVisible =
+      visibilityConfig.employeeReviewVisible;
     annualAssignment.visibility.employeeGradeVisible =
-      input.employeeGradeVisible ?? annualAssignment.visibility.employeeGradeVisible;
+      visibilityConfig.employeeGradeVisible;
     annualAssignment.visibility.employeeMeritVisible =
-      input.employeeMeritVisible ?? annualAssignment.visibility.employeeMeritVisible;
+      visibilityConfig.employeeMeritVisible;
     annualAssignment.visibility.managerGradeVisible =
-      input.managerGradeVisible ?? annualAssignment.visibility.managerGradeVisible;
+      visibilityConfig.managerGradeVisible;
     annualAssignment.visibility.managerMeritVisible =
-      input.managerMeritVisible ?? annualAssignment.visibility.managerMeritVisible;
+      visibilityConfig.managerMeritVisible;
     annualAssignment.annualState = AnnualWorkflowState.VISIBILITY_ENABLED;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.VISIBILITY_ENABLED;
+    annualAssignment.version += 1;
     await annualAssignment.save();
+
+    decision.decisionStatus = AnnualDecisionStatus.VISIBILITY_ENABLED;
+    decision.updatedBy = this.actorIdObject();
+    decision.version += 1;
+    await decision.save();
 
     await this.audit(
       'PMS_ANNUAL_VISIBILITY_UPDATED',
+      'VISIBILITY_CONFIGURATION',
+      visibilityConfig._id.toString(),
+      previousVisibilityValue,
+      visibilityConfig.toObject(),
+      input.reason,
+    );
+
+    await this.audit(
+      'PMS_ANNUAL_ASSIGNMENT_VISIBILITY_CACHE_UPDATED',
       'ANNUAL_ASSIGNMENT',
       annualAssignment._id.toString(),
-      previousValue,
+      previousAssignmentValue,
       annualAssignment.toObject(),
+      input.reason,
     );
 
     return annualAssignment;
@@ -217,6 +346,37 @@ export class AnnualDecisionService extends BaseService {
     if (isGradeApplied && !isMeritApplied) return AppraisalOutcomeType.GRADE_ONLY;
     if (!isGradeApplied && isMeritApplied) return AppraisalOutcomeType.MERIT_ONLY;
     return AppraisalOutcomeType.NIL;
+  }
+
+  private validateDecisionInput(
+    input: SaveDecisionDraftInput,
+    outcomeType: AppraisalOutcomeTypeType,
+  ): void {
+    if (typeof input.isGradeApplied !== 'boolean') {
+      throw new Error('isGradeApplied is required');
+    }
+
+    if (typeof input.isMeritApplied !== 'boolean') {
+      throw new Error('isMeritApplied is required');
+    }
+
+    if (
+      (outcomeType === AppraisalOutcomeType.BOTH || outcomeType === AppraisalOutcomeType.GRADE_ONLY) &&
+      !input.gradeDetails
+    ) {
+      throw new Error('gradeDetails is required when grade is applied');
+    }
+
+    if (
+      (outcomeType === AppraisalOutcomeType.BOTH || outcomeType === AppraisalOutcomeType.MERIT_ONLY) &&
+      !input.meritDetails
+    ) {
+      throw new Error('meritDetails is required when merit is applied');
+    }
+
+    if (outcomeType === AppraisalOutcomeType.NIL && !input.nilReason?.trim()) {
+      throw new Error('nilReason is required when grade and merit are not applied');
+    }
   }
 
   private async assertAllQuartersComplete(annualAssignmentId: Types.ObjectId): Promise<void> {
@@ -246,18 +406,47 @@ export class AnnualDecisionService extends BaseService {
 
   private maskDecision(
     decision: IAnnualDecision,
-    annualAssignment: IAnnualAssignment,
+    visibility: {
+      employeeGradeVisible: boolean;
+      employeeMeritVisible: boolean;
+      managerGradeVisible: boolean;
+      managerMeritVisible: boolean;
+    },
   ): Record<string, unknown> {
     return visibilityMaskService.maskGradeMeritFields(
       decision.toObject() as Record<string, unknown>,
       {
         actorRole: this.requireActor().actorRole,
-        employeeGradeVisible: annualAssignment.visibility.employeeGradeVisible,
-        employeeMeritVisible: annualAssignment.visibility.employeeMeritVisible,
-        managerGradeVisible: annualAssignment.visibility.managerGradeVisible,
-        managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
+        employeeGradeVisible: visibility.employeeGradeVisible,
+        employeeMeritVisible: visibility.employeeMeritVisible,
+        managerGradeVisible: visibility.managerGradeVisible,
+        managerMeritVisible: visibility.managerMeritVisible,
       },
     );
+  }
+
+  private async ensureVisibilityConfiguration(
+    annualAssignment: IAnnualAssignment,
+  ) {
+    const existing = await VisibilityConfiguration.findOne({
+      annualAssignmentId: annualAssignment._id,
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    return VisibilityConfiguration.create({
+      annualAssignmentId: annualAssignment._id,
+      cycleId: annualAssignment.cycleId,
+      employeeId: annualAssignment.employeeId,
+      employeeReviewVisible: annualAssignment.visibility.employeeReviewVisible,
+      employeeGradeVisible: annualAssignment.visibility.employeeGradeVisible,
+      employeeMeritVisible: annualAssignment.visibility.employeeMeritVisible,
+      managerGradeVisible: annualAssignment.visibility.managerGradeVisible,
+      managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
+      createdBy: this.actorIdObject(),
+    });
   }
 
   private assertAssignmentAccess(action: string, annualAssignment: IAnnualAssignment): void {
