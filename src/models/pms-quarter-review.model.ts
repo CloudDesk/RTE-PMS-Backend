@@ -26,6 +26,9 @@ export interface IQuarterReview extends Document {
   ratings: IQuarterReviewRating[];
   comments?: string;
   score?: number;
+  overallScore?: number;
+  overallRating?: string;
+  finalQuarterRemarks?: string;
   recommendation?: string;
   attachments: IPmsAttachment[];
   submittedAt?: Date;
@@ -100,6 +103,9 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     },
     comments: String,
     score: { type: Number, min: 0 },
+    overallScore: { type: Number, min: 0 },
+    overallRating: String,
+    finalQuarterRemarks: String,
     recommendation: String,
     attachments: {
       type: [attachmentSchema],
@@ -113,7 +119,7 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'quarterReviews',
+    collection: 'quarter_reviews',
     timestamps: true,
   },
 );

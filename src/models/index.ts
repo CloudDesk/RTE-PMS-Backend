@@ -32,6 +32,7 @@ export * from './pms-objective-attachment.model';
 export * from './pms-objective-comment.model';
 export * from './pms-objective-evidence.model';
 export * from './pms-quarter-review.model';
+export * from './pms-quarter-review-value.model';
 export * from './pms-annual-cycle.model';
 export * from './pms-quarter-cycle.model';
 export * from './pms-annual-assignment.model';

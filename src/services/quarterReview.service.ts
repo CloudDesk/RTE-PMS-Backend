@@ -4,6 +4,7 @@ import { RequestContext } from '../types/context';
 import { QuarterReviewStatus, QuarterWorkflowState } from '../constants/pms.enums';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
+import { QuarterReviewValue } from '../models/pms-quarter-review-value.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
@@ -24,12 +25,28 @@ interface QuarterReviewAttachmentInput {
   uploadedAt?: Date | string;
 }
 
+interface QuarterReviewValueInput {
+  templateFieldId?: string;
+  fieldKey: string;
+  sectionKey: string;
+  roleCode?: string;
+  actorUserId?: string;
+  workflowStage?: string;
+  valueJson?: unknown;
+  valueText?: string;
+  valueNumber?: number;
+  valueDate?: Date | string;
+  valueStatus?: string;
+}
+
 export interface SubmitQuarterReviewInput {
   ratings: QuarterReviewRatingInput[];
   comments: string;
   score: number;
+  overallRating?: string;
   recommendation?: string;
   attachments?: QuarterReviewAttachmentInput[];
+  reviewValues?: QuarterReviewValueInput[];
 }
 
 export interface SubmitQuarterReviewResult {
@@ -76,6 +93,9 @@ export class QuarterReviewService extends BaseService {
       ratings: this.normalizeRatings(input.ratings),
       comments: input.comments,
       score: input.score,
+      overallScore: input.score,
+      overallRating: input.overallRating,
+      finalQuarterRemarks: input.comments,
       recommendation: input.recommendation,
       attachments: this.normalizeAttachments(input.attachments ?? []),
       submittedAt: new Date(),
@@ -91,6 +111,8 @@ export class QuarterReviewService extends BaseService {
     if (!quarterReview) {
       throw new Error('Unable to submit quarter review');
     }
+
+    await this.persistQuarterReviewValues(quarterReview, quarterAssignment, input);
 
     const updatedQuarterAssignment = await transitionQuarterAssignmentState(
       quarterAssignment._id.toString(),
@@ -183,6 +205,112 @@ export class QuarterReviewService extends BaseService {
         ? new Types.ObjectId(attachment.uploadedBy)
         : undefined,
       uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
+    }));
+  }
+
+  private async persistQuarterReviewValues(
+    quarterReview: IQuarterReview,
+    quarterAssignment: IQuarterAssignment,
+    input: SubmitQuarterReviewInput,
+  ): Promise<void> {
+    const actor = this.requireActor();
+    const actorUserId = new Types.ObjectId(actor.actorId);
+    const submittedAt = quarterReview.submittedAt ?? new Date();
+    const baseValue = {
+      quarterReviewId: quarterReview._id,
+      quarterAssignmentId: quarterAssignment._id,
+      annualAssignmentId: quarterAssignment.annualAssignmentId,
+      cycleId: quarterAssignment.cycleId,
+      employeeId: quarterAssignment.employeeId,
+      roleCode: 'MANAGER',
+      actorUserId,
+      workflowStage: 'MANAGER_REVIEW',
+      valueStatus: 'ACTIVE',
+      submittedAt,
+      createdBy: actorUserId,
+      updatedBy: actorUserId,
+    };
+
+    const valuesToCreate = [
+      {
+        ...baseValue,
+        fieldKey: 'manager_comments',
+        sectionKey: 'manager_quarter_review',
+        valueText: input.comments,
+      },
+      {
+        ...baseValue,
+        fieldKey: 'manager_score',
+        sectionKey: 'manager_quarter_review',
+        valueNumber: input.score,
+      },
+      ...(input.overallRating
+        ? [{
+          ...baseValue,
+          fieldKey: 'manager_rating',
+          sectionKey: 'manager_quarter_review',
+          valueText: input.overallRating,
+        }]
+        : []),
+      ...(input.recommendation
+        ? [{
+          ...baseValue,
+          fieldKey: 'manager_recommendation',
+          sectionKey: 'manager_quarter_review',
+          valueText: input.recommendation,
+        }]
+        : []),
+      ...this.normalizeRatingValues(input.ratings, baseValue),
+      ...this.normalizeExplicitReviewValues(input.reviewValues ?? [], actorUserId, submittedAt, baseValue),
+    ];
+
+    await QuarterReviewValue.deleteMany({ quarterReviewId: quarterReview._id });
+    if (valuesToCreate.length > 0) {
+      await QuarterReviewValue.insertMany(valuesToCreate);
+    }
+  }
+
+  private normalizeRatingValues(
+    ratings: QuarterReviewRatingInput[],
+    baseValue: Record<string, unknown>,
+  ) {
+    return ratings.map((rating, index) => ({
+      ...baseValue,
+      fieldKey: 'objective_rating',
+      sectionKey: 'manager_quarter_review',
+      valueNumber: rating.rating,
+      valueText: rating.comments,
+      valueJson: {
+        objectiveId: rating.objectiveId,
+        rating: rating.rating,
+        comments: rating.comments,
+        displayOrder: index + 1,
+      },
+    }));
+  }
+
+  private normalizeExplicitReviewValues(
+    reviewValues: QuarterReviewValueInput[],
+    defaultActorUserId: Types.ObjectId,
+    submittedAt: Date,
+    baseValue: Record<string, unknown>,
+  ) {
+    return reviewValues.map((reviewValue) => ({
+      ...baseValue,
+      templateFieldId: reviewValue.templateFieldId,
+      fieldKey: reviewValue.fieldKey,
+      sectionKey: reviewValue.sectionKey,
+      roleCode: reviewValue.roleCode ?? 'MANAGER',
+      actorUserId: reviewValue.actorUserId && Types.ObjectId.isValid(reviewValue.actorUserId)
+        ? new Types.ObjectId(reviewValue.actorUserId)
+        : defaultActorUserId,
+      workflowStage: reviewValue.workflowStage ?? 'MANAGER_REVIEW',
+      valueJson: reviewValue.valueJson,
+      valueText: reviewValue.valueText,
+      valueNumber: reviewValue.valueNumber,
+      valueDate: reviewValue.valueDate ? new Date(reviewValue.valueDate) : undefined,
+      valueStatus: reviewValue.valueStatus ?? 'ACTIVE',
+      submittedAt,
     }));
   }
 
