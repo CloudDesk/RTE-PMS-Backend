@@ -63,6 +63,20 @@ export const pmsTemplateRoutes: RouteHandler = async (
     },
   );
 
+  fastify.delete(
+    '/:id',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        await request.container!.pmsTemplateService.deleteTemplate(id);
+        return reply.send(successResponse('PMS template deleted successfully', { id }));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/:id/clone',
     { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
@@ -94,6 +108,20 @@ export const pmsTemplateRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/:id/versions',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const versions = await request.container!.pmsTemplateService.listTemplateVersions(id);
+        return reply.send(successResponse('PMS template versions fetched successfully', versions));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/versions/:versionId/activate',
     { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
@@ -116,6 +144,20 @@ export const pmsTemplateRoutes: RouteHandler = async (
         const { versionId } = request.params as { versionId: string };
         const version = await request.container!.pmsTemplateService.deactivateTemplateVersion(versionId);
         return reply.send(successResponse('PMS template version deactivated successfully', version));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.delete(
+    '/versions/:versionId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const { versionId } = request.params as { versionId: string };
+        await request.container!.pmsTemplateService.deleteTemplateVersion(versionId);
+        return reply.send(successResponse('PMS template version deleted successfully', { versionId }));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -235,6 +277,49 @@ export const pmsTemplateRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/letter-templates',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const templates = await request.container!.pmsTemplateService.listLetterTemplates(
+          request.query as Record<string, unknown>,
+        );
+        return reply.send(successResponse('PMS letter templates fetched successfully', templates));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/letter-templates/:id',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const template = await request.container!.pmsTemplateService.getLetterTemplate(id);
+        return reply.send(successResponse('PMS letter template fetched successfully', template));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/letter-templates/:id/versions',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const versions = await request.container!.pmsTemplateService.listLetterTemplateVersions(id);
+        return reply.send(successResponse('PMS letter template versions fetched successfully', versions));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/letter-templates/:id/preview',
     { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
@@ -244,6 +329,20 @@ export const pmsTemplateRoutes: RouteHandler = async (
         const { data } = request.body as { data?: Record<string, unknown> };
         const preview = await request.container!.pmsTemplateService.previewLetterTemplate(id, data ?? {});
         return reply.send(successResponse('PMS letter template preview generated successfully', preview));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/letter-templates/:versionId/activate',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const { versionId } = request.params as { versionId: string };
+        const letterTemplate = await request.container!.pmsTemplateService.activateLetterTemplate(versionId);
+        return reply.send(successResponse('PMS letter template activated successfully', letterTemplate));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

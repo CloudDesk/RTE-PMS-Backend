@@ -13,6 +13,8 @@ import {
   PmsLetterTemplate,
   PmsLetterTemplateVersion,
 } from '../models/pms-letter-template.model';
+import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
   IPmsTemplateVersion,
@@ -38,6 +40,13 @@ export interface CreateTemplateInput {
 }
 
 export interface TemplateListQuery {
+  status?: string;
+  search?: string;
+  page?: string | number;
+  limit?: string | number;
+}
+
+export interface LetterTemplateListQuery {
   status?: string;
   search?: string;
   page?: string | number;
@@ -163,6 +172,47 @@ export class PmsTemplateService extends BaseService {
     return template;
   }
 
+  async deleteTemplate(id: string): Promise<void> {
+    this.assertAdmin('template.delete');
+    const template = await PmsTemplate.findOne({ _id: id, isDeleted: false });
+    if (!template) {
+      throw new Error('Template not found');
+    }
+
+    const versionIds = (
+      await PmsTemplateVersion.find({
+        templateId: template._id,
+        isDeleted: false,
+      })
+        .select('_id')
+        .lean()
+    ).map((item) => item._id);
+
+    if (versionIds.length > 0) {
+      const [activeCycleUsage, assignmentUsage] = await Promise.all([
+        AnnualCycle.exists({
+          templateVersionId: { $in: versionIds },
+          isDeleted: false,
+        }),
+        AnnualAssignment.exists({
+          templateVersionId: { $in: versionIds },
+          isDeleted: false,
+        }),
+      ]);
+
+      if (activeCycleUsage || assignmentUsage) {
+        throw new Error('Template is assigned to active cycles or assignments and cannot be deleted');
+      }
+    }
+
+    template.isDeleted = true;
+    template.updatedBy = this.actorIdObject();
+    await template.save();
+    await this.audit('PMS_TEMPLATE_DELETED', 'PMS_TEMPLATE', template._id.toString(), undefined, {
+      isDeleted: true,
+    });
+  }
+
   async cloneTemplate(id: string): Promise<IPmsTemplate> {
     this.assertAdmin('template.clone');
 
@@ -210,6 +260,14 @@ export class PmsTemplateService extends BaseService {
     const versionNo = input.versionNo ?? input.versionNumber;
     if (!versionNo) {
       throw new Error('Template version number is required');
+    }
+    const existingVersion = await PmsTemplateVersion.findOne({
+      templateId: new Types.ObjectId(templateId),
+      versionNo,
+      isDeleted: false,
+    }).lean();
+    if (existingVersion) {
+      throw new Error(`Version ${versionNo} already exists for this template`);
     }
 
     const sections = this.normalizeSections(input.sections ?? []);
@@ -289,6 +347,52 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Template not found');
     }
     return template;
+  }
+
+  async listTemplateVersions(templateId: string): Promise<IPmsTemplateVersion[]> {
+    this.assertAdmin('templateVersion.list');
+    await this.ensureTemplateExists(templateId);
+    return PmsTemplateVersion.find({
+      templateId: new Types.ObjectId(templateId),
+      isDeleted: false,
+    }).sort({ versionNo: -1, createdAt: -1 });
+  }
+
+  async deleteTemplateVersion(versionId: string): Promise<void> {
+    this.assertAdmin('templateVersion.delete');
+    const version = await PmsTemplateVersion.findOne({ _id: versionId, isDeleted: false });
+    if (!version) {
+      throw new Error('Template version not found');
+    }
+    if (version.status === PmsTemplateStatus.ACTIVE || version.isLocked) {
+      throw new Error('Active or locked template version cannot be deleted');
+    }
+
+    const [cycleUsage, assignmentUsage] = await Promise.all([
+      AnnualCycle.exists({
+        templateVersionId: version._id,
+        isDeleted: false,
+      }),
+      AnnualAssignment.exists({
+        templateVersionId: version._id,
+        isDeleted: false,
+      }),
+    ]);
+
+    if (cycleUsage || assignmentUsage) {
+      throw new Error('Template version is assigned and cannot be deleted');
+    }
+
+    version.isDeleted = true;
+    version.updatedBy = this.actorIdObject();
+    await version.save();
+    await this.audit(
+      'PMS_TEMPLATE_VERSION_DELETED',
+      'PMS_TEMPLATE_VERSION',
+      version._id.toString(),
+      undefined,
+      { isDeleted: true },
+    );
   }
 
   async getTemplateVersion(versionId: string): Promise<IPmsTemplateVersion> {
@@ -503,6 +607,62 @@ export class PmsTemplateService extends BaseService {
     return letterTemplate;
   }
 
+  async listLetterTemplates(query: LetterTemplateListQuery = {}): Promise<{
+    items: IPmsLetterTemplate[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    this.assertAdmin('letterTemplate.list');
+    const page = this.normalizePositiveInteger(query.page, 1);
+    const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
+    const filter: Record<string, unknown> = { isDeleted: false };
+
+    if (query.status?.trim()) {
+      filter.status = query.status.trim();
+    }
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { code: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [items, total] = await Promise.all([
+      PmsLetterTemplate.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      PmsLetterTemplate.countDocuments(filter),
+    ]);
+    return { items, total, page, limit };
+  }
+
+  async getLetterTemplate(letterTemplateId: string): Promise<IPmsLetterTemplate> {
+    this.assertAdmin('letterTemplate.get');
+    const template = await PmsLetterTemplate.findOne({
+      _id: letterTemplateId,
+      isDeleted: false,
+    });
+    if (!template) {
+      throw new Error('Letter template not found');
+    }
+    return template;
+  }
+
+  async listLetterTemplateVersions(letterTemplateId: string): Promise<IPmsLetterTemplateVersion[]> {
+    this.assertAdmin('letterTemplateVersion.list');
+    const exists = await PmsLetterTemplate.exists({ _id: letterTemplateId, isDeleted: false });
+    if (!exists) {
+      throw new Error('Letter template not found');
+    }
+    return PmsLetterTemplateVersion.find({
+      letterTemplateId: new Types.ObjectId(letterTemplateId),
+      isDeleted: false,
+    }).sort({ versionNo: -1, createdAt: -1 });
+  }
+
   private async ensureTemplateExists(templateId: string): Promise<void> {
     const exists = await PmsTemplate.exists({ _id: templateId });
     if (!exists) {
@@ -567,6 +727,7 @@ export class PmsTemplateService extends BaseService {
         repeatFor: section.repeatFor ?? legacyApplicableQuarters ?? [],
         repeatable: section.repeatable ?? false,
         displayOrder: section.displayOrder ?? legacyOrder ?? index + 1,
+        layout: section.layout === 'grid' ? 'grid' : 'vertical',
         visibilityRules: section.visibilityRules ?? rulePatch.visibilityRules ?? {},
         editabilityRules: section.editabilityRules ?? rulePatch.editabilityRules ?? {},
         metadata: section.metadata ?? {},
@@ -619,6 +780,9 @@ export class PmsTemplateService extends BaseService {
       optionConfig: field.optionConfig ?? {},
       scoringConfig,
       defaultValue: field.defaultValue,
+      colSpan: [1, 2, 3, 4].includes(Number(field.colSpan))
+        ? (Number(field.colSpan) as 1 | 2 | 3 | 4)
+        : 4,
       options: field.options ?? [],
       matrixConfig: field.matrixConfig as ITemplateField['matrixConfig'],
       gridConfig: field.gridConfig as ITemplateField['gridConfig'],
@@ -713,6 +877,10 @@ export class PmsTemplateService extends BaseService {
         }
       }
 
+      if (section.layout && !['vertical', 'grid'].includes(section.layout)) {
+        throw new Error(`Invalid section layout in section ${section.sectionKey}`);
+      }
+
       const fieldKeys = new Set<string>();
       for (const field of section.fields ?? []) {
         if (!field.fieldKey?.trim()) {
@@ -732,6 +900,45 @@ export class PmsTemplateService extends BaseService {
           throw new Error(
             `Invalid field type ${field.fieldType} in section ${section.sectionKey}`,
           );
+        }
+
+        if (field.colSpan !== undefined && ![1, 2, 3, 4].includes(field.colSpan)) {
+          throw new Error(`Invalid colSpan for field ${field.fieldKey} in section ${section.sectionKey}`);
+        }
+
+        if (field.fieldType === PmsTemplateFieldType.STATIC_TEXT && !field.helpText?.trim()) {
+          throw new Error(
+            `Field ${field.fieldKey} in section ${section.sectionKey} requires helpText for STATIC_TEXT`,
+          );
+        }
+
+        if (field.fieldType === PmsTemplateFieldType.SIGNATURE) {
+          const signatureFields =
+            (field.optionConfig?.signatureFields as string[] | undefined) ?? [];
+          if (!Array.isArray(signatureFields) || signatureFields.length === 0) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires optionConfig.signatureFields`,
+            );
+          }
+        }
+
+        if (field.fieldType === PmsTemplateFieldType.FORMULA) {
+          const formula = field.scoringConfig?.formula;
+          if (typeof formula !== 'string' || !formula.trim()) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires scoringConfig.formula`,
+            );
+          }
+        }
+
+        if (field.fieldType === PmsTemplateFieldType.RATING_SCALE) {
+          const min = Number(field.optionConfig?.min);
+          const max = Number(field.optionConfig?.max);
+          if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires valid optionConfig min/max`,
+            );
+          }
         }
 
         if (field.fieldType === PmsTemplateFieldType.MATRIX) {
@@ -762,6 +969,19 @@ export class PmsTemplateService extends BaseService {
             matrixConfig.columns.map((column) => column.key),
             `Duplicate matrix column key in ${field.fieldKey}`,
           );
+
+          for (const row of matrixConfig.rows) {
+            if (!row.label?.trim()) {
+              throw new Error(`Matrix row label is required in ${field.fieldKey}`);
+            }
+            if (row.options && row.options.length > 0) {
+              const optionValues = row.options.map((option) => option.value);
+              this.assertUniqueKeys(
+                optionValues,
+                `Duplicate matrix row option value in ${field.fieldKey}:${row.key}`,
+              );
+            }
+          }
         }
 
         if (field.fieldType === PmsTemplateFieldType.DATA_GRID) {

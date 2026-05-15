@@ -31,9 +31,10 @@ export interface ITemplateField {
   optionConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   defaultValue?: unknown;
+  colSpan?: 1 | 2 | 3 | 4;
   options?: ITemplateOption[];
   matrixConfig?: {
-    rows: Array<{ key: string; label: string }>;
+    rows: Array<{ key: string; label: string; options?: ITemplateOption[] }>;
     columns: Array<{ key: string; label: string }>;
     allowComments?: boolean;
   };
@@ -47,6 +48,7 @@ export interface ITemplateField {
 interface IMatrixItem {
   key: string;
   label: string;
+  options?: ITemplateOption[];
 }
 
 interface IGridColumn {
@@ -60,6 +62,16 @@ const matrixItemSchema = new Schema<IMatrixItem>(
   {
     key: { type: String, required: true, trim: true },
     label: { type: String, required: true, trim: true },
+    options: {
+      type: [
+        {
+          label: { type: String, required: true },
+          value: { type: String, required: true },
+          _id: false,
+        },
+      ],
+      default: undefined,
+    },
   },
   { _id: false },
 );
@@ -82,6 +94,7 @@ export interface ITemplateSection {
   repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
   repeatable?: boolean;
   displayOrder?: number;
+  layout?: 'vertical' | 'grid';
   visibilityRules?: Record<string, unknown>;
   editabilityRules?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -128,6 +141,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
     optionConfig: Schema.Types.Mixed,
     scoringConfig: Schema.Types.Mixed,
     defaultValue: Schema.Types.Mixed,
+    colSpan: { type: Number, enum: [1, 2, 3, 4], default: 4 },
     options: {
       type: [
         {
@@ -201,6 +215,7 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     },
     repeatable: { type: Boolean, default: false },
     displayOrder: { type: Number, default: 0 },
+    layout: { type: String, enum: ['vertical', 'grid'], default: 'vertical' },
     visibilityRules: Schema.Types.Mixed,
     editabilityRules: Schema.Types.Mixed,
     metadata: Schema.Types.Mixed,
