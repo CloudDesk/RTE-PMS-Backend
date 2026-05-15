@@ -1,7 +1,12 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { AnnualWorkflowState, PmsTemplateStatus, QuarterWorkflowState } from '../constants/pms.enums';
+import {
+  AnnualWorkflowState,
+  PmsTemplateStatus,
+  QuarterWorkflowState,
+  WorkflowEntityType,
+} from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
@@ -9,8 +14,10 @@ import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { workflowService } from './workflow.service';
 import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IQuarterCycle } from '../models/pms-quarter-cycle.model';
+import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constants/pms.enums';
 
 type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
@@ -98,6 +105,10 @@ export interface CycleListResult {
   total: number;
   page: number;
   limit: number;
+}
+
+export interface CancelCycleInput {
+  reason: string;
 }
 
 export class CycleService extends BaseService {
@@ -287,30 +298,36 @@ export class CycleService extends BaseService {
   async launchCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.launch');
     const cycle = await this.getCycleForAction(cycleId);
-    if (cycle.status !== AnnualWorkflowState.SCHEDULED) {
-      throw new Error('Only SCHEDULED cycles can be launched');
-    }
     await this.assertLaunchReady(cycle);
+    const transition = this.transitionAnnualCycle(
+      cycle,
+      AnnualWorkflowState.ACTIVE,
+    );
 
-    const previousStatus = cycle.status;
-    cycle.status = AnnualWorkflowState.ACTIVE;
+    cycle.status = transition.currentState as AnnualWorkflowStateType;
     cycle.launchedAt = new Date();
     cycle.updatedBy = this.actorIdObject();
     await cycle.save();
 
-    await this.audit('PMS_CYCLE_LAUNCHED', 'ANNUAL_CYCLE', cycle._id.toString(), { status: previousStatus }, { status: cycle.status });
+    await this.audit(
+      'PMS_CYCLE_LAUNCHED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      { status: transition.previousState },
+      { status: cycle.status },
+    );
     return cycle;
   }
 
   async scheduleCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.schedule');
     const cycle = await this.getCycleForAction(cycleId);
-    if (cycle.status !== AnnualWorkflowState.DRAFT) {
-      throw new Error('Only DRAFT cycles can be scheduled');
-    }
+    const transition = this.transitionAnnualCycle(
+      cycle,
+      AnnualWorkflowState.SCHEDULED,
+    );
 
-    const previousStatus = cycle.status;
-    cycle.status = AnnualWorkflowState.SCHEDULED;
+    cycle.status = transition.currentState as AnnualWorkflowStateType;
     cycle.updatedBy = this.actorIdObject();
     await cycle.save();
 
@@ -318,7 +335,7 @@ export class CycleService extends BaseService {
       'PMS_CYCLE_SCHEDULED',
       'ANNUAL_CYCLE',
       cycle._id.toString(),
-      { status: previousStatus },
+      { status: transition.previousState },
       { status: cycle.status },
     );
     return cycle;
@@ -327,55 +344,73 @@ export class CycleService extends BaseService {
   async closeCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.close');
     const cycle = await this.getCycleForAction(cycleId);
-    if (
-      cycle.status === AnnualWorkflowState.ARCHIVED ||
-      cycle.status === AnnualWorkflowState.CANCELLED
-    ) {
-      throw new Error('Archived or cancelled cycles cannot be closed');
-    }
+    const transition = this.transitionAnnualCycle(
+      cycle,
+      AnnualWorkflowState.CLOSED,
+    );
 
-    const previousStatus = cycle.status;
-    cycle.status = AnnualWorkflowState.CLOSED;
+    cycle.status = transition.currentState as AnnualWorkflowStateType;
     cycle.closedAt = new Date();
     cycle.updatedBy = this.actorIdObject();
     await cycle.save();
 
-    await this.audit('PMS_CYCLE_CLOSED', 'ANNUAL_CYCLE', cycle._id.toString(), { status: previousStatus }, { status: cycle.status });
+    await this.audit(
+      'PMS_CYCLE_CLOSED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      { status: transition.previousState },
+      { status: cycle.status },
+    );
     return cycle;
   }
 
   async archiveCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.archive');
     const cycle = await this.getCycleForAction(cycleId);
-    if (cycle.status !== AnnualWorkflowState.CLOSED) {
-      throw new Error('Only CLOSED cycles can be archived');
-    }
+    const transition = this.transitionAnnualCycle(
+      cycle,
+      AnnualWorkflowState.ARCHIVED,
+    );
 
-    const previousStatus = cycle.status;
-    cycle.status = AnnualWorkflowState.ARCHIVED;
+    cycle.status = transition.currentState as AnnualWorkflowStateType;
     cycle.updatedBy = this.actorIdObject();
     await cycle.save();
 
-    await this.audit('PMS_CYCLE_ARCHIVED', 'ANNUAL_CYCLE', cycle._id.toString(), { status: previousStatus }, { status: cycle.status });
+    await this.audit(
+      'PMS_CYCLE_ARCHIVED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      { status: transition.previousState },
+      { status: cycle.status },
+    );
     return cycle;
   }
 
-  async cancelCycle(cycleId: string): Promise<IAnnualCycle> {
+  async cancelCycle(cycleId: string, input: CancelCycleInput): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.cancel');
     const cycle = await this.getCycleForAction(cycleId);
-    if (
-      cycle.status === AnnualWorkflowState.CLOSED ||
-      cycle.status === AnnualWorkflowState.ARCHIVED
-    ) {
-      throw new Error('Closed or archived cycles cannot be cancelled');
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Cancel reason is required');
     }
+    const transition = this.transitionAnnualCycle(
+      cycle,
+      AnnualWorkflowState.CANCELLED,
+      reason,
+    );
 
-    const previousStatus = cycle.status;
-    cycle.status = AnnualWorkflowState.CANCELLED;
+    cycle.status = transition.currentState as AnnualWorkflowStateType;
     cycle.updatedBy = this.actorIdObject();
     await cycle.save();
 
-    await this.audit('PMS_CYCLE_CANCELLED', 'ANNUAL_CYCLE', cycle._id.toString(), { status: previousStatus }, { status: cycle.status });
+    await this.audit(
+      'PMS_CYCLE_CANCELLED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      { status: transition.previousState },
+      { status: cycle.status },
+      reason,
+    );
     return cycle;
   }
 
@@ -794,6 +829,23 @@ export class CycleService extends BaseService {
     return cycle;
   }
 
+  private transitionAnnualCycle(
+    cycle: IAnnualCycle,
+    nextState: AnnualWorkflowStateType,
+    reason?: string,
+  ) {
+    const actor = this.requireActor();
+    return workflowService.transition({
+      entityType: WorkflowEntityType.ANNUAL_CYCLE,
+      entityId: cycle._id.toString(),
+      currentState: cycle.status,
+      nextState,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+      reason,
+    });
+  }
+
   private async assertLaunchReady(cycle: IAnnualCycle): Promise<void> {
     const expectedQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
     const quarterCycles = await QuarterCycle.find({
@@ -858,6 +910,18 @@ export class CycleService extends BaseService {
       : undefined;
   }
 
+  private requireActor() {
+    const user = this.context.user;
+    if (!user) {
+      throw new Error('Authentication required');
+    }
+
+    return {
+      actorId: user._id.toString(),
+      actorRole: user.role,
+    };
+  }
+
   private assertAdmin(action: string): void {
     const user = this.context.user;
     if (!user) {
@@ -884,6 +948,7 @@ export class CycleService extends BaseService {
     entityId: string,
     previousValue?: unknown,
     newValue?: unknown,
+    reason?: string,
   ): Promise<void> {
     const user = this.context.user;
     if (!user) return;
@@ -896,6 +961,7 @@ export class CycleService extends BaseService {
       entityId,
       previousValue,
       newValue,
+      reason,
     });
   }
 }

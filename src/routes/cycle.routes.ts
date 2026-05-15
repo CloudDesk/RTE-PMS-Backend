@@ -3,6 +3,7 @@ import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
+  CancelCycleInput,
   CreateCycleInput,
   CycleListQuery,
   UpdateCycleInput,
@@ -134,7 +135,10 @@ export const cycleRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const cycle = await request.container!.cycleService.cancelCycle(id);
+        const cycle = await request.container!.cycleService.cancelCycle(
+          id,
+          request.body as CancelCycleInput,
+        );
         return reply.send(successResponse('PMS cycle cancelled successfully', cycle));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
