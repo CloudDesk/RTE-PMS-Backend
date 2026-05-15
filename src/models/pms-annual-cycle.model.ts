@@ -11,6 +11,14 @@ export interface IAnnualCycle extends Document {
   status: AnnualWorkflowStateType;
   templateVersionId?: Types.ObjectId;
   quarterCycleIds: Types.ObjectId[];
+  appraisalWindowConfig?: Record<string, unknown>;
+  communicationRuleConfig?: Record<string, unknown>;
+  isDeleted: boolean;
+  createdBy?: Types.ObjectId;
+  updatedBy?: Types.ObjectId;
+  version: number;
+  launchedAt?: Date;
+  closedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,12 +60,25 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
       type: [{ type: Schema.Types.ObjectId, ref: 'QuarterCycle' }],
       default: [],
     },
+    appraisalWindowConfig: { type: Schema.Types.Mixed, default: {} },
+    communicationRuleConfig: { type: Schema.Types.Mixed, default: {} },
+    isDeleted: { type: Boolean, default: false, index: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    version: { type: Number, default: 1 },
+    launchedAt: Date,
+    closedAt: Date,
   },
   {
-    collection: 'annualCycles',
+    collection: 'annual_cycles',
     timestamps: true,
   },
 );
+
+annualCycleSchema.index({ code: 1 }, { unique: true, name: 'idx_annual_cycle_code' });
+annualCycleSchema.index({ appraisalYear: 1 });
+annualCycleSchema.index({ status: 1 });
+annualCycleSchema.index({ templateVersionId: 1 });
 
 export const AnnualCycle = mongoose.model<IAnnualCycle>(
   'AnnualCycle',

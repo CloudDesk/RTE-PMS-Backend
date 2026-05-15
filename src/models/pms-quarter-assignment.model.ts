@@ -87,7 +87,7 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'quarterAssignments',
+    collection: 'quarter_assignments',
     timestamps: true,
   },
 );

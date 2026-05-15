@@ -115,7 +115,7 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'annualAssignments',
+    collection: 'annual_assignments',
     timestamps: true,
   },
 );

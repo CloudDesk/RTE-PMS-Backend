@@ -21,6 +21,62 @@ export const cycleRoutes: RouteHandler = async (
       }
     },
   );
+
+  fastify.post(
+    '/:id/launch',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const cycle = await request.container!.cycleService.launchCycle(id);
+        return reply.send(successResponse('PMS cycle launched successfully', cycle));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/close',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const cycle = await request.container!.cycleService.closeCycle(id);
+        return reply.send(successResponse('PMS cycle closed successfully', cycle));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/archive',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const cycle = await request.container!.cycleService.archiveCycle(id);
+        return reply.send(successResponse('PMS cycle archived successfully', cycle));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/cancel',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const cycle = await request.container!.cycleService.cancelCycle(id);
+        return reply.send(successResponse('PMS cycle cancelled successfully', cycle));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {

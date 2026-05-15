@@ -16,6 +16,12 @@ export interface IQuarterCycle extends Document {
   objectiveApprovalWindow?: IDateWindow;
   managerReviewWindow?: IDateWindow;
   status: QuarterWorkflowStateType;
+  slaConfig?: Record<string, unknown>;
+  closureRules?: Record<string, unknown>;
+  isDeleted: boolean;
+  createdBy?: Types.ObjectId;
+  updatedBy?: Types.ObjectId;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,6 +52,8 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
     objectiveSettingWindow: dateWindowSchema,
     objectiveApprovalWindow: dateWindowSchema,
     managerReviewWindow: dateWindowSchema,
+    slaConfig: { type: Schema.Types.Mixed, default: {} },
+    closureRules: { type: Schema.Types.Mixed, default: {} },
     status: {
       type: String,
       required: true,
@@ -53,9 +61,13 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
       default: QuarterWorkflowState.NOT_STARTED,
       index: true,
     },
+    isDeleted: { type: Boolean, default: false, index: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    version: { type: Number, default: 1 },
   },
   {
-    collection: 'quarterCycles',
+    collection: 'quarter_cycles',
     timestamps: true,
   },
 );
@@ -64,6 +76,7 @@ quarterCycleSchema.index(
   { cycleId: 1, quarterCode: 1 },
   { unique: true, name: 'idx_annual_cycle_quarter' },
 );
+quarterCycleSchema.index({ startDate: 1, endDate: 1 });
 
 export const QuarterCycle = mongoose.model<IQuarterCycle>(
   'QuarterCycle',
