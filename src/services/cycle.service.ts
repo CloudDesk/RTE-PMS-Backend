@@ -13,6 +13,11 @@ import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IQuarterCycle } from '../models/pms-quarter-cycle.model';
 
 type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
+type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
+type AppraisalWindowBase =
+  | 'Q4_FINALIZATION'
+  | 'ALL_APPLICABLE_QUARTERS_FINALIZED'
+  | 'ANNUAL_CYCLE_END';
 
 interface DateWindowInput {
   startDate?: Date | string;
@@ -45,6 +50,16 @@ export interface CreateCycleInput {
   quarters?: QuarterCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: Record<string, unknown>;
+}
+
+interface AppraisalWindowConfigInput {
+  type?: AppraisalWindowType;
+  date?: Date | string;
+  startDate?: Date | string;
+  endDate?: Date | string;
+  base?: AppraisalWindowBase;
+  offsetDays?: number;
+  durationDays?: number;
 }
 
 export interface CreateCycleResult {
@@ -149,37 +164,48 @@ export class CycleService extends BaseService {
       throw new Error('Cycle code already exists');
     }
 
-    const annualCycle = await AnnualCycle.create({
-      name: input.name,
-      code,
-      appraisalYear: input.appraisalYear ?? input.year,
-      startDate: new Date(input.startDate),
-      endDate: new Date(input.endDate),
-      status: AnnualWorkflowState.DRAFT,
-      templateVersionId,
-      appraisalWindowConfig: input.appraisalWindowConfig ?? {},
-      communicationRuleConfig: input.communicationRuleConfig ?? {},
-      createdBy: this.actorIdObject(),
-    });
+    let annualCycle: IAnnualCycle | undefined;
 
-    const quarterPayload = this.buildQuarterPayloads(input, annualCycle._id);
-    const quarterCycles = await QuarterCycle.insertMany(quarterPayload);
+    try {
+      annualCycle = await AnnualCycle.create({
+        name: input.name,
+        code,
+        appraisalYear: input.appraisalYear ?? input.year,
+        startDate: new Date(input.startDate),
+        endDate: new Date(input.endDate),
+        status: AnnualWorkflowState.DRAFT,
+        templateVersionId,
+        appraisalWindowConfig: input.appraisalWindowConfig ?? {},
+        communicationRuleConfig: input.communicationRuleConfig ?? {},
+        createdBy: this.actorIdObject(),
+      });
 
-    annualCycle.quarterCycleIds = quarterCycles.map((quarterCycle) => quarterCycle._id);
-    await annualCycle.save();
+      const quarterPayload = this.buildQuarterPayloads(input, annualCycle._id);
+      const quarterCycles = await QuarterCycle.insertMany(quarterPayload);
 
-    await this.audit(
-      'PMS_CYCLE_CREATED',
-      'ANNUAL_CYCLE',
-      annualCycle._id.toString(),
-      undefined,
-      {
-        annualCycle,
-        quarterCycleIds: annualCycle.quarterCycleIds,
-      },
-    );
+      annualCycle.quarterCycleIds = quarterCycles.map((quarterCycle) => quarterCycle._id);
+      await annualCycle.save();
 
-    return { annualCycle, quarterCycles };
+      await this.audit(
+        'PMS_CYCLE_CREATED',
+        'ANNUAL_CYCLE',
+        annualCycle._id.toString(),
+        undefined,
+        {
+          annualCycle,
+          quarterCycleIds: annualCycle.quarterCycleIds,
+        },
+      );
+
+      return { annualCycle, quarterCycles };
+    } catch (error) {
+      if (annualCycle?._id) {
+        await QuarterCycle.deleteMany({ cycleId: annualCycle._id });
+        await AnnualCycle.deleteOne({ _id: annualCycle._id });
+      }
+
+      throw error;
+    }
   }
 
   async updateCycle(cycleId: string, input: UpdateCycleInput): Promise<CycleDetailResult> {
@@ -504,6 +530,74 @@ export class CycleService extends BaseService {
 
     const quarters = input.quarters ?? this.createDefaultQuarterDates(input.startDate, input.endDate);
     this.validateQuarterWindows(quarters, cycleStart, cycleEnd);
+    this.validateAppraisalWindowConfig(input.appraisalWindowConfig);
+  }
+
+  private validateAppraisalWindowConfig(
+    config?: Record<string, unknown>,
+  ): void {
+    if (!config || Object.keys(config).length === 0) {
+      return;
+    }
+
+    const appraisalWindowConfig = config as AppraisalWindowConfigInput;
+    const allowedTypes: AppraisalWindowType[] = ['FIXED_DATE', 'FIXED_RANGE', 'RELATIVE_OFFSET'];
+    if (!appraisalWindowConfig.type || !allowedTypes.includes(appraisalWindowConfig.type)) {
+      throw new Error(
+        `appraisalWindowConfig.type must be one of: ${allowedTypes.join(', ')}`,
+      );
+    }
+
+    if (appraisalWindowConfig.type === 'FIXED_DATE') {
+      if (!appraisalWindowConfig.date) {
+        throw new Error('appraisalWindowConfig.date is required for FIXED_DATE');
+      }
+
+      this.assertValidDate(new Date(appraisalWindowConfig.date), 'Appraisal fixed date');
+      return;
+    }
+
+    if (appraisalWindowConfig.type === 'FIXED_RANGE') {
+      const startDate = appraisalWindowConfig.startDate
+        ? new Date(appraisalWindowConfig.startDate)
+        : undefined;
+      const endDate = appraisalWindowConfig.endDate
+        ? new Date(appraisalWindowConfig.endDate)
+        : undefined;
+
+      if (!startDate || !endDate) {
+        throw new Error(
+          'appraisalWindowConfig.startDate and endDate are required for FIXED_RANGE',
+        );
+      }
+
+      this.assertValidDateRange(startDate, endDate, 'Appraisal fixed range');
+      return;
+    }
+
+    const allowedBases: AppraisalWindowBase[] = [
+      'Q4_FINALIZATION',
+      'ALL_APPLICABLE_QUARTERS_FINALIZED',
+      'ANNUAL_CYCLE_END',
+    ];
+    if (!appraisalWindowConfig.base || !allowedBases.includes(appraisalWindowConfig.base)) {
+      throw new Error(
+        `appraisalWindowConfig.base must be one of: ${allowedBases.join(', ')}`,
+      );
+    }
+
+    const offsetDays = appraisalWindowConfig.offsetDays;
+    if (offsetDays === undefined || !Number.isInteger(offsetDays) || offsetDays < 0) {
+      throw new Error('appraisalWindowConfig.offsetDays must be a non-negative integer');
+    }
+
+    if (
+      appraisalWindowConfig.durationDays !== undefined &&
+      (!Number.isInteger(appraisalWindowConfig.durationDays) ||
+        appraisalWindowConfig.durationDays <= 0)
+    ) {
+      throw new Error('appraisalWindowConfig.durationDays must be a positive integer');
+    }
   }
 
   private validateQuarterWindows(
@@ -643,12 +737,17 @@ export class CycleService extends BaseService {
   }
 
   private assertValidDateRange(startDate: Date, endDate: Date, label: string): void {
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-      throw new Error(`${label} has invalid dates`);
-    }
+    this.assertValidDate(startDate, `${label} startDate`);
+    this.assertValidDate(endDate, `${label} endDate`);
 
     if (startDate > endDate) {
       throw new Error(`${label} startDate must be before or equal to endDate`);
+    }
+  }
+
+  private assertValidDate(date: Date, label: string): void {
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`${label} has invalid date`);
     }
   }
 
