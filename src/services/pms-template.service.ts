@@ -686,8 +686,8 @@ export class PmsTemplateService extends BaseService {
     return version;
   }
 
-  private async getLetterTemplateVersion(letterTemplateId: string): Promise<IPmsLetterTemplateVersion> {
-    const letterTemplate = await PmsLetterTemplateVersion.findById(letterTemplateId);
+  async getLetterTemplateVersion(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
+    const letterTemplate = await PmsLetterTemplateVersion.findById(letterTemplateVersionId);
     if (!letterTemplate) {
       throw new Error('Letter template version not found');
     }
@@ -784,8 +784,32 @@ export class PmsTemplateService extends BaseService {
         ? (Number(field.colSpan) as 1 | 2 | 3 | 4)
         : 4,
       options: field.options ?? [],
-      matrixConfig: field.matrixConfig as ITemplateField['matrixConfig'],
-      gridConfig: field.gridConfig as ITemplateField['gridConfig'],
+      matrixConfig: field.matrixConfig
+        ? {
+          rows: (field.matrixConfig.rows ?? []).map((row: any) => ({
+            key: row.key,
+            label: row.label,
+            options: row.options ?? [],
+          })),
+          columns: (field.matrixConfig.columns ?? []).map((col: any) => ({
+            key: col.key,
+            label: col.label,
+          })),
+          allowComments: !!field.matrixConfig.allowComments,
+        }
+        : undefined,
+      gridConfig: field.gridConfig
+        ? {
+          columns: (field.gridConfig.columns ?? []).map((col: any) => ({
+            key: col.key,
+            label: col.label,
+            type: col.type,
+            required: !!col.required,
+          })),
+          minRows: field.gridConfig.minRows,
+          maxRows: field.gridConfig.maxRows,
+        }
+        : undefined,
     };
   }
 
@@ -900,6 +924,21 @@ export class PmsTemplateService extends BaseService {
           throw new Error(
             `Invalid field type ${field.fieldType} in section ${section.sectionKey}`,
           );
+        }
+
+        if (
+          ([
+            PmsTemplateFieldType.DROPDOWN,
+            PmsTemplateFieldType.RADIO,
+            PmsTemplateFieldType.CHECKBOX_GROUP,
+            PmsTemplateFieldType.MULTISELECT,
+          ] as string[]).includes(field.fieldType as string)
+        ) {
+          if (!Array.isArray(field.options) || field.options.length === 0) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} requires options`,
+            );
+          }
         }
 
         if (field.colSpan !== undefined && ![1, 2, 3, 4].includes(field.colSpan)) {

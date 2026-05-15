@@ -307,13 +307,13 @@ export const pmsTemplateRoutes: RouteHandler = async (
   );
 
   fastify.get(
-    '/letter-templates/:id/versions',
+    '/letter-templates/versions/:versionId',
     { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: string };
-        const versions = await request.container!.pmsTemplateService.listLetterTemplateVersions(id);
-        return reply.send(successResponse('PMS letter template versions fetched successfully', versions));
+        const { versionId } = request.params as { versionId: string };
+        const version = await request.container!.pmsTemplateService.getLetterTemplateVersion(versionId);
+        return reply.send(successResponse('PMS letter template version fetched successfully', version));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -349,14 +349,14 @@ export const pmsTemplateRoutes: RouteHandler = async (
     },
   );
 
-  fastify.post(
-    '/letter-templates/:id/activate',
+  fastify.get(
+    '/letter-templates/:id/versions',
     { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const letterTemplate = await request.container!.pmsTemplateService.activateLetterTemplate(id);
-        return reply.send(successResponse('PMS letter template activated successfully', letterTemplate));
+        const versions = await request.container!.pmsTemplateService.listLetterTemplateVersions(id);
+        return reply.send(successResponse('PMS letter template versions fetched successfully', versions));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
