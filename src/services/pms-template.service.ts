@@ -8,14 +8,20 @@ import {
 } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
-import { PmsLetterTemplate } from '../models/pms-letter-template.model';
+import {
+  PmsLetterTemplate,
+  PmsLetterTemplateVersion,
+} from '../models/pms-letter-template.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
   IPmsTemplateVersion,
   ITemplateField,
   ITemplateSection,
 } from '../models/pms-template-version.model';
-import type { IPmsLetterTemplate } from '../models/pms-letter-template.model';
+import type {
+  IPmsLetterTemplate,
+  IPmsLetterTemplateVersion,
+} from '../models/pms-letter-template.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 
@@ -52,13 +58,21 @@ export interface CreateTemplateVersionInput {
 export interface CreateLetterTemplateInput {
   name: string;
   code: string;
-  type: string;
+  type?: string;
+  outcomeType?: string;
   channel: string;
-  versionNumber: number;
+  versionNo?: number;
+  versionNumber?: number;
   subject?: string;
-  body: string;
+  subjectTemplate?: string;
+  body?: string;
+  bodyTemplate?: string;
   placeholders?: string[];
-  conditionalBlocks?: string[];
+  placeholderRules?: {
+    required?: string[];
+    conditional?: string[];
+  };
+  conditionalBlocks?: Array<string | { blockKey: string; condition: string }>;
 }
 
 export class PmsTemplateService extends BaseService {
@@ -335,49 +349,115 @@ export class PmsTemplateService extends BaseService {
     return this.getTemplateVersion(versionId);
   }
 
-  async createLetterTemplate(input: CreateLetterTemplateInput): Promise<IPmsLetterTemplate> {
+  async createLetterTemplate(input: CreateLetterTemplateInput): Promise<{
+    letterTemplate: IPmsLetterTemplate;
+    letterTemplateVersion: IPmsLetterTemplateVersion;
+  }> {
     this.assertAdmin('letterTemplate.create');
-    this.validateLetterTemplate(input.body, input.placeholders ?? [], input.conditionalBlocks ?? []);
+    const subjectTemplate = input.subjectTemplate ?? input.subject ?? '';
+    const bodyTemplate = input.bodyTemplate ?? input.body;
+    const versionNo = input.versionNo ?? input.versionNumber ?? 1;
+    const outcomeType = input.outcomeType ?? input.type;
+    const placeholderRules = input.placeholderRules ?? {
+      required: input.placeholders ?? [],
+      conditional: [],
+    };
+    const conditionalBlocks = this.normalizeConditionalBlocks(input.conditionalBlocks ?? []);
+
+    if (!bodyTemplate) {
+      throw new Error('Letter template body is required');
+    }
+
+    if (!outcomeType) {
+      throw new Error('Letter template outcomeType is required');
+    }
+
+    this.validateLetterTemplate(
+      bodyTemplate,
+      placeholderRules.required ?? [],
+      conditionalBlocks.map((block) => block.blockKey),
+    );
 
     const letterTemplate = await PmsLetterTemplate.create({
-      ...input,
       code: this.normalizeCode(input.code),
+      name: input.name,
+      outcomeType,
+      channel: input.channel,
       status: PmsTemplateStatus.DRAFT,
-      placeholders: input.placeholders ?? [],
-      conditionalBlocks: input.conditionalBlocks ?? [],
       createdBy: this.actorIdObject(),
     });
 
-    await this.audit('PMS_LETTER_TEMPLATE_CREATED', 'PMS_LETTER_TEMPLATE', letterTemplate._id.toString(), undefined, letterTemplate.toObject());
-    return letterTemplate;
+    const letterTemplateVersion = await PmsLetterTemplateVersion.create({
+      letterTemplateId: letterTemplate._id,
+      versionNo,
+      status: PmsTemplateStatus.DRAFT,
+      subjectTemplate,
+      bodyTemplate,
+      placeholderRules,
+      conditionalBlocks,
+      createdBy: this.actorIdObject(),
+    });
+
+    await this.audit('PMS_LETTER_TEMPLATE_CREATED', 'PMS_LETTER_TEMPLATE', letterTemplate._id.toString(), undefined, {
+      letterTemplate: letterTemplate.toObject(),
+      letterTemplateVersion: letterTemplateVersion.toObject(),
+    });
+    return { letterTemplate, letterTemplateVersion };
   }
 
   async previewLetterTemplate(
-    letterTemplateId: string,
+    letterTemplateVersionId: string,
     data: Record<string, unknown>,
   ): Promise<{ subject?: string; body: string }> {
-    const letterTemplate = await this.getLetterTemplate(letterTemplateId);
+    const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
     return {
-      subject: letterTemplate.subject ? this.renderTemplate(letterTemplate.subject, data) : undefined,
-      body: this.renderTemplate(letterTemplate.body, data),
+      subject: letterTemplate.subjectTemplate
+        ? this.renderTemplate(letterTemplate.subjectTemplate, data)
+        : undefined,
+      body: this.renderTemplate(letterTemplate.bodyTemplate, data),
     };
   }
 
-  async activateLetterTemplate(letterTemplateId: string): Promise<IPmsLetterTemplate> {
+  async activateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
     this.assertAdmin('letterTemplate.activate');
-    const letterTemplate = await this.getLetterTemplate(letterTemplateId);
+    const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
     this.validateLetterTemplate(
-      letterTemplate.body,
-      letterTemplate.placeholders,
-      letterTemplate.conditionalBlocks,
+      letterTemplate.bodyTemplate,
+      letterTemplate.placeholderRules.required ?? [],
+      letterTemplate.conditionalBlocks.map((block) => block.blockKey),
+    );
+
+    await PmsLetterTemplateVersion.updateMany(
+      {
+        letterTemplateId: letterTemplate.letterTemplateId,
+        _id: { $ne: letterTemplate._id },
+        status: PmsTemplateStatus.ACTIVE,
+      },
+      {
+        $set: {
+          status: PmsTemplateStatus.INACTIVE,
+          deactivatedAt: new Date(),
+          updatedBy: this.actorIdObject(),
+        },
+      },
     );
 
     letterTemplate.status = PmsTemplateStatus.ACTIVE;
+    letterTemplate.isLocked = true;
+    letterTemplate.lockedAt = letterTemplate.lockedAt ?? new Date();
     letterTemplate.activatedAt = new Date();
     letterTemplate.updatedBy = this.actorIdObject();
     await letterTemplate.save();
 
-    await this.audit('PMS_LETTER_TEMPLATE_ACTIVATED', 'PMS_LETTER_TEMPLATE', letterTemplateId, undefined, { status: letterTemplate.status });
+    await PmsLetterTemplate.findByIdAndUpdate(letterTemplate.letterTemplateId, {
+      $set: {
+        status: PmsTemplateStatus.ACTIVE,
+        currentVersionId: letterTemplate._id,
+        updatedBy: this.actorIdObject(),
+      },
+    });
+
+    await this.audit('PMS_LETTER_TEMPLATE_ACTIVATED', 'PMS_LETTER_TEMPLATE_VERSION', letterTemplateVersionId, undefined, { status: letterTemplate.status });
     return letterTemplate;
   }
 
@@ -404,12 +484,24 @@ export class PmsTemplateService extends BaseService {
     return version;
   }
 
-  private async getLetterTemplate(letterTemplateId: string): Promise<IPmsLetterTemplate> {
-    const letterTemplate = await PmsLetterTemplate.findById(letterTemplateId);
+  private async getLetterTemplateVersion(letterTemplateId: string): Promise<IPmsLetterTemplateVersion> {
+    const letterTemplate = await PmsLetterTemplateVersion.findById(letterTemplateId);
     if (!letterTemplate) {
-      throw new Error('Letter template not found');
+      throw new Error('Letter template version not found');
     }
     return letterTemplate;
+  }
+
+  private normalizeConditionalBlocks(
+    blocks: Array<string | { blockKey: string; condition: string }>,
+  ): Array<{ blockKey: string; condition: string }> {
+    return blocks.map((block) => {
+      if (typeof block === 'string') {
+        return { blockKey: block, condition: block };
+      }
+
+      return block;
+    });
   }
 
   private normalizeSections(

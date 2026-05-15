@@ -41,6 +41,7 @@ import { AssignmentService } from '../services/assignment.service';
 import { ObjectiveService } from '../services/objective.service';
 import { QuarterReviewService } from '../services/quarterReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
+import { PmsCommunicationService } from '../services/pmsCommunication.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -86,4 +87,5 @@ export interface ServiceContainer {
   objectiveService: ObjectiveService;
   quarterReviewService: QuarterReviewService;
   annualDecisionService: AnnualDecisionService;
+  pmsCommunicationService: PmsCommunicationService;
 } 

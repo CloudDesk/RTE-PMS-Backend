@@ -14,6 +14,7 @@ import { objectiveRoutes } from "./objective.routes";
 import { quarterReviewRoutes } from "./quarterReview.routes";
 import { quarterAssignmentRoutes } from "./quarterAssignment.routes";
 import { annualDecisionRoutes } from "./annualDecision.routes";
+import { pmsCommunicationRoutes } from "./pmsCommunication.routes";
 // import { shiftRoutes } from "./shift.routes";
 // import { trainingRoutes } from "./training.routes";
 // import { trainingAttendanceRoutes } from "./training-attendance.routes";
@@ -82,6 +83,7 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(quarterReviewRoutes, { prefix: "/pms/quarter-reviews" });
   fastify.register(quarterAssignmentRoutes, { prefix: "/pms/quarter-assignments" });
   fastify.register(annualDecisionRoutes, { prefix: "/pms/annual-assignments" });
+  fastify.register(pmsCommunicationRoutes, { prefix: "/pms/communications" });
   // fastify.register(shiftRoutes, { prefix: "/shifts" });
   // fastify.register(trainingRoutes, { prefix: "/trainings" });
   // fastify.register(trainingAttendanceRoutes, {

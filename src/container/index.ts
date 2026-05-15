@@ -42,6 +42,7 @@ import { AssignmentService } from '../services/assignment.service';
 import { ObjectiveService } from '../services/objective.service';
 import { QuarterReviewService } from '../services/quarterReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
+import { PmsCommunicationService } from '../services/pmsCommunication.service';
 
 export class Container {
   private static instance: Container;
@@ -106,6 +107,7 @@ export class Container {
       objectiveService: new ObjectiveService(context),
       quarterReviewService: new QuarterReviewService(context),
       annualDecisionService: new AnnualDecisionService(context),
+      pmsCommunicationService: new PmsCommunicationService(context),
     };
   }
 

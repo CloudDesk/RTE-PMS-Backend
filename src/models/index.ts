@@ -38,6 +38,8 @@ export * from './pms-annual-assignment.model';
 export * from './pms-annual-decision.model';
 export * from './pms-annual-decision-value.model';
 export * from './pms-visibility-configuration.model';
+export * from './pms-workflow-event.model';
+export * from './pms-communication-dispatch.model';
 export * from './pms-template.model';
 export * from './pms-template-version.model';
 export * from './pms-letter-template.model';
