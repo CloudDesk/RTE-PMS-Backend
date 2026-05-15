@@ -7,6 +7,7 @@ import type {
   CreateCycleInput,
   CycleListQuery,
   UpdateCycleInput,
+  QuarterCycleInput,
 } from '../services/cycle.service';
 
 export const cycleRoutes: RouteHandler = async (
@@ -67,6 +68,57 @@ export const cycleRoutes: RouteHandler = async (
           request.body as UpdateCycleInput,
         );
         return reply.send(successResponse('PMS cycle updated successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.patch(
+    '/:id/windows',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.cycleService.updateWindows(
+          id,
+          request.body as QuarterCycleInput[],
+        );
+        return reply.send(successResponse('PMS cycle windows updated successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.patch(
+    '/:id/communication',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.cycleService.updateCommunication(
+          id,
+          request.body as Record<string, unknown>,
+        );
+        return reply.send(successResponse('PMS cycle communication config updated successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.patch(
+    '/:id/appraisal-window',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.cycleService.updateAppraisalWindow(
+          id,
+          request.body as Record<string, unknown>,
+        );
+        return reply.send(successResponse('PMS cycle appraisal window updated successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

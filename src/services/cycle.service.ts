@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import mongoose, { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
@@ -26,12 +26,12 @@ type AppraisalWindowBase =
   | 'ALL_APPLICABLE_QUARTERS_FINALIZED'
   | 'ANNUAL_CYCLE_END';
 
-interface DateWindowInput {
+export interface DateWindowInput {
   startDate?: Date | string;
   endDate?: Date | string;
 }
 
-interface QuarterCycleInput {
+export interface QuarterCycleInput {
   quarter?: QuarterCode;
   quarterCode?: QuarterCode;
   startDate: Date | string;
@@ -175,27 +175,33 @@ export class CycleService extends BaseService {
       throw new Error('Cycle code already exists');
     }
 
-    let annualCycle: IAnnualCycle | undefined;
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
     try {
-      annualCycle = await AnnualCycle.create({
-        name: input.name,
-        code,
-        appraisalYear: input.appraisalYear ?? input.year,
-        startDate: new Date(input.startDate),
-        endDate: new Date(input.endDate),
-        status: AnnualWorkflowState.DRAFT,
-        templateVersionId,
-        appraisalWindowConfig: input.appraisalWindowConfig ?? {},
-        communicationRuleConfig: input.communicationRuleConfig ?? {},
-        createdBy: this.actorIdObject(),
-      });
+      const [annualCycle] = await AnnualCycle.create(
+        [
+          {
+            name: input.name,
+            code,
+            appraisalYear: input.appraisalYear ?? input.year,
+            startDate: new Date(input.startDate),
+            endDate: new Date(input.endDate),
+            status: AnnualWorkflowState.DRAFT,
+            templateVersionId,
+            appraisalWindowConfig: input.appraisalWindowConfig ?? {},
+            communicationRuleConfig: input.communicationRuleConfig ?? {},
+            createdBy: this.actorIdObject(),
+          },
+        ],
+        { session },
+      );
 
       const quarterPayload = this.buildQuarterPayloads(input, annualCycle._id);
-      const quarterCycles = await QuarterCycle.insertMany(quarterPayload);
+      const quarterCycles = await QuarterCycle.insertMany(quarterPayload, { session });
 
-      annualCycle.quarterCycleIds = quarterCycles.map((quarterCycle) => quarterCycle._id);
-      await annualCycle.save();
+      annualCycle.quarterCycleIds = quarterCycles.map((qc) => qc._id as Types.ObjectId);
+      await annualCycle.save({ session });
 
       await this.audit(
         'PMS_CYCLE_CREATED',
@@ -203,19 +209,20 @@ export class CycleService extends BaseService {
         annualCycle._id.toString(),
         undefined,
         {
-          annualCycle,
+          annualCycle: annualCycle.toObject(),
           quarterCycleIds: annualCycle.quarterCycleIds,
         },
+        undefined,
+        session,
       );
 
+      await session.commitTransaction();
       return { annualCycle, quarterCycles };
     } catch (error) {
-      if (annualCycle?._id) {
-        await QuarterCycle.deleteMany({ cycleId: annualCycle._id });
-        await AnnualCycle.deleteOne({ _id: annualCycle._id });
-      }
-
+      await session.abortTransaction();
       throw error;
+    } finally {
+      await session.endSession();
     }
   }
 
@@ -241,149 +248,120 @@ export class CycleService extends BaseService {
       quarterCycles: existingQuarters.map((quarter) => quarter.toObject()),
     };
 
-    if (input.code?.trim()) {
-      const code = input.code.trim().toUpperCase();
-      const existingCycle = await AnnualCycle.exists({
-        code,
-        _id: { $ne: cycle._id },
-      });
-      if (existingCycle) {
-        throw new Error('Cycle code already exists');
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      if (input.code?.trim()) {
+        const code = input.code.trim().toUpperCase();
+        const existingCycle = await AnnualCycle.exists({
+          code,
+          _id: { $ne: cycle._id },
+        });
+        if (existingCycle) {
+          throw new Error('Cycle code already exists');
+        }
+        cycle.code = code;
       }
-      cycle.code = code;
-    }
 
-    if (input.templateVersionId) {
-      cycle.templateVersionId = await this.validateTemplateVersion(input.templateVersionId);
-    }
+      if (input.templateVersionId) {
+        cycle.templateVersionId = await this.validateTemplateVersion(input.templateVersionId);
+      }
 
-    if (input.name !== undefined) cycle.name = input.name;
-    if (input.appraisalYear !== undefined || input.year !== undefined) {
-      cycle.appraisalYear = input.appraisalYear ?? input.year!;
-    }
-    if (input.startDate !== undefined) cycle.startDate = new Date(input.startDate);
-    if (input.endDate !== undefined) cycle.endDate = new Date(input.endDate);
-    if (input.appraisalWindowConfig !== undefined) {
-      cycle.appraisalWindowConfig = input.appraisalWindowConfig;
-    }
-    if (input.communicationRuleConfig !== undefined) {
-      cycle.communicationRuleConfig = input.communicationRuleConfig;
-    }
-    cycle.updatedBy = this.actorIdObject();
+      if (input.name !== undefined) cycle.name = input.name;
+      if (input.appraisalYear !== undefined || input.year !== undefined) {
+        cycle.appraisalYear = input.appraisalYear ?? input.year!;
+      }
+      if (input.startDate !== undefined) cycle.startDate = new Date(input.startDate);
+      if (input.endDate !== undefined) cycle.endDate = new Date(input.endDate);
+      if (input.appraisalWindowConfig !== undefined) {
+        cycle.appraisalWindowConfig = input.appraisalWindowConfig;
+      }
+      if (input.communicationRuleConfig !== undefined) {
+        cycle.communicationRuleConfig = input.communicationRuleConfig;
+      }
+      cycle.updatedBy = this.actorIdObject();
 
-    let quarterCycles = existingQuarters;
-    if (input.quarters) {
-      await QuarterCycle.deleteMany({ cycleId: cycle._id });
-      const quarterPayload = this.buildQuarterPayloads(mergedInput, cycle._id);
-      quarterCycles = await QuarterCycle.insertMany(quarterPayload);
-      cycle.quarterCycleIds = quarterCycles.map((quarterCycle) => quarterCycle._id);
+      let quarterCycles: IQuarterCycle[] = existingQuarters;
+      if (input.quarters) {
+        const quarterPayloads = this.buildQuarterPayloads(mergedInput, cycle._id);
+        const upsertPromises = quarterPayloads.map((payload) =>
+          QuarterCycle.findOneAndUpdate(
+            { cycleId: cycle._id, quarterCode: payload.quarterCode },
+            { $set: { ...payload, updatedBy: this.actorIdObject() } },
+            { upsert: true, new: true, session },
+          ),
+        );
+        quarterCycles = (await Promise.all(upsertPromises)) as IQuarterCycle[];
+        cycle.quarterCycleIds = quarterCycles.map((qc) => qc._id as Types.ObjectId);
+      }
+
+      await cycle.save({ session });
+
+      await this.audit(
+        'PMS_CYCLE_UPDATED',
+        'ANNUAL_CYCLE',
+        cycle._id.toString(),
+        previousValue,
+        {
+          annualCycle: cycle.toObject(),
+          quarterCycles: quarterCycles.map((qc) => qc.toObject()),
+        },
+        undefined,
+        session,
+      );
+
+      await session.commitTransaction();
+      return { annualCycle: cycle, quarterCycles };
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      await session.endSession();
     }
+  }
 
-    await cycle.save();
+  async updateWindows(cycleId: string, quarters: QuarterCycleInput[]): Promise<CycleDetailResult> {
+    return this.updateCycle(cycleId, { quarters });
+  }
 
-    await this.audit(
-      'PMS_CYCLE_UPDATED',
-      'ANNUAL_CYCLE',
-      cycle._id.toString(),
-      previousValue,
-      {
-        annualCycle: cycle,
-        quarterCycles,
-      },
-    );
+  async updateCommunication(cycleId: string, config: Record<string, unknown>): Promise<IAnnualCycle> {
+    const result = await this.updateCycle(cycleId, { communicationRuleConfig: config });
+    return result.annualCycle;
+  }
 
-    return { annualCycle: cycle, quarterCycles };
+  async updateAppraisalWindow(cycleId: string, config: Record<string, unknown>): Promise<IAnnualCycle> {
+    const result = await this.updateCycle(cycleId, { appraisalWindowConfig: config });
+    return result.annualCycle;
   }
 
   async launchCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.launch');
     const cycle = await this.getCycleForAction(cycleId);
     await this.assertLaunchReady(cycle);
-    const transition = this.transitionAnnualCycle(
-      cycle,
-      AnnualWorkflowState.ACTIVE,
-    );
-
-    cycle.status = transition.currentState as AnnualWorkflowStateType;
-    cycle.launchedAt = new Date();
-    cycle.updatedBy = this.actorIdObject();
-    await cycle.save();
-
-    await this.audit(
-      'PMS_CYCLE_LAUNCHED',
-      'ANNUAL_CYCLE',
-      cycle._id.toString(),
-      { status: transition.previousState },
-      { status: cycle.status },
-    );
-    return cycle;
+    return this.executeTransition(cycle, AnnualWorkflowState.ACTIVE, 'PMS_CYCLE_LAUNCHED', {
+      launchedAt: new Date(),
+    });
   }
 
   async scheduleCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.schedule');
     const cycle = await this.getCycleForAction(cycleId);
-    const transition = this.transitionAnnualCycle(
-      cycle,
-      AnnualWorkflowState.SCHEDULED,
-    );
-
-    cycle.status = transition.currentState as AnnualWorkflowStateType;
-    cycle.updatedBy = this.actorIdObject();
-    await cycle.save();
-
-    await this.audit(
-      'PMS_CYCLE_SCHEDULED',
-      'ANNUAL_CYCLE',
-      cycle._id.toString(),
-      { status: transition.previousState },
-      { status: cycle.status },
-    );
-    return cycle;
+    return this.executeTransition(cycle, AnnualWorkflowState.SCHEDULED, 'PMS_CYCLE_SCHEDULED');
   }
 
   async closeCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.close');
     const cycle = await this.getCycleForAction(cycleId);
-    const transition = this.transitionAnnualCycle(
-      cycle,
-      AnnualWorkflowState.CLOSED,
-    );
-
-    cycle.status = transition.currentState as AnnualWorkflowStateType;
-    cycle.closedAt = new Date();
-    cycle.updatedBy = this.actorIdObject();
-    await cycle.save();
-
-    await this.audit(
-      'PMS_CYCLE_CLOSED',
-      'ANNUAL_CYCLE',
-      cycle._id.toString(),
-      { status: transition.previousState },
-      { status: cycle.status },
-    );
-    return cycle;
+    return this.executeTransition(cycle, AnnualWorkflowState.CLOSED, 'PMS_CYCLE_CLOSED', {
+      closedAt: new Date(),
+    });
   }
 
   async archiveCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.archive');
     const cycle = await this.getCycleForAction(cycleId);
-    const transition = this.transitionAnnualCycle(
-      cycle,
-      AnnualWorkflowState.ARCHIVED,
-    );
-
-    cycle.status = transition.currentState as AnnualWorkflowStateType;
-    cycle.updatedBy = this.actorIdObject();
-    await cycle.save();
-
-    await this.audit(
-      'PMS_CYCLE_ARCHIVED',
-      'ANNUAL_CYCLE',
-      cycle._id.toString(),
-      { status: transition.previousState },
-      { status: cycle.status },
-    );
-    return cycle;
+    return this.executeTransition(cycle, AnnualWorkflowState.ARCHIVED, 'PMS_CYCLE_ARCHIVED');
   }
 
   async cancelCycle(cycleId: string, input: CancelCycleInput): Promise<IAnnualCycle> {
@@ -393,24 +371,39 @@ export class CycleService extends BaseService {
     if (!reason) {
       throw new Error('Cancel reason is required');
     }
-    const transition = this.transitionAnnualCycle(
+    return this.executeTransition(
       cycle,
       AnnualWorkflowState.CANCELLED,
+      'PMS_CYCLE_CANCELLED',
+      {},
       reason,
     );
+  }
+
+  private async executeTransition(
+    cycle: IAnnualCycle,
+    nextState: AnnualWorkflowStateType,
+    auditEvent: string,
+    additionalUpdates: Record<string, unknown> = {},
+    reason?: string,
+  ): Promise<IAnnualCycle> {
+    const previousState = cycle.status;
+    const transition = this.transitionAnnualCycle(cycle, nextState, reason);
 
     cycle.status = transition.currentState as AnnualWorkflowStateType;
+    Object.assign(cycle, additionalUpdates);
     cycle.updatedBy = this.actorIdObject();
     await cycle.save();
 
     await this.audit(
-      'PMS_CYCLE_CANCELLED',
+      auditEvent,
       'ANNUAL_CYCLE',
       cycle._id.toString(),
-      { status: transition.previousState },
+      { status: previousState },
       { status: cycle.status },
       reason,
     );
+
     return cycle;
   }
 
@@ -565,11 +558,13 @@ export class CycleService extends BaseService {
 
     const quarters = input.quarters ?? this.createDefaultQuarterDates(input.startDate, input.endDate);
     this.validateQuarterWindows(quarters, cycleStart, cycleEnd);
-    this.validateAppraisalWindowConfig(input.appraisalWindowConfig);
+    this.validateAppraisalWindowConfig(input.appraisalWindowConfig, cycleStart, cycleEnd);
   }
 
   private validateAppraisalWindowConfig(
-    config?: Record<string, unknown>,
+    config: Record<string, unknown> | undefined,
+    cycleStart: Date,
+    cycleEnd: Date,
   ): void {
     if (!config || Object.keys(config).length === 0) {
       return;
@@ -588,7 +583,11 @@ export class CycleService extends BaseService {
         throw new Error('appraisalWindowConfig.date is required for FIXED_DATE');
       }
 
-      this.assertValidDate(new Date(appraisalWindowConfig.date), 'Appraisal fixed date');
+      const date = new Date(appraisalWindowConfig.date);
+      this.assertValidDate(date, 'Appraisal fixed date');
+      if (date < cycleStart || date > cycleEnd) {
+        throw new Error('Appraisal fixed date must be within annual cycle timeline');
+      }
       return;
     }
 
@@ -607,6 +606,9 @@ export class CycleService extends BaseService {
       }
 
       this.assertValidDateRange(startDate, endDate, 'Appraisal fixed range');
+      if (startDate < cycleStart || endDate > cycleEnd) {
+        throw new Error('Appraisal fixed range must be within annual cycle timeline');
+      }
       return;
     }
 
@@ -949,19 +951,23 @@ export class CycleService extends BaseService {
     previousValue?: unknown,
     newValue?: unknown,
     reason?: string,
+    session?: mongoose.ClientSession,
   ): Promise<void> {
     const user = this.context.user;
     if (!user) return;
 
-    await auditService.createAuditLog({
-      actorId: user._id.toString(),
-      actorRole: user.role,
-      action,
-      entityType,
-      entityId,
-      previousValue,
-      newValue,
-      reason,
-    });
+    await auditService.createAuditLog(
+      {
+        actorId: user._id.toString(),
+        actorRole: user.role,
+        action,
+        entityType,
+        entityId,
+        previousValue,
+        newValue,
+        reason,
+      },
+      session,
+    );
   }
 }
