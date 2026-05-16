@@ -18,6 +18,23 @@ export interface ITemplateOption {
   weight?: number;
 }
 
+export interface ITemplatePredefinedObjective {
+  objectiveKey: string;
+  title: string;
+  description?: string;
+  kpi?: string;
+  targetValue?: string;
+  weightage?: number;
+  successCriteria?: string;
+}
+
+export interface ITemplateObjectiveConfig {
+  mode: 'PREDEFINED' | 'DYNAMIC' | 'HYBRID';
+  allowEmployeeCreated?: boolean;
+  allowManagerCreated?: boolean;
+  predefinedObjectives?: ITemplatePredefinedObjective[];
+}
+
 export interface ITemplateBehaviorRule {
   workflowState: string;
   role: string;
@@ -117,6 +134,33 @@ const gridColumnSchema = new Schema<IGridColumn>(
   { _id: false },
 );
 
+const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
+  {
+    objectiveKey: { type: String, required: true, trim: true },
+    title: { type: String, required: true, trim: true },
+    description: { type: String, trim: true },
+    kpi: { type: String, trim: true },
+    targetValue: { type: String, trim: true },
+    weightage: { type: Number, min: 0, max: 100 },
+    successCriteria: { type: String, trim: true },
+  },
+  { _id: false },
+);
+
+const objectiveConfigSchema = new Schema<ITemplateObjectiveConfig>(
+  {
+    mode: {
+      type: String,
+      enum: ['PREDEFINED', 'DYNAMIC', 'HYBRID'],
+      default: 'DYNAMIC',
+    },
+    allowEmployeeCreated: { type: Boolean, default: true },
+    allowManagerCreated: { type: Boolean, default: true },
+    predefinedObjectives: { type: [predefinedObjectiveSchema], default: [] },
+  },
+  { _id: false },
+);
+
 export interface ITemplateSection {
   sectionKey: string;
   sectionLabel: string;
@@ -136,6 +180,7 @@ export interface ITemplateSection {
   };
   visibilityRules?: Record<string, unknown>;
   editabilityRules?: Record<string, unknown>;
+  objectiveConfig?: ITemplateObjectiveConfig;
   metadata?: Record<string, unknown>;
   fields: ITemplateField[];
 }
@@ -326,6 +371,10 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     },
     visibilityRules: Schema.Types.Mixed,
     editabilityRules: Schema.Types.Mixed,
+    objectiveConfig: {
+      type: objectiveConfigSchema,
+      default: undefined,
+    },
     metadata: Schema.Types.Mixed,
     fields: { type: [templateFieldSchema], default: [] },
   },

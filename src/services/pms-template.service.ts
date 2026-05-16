@@ -5,6 +5,7 @@ import {
   AnnualWorkflowState,
   AppraisalOutcomeType,
   PmsTemplateFieldType,
+  normalizePmsRole,
   PmsTemplateSectionLevel,
   PmsTemplateSectionType,
   PmsTemplateStatus,
@@ -856,6 +857,7 @@ export class PmsTemplateService extends BaseService {
       const legacyOrder = section.order as number | undefined;
       const legacyPermissions = section.permissions as TemplatePermission[] | undefined;
       const sectionScoringConfig = section.sectionScoringConfig as ITemplateSection['sectionScoringConfig'] | undefined;
+      const objectiveConfig = section.objectiveConfig ?? (section.metadata as any)?.objectiveConfig;
       const repeatFor = section.repeatFor ?? legacyApplicableQuarters ?? [];
       const quarterScope = section.quarterScope as ITemplateSection['quarterScope'] | undefined;
       const rulePatch = this.rulesFromPermissions(legacyPermissions ?? []);
@@ -885,6 +887,7 @@ export class PmsTemplateService extends BaseService {
         visibilityRules: section.visibilityRules ?? rulePatch.visibilityRules ?? {},
         editabilityRules: section.editabilityRules ?? rulePatch.editabilityRules ?? {},
         metadata: section.metadata ?? {},
+        objectiveConfig: this.normalizeObjectiveConfig(objectiveConfig),
         fields: (section.fields ?? []).map((field, fieldIndex) =>
           this.normalizeField(field, fieldIndex),
         ),
@@ -990,6 +993,39 @@ export class PmsTemplateService extends BaseService {
           maxRows: field.gridConfig.maxRows,
         }
         : undefined,
+    };
+  }
+
+  private normalizeObjectiveConfig(
+    rawConfig: unknown,
+  ): ITemplateSection['objectiveConfig'] | undefined {
+    if (!rawConfig || typeof rawConfig !== 'object') {
+      return undefined;
+    }
+
+    const config = rawConfig as Record<string, any>;
+    const mode = ['PREDEFINED', 'DYNAMIC', 'HYBRID'].includes(config.mode)
+      ? config.mode
+      : 'DYNAMIC';
+
+    return {
+      mode,
+      allowEmployeeCreated: config.allowEmployeeCreated !== false,
+      allowManagerCreated: config.allowManagerCreated !== false,
+      predefinedObjectives: Array.isArray(config.predefinedObjectives)
+        ? config.predefinedObjectives.map((objective: Record<string, any>) => ({
+            objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
+            title: String(objective.title ?? '').trim(),
+            description: objective.description ? String(objective.description) : undefined,
+            kpi: objective.kpi ? String(objective.kpi) : undefined,
+            targetValue: objective.targetValue ? String(objective.targetValue) : undefined,
+            weightage:
+              objective.weightage === undefined || objective.weightage === ''
+                ? undefined
+                : Number(objective.weightage),
+            successCriteria: objective.successCriteria ? String(objective.successCriteria) : undefined,
+          }))
+        : [],
     };
   }
 
@@ -1240,9 +1276,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   private normalizeRoleCode(role: string): string {
-    const normalized = role.replace(/[ /-]/g, '_').toUpperCase();
-    if (normalized === 'HRADMIN') return 'HR_ADMIN';
-    return normalized;
+    return normalizePmsRole(role) ?? role.replace(/[ /-]/g, '_').toUpperCase();
   }
 
   private normalizeRenderingScope(
@@ -1307,6 +1341,7 @@ export class PmsTemplateService extends BaseService {
     const allowedQuarters = new Set(['Q1', 'Q2', 'Q3', 'Q4']);
     const sectionKeys = new Set<string>();
     const allFieldKeys = new Set<string>();
+    const conditionalDependencies = new Map<string, string[]>();
 
     for (const section of sections) {
       if (!section.sectionKey?.trim()) {
@@ -1344,6 +1379,10 @@ export class PmsTemplateService extends BaseService {
         !['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'].includes(section.renderingScope)
       ) {
         throw new Error(`Invalid renderingScope in section ${section.sectionKey}`);
+      }
+
+      if (section.sectionType === PmsTemplateSectionType.OBJECTIVES) {
+        this.validateObjectiveConfig(section);
       }
 
       const fieldKeys = new Set<string>();
@@ -1395,6 +1434,9 @@ export class PmsTemplateService extends BaseService {
           }
           if (!behavior.role?.trim()) {
             throw new Error(`Behavior role is required for field ${field.fieldKey}`);
+          }
+          if (!normalizePmsRole(behavior.role)) {
+            throw new Error(`Invalid behavior role ${behavior.role} for field ${field.fieldKey}`);
           }
         }
 
@@ -1505,6 +1547,10 @@ export class PmsTemplateService extends BaseService {
             );
           }
         }
+
+        if (field.conditionalRendering?.dependsOn) {
+          conditionalDependencies.set(field.fieldKey, [field.conditionalRendering.dependsOn]);
+        }
       }
     }
 
@@ -1517,9 +1563,21 @@ export class PmsTemplateService extends BaseService {
         }
       }
     }
+
+    this.assertNoConditionalCycles(conditionalDependencies);
   }
 
   private validateTemplateVersionForActivation(version: IPmsTemplateVersion): void {
+    if (version.sections.length === 0) {
+      throw new Error('Template version must contain at least one section before activation');
+    }
+
+    for (const section of version.sections) {
+      if ((section.fields ?? []).length === 0) {
+        throw new Error(`Section ${section.sectionKey} must contain at least one field before activation`);
+      }
+    }
+
     const scoringSections = version.sections.filter(
       (section) => section.sectionScoringConfig?.participatesInScoring === true,
     );
@@ -1576,6 +1634,66 @@ export class PmsTemplateService extends BaseService {
       }
       if (!mapping.letterTemplateVersionId?.trim()) {
         throw new Error(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
+      }
+    }
+  }
+
+  private validateObjectiveConfig(section: TemplateSection): void {
+    const config = section.objectiveConfig;
+    if (!config) return;
+
+    if (!['PREDEFINED', 'DYNAMIC', 'HYBRID'].includes(config.mode)) {
+      throw new Error(`Invalid objective mode in section ${section.sectionKey}`);
+    }
+
+    const predefinedObjectives = config.predefinedObjectives ?? [];
+    if (
+      ['PREDEFINED', 'HYBRID'].includes(config.mode) &&
+      predefinedObjectives.length === 0
+    ) {
+      throw new Error(`Objective section ${section.sectionKey} requires predefined objectives`);
+    }
+
+    if (
+      ['DYNAMIC', 'HYBRID'].includes(config.mode) &&
+      config.allowEmployeeCreated === false &&
+      config.allowManagerCreated === false
+    ) {
+      throw new Error(`Objective section ${section.sectionKey} requires at least one dynamic creator role`);
+    }
+
+    const objectiveKeys = new Set<string>();
+    for (const objective of predefinedObjectives) {
+      if (!objective.objectiveKey?.trim()) {
+        throw new Error(`Predefined objective key is required in section ${section.sectionKey}`);
+      }
+      if (!objective.title?.trim()) {
+        throw new Error(`Predefined objective title is required in section ${section.sectionKey}`);
+      }
+      if (objectiveKeys.has(objective.objectiveKey)) {
+        throw new Error(`Duplicate predefined objective key ${objective.objectiveKey} in section ${section.sectionKey}`);
+      }
+      objectiveKeys.add(objective.objectiveKey);
+      if (
+        objective.weightage !== undefined &&
+        (!Number.isFinite(objective.weightage) || objective.weightage < 0 || objective.weightage > 100)
+      ) {
+        throw new Error(`Predefined objective ${objective.objectiveKey} weightage must be between 0 and 100`);
+      }
+    }
+  }
+
+  private assertNoConditionalCycles(dependencies: Map<string, string[]>): void {
+    for (const fieldKey of dependencies.keys()) {
+      const visiting = new Set<string>();
+      let current: string | undefined = fieldKey;
+
+      while (current && dependencies.has(current)) {
+        if (visiting.has(current)) {
+          throw new Error(`Conditional rendering has a circular dependency at field ${current}`);
+        }
+        visiting.add(current);
+        current = dependencies.get(current)?.[0];
       }
     }
   }
