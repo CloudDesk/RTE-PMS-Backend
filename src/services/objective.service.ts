@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { ObjectiveSource, ObjectiveStatus, QuarterWorkflowState } from '../constants/pms.enums';
+import { ObjectiveSource, ObjectiveStatus, PmsRole, QuarterWorkflowState } from '../constants/pms.enums';
 import { Objective } from '../models/pms-objective.model';
 import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
@@ -330,8 +330,8 @@ export class ObjectiveService extends BaseService {
   private resolveObjectiveSource(actorRole: string): ObjectiveSourceType {
     const mappedRole = accessService.mapRole(actorRole);
 
-    if (mappedRole === 'Employee') return ObjectiveSource.EMPLOYEE_CREATED;
-    if (mappedRole === 'Manager') return ObjectiveSource.MANAGER_CREATED;
+    if (mappedRole === PmsRole.EMPLOYEE) return ObjectiveSource.EMPLOYEE_CREATED;
+    if (mappedRole === PmsRole.MANAGER) return ObjectiveSource.MANAGER_CREATED;
 
     throw new Error('Only employee or manager can create objectives');
   }

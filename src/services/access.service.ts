@@ -5,54 +5,49 @@ import type {
   AccessResourceContext,
   PmsMappedRole,
 } from '../types/pms.types';
+import { normalizePmsRole, PmsErrorCode, PmsRole } from '../constants/pms.enums';
 
 export class AccessService {
   mapRole(actorRole: string): PmsMappedRole {
-    const role = actorRole.toLowerCase();
-
-    if (role === 'staff') return 'Employee';
-    if (role === 'manager') return 'Manager';
-    if (role === 'admin') return 'HR/Admin';
-
-    return 'Unknown';
+    return normalizePmsRole(actorRole) ?? 'UNKNOWN';
   }
 
   canPerform(input: AccessCheckInput): AccessCheckResult {
     const mappedRole = this.mapRole(input.actor.actorRole);
 
-    if (mappedRole === 'Unknown') {
+    if (mappedRole === 'UNKNOWN') {
       return {
         allowed: false,
-        errorCode: 'UNKNOWN_PMS_ROLE',
+        errorCode: PmsErrorCode.UNKNOWN_ROLE,
         message: `Role ${input.actor.actorRole} is not mapped for PMS access.`,
         mappedRole,
       };
     }
 
-    if (mappedRole === 'HR/Admin') {
+    if (mappedRole === PmsRole.ADMIN || mappedRole === PmsRole.SUPER_ADMIN) {
       return { allowed: true, mappedRole };
     }
 
     if (input.requiresAdmin) {
       return {
         allowed: false,
-        errorCode: 'ADMIN_ACCESS_REQUIRED',
-        message: 'This PMS action requires HR/Admin access.',
+        errorCode: PmsErrorCode.ADMIN_ACCESS_REQUIRED,
+        message: 'This PMS action requires Admin access.',
         mappedRole,
       };
     }
 
-    if (mappedRole === 'Employee') {
+    if (mappedRole === PmsRole.EMPLOYEE) {
       return this.canEmployeeAccess(input.actor, input.resource, mappedRole);
     }
 
-    if (mappedRole === 'Manager') {
+    if (mappedRole === PmsRole.MANAGER || mappedRole === PmsRole.MANAGEMENT) {
       return this.canManagerAccess(input.actor, input.resource, mappedRole);
     }
 
     return {
       allowed: false,
-      errorCode: 'ACCESS_DENIED',
+      errorCode: PmsErrorCode.ACCESS_DENIED,
       message: 'PMS access denied.',
       mappedRole,
     };
@@ -71,7 +66,7 @@ export class AccessService {
 
     return {
       allowed: false,
-      errorCode: 'EMPLOYEE_SCOPE_VIOLATION',
+      errorCode: PmsErrorCode.EMPLOYEE_SCOPE_VIOLATION,
       message: 'Employees can access only their own PMS records.',
       mappedRole,
     };
@@ -94,7 +89,7 @@ export class AccessService {
 
     return {
       allowed: false,
-      errorCode: 'MANAGER_SCOPE_VIOLATION',
+      errorCode: PmsErrorCode.MANAGER_SCOPE_VIOLATION,
       message: 'Managers can access only assigned employee PMS records.',
       mappedRole,
     };

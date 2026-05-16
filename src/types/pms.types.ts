@@ -2,6 +2,8 @@ import type {
   AnnualWorkflowState as AnnualWorkflowStateEnum,
   AnnualDecisionStatus as AnnualDecisionStatusEnum,
   ObjectiveStatus as ObjectiveStatusEnum,
+  PmsErrorCode,
+  PmsRole,
   QuarterReviewStatus as QuarterReviewStatusEnum,
   QuarterWorkflowState as QuarterWorkflowStateEnum,
   WorkflowEntityType,
@@ -47,7 +49,7 @@ export interface WorkflowTransitionResult {
   transitionedAt: Date;
 }
 
-export type PmsMappedRole = 'Employee' | 'Manager' | 'HR/Admin' | 'Unknown';
+export type PmsMappedRole = PmsRole | 'UNKNOWN';
 
 export interface AccessActorContext {
   actorId: string;
@@ -71,7 +73,7 @@ export interface AccessCheckInput {
 
 export interface AccessCheckResult {
   allowed: boolean;
-  errorCode?: string;
+  errorCode?: PmsErrorCode;
   message?: string;
   mappedRole: PmsMappedRole;
 }

@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { QuarterReviewStatus, QuarterWorkflowState } from '../constants/pms.enums';
+import { PmsRole, QuarterReviewStatus, QuarterWorkflowState } from '../constants/pms.enums';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
 import { QuarterReviewValue } from '../models/pms-quarter-review-value.model';
@@ -365,7 +365,7 @@ export class QuarterReviewService extends BaseService {
       },
     });
 
-    if (!access.allowed || access.mappedRole !== 'Manager') {
+    if (!access.allowed || access.mappedRole !== PmsRole.MANAGER) {
       throw new Error(access.message ?? 'Only the assigned manager can submit quarter review');
     }
   }
