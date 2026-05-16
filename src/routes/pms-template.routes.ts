@@ -6,6 +6,7 @@ import type {
   CreateLetterTemplateInput,
   CreateTemplateInput,
   CreateTemplateVersionInput,
+  ResolveTemplateVersionInput,
   TemplateField,
   TemplateListQuery,
   TemplatePermission,
@@ -184,8 +185,18 @@ export const pmsTemplateRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { versionId } = request.params as { versionId: string };
-        const { sections } = request.body as { sections: TemplateSection[] };
-        const version = await request.container!.pmsTemplateService.configureSections(versionId, sections);
+        const { sections, annualScoringConfig, outcomeMappings } = request.body as {
+          sections: TemplateSection[];
+          annualScoringConfig?: Record<string, unknown>;
+          outcomeMappings?: Array<{
+            outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
+            letterTemplateVersionId: string;
+          }>;
+        };
+        const version = await request.container!.pmsTemplateService.configureSections(versionId, sections, {
+          annualScoringConfig,
+          outcomeMappings,
+        });
         return reply.send(successResponse('PMS template sections configured successfully', version));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
@@ -242,6 +253,23 @@ export const pmsTemplateRoutes: RouteHandler = async (
         };
         const version = await request.container!.pmsTemplateService.configureFieldPermissions(versionId, sectionKey, fieldKey, permissions);
         return reply.send(successResponse('PMS template field permissions configured successfully', version));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/versions/:versionId/resolve',
+    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
+    async (request, reply) => {
+      try {
+        const { versionId } = request.params as { versionId: string };
+        const resolved = await request.container!.pmsTemplateService.resolveTemplateVersion(
+          versionId,
+          request.body as ResolveTemplateVersionInput,
+        );
+        return reply.send(successResponse('PMS template version resolved successfully', resolved));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

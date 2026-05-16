@@ -15,6 +15,30 @@ import type {
 export interface ITemplateOption {
   label: string;
   value: string;
+  weight?: number;
+}
+
+export interface ITemplateBehaviorRule {
+  workflowState: string;
+  role: string;
+  visibility: 'VISIBLE' | 'HIDDEN';
+  editability: 'EDITABLE' | 'READ_ONLY';
+  mandatory?: boolean;
+}
+
+export interface ITemplateConditionalRendering {
+  dependsOn: string;
+  operator:
+    | 'EQUALS'
+    | 'NOT_EQUALS'
+    | 'IN'
+    | 'NOT_IN'
+    | 'GREATER_THAN'
+    | 'LESS_THAN'
+    | 'IS_EMPTY'
+    | 'IS_NOT_EMPTY';
+  value?: unknown;
+  action: 'SHOW' | 'HIDE';
 }
 
 export interface ITemplateField {
@@ -33,9 +57,11 @@ export interface ITemplateField {
   defaultValue?: unknown;
   colSpan?: 1 | 2 | 3 | 4;
   options?: ITemplateOption[];
+  behaviors?: ITemplateBehaviorRule[];
+  conditionalRendering?: ITemplateConditionalRendering;
   matrixConfig?: {
     rows: Array<{ key: string; label: string; options?: ITemplateOption[] }>;
-    columns: Array<{ key: string; label: string }>;
+    columns: Array<{ key: string; label: string; weightage?: number }>;
     allowComments?: boolean;
   };
   gridConfig?: {
@@ -48,6 +74,7 @@ export interface ITemplateField {
 interface IMatrixItem {
   key: string;
   label: string;
+  weightage?: number;
   options?: ITemplateOption[];
 }
 
@@ -55,6 +82,7 @@ interface IGridColumn {
   key: string;
   label: string;
   type: string;
+  weightage?: number;
   required?: boolean;
 }
 
@@ -62,11 +90,13 @@ const matrixItemSchema = new Schema<IMatrixItem>(
   {
     key: { type: String, required: true, trim: true },
     label: { type: String, required: true, trim: true },
+    weightage: { type: Number },
     options: {
       type: [
         {
           label: { type: String, required: true },
           value: { type: String, required: true },
+          weight: { type: Number },
           _id: false,
         },
       ],
@@ -80,6 +110,7 @@ const gridColumnSchema = new Schema<IGridColumn>(
   {
     key: { type: String, required: true, trim: true },
     label: { type: String, required: true, trim: true },
+    weightage: { type: Number },
     type: { type: String, required: true, trim: true },
     required: { type: Boolean, default: false },
   },
@@ -95,6 +126,14 @@ export interface ITemplateSection {
   repeatable?: boolean;
   displayOrder?: number;
   layout?: 'vertical' | 'grid';
+  renderingScope?: 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
+  quarterScope?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  sectionScoringConfig?: {
+    participatesInScoring?: boolean;
+    weightage?: number;
+    aggregationMethod?: 'WEIGHTED_AVERAGE' | 'SIMPLE_AVERAGE' | 'SUM' | 'MAX_FIELD';
+    maxSectionScore?: number;
+  };
   visibilityRules?: Record<string, unknown>;
   editabilityRules?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -108,6 +147,11 @@ export interface IPmsTemplateVersion extends Document {
   sections: ITemplateSection[];
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
+  annualScoringConfig?: Record<string, unknown>;
+  outcomeMappings?: Array<{
+    outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
+    letterTemplateVersionId: string;
+  }>;
   effectiveFrom?: Date;
   effectiveTo?: Date;
   isLocked: boolean;
@@ -142,11 +186,50 @@ const templateFieldSchema = new Schema<ITemplateField>(
     scoringConfig: Schema.Types.Mixed,
     defaultValue: Schema.Types.Mixed,
     colSpan: { type: Number, enum: [1, 2, 3, 4], default: 4 },
+    behaviors: {
+      type: [
+        {
+          workflowState: { type: String, required: true },
+          role: { type: String, required: true },
+          visibility: { type: String, enum: ['VISIBLE', 'HIDDEN'], default: 'VISIBLE' },
+          editability: { type: String, enum: ['EDITABLE', 'READ_ONLY'], default: 'READ_ONLY' },
+          mandatory: { type: Boolean, default: false },
+          _id: false,
+        },
+      ],
+      default: [],
+    },
+    conditionalRendering: {
+      type: new Schema<ITemplateConditionalRendering>(
+        {
+          dependsOn: { type: String, required: true, trim: true },
+          operator: {
+            type: String,
+            enum: [
+              'EQUALS',
+              'NOT_EQUALS',
+              'IN',
+              'NOT_IN',
+              'GREATER_THAN',
+              'LESS_THAN',
+              'IS_EMPTY',
+              'IS_NOT_EMPTY',
+            ],
+            required: true,
+          },
+          value: Schema.Types.Mixed,
+          action: { type: String, enum: ['SHOW', 'HIDE'], required: true },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     options: {
       type: [
         {
           label: { type: String, required: true },
           value: { type: String, required: true },
+          weight: { type: Number },
           _id: false,
         },
       ],
@@ -216,6 +299,31 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     repeatable: { type: Boolean, default: false },
     displayOrder: { type: Number, default: 0 },
     layout: { type: String, enum: ['vertical', 'grid'], default: 'vertical' },
+    renderingScope: {
+      type: String,
+      enum: ['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'],
+      default: 'ANNUAL_ONLY',
+    },
+    quarterScope: {
+      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      default: [],
+    },
+    sectionScoringConfig: {
+      type: new Schema(
+        {
+          participatesInScoring: { type: Boolean, default: false },
+          weightage: { type: Number, default: 0 },
+          aggregationMethod: {
+            type: String,
+            enum: ['WEIGHTED_AVERAGE', 'SIMPLE_AVERAGE', 'SUM', 'MAX_FIELD'],
+            default: 'WEIGHTED_AVERAGE',
+          },
+          maxSectionScore: { type: Number, default: 100 },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     visibilityRules: Schema.Types.Mixed,
     editabilityRules: Schema.Types.Mixed,
     metadata: Schema.Types.Mixed,
@@ -243,6 +351,21 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
     sections: { type: [templateSectionSchema], default: [] },
     themeConfig: { type: Schema.Types.Mixed, default: {} },
     scoringConfig: { type: Schema.Types.Mixed, default: {} },
+    annualScoringConfig: { type: Schema.Types.Mixed, default: {} },
+    outcomeMappings: {
+      type: [
+        {
+          outcomeType: {
+            type: String,
+            enum: ['BOTH', 'MERIT_ONLY', 'GRADE_ONLY', 'NIL'],
+            required: true,
+          },
+          letterTemplateVersionId: { type: String, required: true },
+          _id: false,
+        },
+      ],
+      default: [],
+    },
     effectiveFrom: Date,
     effectiveTo: Date,
     isLocked: { type: Boolean, default: false, index: true },

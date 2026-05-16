@@ -2,10 +2,13 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
+  AnnualWorkflowState,
+  AppraisalOutcomeType,
   PmsTemplateFieldType,
   PmsTemplateSectionLevel,
   PmsTemplateSectionType,
   PmsTemplateStatus,
+  QuarterWorkflowState,
 } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
@@ -31,6 +34,50 @@ import { auditService } from './audit.service';
 export type TemplateSection = IPmsTemplateVersion['sections'][number];
 export type TemplateField = TemplateSection['fields'][number];
 export type TemplatePermission = Record<string, unknown>;
+
+export interface ResolveTemplateVersionInput {
+  role: string;
+  workflowState: string;
+  hierarchyScope?: string;
+  quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  visibilityFlags?: string[];
+  values?: Record<string, unknown>;
+}
+
+export interface ResolvedTemplateField {
+  key: string;
+  label: string;
+  type: string;
+  required: boolean;
+  visible: boolean;
+  editable: boolean;
+  placeholder?: string;
+  helpText?: string;
+  colSpan?: number;
+  options?: unknown[];
+  matrixConfig?: unknown;
+  gridConfig?: unknown;
+  scoringIncluded?: boolean;
+  scoringConfig?: Record<string, unknown>;
+  validationRules?: Record<string, unknown>;
+}
+
+export interface ResolvedTemplateSection {
+  id: string;
+  key: string;
+  title: string;
+  module: string;
+  level: 'quarter' | 'annual';
+  layout: 'vertical' | 'grid';
+  fields: ResolvedTemplateField[];
+}
+
+export interface ResolvedTemplateVersion {
+  versionId: string;
+  role: string;
+  workflowState: string;
+  sections: ResolvedTemplateSection[];
+}
 
 export interface CreateTemplateInput {
   name: string;
@@ -66,6 +113,11 @@ export interface CreateTemplateVersionInput {
   sections?: unknown[];
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
+  annualScoringConfig?: Record<string, unknown>;
+  outcomeMappings?: Array<{
+    outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
+    letterTemplateVersionId: string;
+  }>;
   effectiveFrom?: Date;
   effectiveTo?: Date;
   placeholders?: string[];
@@ -240,6 +292,8 @@ export class PmsTemplateService extends BaseService {
         sections: version.sections,
         themeConfig: version.themeConfig ?? {},
         scoringConfig: version.scoringConfig ?? {},
+        annualScoringConfig: version.annualScoringConfig ?? {},
+        outcomeMappings: version.outcomeMappings ?? [],
         effectiveFrom: version.effectiveFrom,
         effectiveTo: version.effectiveTo,
         isLocked: false,
@@ -279,6 +333,8 @@ export class PmsTemplateService extends BaseService {
       sections,
       themeConfig: input.themeConfig ?? {},
       scoringConfig: input.scoringConfig ?? {},
+      annualScoringConfig: input.annualScoringConfig ?? {},
+      outcomeMappings: input.outcomeMappings ?? [],
       effectiveFrom: input.effectiveFrom,
       effectiveTo: input.effectiveTo,
       status: PmsTemplateStatus.DRAFT,
@@ -293,6 +349,7 @@ export class PmsTemplateService extends BaseService {
     this.assertAdmin('templateVersion.activate');
     const version = await this.getEditableOrExistingVersion(versionId, false);
     this.validateSections(version.sections);
+    this.validateTemplateVersionForActivation(version);
 
     await PmsTemplateVersion.updateMany(
       {
@@ -406,6 +463,10 @@ export class PmsTemplateService extends BaseService {
   async configureSections(
     versionId: string,
     sections: unknown[],
+    metadata: {
+      annualScoringConfig?: Record<string, unknown>;
+      outcomeMappings?: IPmsTemplateVersion['outcomeMappings'];
+    } = {},
   ): Promise<IPmsTemplateVersion> {
     this.assertAdmin('templateVersion.configureSections');
     const version = await this.getEditableOrExistingVersion(versionId, true);
@@ -413,6 +474,12 @@ export class PmsTemplateService extends BaseService {
     this.validateSections(normalizedSections);
 
     version.sections = normalizedSections;
+    if (metadata.annualScoringConfig !== undefined) {
+      version.annualScoringConfig = metadata.annualScoringConfig;
+    }
+    if (metadata.outcomeMappings !== undefined) {
+      version.outcomeMappings = metadata.outcomeMappings;
+    }
     version.updatedBy = this.actorIdObject();
     await version.save();
 
@@ -493,6 +560,77 @@ export class PmsTemplateService extends BaseService {
 
   async previewTemplate(versionId: string): Promise<IPmsTemplateVersion> {
     return this.getTemplateVersion(versionId);
+  }
+
+  async resolveTemplateVersion(
+    versionId: string,
+    input: ResolveTemplateVersionInput,
+  ): Promise<ResolvedTemplateVersion> {
+    const version = await PmsTemplateVersion.findOne({
+      _id: versionId,
+      isDeleted: false,
+    });
+    if (!version) {
+      throw new Error('Template version not found');
+    }
+
+    const role = this.normalizeRoleCode(input.role);
+    const workflowState = input.workflowState;
+    if (!this.isApprovedWorkflowState(workflowState)) {
+      throw new Error(`Invalid PMS workflow state: ${workflowState}`);
+    }
+
+    const visibilityFlags = new Set(input.visibilityFlags ?? []);
+    const values = input.values ?? {};
+
+    const sections = version.sections
+      .filter((section) => this.isSectionInScope(section, input.quarter))
+      .filter((section) =>
+        this.isVisibleByRules(section.visibilityRules, {
+          role,
+          workflowState,
+          hierarchyScope: input.hierarchyScope,
+          visibilityFlags,
+        }),
+      )
+      .map((section) => {
+        const fields = (section.fields ?? [])
+          .filter((field) =>
+            this.isFieldVisible(field, {
+              role,
+              workflowState,
+              hierarchyScope: input.hierarchyScope,
+              visibilityFlags,
+              values,
+            }),
+          )
+          .map((field) =>
+            this.toResolvedField(field, {
+              role,
+              workflowState,
+              hierarchyScope: input.hierarchyScope,
+              visibilityFlags,
+            }),
+          );
+
+        return {
+          id: section.sectionKey,
+          key: section.sectionKey,
+          title: section.sectionLabel,
+          module: this.mapSectionModule(section.sectionType),
+          level: section.level === PmsTemplateSectionLevel.QUARTER ? 'quarter' : 'annual',
+          layout: section.layout ?? 'vertical',
+          fields,
+        } as ResolvedTemplateSection;
+      })
+      .filter((section) => section.fields.length > 0);
+
+    return {
+      versionId,
+      role: input.role,
+      workflowState,
+      sections,
+    };
   }
 
   async createLetterTemplate(input: CreateLetterTemplateInput): Promise<{
@@ -717,6 +855,9 @@ export class PmsTemplateService extends BaseService {
       const legacyApplicableQuarters = section.applicableQuarters as ITemplateSection['repeatFor'] | undefined;
       const legacyOrder = section.order as number | undefined;
       const legacyPermissions = section.permissions as TemplatePermission[] | undefined;
+      const sectionScoringConfig = section.sectionScoringConfig as ITemplateSection['sectionScoringConfig'] | undefined;
+      const repeatFor = section.repeatFor ?? legacyApplicableQuarters ?? [];
+      const quarterScope = section.quarterScope as ITemplateSection['quarterScope'] | undefined;
       const rulePatch = this.rulesFromPermissions(legacyPermissions ?? []);
 
       return {
@@ -724,10 +865,23 @@ export class PmsTemplateService extends BaseService {
         sectionLabel: section.sectionLabel ?? legacyLabel ?? '',
         sectionType: section.sectionType ?? legacyType ?? PmsTemplateSectionType.OBJECTIVES,
         level: section.level ?? PmsTemplateSectionLevel.ANNUAL,
-        repeatFor: section.repeatFor ?? legacyApplicableQuarters ?? [],
+        repeatFor,
         repeatable: section.repeatable ?? false,
         displayOrder: section.displayOrder ?? legacyOrder ?? index + 1,
         layout: section.layout === 'grid' ? 'grid' : 'vertical',
+        renderingScope: this.normalizeRenderingScope(
+          section.renderingScope as string | undefined,
+          section.level ?? PmsTemplateSectionLevel.ANNUAL,
+        ),
+        quarterScope: quarterScope ?? repeatFor,
+        sectionScoringConfig: sectionScoringConfig
+          ? {
+              participatesInScoring: !!sectionScoringConfig.participatesInScoring,
+              weightage: Number(sectionScoringConfig.weightage ?? 0),
+              aggregationMethod: sectionScoringConfig.aggregationMethod ?? 'WEIGHTED_AVERAGE',
+              maxSectionScore: Number(sectionScoringConfig.maxSectionScore ?? 100),
+            }
+          : undefined,
         visibilityRules: section.visibilityRules ?? rulePatch.visibilityRules ?? {},
         editabilityRules: section.editabilityRules ?? rulePatch.editabilityRules ?? {},
         metadata: section.metadata ?? {},
@@ -783,17 +937,43 @@ export class PmsTemplateService extends BaseService {
       colSpan: [1, 2, 3, 4].includes(Number(field.colSpan))
         ? (Number(field.colSpan) as 1 | 2 | 3 | 4)
         : 4,
-      options: field.options ?? [],
+      options: (field.options ?? []).map((option: any) => ({
+        label: option.label,
+        value: option.value,
+        ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
+      })),
+      behaviors: Array.isArray(field.behaviors)
+        ? field.behaviors.map((behavior: any) => ({
+            workflowState: behavior.workflowState,
+            role: this.normalizeRoleCode(behavior.role),
+            visibility: behavior.visibility === 'HIDDEN' ? 'HIDDEN' : 'VISIBLE',
+            editability: behavior.editability === 'EDITABLE' ? 'EDITABLE' : 'READ_ONLY',
+            mandatory: !!behavior.mandatory,
+          }))
+        : [],
+      conditionalRendering: field.conditionalRendering
+        ? {
+            dependsOn: String((field.conditionalRendering as any).dependsOn ?? ''),
+            operator: (field.conditionalRendering as any).operator,
+            value: (field.conditionalRendering as any).value,
+            action: (field.conditionalRendering as any).action === 'HIDE' ? 'HIDE' : 'SHOW',
+          }
+        : undefined,
       matrixConfig: field.matrixConfig
         ? {
           rows: (field.matrixConfig.rows ?? []).map((row: any) => ({
-            key: row.key,
+            key: row.key ?? row.id,
             label: row.label,
-            options: row.options ?? [],
+            options: (row.options ?? []).map((option: any) => ({
+              label: option.label,
+              value: option.value,
+              ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
+            })),
           })),
           columns: (field.matrixConfig.columns ?? []).map((col: any) => ({
-            key: col.key,
+            key: col.key ?? col.id,
             label: col.label,
+            weightage: col.weightage,
           })),
           allowComments: !!field.matrixConfig.allowComments,
         }
@@ -801,7 +981,7 @@ export class PmsTemplateService extends BaseService {
       gridConfig: field.gridConfig
         ? {
           columns: (field.gridConfig.columns ?? []).map((col: any) => ({
-            key: col.key,
+            key: col.key ?? col.id,
             label: col.label,
             type: col.type,
             required: !!col.required,
@@ -833,7 +1013,9 @@ export class PmsTemplateService extends BaseService {
     const hierarchyScopes = new Set<string>();
 
     for (const permission of permissions) {
-      const roleCode = typeof permission.roleCode === 'string' ? permission.roleCode : undefined;
+      const roleCode = typeof permission.roleCode === 'string'
+        ? this.normalizeRoleCode(permission.roleCode)
+        : undefined;
       if (!roleCode) continue;
 
       if (permission.visible === false) hiddenFrom.push(roleCode);
@@ -870,9 +1052,261 @@ export class PmsTemplateService extends BaseService {
     };
   }
 
+  private isSectionInScope(
+    section: ITemplateSection,
+    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+  ): boolean {
+    if (!quarter) return true;
+    const scopedQuarters = section.quarterScope?.length
+      ? section.quarterScope
+      : section.repeatFor ?? [];
+    if (scopedQuarters.length === 0) return true;
+    return scopedQuarters.includes(quarter);
+  }
+
+  private isFieldVisible(
+    field: ITemplateField,
+    context: {
+      role: string;
+      workflowState: string;
+      hierarchyScope?: string;
+      visibilityFlags: Set<string>;
+      values: Record<string, unknown>;
+    },
+  ): boolean {
+    const behavior = this.findBehavior(field, context.role, context.workflowState);
+    if (behavior?.visibility === 'HIDDEN') return false;
+
+    const visibleByRules = this.isVisibleByRules(field.visibilityRules, context);
+    if (!visibleByRules) return false;
+
+    if (behavior && behavior.visibility !== 'VISIBLE') return false;
+
+    if (field.conditionalRendering) {
+      const conditionMet = this.evaluateCondition(
+        context.values[field.conditionalRendering.dependsOn],
+        field.conditionalRendering.operator,
+        field.conditionalRendering.value,
+      );
+      return field.conditionalRendering.action === 'SHOW' ? conditionMet : !conditionMet;
+    }
+
+    return true;
+  }
+
+  private toResolvedField(
+    field: ITemplateField,
+    context: {
+      role: string;
+      workflowState: string;
+      hierarchyScope?: string;
+      visibilityFlags: Set<string>;
+    },
+  ): ResolvedTemplateField {
+    const behavior = this.findBehavior(field, context.role, context.workflowState);
+    const requiredFor = this.stringArrayFromRule(field.validationRules, 'requiredFor');
+    return {
+      key: field.fieldKey,
+      label: field.fieldLabel,
+      type: this.mapFieldTypeForClient(field.fieldType),
+      required: behavior?.mandatory ?? field.isRequired ?? requiredFor.includes(context.role),
+      visible: true,
+      editable: this.isFieldEditable(field, context.role, context.workflowState, behavior),
+      placeholder: field.placeholder,
+      helpText: field.helpText,
+      colSpan: field.colSpan,
+      options: field.options ?? [],
+      matrixConfig: field.matrixConfig,
+      gridConfig: field.gridConfig,
+      scoringIncluded: field.scoringConfig?.participatesInScoring === true,
+      scoringConfig: field.scoringConfig,
+      validationRules: field.validationRules,
+    };
+  }
+
+  private isVisibleByRules(
+    rules: Record<string, unknown> | undefined,
+    context: {
+      role: string;
+      workflowState: string;
+      hierarchyScope?: string;
+      visibilityFlags: Set<string>;
+    },
+  ): boolean {
+    const hiddenFrom = this.stringArrayFromRule(rules, 'hiddenFrom').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    if (hiddenFrom.includes(context.role)) return false;
+
+    const visibleTo = this.stringArrayFromRule(rules, 'visibleTo').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    if (visibleTo.length > 0 && !visibleTo.includes(context.role)) return false;
+
+    const visibleStates = this.stringArrayFromRule(rules, 'visibleStates');
+    if (visibleStates.length > 0 && !visibleStates.includes(context.workflowState)) return false;
+
+    const hierarchyScopes = this.stringArrayFromRule(rules, 'hierarchyScopes');
+    if (
+      hierarchyScopes.length > 0 &&
+      (!context.hierarchyScope || !hierarchyScopes.includes(context.hierarchyScope))
+    ) {
+      return false;
+    }
+
+    const publishFlags = this.stringArrayFromRule(rules, 'publishFlags');
+    if (publishFlags.length > 0) {
+      return publishFlags.every((flag) => context.visibilityFlags.has(flag));
+    }
+
+    if (rules?.publishFlagRequired === true && context.visibilityFlags.size === 0) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private isFieldEditable(
+    field: ITemplateField,
+    role: string,
+    workflowState: string,
+    behavior?: NonNullable<ITemplateField['behaviors']>[number],
+  ): boolean {
+    if (behavior) return behavior.editability === 'EDITABLE';
+
+    const editableBy = this.stringArrayFromRule(field.editabilityRules, 'editableBy').map((item) =>
+      this.normalizeRoleCode(item),
+    );
+    if (editableBy.length > 0 && !editableBy.includes(role)) return false;
+
+    const editableStates = this.stringArrayFromRule(field.editabilityRules, 'editableStates');
+    if (editableStates.length > 0 && !editableStates.includes(workflowState)) return false;
+
+    return editableBy.includes(role);
+  }
+
+  private findBehavior(
+    field: ITemplateField,
+    role: string,
+    workflowState: string,
+  ): NonNullable<ITemplateField['behaviors']>[number] | undefined {
+    return (field.behaviors ?? []).find(
+      (behavior) =>
+        this.normalizeRoleCode(behavior.role) === role &&
+        behavior.workflowState === workflowState,
+    );
+  }
+
+  private evaluateCondition(
+    actualValue: unknown,
+    operator: string,
+    expectedValue: unknown,
+  ): boolean {
+    switch (operator) {
+      case 'EQUALS':
+        return actualValue === expectedValue;
+      case 'NOT_EQUALS':
+        return actualValue !== expectedValue;
+      case 'IN':
+        return Array.isArray(expectedValue) && expectedValue.includes(actualValue as never);
+      case 'NOT_IN':
+        return Array.isArray(expectedValue) && !expectedValue.includes(actualValue as never);
+      case 'GREATER_THAN':
+        return Number(actualValue) > Number(expectedValue);
+      case 'LESS_THAN':
+        return Number(actualValue) < Number(expectedValue);
+      case 'IS_EMPTY':
+        return actualValue === undefined || actualValue === null || actualValue === '';
+      case 'IS_NOT_EMPTY':
+        return actualValue !== undefined && actualValue !== null && actualValue !== '';
+      default:
+        return false;
+    }
+  }
+
+  private stringArrayFromRule(
+    rules: Record<string, unknown> | undefined,
+    key: string,
+  ): string[] {
+    const value = rules?.[key];
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  }
+
+  private isApprovedWorkflowState(workflowState: string): boolean {
+    return (
+      (Object.values(QuarterWorkflowState) as string[]).includes(workflowState) ||
+      (Object.values(AnnualWorkflowState) as string[]).includes(workflowState)
+    );
+  }
+
+  private normalizeRoleCode(role: string): string {
+    const normalized = role.replace(/[ /-]/g, '_').toUpperCase();
+    if (normalized === 'HRADMIN') return 'HR_ADMIN';
+    return normalized;
+  }
+
+  private normalizeRenderingScope(
+    renderingScope: string | undefined,
+    level: string,
+  ): 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH' {
+    if (renderingScope === 'QUARTER_ONLY' || renderingScope === 'ANNUAL_ONLY' || renderingScope === 'BOTH') {
+      return renderingScope;
+    }
+    return level === PmsTemplateSectionLevel.QUARTER ? 'QUARTER_ONLY' : 'ANNUAL_ONLY';
+  }
+
+  private mapSectionModule(sectionType: string): string {
+    if (sectionType === PmsTemplateSectionType.QUARTER_REVIEW) {
+      return 'Manager Quarterly Review Management';
+    }
+    if (
+      [
+        PmsTemplateSectionType.ANNUAL_SUMMARY,
+        PmsTemplateSectionType.FINAL_GRADE,
+        PmsTemplateSectionType.MERIT,
+        PmsTemplateSectionType.APPRAISAL_COMMUNICATION,
+        PmsTemplateSectionType.OVERALL_FEEDBACK,
+      ].includes(sectionType as never)
+    ) {
+      return 'Annual Appraisal Decision Management';
+    }
+    return 'Objective Management';
+  }
+
+  private mapFieldTypeForClient(fieldType: string): string {
+    const map: Record<string, string> = {
+      SHORT_TEXT: 'text',
+      LONG_TEXT: 'textarea',
+      NUMERIC_INPUT: 'number',
+      DROPDOWN: 'select',
+      RADIO: 'radio',
+      CHECKBOX: 'checkbox',
+      CHECKBOX_GROUP: 'checkbox_group',
+      MULTISELECT: 'multiselect',
+      DATE: 'date',
+      DATE_RANGE: 'date_range',
+      RATING_SCALE: 'rating_scale',
+      WEIGHTED_SCORE: 'number',
+      CURRENCY: 'currency',
+      PERCENTAGE: 'percentage',
+      ATTACHMENT: 'attachment',
+      RICH_TEXT: 'rich_text',
+      FORMULA: 'formula',
+      COMMENT_BOX: 'textarea',
+      BOOLEAN: 'checkbox',
+      MATRIX: 'matrix',
+      DATA_GRID: 'data_grid',
+      STATIC_TEXT: 'static_text',
+      SECTION_DIVIDER: 'section_divider',
+      SIGNATURE: 'signature',
+    };
+    return map[fieldType] ?? 'text';
+  }
+
   private validateSections(sections: TemplateSection[]): void {
     const allowedQuarters = new Set(['Q1', 'Q2', 'Q3', 'Q4']);
     const sectionKeys = new Set<string>();
+    const allFieldKeys = new Set<string>();
 
     for (const section of sections) {
       if (!section.sectionKey?.trim()) {
@@ -905,6 +1339,13 @@ export class PmsTemplateService extends BaseService {
         throw new Error(`Invalid section layout in section ${section.sectionKey}`);
       }
 
+      if (
+        section.renderingScope &&
+        !['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'].includes(section.renderingScope)
+      ) {
+        throw new Error(`Invalid renderingScope in section ${section.sectionKey}`);
+      }
+
       const fieldKeys = new Set<string>();
       for (const field of section.fields ?? []) {
         if (!field.fieldKey?.trim()) {
@@ -919,6 +1360,7 @@ export class PmsTemplateService extends BaseService {
           throw new Error(`Duplicate field key ${field.fieldKey} in section ${section.sectionKey}`);
         }
         fieldKeys.add(field.fieldKey);
+        allFieldKeys.add(field.fieldKey);
 
         if (!Object.values(PmsTemplateFieldType).includes(field.fieldType)) {
           throw new Error(
@@ -943,6 +1385,17 @@ export class PmsTemplateService extends BaseService {
 
         if (field.colSpan !== undefined && ![1, 2, 3, 4].includes(field.colSpan)) {
           throw new Error(`Invalid colSpan for field ${field.fieldKey} in section ${section.sectionKey}`);
+        }
+
+        for (const behavior of field.behaviors ?? []) {
+          if (!this.isApprovedWorkflowState(behavior.workflowState)) {
+            throw new Error(
+              `Invalid behavior workflowState ${behavior.workflowState} for field ${field.fieldKey}`,
+            );
+          }
+          if (!behavior.role?.trim()) {
+            throw new Error(`Behavior role is required for field ${field.fieldKey}`);
+          }
         }
 
         if (field.fieldType === PmsTemplateFieldType.STATIC_TEXT && !field.helpText?.trim()) {
@@ -1052,6 +1505,77 @@ export class PmsTemplateService extends BaseService {
             );
           }
         }
+      }
+    }
+
+    for (const section of sections) {
+      for (const field of section.fields ?? []) {
+        if (field.conditionalRendering && !allFieldKeys.has(field.conditionalRendering.dependsOn)) {
+          throw new Error(
+            `Field ${field.fieldKey} depends on missing field ${field.conditionalRendering.dependsOn}`,
+          );
+        }
+      }
+    }
+  }
+
+  private validateTemplateVersionForActivation(version: IPmsTemplateVersion): void {
+    const scoringSections = version.sections.filter(
+      (section) => section.sectionScoringConfig?.participatesInScoring === true,
+    );
+
+    if (scoringSections.length > 0) {
+      const totalSectionWeight = scoringSections.reduce(
+        (total, section) => total + Number(section.sectionScoringConfig?.weightage ?? 0),
+        0,
+      );
+      if (totalSectionWeight !== 100) {
+        throw new Error('Scoring section weightage total must be exactly 100 before activation');
+      }
+
+      for (const section of scoringSections) {
+        const scoringFields = (section.fields ?? []).filter(
+          (field) => field.scoringConfig?.participatesInScoring === true,
+        );
+        if (scoringFields.length === 0) {
+          throw new Error(`Scoring section ${section.sectionKey} must contain at least one scoring field`);
+        }
+
+        const fieldWeightTotal = scoringFields.reduce(
+          (total, field) => total + Number(field.scoringConfig?.weight ?? field.scoringConfig?.weightage ?? 0),
+          0,
+        );
+        if (fieldWeightTotal !== 100) {
+          throw new Error(`Scoring field weightage total in section ${section.sectionKey} must be exactly 100`);
+        }
+      }
+    }
+
+    const annualScoringConfig = version.annualScoringConfig as
+      | {
+          quarterWeights?: Record<string, number>;
+          excludedQuarters?: string[];
+        }
+      | undefined;
+    const quarterWeights = annualScoringConfig?.quarterWeights;
+    if (quarterWeights && Object.keys(quarterWeights).length > 0) {
+      const excluded = new Set(annualScoringConfig?.excludedQuarters ?? []);
+      const totalQuarterWeight = ['Q1', 'Q2', 'Q3', 'Q4']
+        .filter((quarter) => !excluded.has(quarter))
+        .reduce((total, quarter) => total + Number(quarterWeights[quarter] ?? 0), 0);
+
+      if (totalQuarterWeight !== 100) {
+        throw new Error('Annual scoring quarter weightage total must be exactly 100 before activation');
+      }
+    }
+
+    const outcomeTypes = new Set(Object.values(AppraisalOutcomeType));
+    for (const mapping of version.outcomeMappings ?? []) {
+      if (!outcomeTypes.has(mapping.outcomeType)) {
+        throw new Error(`Invalid outcome mapping type: ${mapping.outcomeType}`);
+      }
+      if (!mapping.letterTemplateVersionId?.trim()) {
+        throw new Error(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
       }
     }
   }
