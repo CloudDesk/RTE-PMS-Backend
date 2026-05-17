@@ -44,6 +44,19 @@ export const cycleRoutes: RouteHandler = async (
   );
 
   fastify.get(
+    '/communication-rules',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.cycleService.listCommunicationRules();
+        return reply.send(successResponse('PMS cycle communication rules fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
     '/:id',
     { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
     async (request, reply) => {
@@ -80,9 +93,11 @@ export const cycleRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
+        const body = request.body as { quarters?: QuarterCycleInput[] } | QuarterCycleInput[];
+        const quarters = Array.isArray(body) ? body : body.quarters;
         const result = await request.container!.cycleService.updateWindows(
           id,
-          request.body as QuarterCycleInput[],
+          quarters ?? [],
         );
         return reply.send(successResponse('PMS cycle windows updated successfully', result));
       } catch (error: unknown) {
@@ -97,9 +112,16 @@ export const cycleRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
+        const body = (request.body ?? {}) as
+          | { config?: Record<string, unknown> }
+          | Record<string, unknown>;
+        const config: Record<string, unknown> =
+          'config' in body && body.config
+            ? (body.config as Record<string, unknown>)
+            : (body as Record<string, unknown>);
         const result = await request.container!.cycleService.updateCommunication(
           id,
-          request.body as Record<string, unknown>,
+          config,
         );
         return reply.send(successResponse('PMS cycle communication config updated successfully', result));
       } catch (error: unknown) {
@@ -114,9 +136,16 @@ export const cycleRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
+        const body = (request.body ?? {}) as
+          | { config?: Record<string, unknown> }
+          | Record<string, unknown>;
+        const config: Record<string, unknown> =
+          'config' in body && body.config
+            ? (body.config as Record<string, unknown>)
+            : (body as Record<string, unknown>);
         const result = await request.container!.cycleService.updateAppraisalWindow(
           id,
-          request.body as Record<string, unknown>,
+          config,
         );
         return reply.send(successResponse('PMS cycle appraisal window updated successfully', result));
       } catch (error: unknown) {
@@ -192,6 +221,20 @@ export const cycleRoutes: RouteHandler = async (
           request.body as CancelCycleInput,
         );
         return reply.send(successResponse('PMS cycle cancelled successfully', cycle));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/sync-progression',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const cycle = await request.container!.cycleService.syncCycleProgression(id);
+        return reply.send(successResponse('PMS cycle progression synced successfully', cycle));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

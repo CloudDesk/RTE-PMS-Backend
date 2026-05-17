@@ -4,6 +4,7 @@ import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
   PmsTemplateStatus,
+  PmsRole,
   QuarterWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
@@ -11,6 +12,7 @@ import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
+import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
@@ -61,12 +63,19 @@ export interface CreateCycleInput {
 
 interface AppraisalWindowConfigInput {
   type?: AppraisalWindowType;
+  mode?: AppraisalWindowType;
   date?: Date | string;
   startDate?: Date | string;
   endDate?: Date | string;
   base?: AppraisalWindowBase;
   offsetDays?: number;
   durationDays?: number;
+  fixedWindow?: DateWindowInput;
+  relativeOffset?: {
+    dependency?: 'Q4_COMPLETION' | AppraisalWindowBase;
+    offsetDays?: number;
+    durationDays?: number;
+  };
 }
 
 export interface CreateCycleResult {
@@ -107,6 +116,17 @@ export interface CycleListResult {
   limit: number;
 }
 
+export interface CycleCommunicationRuleOption {
+  id: string;
+  name: string;
+  templateVersionId: string;
+  mappings: Array<{
+    outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
+    letterTemplateId: string;
+    letterTemplateName: string;
+  }>;
+}
+
 export interface CancelCycleInput {
   reason: string;
 }
@@ -117,10 +137,14 @@ export class CycleService extends BaseService {
   }
 
   async listCycles(query: CycleListQuery = {}): Promise<CycleListResult> {
-    this.assertAdmin('cycle.list');
+    await this.assertCycleListAccess();
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
+    const assignedCycleIds = await this.getAssignedCycleIdsForActor();
+    if (assignedCycleIds) {
+      filter._id = { $in: assignedCycleIds };
+    }
 
     if (query.status) {
       filter.status = query.status;
@@ -154,14 +178,58 @@ export class CycleService extends BaseService {
   }
 
   async getCycleDetail(cycleId: string): Promise<CycleDetailResult> {
-    this.assertAdmin('cycle.detail');
     const annualCycle = await this.getCycleForAction(cycleId);
+    await this.assertCycleReadAccess(annualCycle);
     const quarterCycles = await QuarterCycle.find({
       cycleId: annualCycle._id,
       isDeleted: false,
     }).sort({ quarterCode: 1 });
 
     return { annualCycle, quarterCycles };
+  }
+
+  async listCommunicationRules(): Promise<CycleCommunicationRuleOption[]> {
+    this.assertAdmin('cycle.communication.read');
+
+    const versions = await PmsTemplateVersion.find({
+      status: PmsTemplateStatus.ACTIVE,
+      isDeleted: false,
+      outcomeMappings: { $exists: true, $ne: [] },
+    }).sort({ activatedAt: -1, createdAt: -1 });
+
+    const templateIds = Array.from(
+      new Set(versions.map((version) => version.templateId.toString())),
+    );
+    const templates = await PmsTemplate.find({
+      _id: { $in: templateIds },
+      isDeleted: false,
+    }).select('name code');
+    const templateById = new Map(
+      templates.map((template) => [
+        template._id.toString(),
+        { name: template.name, code: template.code },
+      ]),
+    );
+
+    return versions.map((version) => {
+      const template = templateById.get(version.templateId.toString());
+      const templateName = template?.name ?? 'PMS Template';
+      const templateCode = template?.code ? ` · ${template.code}` : '';
+
+      return {
+        id: version._id.toString(),
+        name: `${templateName} v${version.versionNo}${templateCode}`,
+        templateVersionId: version._id.toString(),
+        mappings: (version.outcomeMappings ?? []).map((mapping) => ({
+          outcomeType: mapping.outcomeType,
+          letterTemplateId: mapping.letterTemplateVersionId,
+          letterTemplateName: this.resolveLetterTemplateName(
+            version,
+            mapping.letterTemplateVersionId,
+          ),
+        })),
+      };
+    });
   }
 
   async createCycle(input: CreateCycleInput): Promise<CreateCycleResult> {
@@ -189,7 +257,9 @@ export class CycleService extends BaseService {
             endDate: new Date(input.endDate),
             status: AnnualWorkflowState.DRAFT,
             templateVersionId,
-            appraisalWindowConfig: input.appraisalWindowConfig ?? {},
+            appraisalWindowConfig: this.normalizeAppraisalWindowConfig(
+              input.appraisalWindowConfig,
+            ),
             communicationRuleConfig: input.communicationRuleConfig ?? {},
             createdBy: this.actorIdObject(),
           },
@@ -275,7 +345,9 @@ export class CycleService extends BaseService {
       if (input.startDate !== undefined) cycle.startDate = new Date(input.startDate);
       if (input.endDate !== undefined) cycle.endDate = new Date(input.endDate);
       if (input.appraisalWindowConfig !== undefined) {
-        cycle.appraisalWindowConfig = input.appraisalWindowConfig;
+        cycle.appraisalWindowConfig = this.normalizeAppraisalWindowConfig(
+          input.appraisalWindowConfig,
+        );
       }
       if (input.communicationRuleConfig !== undefined) {
         cycle.communicationRuleConfig = input.communicationRuleConfig;
@@ -371,6 +443,9 @@ export class CycleService extends BaseService {
     if (!reason) {
       throw new Error('Cancel reason is required');
     }
+
+    await this.assertCycleCanBeCancelled(cycle);
+
     return this.executeTransition(
       cycle,
       AnnualWorkflowState.CANCELLED,
@@ -378,6 +453,61 @@ export class CycleService extends BaseService {
       {},
       reason,
     );
+  }
+
+  async syncCycleProgression(cycleId: string): Promise<IAnnualCycle> {
+    this.assertAdmin('cycle.progression.sync');
+    const cycle = await this.getCycleForAction(cycleId);
+
+    if (
+      cycle.status !== AnnualWorkflowState.ACTIVE &&
+      cycle.status !== AnnualWorkflowState.IN_PROGRESS &&
+      cycle.status !== AnnualWorkflowState.ALL_QUARTERS_FINALIZED
+    ) {
+      throw new Error(
+        'Cycle progression can be synced only for ACTIVE, IN_PROGRESS, or ALL_QUARTERS_FINALIZED cycles',
+      );
+    }
+
+    const completion = await this.getQuarterCompletionForCycle(cycle);
+    if (!completion.hasAssignments) {
+      throw new Error('Cycle progression cannot be synced without annual assignments');
+    }
+    if (!completion.allComplete) {
+      throw new Error('Applicable quarter assignments are not all finalized or closed');
+    }
+
+    let updatedCycle = cycle;
+    if (updatedCycle.status === AnnualWorkflowState.ACTIVE) {
+      updatedCycle = await this.executeTransition(
+        updatedCycle,
+        AnnualWorkflowState.IN_PROGRESS,
+        'PMS_CYCLE_IN_PROGRESS',
+      );
+    }
+
+    if (updatedCycle.status === AnnualWorkflowState.IN_PROGRESS) {
+      updatedCycle = await this.executeTransition(
+        updatedCycle,
+        AnnualWorkflowState.ALL_QUARTERS_FINALIZED,
+        'PMS_CYCLE_ALL_QUARTERS_FINALIZED',
+        { allQuartersFinalizedAt: completion.completedAt },
+      );
+    }
+
+    if (
+      updatedCycle.status === AnnualWorkflowState.ALL_QUARTERS_FINALIZED &&
+      this.isAppraisalWindowOpen(updatedCycle, completion.completedAt)
+    ) {
+      updatedCycle = await this.executeTransition(
+        updatedCycle,
+        AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+        'PMS_CYCLE_APPRAISAL_WINDOW_OPEN',
+        { appraisalWindowOpenedAt: new Date() },
+      );
+    }
+
+    return updatedCycle;
   }
 
   private async executeTransition(
@@ -452,7 +582,9 @@ export class CycleService extends BaseService {
         managerReviewWindow: this.normalizeWindow(
           quarterInput.managerReviewWindow ?? quarterInput.reviewWindow,
         ),
-        quarterFinalizationWindow: this.normalizeWindow(quarterInput.quarterFinalizationWindow),
+        quarterFinalizationWindow: this.normalizeWindow(
+          this.getQuarterFinalizationWindowInput(quarterInput),
+        ),
         slaConfig: quarterInput.slaConfig ?? {},
         closureRules: quarterInput.closureRules ?? {},
         status: QuarterWorkflowState.NOT_STARTED,
@@ -534,6 +666,59 @@ export class CycleService extends BaseService {
     };
   }
 
+  private getQuarterFinalizationWindowInput(
+    quarterInput: QuarterCycleInput,
+  ): DateWindowInput | undefined {
+    const closureRules = quarterInput.closureRules as
+      | {
+          quarterFinalizationWindow?: DateWindowInput;
+          finalizationWindow?: DateWindowInput;
+        }
+      | undefined;
+
+    return (
+      quarterInput.quarterFinalizationWindow ??
+      closureRules?.quarterFinalizationWindow ??
+      closureRules?.finalizationWindow
+    );
+  }
+
+  private normalizeAppraisalWindowConfig(
+    config: Record<string, unknown> | undefined,
+  ): Record<string, unknown> {
+    if (!config || Object.keys(config).length === 0) {
+      return {};
+    }
+
+    const appraisalConfig = config as AppraisalWindowConfigInput;
+    const type = appraisalConfig.type ?? appraisalConfig.mode;
+
+    if (type === 'FIXED_DATE' && appraisalConfig.fixedWindow) {
+      return {
+        type: 'FIXED_RANGE',
+        mode: 'FIXED_DATE',
+        startDate: appraisalConfig.fixedWindow.startDate,
+        endDate: appraisalConfig.fixedWindow.endDate,
+      };
+    }
+
+    if (type === 'RELATIVE_OFFSET' && appraisalConfig.relativeOffset) {
+      const dependency = appraisalConfig.relativeOffset.dependency;
+      return {
+        type: 'RELATIVE_OFFSET',
+        mode: 'RELATIVE_OFFSET',
+        base: dependency === 'Q4_COMPLETION' ? 'Q4_FINALIZATION' : dependency,
+        offsetDays: Number(appraisalConfig.relativeOffset.offsetDays),
+        durationDays: Number(appraisalConfig.relativeOffset.durationDays),
+      };
+    }
+
+    return {
+      ...config,
+      type,
+    };
+  }
+
   private validateCycleInput(input: CreateCycleInput): void {
     if (!input.name?.trim()) {
       throw new Error('Cycle name is required');
@@ -558,7 +743,54 @@ export class CycleService extends BaseService {
 
     const quarters = input.quarters ?? this.createDefaultQuarterDates(input.startDate, input.endDate);
     this.validateQuarterWindows(quarters, cycleStart, cycleEnd);
-    this.validateAppraisalWindowConfig(input.appraisalWindowConfig, cycleStart, cycleEnd);
+    const appraisalWindowConfig = this.normalizeAppraisalWindowConfig(
+      input.appraisalWindowConfig,
+    );
+    this.validateAppraisalWindowConfig(
+      appraisalWindowConfig,
+      cycleStart,
+      cycleEnd,
+    );
+    this.validateAppraisalWindowAfterQuarterFinalization(quarters, appraisalWindowConfig);
+  }
+
+  private validateAppraisalWindowAfterQuarterFinalization(
+    quarters: QuarterCycleInput[],
+    config: Record<string, unknown>,
+  ): void {
+    if (!config || Object.keys(config).length === 0) {
+      return;
+    }
+
+    const appraisalConfig = config as AppraisalWindowConfigInput;
+    if (appraisalConfig.type === 'RELATIVE_OFFSET') {
+      return;
+    }
+
+    const appraisalStartInput = appraisalConfig.startDate ?? appraisalConfig.date;
+    if (!appraisalStartInput) {
+      return;
+    }
+
+    const finalizationEnds = quarters
+      .map((quarter) => this.getQuarterFinalizationWindowInput(quarter)?.endDate)
+      .filter((endDate): endDate is Date | string => Boolean(endDate))
+      .map((endDate) => new Date(endDate));
+
+    if (!finalizationEnds.length) {
+      return;
+    }
+
+    const latestFinalizationEnd = finalizationEnds.reduce((latest, current) =>
+      current > latest ? current : latest,
+    );
+    const appraisalStart = new Date(appraisalStartInput);
+
+    if (appraisalStart <= latestFinalizationEnd) {
+      throw new Error(
+        'Annual appraisal window must open after applicable quarter finalization windows',
+      );
+    }
   }
 
   private validateAppraisalWindowConfig(
@@ -682,7 +914,7 @@ export class CycleService extends BaseService {
         `${quarterCode} manager review window`,
       );
       this.validateWindowWithinQuarter(
-        quarter.quarterFinalizationWindow,
+        this.getQuarterFinalizationWindowInput(quarter),
         startDate,
         endDate,
         `${quarterCode} quarter finalization window`,
@@ -751,7 +983,7 @@ export class CycleService extends BaseService {
       },
       {
         label: 'quarter finalization window',
-        window: quarter.quarterFinalizationWindow,
+        window: this.getQuarterFinalizationWindowInput(quarter),
       },
     ]
       .filter((item) => item.window)
@@ -905,6 +1137,134 @@ export class CycleService extends BaseService {
     }
   }
 
+  private resolveLetterTemplateName(
+    version: { get?: (path: string) => unknown },
+    letterTemplateVersionId: string,
+  ): string {
+    const letterTemplates = version.get?.('letterTemplates') as
+      | Array<{
+          id?: string;
+          _id?: Types.ObjectId;
+          name?: string;
+          outcomeType?: string;
+        }>
+      | undefined;
+    const match = letterTemplates?.find((template) =>
+      [template.id, template._id?.toString()].includes(letterTemplateVersionId),
+    );
+    return match?.name ?? `Letter template ${letterTemplateVersionId}`;
+  }
+
+  private async assertCycleCanBeCancelled(cycle: IAnnualCycle): Promise<void> {
+    if (
+      cycle.status !== AnnualWorkflowState.ACTIVE &&
+      cycle.status !== AnnualWorkflowState.IN_PROGRESS
+    ) {
+      return;
+    }
+
+    const activeAssignments = await AnnualAssignment.countDocuments({
+      cycleId: cycle._id,
+      isDeleted: false,
+      annualState: {
+        $nin: [
+          AnnualWorkflowState.DRAFT,
+          AnnualWorkflowState.CANCELLED,
+          AnnualWorkflowState.CLOSED,
+          AnnualWorkflowState.ARCHIVED,
+        ],
+      },
+    });
+
+    if (activeAssignments > 0) {
+      throw new Error(
+        'Cycle has active assignments. Close or archive affected assignments before cancelling the cycle.',
+      );
+    }
+  }
+
+  private async getQuarterCompletionForCycle(cycle: IAnnualCycle): Promise<{
+    hasAssignments: boolean;
+    allComplete: boolean;
+    completedAt: Date;
+  }> {
+    const annualAssignments = await AnnualAssignment.find({
+      cycleId: cycle._id,
+      isDeleted: false,
+    }).select('applicableQuarters');
+    if (annualAssignments.length === 0) {
+      return { hasAssignments: false, allComplete: false, completedAt: new Date() };
+    }
+
+    const annualAssignmentIds = annualAssignments.map((assignment) => assignment._id);
+    const quarterAssignments = await QuarterAssignment.find({
+      annualAssignmentId: { $in: annualAssignmentIds },
+      isDeleted: false,
+    }).select('annualAssignmentId quarterCode quarterState lastTransitionAt updatedAt');
+    const quarterByAssignment = new Map<string, Map<QuarterCode, typeof quarterAssignments[number]>>();
+
+    for (const quarterAssignment of quarterAssignments) {
+      const key = quarterAssignment.annualAssignmentId.toString();
+      const quarters = quarterByAssignment.get(key) ?? new Map<QuarterCode, typeof quarterAssignment>();
+      quarters.set(quarterAssignment.quarterCode, quarterAssignment);
+      quarterByAssignment.set(key, quarters);
+    }
+
+    const completedStates = new Set<QuarterWorkflowState>([
+      QuarterWorkflowState.QUARTER_FINALIZED,
+      QuarterWorkflowState.CLOSED_BY_ADMIN,
+    ]);
+    let completedAt = cycle.updatedAt ?? new Date();
+
+    for (const assignment of annualAssignments) {
+      const quarters = quarterByAssignment.get(assignment._id.toString());
+      if (!quarters) {
+        return { hasAssignments: true, allComplete: false, completedAt };
+      }
+
+      for (const applicableQuarter of assignment.applicableQuarters) {
+        const quarter = quarters.get(applicableQuarter);
+        if (!quarter || !completedStates.has(quarter.quarterState as QuarterWorkflowState)) {
+          return { hasAssignments: true, allComplete: false, completedAt };
+        }
+
+        const transitionDate = quarter.lastTransitionAt ?? quarter.updatedAt;
+        if (transitionDate && transitionDate > completedAt) {
+          completedAt = transitionDate;
+        }
+      }
+    }
+
+    return { hasAssignments: true, allComplete: true, completedAt };
+  }
+
+  private isAppraisalWindowOpen(cycle: IAnnualCycle, allQuartersCompletedAt: Date): boolean {
+    const config = this.normalizeAppraisalWindowConfig(cycle.appraisalWindowConfig);
+    if (!config || Object.keys(config).length === 0) {
+      return false;
+    }
+
+    const now = new Date();
+    const appraisalConfig = config as AppraisalWindowConfigInput;
+    if (appraisalConfig.type === 'FIXED_DATE' || appraisalConfig.type === 'FIXED_RANGE') {
+      const startDateInput = appraisalConfig.startDate ?? appraisalConfig.date;
+      return Boolean(startDateInput && now >= new Date(startDateInput));
+    }
+
+    if (appraisalConfig.type !== 'RELATIVE_OFFSET') {
+      return false;
+    }
+
+    const baseDate =
+      appraisalConfig.base === 'ANNUAL_CYCLE_END'
+        ? cycle.endDate
+        : allQuartersCompletedAt;
+    const offsetDays = appraisalConfig.offsetDays ?? 0;
+    const openDate = new Date(baseDate);
+    openDate.setDate(openDate.getDate() + offsetDays);
+    return now >= openDate;
+  }
+
   private actorIdObject(): Types.ObjectId | undefined {
     const actorId = this.context.user?._id.toString();
     return actorId && Types.ObjectId.isValid(actorId)
@@ -922,6 +1282,81 @@ export class CycleService extends BaseService {
       actorId: user._id.toString(),
       actorRole: user.role,
     };
+  }
+
+  private async assertCycleListAccess(): Promise<void> {
+    const user = this.context.user;
+    if (!user) {
+      throw new Error('Authentication required');
+    }
+
+    const mappedRole = accessService.mapRole(user.role);
+    const allowedRoles = [
+      PmsRole.ADMIN,
+      PmsRole.SUPER_ADMIN,
+      PmsRole.MANAGEMENT,
+      PmsRole.EMPLOYEE,
+      PmsRole.MANAGER,
+    ];
+
+    if (!allowedRoles.includes(mappedRole as PmsRole)) {
+      throw new Error(`Role ${user.role} is not mapped for PMS cycle access.`);
+    }
+  }
+
+  private async assertCycleReadAccess(cycle: IAnnualCycle): Promise<void> {
+    const user = this.context.user;
+    if (!user) {
+      throw new Error('Authentication required');
+    }
+
+    const mappedRole = accessService.mapRole(user.role);
+    if (
+      mappedRole === PmsRole.ADMIN ||
+      mappedRole === PmsRole.SUPER_ADMIN ||
+      mappedRole === PmsRole.MANAGEMENT
+    ) {
+      return;
+    }
+
+    const assignedCycleIds = await this.getAssignedCycleIdsForActor();
+    const isAssigned = assignedCycleIds?.some((cycleId) => cycleId.equals(cycle._id)) ?? false;
+    if (!isAssigned) {
+      throw new Error('Users can access only assigned PMS cycle data.');
+    }
+  }
+
+  private async getAssignedCycleIdsForActor(): Promise<Types.ObjectId[] | undefined> {
+    const user = this.context.user;
+    if (!user) {
+      throw new Error('Authentication required');
+    }
+
+    const mappedRole = accessService.mapRole(user.role);
+    if (
+      mappedRole === PmsRole.ADMIN ||
+      mappedRole === PmsRole.SUPER_ADMIN ||
+      mappedRole === PmsRole.MANAGEMENT
+    ) {
+      return undefined;
+    }
+
+    const actorId = this.actorIdObject();
+    if (!actorId) {
+      throw new Error('Invalid authenticated user id');
+    }
+
+    const assignmentFilter: Record<string, unknown> = { isDeleted: false };
+    if (mappedRole === PmsRole.EMPLOYEE) {
+      assignmentFilter.employeeId = actorId;
+    } else if (mappedRole === PmsRole.MANAGER) {
+      assignmentFilter.assignedManagerId = actorId;
+    } else {
+      throw new Error(`Role ${user.role} is not mapped for PMS cycle access.`);
+    }
+
+    const assignments = await AnnualAssignment.find(assignmentFilter).select('cycleId');
+    return assignments.map((assignment) => assignment.cycleId);
   }
 
   private assertAdmin(action: string): void {
