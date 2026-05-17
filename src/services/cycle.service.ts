@@ -409,8 +409,17 @@ export class CycleService extends BaseService {
 
   async launchCycle(cycleId: string): Promise<IAnnualCycle> {
     this.assertAdmin('cycle.launch');
-    const cycle = await this.getCycleForAction(cycleId);
+    let cycle = await this.getCycleForAction(cycleId);
     await this.assertLaunchReady(cycle);
+
+    if (cycle.status === AnnualWorkflowState.DRAFT) {
+      cycle = await this.executeTransition(
+        cycle,
+        AnnualWorkflowState.SCHEDULED,
+        'PMS_CYCLE_SCHEDULED',
+      );
+    }
+
     return this.executeTransition(cycle, AnnualWorkflowState.ACTIVE, 'PMS_CYCLE_LAUNCHED', {
       launchedAt: new Date(),
     });
