@@ -666,3 +666,89 @@ Module 4 scope to implement/verify:
 - Assignment-aware runtime resolver authorization still needs completion.
 - Full employee/manager PMS runtime screens belong to later objective/review modules, but Module 4 should prepare assignment access and listing foundations.
 - Client `npm run check` still has app-wide pre-existing errors outside the completed PMS module scope.
+
+---
+
+May 18
+
+## Module 4 - Assignment Management Baseline
+
+### Completed
+
+- Extended existing PMS Assignment backend service instead of creating a separate assignment path.
+- Preserved the existing cycle launch assignment endpoint:
+  - `POST /pms/cycles/:id/assign`
+- Added cycle assignment listing:
+  - `GET /pms/cycles/:id/assignments`
+- Added backend bulk assignment:
+  - `POST /pms/cycles/:id/assignments/bulk`
+  - returns per-record `CREATED`, `SKIPPED`, `FAILED`, or `EXCEPTION`
+  - skips duplicate employee rows in the same bulk request
+  - queues missing-manager records into the assignment exception queue
+- Added assignment exception queue access:
+  - `GET /pms/cycles/:id/assignment-exceptions`
+  - `POST /pms/cycles/:cycleId/assignment-exceptions/:exceptionId/resolve`
+- Added assignment detail access:
+  - `GET /pms/cycles/:cycleId/assignments/:assignmentId`
+- Added manager reassignment:
+  - `POST /pms/cycles/:cycleId/assignments/:assignmentId/reassign`
+  - reassignment reason is mandatory
+  - completed/finalized or admin-closed quarters keep old manager attribution
+  - only future/open quarter assignments are moved to the new manager
+  - reassignment history is persisted in the existing reassignment collection
+- Added assignment close/reopen actions:
+  - `POST /pms/cycles/:cycleId/assignments/:assignmentId/close`
+  - `POST /pms/cycles/:cycleId/assignments/:assignmentId/reopen`
+  - reason is mandatory for both actions
+- Assignment list/detail access is scoped:
+  - Admin/Super Admin/Management can view cycle assignments
+  - Employee sees own assignments
+  - Manager sees assigned employee assignments
+- Management role can now view annual assignment summary records through the existing annual summary API.
+- Employee eligibility validation now blocks inactive employees and employees whose separation date has passed.
+- Existing assignment creation still enforces:
+  - one annual assignment per employee per cycle
+  - linked quarter assignments for applicable quarters
+  - active template version lock during assignment creation
+  - assigned manager mapping
+- Added frontend assignment API wrapper:
+  - `Client/src/lib/services/api/pmsAssignments.ts`
+- Added admin Assignment Management screen:
+  - `/admin/pms/assignments`
+  - cycle selector
+  - searchable employee selection
+  - bulk manager/reason/quarter assignment controls
+  - assignment table with quarter status and reassignment history count
+  - close/reopen actions
+  - missing-manager exception queue with resolve action
+- Sidebar PMS navigation now includes:
+  - Cycles
+  - Assignments
+
+### Files Changed
+
+Backend:
+- `Server/src/services/assignment.service.ts`
+- `Server/src/routes/assignment.routes.ts`
+- `Server/src/services/annualDecision.service.ts`
+
+Frontend:
+- `Client/src/lib/services/api/pmsAssignments.ts`
+- `Client/src/routes/admin/pms/assignments/+page.svelte`
+- `Client/src/lib/components/common/Sidebar.svelte`
+
+Status:
+- `Server/Document Repository/Module/Current_Status.md`
+
+### Verification
+
+- `Server npm run build` passed.
+- `Client npm run build` passed.
+- Client build still reports existing app-wide Svelte/a11y warnings and existing CSS minifier warnings, but no build failure.
+
+### Remaining Gaps / Follow-up
+
+- The admin reassignment UI currently uses a simple manager-id prompt; a polished selector modal can replace it later.
+- Server-side bulk assignment now exists, so the cycle launch modal can be refactored later to call the bulk endpoint instead of one request per employee.
+- Full employee and manager runtime PMS work screens still belong to later objective/review modules.
+- A dedicated management dashboard screen belongs to later dashboard/reporting modules.

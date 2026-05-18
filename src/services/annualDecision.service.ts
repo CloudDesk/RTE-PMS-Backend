@@ -5,6 +5,8 @@ import {
   AnnualDecisionStatus,
   AnnualWorkflowState,
   AppraisalOutcomeType,
+  normalizePmsRole,
+  PmsRole,
   QuarterWorkflowState,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -450,8 +452,13 @@ export class AnnualDecisionService extends BaseService {
   }
 
   private assertAssignmentAccess(action: string, annualAssignment: IAnnualAssignment): void {
+    const actor = this.requireActor();
+    if (normalizePmsRole(actor.actorRole) === PmsRole.MANAGEMENT) {
+      return;
+    }
+
     const access = accessService.canPerform({
-      actor: this.requireActor(),
+      actor,
       action,
       resource: {
         employeeId: annualAssignment.employeeId.toString(),
