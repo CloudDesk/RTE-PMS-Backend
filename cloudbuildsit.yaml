@@ -7,21 +7,21 @@ steps:
       - 'config'
       - 'set'
       - 'project'
-      - 'zuno-hr-2025'
+      - 'cloud-desk-447206'
 
   # Step 2: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '-t'
-      - 'gcr.io/zuno-hr-2025/zuno-cd-hr-india:latest'
+      - 'gcr.io/cloud-desk-447206/rte-pms:latest'
       - '.'
 
   # Step 3: Push the Docker image to Google Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/zuno-hr-2025/zuno-cd-hr-india:latest'
+      - 'gcr.io/cloud-desk-447206/rte-pms:latest'
 
   # Step 4: Deploy the image to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -29,16 +29,16 @@ steps:
     args:
       - 'run'
       - 'deploy'
-      - 'zuno-cd-hr-india'
+      - 'rte-pms'
       - '--image'
-      - 'gcr.io/zuno-hr-2025/zuno-cd-hr-india:latest'
+      - 'gcr.io/cloud-desk-447206/rte-pms:latest'
       - '--region'
       - 'asia-south1'
       - '--platform'
       - 'managed'
       - '--allow-unauthenticated'
       - '--service-account'
-      - 'zunoprod@zuno-hr-2025.iam.gserviceaccount.com'
+      - '374914445110-compute@developer.gserviceaccount.com'
       - '--execution-environment'
       - 'gen2'
       - '--memory'
