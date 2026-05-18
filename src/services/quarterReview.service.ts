@@ -18,6 +18,7 @@ import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
 import { QuarterReviewValue } from '../models/pms-quarter-review-value.model';
+import { Delegation } from '../models/pms-delegation.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
@@ -252,6 +253,12 @@ export class QuarterReviewService extends BaseService {
         ? await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode)
         : this.defaultQuarterReviewConfig();
 
+      const actorRole = normalizePmsRole(this.requireActor().actorRole);
+      let isReviewVisible = true;
+      if (actorRole === PmsRole.EMPLOYEE) {
+        isReviewVisible = annualAssignment?.visibility?.employeeReviewVisible === true;
+      }
+
       return {
         id: quarterAssignment._id.toString(),
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
@@ -281,7 +288,7 @@ export class QuarterReviewService extends BaseService {
           successCriteria: objective.successCriteria ?? '',
           weightage: objective.weightage,
         })),
-        quarterReview: review ? this.mapQuarterReviewRecord(review) : null,
+        quarterReview: review ? this.mapQuarterReviewRecord(review, isReviewVisible) : null,
         backendConnected: true,
       };
     }));
@@ -300,7 +307,7 @@ export class QuarterReviewService extends BaseService {
     input: SaveQuarterReviewDraftInput,
   ): Promise<SubmitQuarterReviewResult> {
     const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    this.assertManagerAccess('quarterReview.draft', quarterAssignment);
+    await this.assertManagerAccess('quarterReview.draft', quarterAssignment);
     await this.assertReviewWindow(quarterAssignment);
 
     if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
@@ -325,6 +332,27 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Submitted quarter review cannot be edited as draft');
     }
 
+    const actor = this.requireActor();
+    const actorObjectId = new Types.ObjectId(actor.actorId);
+    let actingDelegateUserId: Types.ObjectId | undefined;
+    let originalOwnerUserId: Types.ObjectId | undefined;
+
+    if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
+      const delegation = await Delegation.findOne({
+        delegateUserId: actorObjectId,
+        delegatorUserId: quarterAssignment.assignedManagerId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }).lean();
+
+      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+        actingDelegateUserId = actorObjectId;
+        originalOwnerUserId = quarterAssignment.assignedManagerId;
+      }
+    }
+
     const reviewPayload = {
       quarterAssignmentId: quarterAssignment._id,
       annualAssignmentId: quarterAssignment.annualAssignmentId,
@@ -342,6 +370,8 @@ export class QuarterReviewService extends BaseService {
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
       attachments: this.normalizeAttachments(input.attachments ?? []),
+      actingDelegateUserId,
+      originalOwnerUserId,
       updatedBy: this.actorIdObject(),
       createdBy: existingReview?.createdBy ?? this.actorIdObject(),
     };
@@ -383,7 +413,7 @@ export class QuarterReviewService extends BaseService {
     input: SubmitQuarterReviewInput,
   ): Promise<SubmitQuarterReviewResult> {
     const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    this.assertManagerAccess('quarterReview.submit', quarterAssignment);
+    await this.assertManagerAccess('quarterReview.submit', quarterAssignment);
     await this.assertReviewWindow(quarterAssignment);
 
     if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
@@ -404,6 +434,27 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Quarter review already submitted');
     }
 
+    const actor = this.requireActor();
+    const actorObjectId = new Types.ObjectId(actor.actorId);
+    let actingDelegateUserId: Types.ObjectId | undefined;
+    let originalOwnerUserId: Types.ObjectId | undefined;
+
+    if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
+      const delegation = await Delegation.findOne({
+        delegateUserId: actorObjectId,
+        delegatorUserId: quarterAssignment.assignedManagerId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }).lean();
+
+      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+        actingDelegateUserId = actorObjectId;
+        originalOwnerUserId = quarterAssignment.assignedManagerId;
+      }
+    }
+
     const reviewPayload = {
       quarterAssignmentId: quarterAssignment._id,
       annualAssignmentId: quarterAssignment.annualAssignmentId,
@@ -421,6 +472,8 @@ export class QuarterReviewService extends BaseService {
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
       attachments: this.normalizeAttachments(input.attachments ?? []),
+      actingDelegateUserId,
+      originalOwnerUserId,
       submittedAt: new Date(),
       updatedBy: this.actorIdObject(),
       createdBy: existingReview?.createdBy ?? this.actorIdObject(),
@@ -589,7 +642,7 @@ export class QuarterReviewService extends BaseService {
 
     const actor = this.requireActor();
     for (const quarterAssignment of quarterAssignments) {
-      this.assertQuarterAssignmentViewAccess(actor.actorRole, quarterAssignment);
+      await this.assertQuarterAssignmentViewAccess(actor.actorRole, quarterAssignment);
     }
 
     const annualAssignmentIds = quarterAssignments.map((item) => item.annualAssignmentId);
@@ -646,6 +699,12 @@ export class QuarterReviewService extends BaseService {
         ? await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode)
         : this.defaultQuarterReviewConfig();
 
+      const actorRole = normalizePmsRole(this.requireActor().actorRole);
+      let isReviewVisible = true;
+      if (actorRole === PmsRole.EMPLOYEE) {
+        isReviewVisible = annualAssignment?.visibility?.employeeReviewVisible === true;
+      }
+
       return {
         id: quarterAssignment._id.toString(),
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
@@ -675,13 +734,36 @@ export class QuarterReviewService extends BaseService {
           successCriteria: objective.successCriteria ?? '',
           weightage: objective.weightage,
         })),
-        quarterReview: review ? this.mapQuarterReviewRecord(review) : null,
+        quarterReview: review ? this.mapQuarterReviewRecord(review, isReviewVisible) : null,
         backendConnected: true,
       };
     }));
   }
 
-  private mapQuarterReviewRecord(review: Record<string, any>): QuarterReviewRecord {
+  private mapQuarterReviewRecord(review: Record<string, any>, isReviewVisible = true): QuarterReviewRecord {
+    if (!isReviewVisible) {
+      return {
+        id: review._id.toString(),
+        quarterAssignmentId: review.quarterAssignmentId.toString(),
+        annualAssignmentId: review.annualAssignmentId?.toString?.() ?? '',
+        cycleId: review.cycleId?.toString?.() ?? '',
+        employeeId: review.employeeId.toString(),
+        managerId: review.managerId.toString(),
+        reviewStatus: review.reviewStatus,
+        ratings: [],
+        comments: '',
+        score: undefined,
+        overallRating: '',
+        recommendation: '',
+        achievements: '',
+        developmentObservations: '',
+        attachments: [],
+        submittedAt: review.submittedAt ? new Date(review.submittedAt).toISOString() : undefined,
+        finalizedAt: review.finalizedAt ? new Date(review.finalizedAt).toISOString() : undefined,
+        isDraft: !review.submittedAt,
+      };
+    }
+
     return {
       id: review._id.toString(),
       quarterAssignmentId: review.quarterAssignmentId.toString(),
@@ -1179,9 +1261,10 @@ export class QuarterReviewService extends BaseService {
     };
   }
 
-  private assertManagerAccess(action: string, quarterAssignment: IQuarterAssignment): void {
+  private async assertManagerAccess(action: string, quarterAssignment: IQuarterAssignment): Promise<void> {
+    const actor = this.requireActor();
     const access = accessService.canPerform({
-      actor: this.requireActor(),
+      actor,
       action,
       resource: {
         employeeId: quarterAssignment.employeeId.toString(),
@@ -1189,15 +1272,31 @@ export class QuarterReviewService extends BaseService {
       },
     });
 
-    if (!access.allowed || access.mappedRole !== PmsRole.MANAGER) {
-      throw new Error(access.message ?? 'Only the assigned manager can manage quarter review');
+    if (access.allowed && access.mappedRole === PmsRole.MANAGER) {
+      return;
     }
+
+    // Check delegation
+    const delegation = await Delegation.findOne({
+      delegateUserId: new Types.ObjectId(actor.actorId),
+      delegatorUserId: quarterAssignment.assignedManagerId,
+      status: 'ACTIVE',
+      validFrom: { $lte: new Date() },
+      validTo: { $gte: new Date() },
+      isDeleted: false,
+    }).lean();
+
+    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+      return;
+    }
+
+    throw new Error(access.message ?? 'Only the assigned manager can manage quarter review');
   }
 
-  private assertQuarterAssignmentViewAccess(
+  private async assertQuarterAssignmentViewAccess(
     actorRole: string,
     quarterAssignment: Pick<IQuarterAssignment, 'employeeId' | 'assignedManagerId'>,
-  ): void {
+  ): Promise<void> {
     const mappedRole = normalizePmsRole(actorRole);
     if (
       mappedRole === PmsRole.ADMIN ||
@@ -1207,8 +1306,9 @@ export class QuarterReviewService extends BaseService {
       return;
     }
 
+    const actor = this.requireActor();
     const access = accessService.canPerform({
-      actor: this.requireActor(),
+      actor,
       action: 'quarterReview.view',
       resource: {
         employeeId: quarterAssignment.employeeId.toString(),
@@ -1216,9 +1316,25 @@ export class QuarterReviewService extends BaseService {
       },
     });
 
-    if (!access.allowed) {
-      throw new Error(access.message ?? 'Access denied');
+    if (access.allowed) {
+      return;
     }
+
+    // Check delegation
+    const delegation = await Delegation.findOne({
+      delegateUserId: new Types.ObjectId(actor.actorId),
+      delegatorUserId: quarterAssignment.assignedManagerId,
+      status: 'ACTIVE',
+      validFrom: { $lte: new Date() },
+      validTo: { $gte: new Date() },
+      isDeleted: false,
+    }).lean();
+
+    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+      return;
+    }
+
+    throw new Error(access.message ?? 'Access denied');
   }
 
   private assertAdmin(action: string): void {

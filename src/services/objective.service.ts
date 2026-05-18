@@ -16,6 +16,7 @@ import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
+import { Delegation } from '../models/pms-delegation.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
@@ -266,7 +267,7 @@ export class ObjectiveService extends BaseService {
 
   async getObjectiveDetail(objectiveId: string): Promise<ObjectiveRecord> {
     const objective = await this.getObjective(objectiveId);
-    this.assertObjectiveAccess('objective.view', objective, false);
+    await this.assertObjectiveAccess('objective.view', objective, false);
 
     const annualAssignment = objective.annualAssignmentId
       ? await AnnualAssignment.findById(objective.annualAssignmentId).lean()
@@ -317,6 +318,25 @@ export class ObjectiveService extends BaseService {
     }
 
     const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
+    let actingDelegateUserId: Types.ObjectId | undefined;
+    let originalOwnerUserId: Types.ObjectId | undefined;
+
+    if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
+      const delegation = await Delegation.findOne({
+        delegateUserId: actorObjectId,
+        delegatorUserId: quarterAssignment.assignedManagerId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }).lean();
+
+      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+        actingDelegateUserId = actorObjectId;
+        originalOwnerUserId = quarterAssignment.assignedManagerId;
+      }
+    }
+
     const objective = await Objective.create({
       quarterAssignmentId: quarterAssignment._id,
       annualAssignmentId: quarterAssignment.annualAssignmentId,
@@ -340,6 +360,8 @@ export class ObjectiveService extends BaseService {
       createdByRole: actor.actorRole,
       createdByUserId: actorObjectId,
       createdBy: actorObjectId,
+      actingDelegateUserId,
+      originalOwnerUserId,
       approvedAt: source === ObjectiveSource.MANAGER_CREATED ? new Date() : undefined,
       approvedBy: source === ObjectiveSource.MANAGER_CREATED ? actorObjectId : undefined,
     });
@@ -366,7 +388,7 @@ export class ObjectiveService extends BaseService {
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
     const actor = this.requireActor();
 
-    this.assertObjectiveAccess('objective.edit', objective, false);
+    await this.assertObjectiveAccess('objective.edit', objective, false);
     this.assertRegularObjectiveEditAccess(objective);
     this.assertObjectiveWindow(quarterAssignment, 'setting');
     this.validateObjectiveInput({
@@ -385,6 +407,25 @@ export class ObjectiveService extends BaseService {
       objectiveConfig,
       input.weightage ?? objective.weightage,
     );
+
+    let actingDelegateUserId: Types.ObjectId | undefined;
+    let originalOwnerUserId: Types.ObjectId | undefined;
+
+    if (actor.actorId !== objective.assignedManagerId.toString()) {
+      const delegation = await Delegation.findOne({
+        delegateUserId: new Types.ObjectId(actor.actorId),
+        delegatorUserId: objective.assignedManagerId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }).lean();
+
+      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+        actingDelegateUserId = new Types.ObjectId(actor.actorId);
+        originalOwnerUserId = objective.assignedManagerId;
+      }
+    }
 
     const previousValue = objective.toObject();
 
@@ -413,6 +454,10 @@ export class ObjectiveService extends BaseService {
       ? objective.attachments
       : this.normalizeAttachments(input.attachments);
     objective.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+    if (actingDelegateUserId) {
+      objective.actingDelegateUserId = actingDelegateUserId;
+      objective.originalOwnerUserId = originalOwnerUserId;
+    }
     objective.version += 1;
     await objective.save();
 
@@ -434,7 +479,7 @@ export class ObjectiveService extends BaseService {
   async submitObjective(objectiveId: string): Promise<IObjective> {
     const objective = await this.getObjective(objectiveId);
     const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
-    this.assertObjectiveAccess('objective.submit', objective, true);
+    await this.assertObjectiveAccess('objective.submit', objective, true);
     this.assertObjectiveWindow(quarterAssignment, 'setting');
 
     if (objective.source === ObjectiveSource.MANAGER_CREATED) {
@@ -478,18 +523,43 @@ export class ObjectiveService extends BaseService {
   async approveObjective(objectiveId: string): Promise<IObjective> {
     const objective = await this.getObjective(objectiveId);
     const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
-    this.assertObjectiveAccess('objective.approve', objective, false);
+    await this.assertObjectiveAccess('objective.approve', objective, false);
     this.assertObjectiveWindow(quarterAssignment, 'approval');
 
     if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
       throw new Error('Only submitted objectives can be approved');
     }
 
+    const actor = this.requireActor();
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
+    let actingDelegateUserId: Types.ObjectId | undefined;
+    let originalOwnerUserId: Types.ObjectId | undefined;
+
+    if (actor.actorId !== objective.assignedManagerId.toString()) {
+      const delegation = await Delegation.findOne({
+        delegateUserId: actorObjectId,
+        delegatorUserId: objective.assignedManagerId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }).lean();
+
+      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+        actingDelegateUserId = actorObjectId;
+        originalOwnerUserId = objective.assignedManagerId;
+      }
+    }
+
     const previousState = objective.status;
     objective.status = ObjectiveStatus.OBJECTIVE_APPROVED;
     objective.approvedAt = new Date();
-    objective.approvedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
-    objective.updatedBy = objective.approvedBy;
+    objective.approvedBy = actorObjectId;
+    objective.updatedBy = actorObjectId;
+    if (actingDelegateUserId) {
+      objective.actingDelegateUserId = actingDelegateUserId;
+      objective.originalOwnerUserId = originalOwnerUserId;
+    }
     objective.version += 1;
     await objective.save();
 
@@ -514,11 +584,32 @@ export class ObjectiveService extends BaseService {
 
     const objective = await this.getObjective(objectiveId);
     const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
-    this.assertObjectiveAccess('objective.return', objective, false);
+    await this.assertObjectiveAccess('objective.return', objective, false);
     this.assertObjectiveWindow(quarterAssignment, 'approval');
 
     if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
       throw new Error('Only submitted objectives can be returned for revision');
+    }
+
+    const actor = this.requireActor();
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
+    let actingDelegateUserId: Types.ObjectId | undefined;
+    let originalOwnerUserId: Types.ObjectId | undefined;
+
+    if (actor.actorId !== objective.assignedManagerId.toString()) {
+      const delegation = await Delegation.findOne({
+        delegateUserId: actorObjectId,
+        delegatorUserId: objective.assignedManagerId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }).lean();
+
+      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+        actingDelegateUserId = actorObjectId;
+        originalOwnerUserId = objective.assignedManagerId;
+      }
     }
 
     await this.transitionQuarterIfNeeded(
@@ -531,7 +622,11 @@ export class ObjectiveService extends BaseService {
     objective.status = ObjectiveStatus.OBJECTIVE_REVISION_REQUIRED;
     objective.returnedReason = reason;
     objective.returnedAt = new Date();
-    objective.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    objective.updatedBy = actorObjectId;
+    if (actingDelegateUserId) {
+      objective.actingDelegateUserId = actingDelegateUserId;
+      objective.originalOwnerUserId = originalOwnerUserId;
+    }
     objective.version += 1;
     await objective.save();
 
@@ -556,7 +651,7 @@ export class ObjectiveService extends BaseService {
     }
 
     const objective = await this.getObjective(objectiveId);
-    this.assertObjectiveAccess('objective.comment', objective, false);
+    await this.assertObjectiveAccess('objective.comment', objective, false);
 
     return this.createCommentRecord(
       objective,
@@ -1302,11 +1397,11 @@ export class ObjectiveService extends BaseService {
     }
   }
 
-  private assertObjectiveAccess(
+  private async assertObjectiveAccess(
     action: string,
     objective: IObjective,
     employeeOnly: boolean,
-  ): void {
+  ): Promise<void> {
     const actor = this.requireActor();
 
     if (employeeOnly && actor.actorId !== objective.employeeId.toString()) {
@@ -1322,9 +1417,25 @@ export class ObjectiveService extends BaseService {
       },
     });
 
-    if (!access.allowed) {
-      throw new Error(access.message ?? 'Access denied');
+    if (access.allowed) {
+      return;
     }
+
+    // Check delegation
+    const delegation = await Delegation.findOne({
+      delegateUserId: new Types.ObjectId(actor.actorId),
+      delegatorUserId: objective.assignedManagerId,
+      status: 'ACTIVE',
+      validFrom: { $lte: new Date() },
+      validTo: { $gte: new Date() },
+      isDeleted: false,
+    }).lean();
+
+    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+      return;
+    }
+
+    throw new Error(access.message ?? 'Access denied');
   }
 
   private async getObjective(objectiveId: string): Promise<IObjective> {

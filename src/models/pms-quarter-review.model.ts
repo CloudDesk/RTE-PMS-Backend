@@ -38,6 +38,8 @@ export interface IQuarterReview extends Document {
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
+  actingDelegateUserId?: Types.ObjectId;
+  originalOwnerUserId?: Types.ObjectId;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -120,6 +122,8 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    actingDelegateUserId: { type: Schema.Types.ObjectId, ref: 'User' },
+    originalOwnerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     version: { type: Number, default: 1 },
   },
   {

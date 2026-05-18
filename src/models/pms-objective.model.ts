@@ -36,6 +36,8 @@ export interface IObjective extends Document {
   createdByUserId: Types.ObjectId;
   createdBy: Types.ObjectId;
   updatedBy?: Types.ObjectId;
+  actingDelegateUserId?: Types.ObjectId;
+  originalOwnerUserId?: Types.ObjectId;
   submittedAt?: Date;
   approvedAt?: Date;
   approvedBy?: Types.ObjectId;
@@ -143,6 +145,8 @@ const objectiveSchema = new Schema<IObjective>(
       ref: 'User',
     },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    actingDelegateUserId: { type: Schema.Types.ObjectId, ref: 'User' },
+    originalOwnerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     submittedAt: Date,
     approvedAt: Date,
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },

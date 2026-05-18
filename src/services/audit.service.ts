@@ -28,6 +28,12 @@ export class AuditService {
     return auditLog;
   }
 
+  async getHistory(assignmentId: string): Promise<IAuditLog[]> {
+    return AuditLog.find({ assignmentId: this.toObjectIdIfValid(assignmentId) })
+      .sort({ timestamp: -1 })
+      .lean();
+  }
+
   private toObjectIdIfValid(value: string): Types.ObjectId | string {
     return Types.ObjectId.isValid(value) ? new Types.ObjectId(value) : value;
   }
