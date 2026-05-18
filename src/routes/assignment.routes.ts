@@ -149,6 +149,23 @@ export const assignmentRoutes: RouteHandler = async (
   );
 
   fastify.post(
+    '/:cycleId/assignments/:assignmentId/reopen-appraisal',
+    { onRequest: [authenticate], schema: { tags: ['PMS Assignment Management'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { cycleId: string; assignmentId: string };
+        const result = await request.container!.assignmentService.adminReopenAnnual(
+          assignmentId,
+          request.body as AssignmentStateInput,
+        );
+        return reply.send(successResponse('PMS annual appraisal window reopened successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
     '/:cycleId/assignment-exceptions/:exceptionId/resolve',
     { onRequest: [authenticate], schema: { tags: ['PMS Assignment Management'] } },
     async (request, reply) => {
