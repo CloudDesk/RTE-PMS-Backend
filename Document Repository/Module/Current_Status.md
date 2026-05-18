@@ -604,3 +604,65 @@ Frontend:
 
 - No UX blocker remains for 100+ employee assignment during launch.
 - Future enhancement can add server-side bulk assignment endpoint for fewer network calls, but current FE works with the existing assignment API.
+
+---
+
+May 18
+
+## Current PMS Status - Module 4 Handoff
+
+### Completed / Baseline Ready
+
+- Module 1 shared PMS roles/constants/access alignment is complete for the approved baseline.
+- Module 2 Template Management / Template Builder is complete for admin builder baseline:
+  - template/version management
+  - objective model setup
+  - section/field/workflow/visibility/conditional configuration
+  - outcome mapping and letter-template flow
+  - activation validation improvements
+- Module 3 Cycle Management is complete for baseline:
+  - annual cycle and Q1-Q4 child quarters
+  - cycle windows and appraisal window configuration
+  - SLA and communication-rule configuration persistence
+  - launch/close/archive/cancel baseline flow
+  - cycle launch readiness validation
+  - cycle progression sync action
+- Cycle launch assignment flow is available:
+  - launch modal collects selected employees, manager, applicable quarters, and reason
+  - supports searchable selection and bulk manager/reason/quarter controls
+  - creates assignments before launching the cycle
+
+### Important Clarification
+
+- The cycle launch modal is only the minimum assignment path required to launch a cycle.
+- It does not replace full Module 4 Assignment Management.
+- Module 4 should now build the dedicated assignment management capability around annual and quarter assignments.
+
+### Starting Next: Module 4 - Assignment Management
+
+Module 4 scope to implement/verify:
+
+- Annual Assignment model and Quarter Assignment model completeness.
+- One annual assignment per employee per cycle.
+- Linked Q1-Q4 quarter assignments.
+- Locked template version captured during assignment creation.
+- Assigned manager mapping.
+- Backend bulk assignment support beyond the launch modal flow.
+- Duplicate prevention and clear per-record validation result.
+- Employee eligibility validation.
+- Missing manager exception queue.
+- Manager reassignment with mandatory reason.
+- Preserve old manager attribution for completed quarters.
+- Close/reopen assignment actions.
+- Assignment history.
+- Employee own-assignment view.
+- Manager assigned-employee assignment view.
+- Management annual decision summary visibility.
+
+### Remaining Known Cross-Module Gaps
+
+- Full scoring engine and formula evaluator are still pending.
+- Immutable score snapshot on quarter finalization is still pending.
+- Assignment-aware runtime resolver authorization still needs completion.
+- Full employee/manager PMS runtime screens belong to later objective/review modules, but Module 4 should prepare assignment access and listing foundations.
+- Client `npm run check` still has app-wide pre-existing errors outside the completed PMS module scope.
