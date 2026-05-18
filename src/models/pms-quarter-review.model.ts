@@ -30,6 +30,8 @@ export interface IQuarterReview extends Document {
   overallRating?: string;
   finalQuarterRemarks?: string;
   recommendation?: string;
+  achievements?: string;
+  developmentObservations?: string;
   attachments: IPmsAttachment[];
   submittedAt?: Date;
   finalizedAt?: Date;
@@ -107,6 +109,8 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     overallRating: String,
     finalQuarterRemarks: String,
     recommendation: String,
+    achievements: String,
+    developmentObservations: String,
     attachments: {
       type: [attachmentSchema],
       default: [],

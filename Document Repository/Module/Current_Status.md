@@ -752,3 +752,334 @@ Status:
 - Server-side bulk assignment now exists, so the cycle launch modal can be refactored later to call the bulk endpoint instead of one request per employee.
 - Full employee and manager runtime PMS work screens still belong to later objective/review modules.
 - A dedicated management dashboard screen belongs to later dashboard/reporting modules.
+
+---
+
+May 18
+
+## Team Tracking Module 6 - Objective Management
+
+Note:
+- The approved source-of-truth module documents classify Objective Management as Module 5 and Quarterly Manager Review as Module 6.
+- This status entry follows the team's current implementation tracking where the completed objective workspace has been referred to as Module 6, so the handoff remains consistent with current team discussion.
+
+### Completed
+
+- Backend objective management is now implemented as a real PMS runtime flow instead of a partial scaffold:
+  - employee objective create
+  - employee objective edit during allowed states
+  - employee objective submit
+  - manager objective create for assigned employee
+  - manager approve
+  - manager return for revision with mandatory reason
+  - admin/super-admin correction flow
+  - objective comments
+  - predefined objective support from template configuration
+  - dynamic objective support
+  - hybrid objective support
+- Backend objective APIs currently available:
+  - `POST /pms/objectives`
+  - `GET /pms/objectives/assignments`
+  - `GET /pms/objectives/:id`
+  - `PUT /pms/objectives/:id`
+  - `POST /pms/objectives/:id/submit`
+  - `POST /pms/objectives/:id/approve`
+  - `POST /pms/objectives/:id/return`
+  - `POST /pms/objectives/:id/comments`
+  - `POST /pms/objectives/:id/correction`
+- Backend validation and workflow coverage now includes:
+  - objective setting window enforcement
+  - objective approval window enforcement
+  - employee cannot edit manager-created objective
+  - approved objectives are read-only for normal edit flow
+  - manager return requires reason
+  - required objective fields enforced on submit
+  - draft save can remain flexible
+  - quarter objective weightage cap enforcement
+  - assigned-manager / assigned-employee access scoping
+- Predefined objective initialization was moved to assignment creation so objective list/read APIs no longer mutate data on fetch.
+- Frontend employee objective workspace is now active:
+  - `/my/assignments`
+  - create/edit/revise/submit own objectives
+  - template-seeded objective visibility
+  - comment entry
+  - manager return reason display
+- Frontend manager objective workspace is now active:
+  - `/manager/objectives`
+  - create objectives for assigned employees
+  - approve submitted objectives
+  - return objectives for revision
+  - comment entry
+- Frontend objective flow now uses backend APIs directly and no longer falls back to local mock/localStorage objective persistence.
+
+### Files Changed
+
+Backend:
+- `Server/src/services/objective.service.ts`
+- `Server/src/routes/objective.routes.ts`
+- `Server/src/services/assignment.service.ts`
+
+Frontend:
+- `Client/src/lib/services/api/pmsObjectives.ts`
+- `Client/src/lib/components/pms/objectives/ObjectiveWorkspace.svelte`
+- `Client/src/lib/components/pms/objectives/ObjectiveStatusBadge.svelte`
+- `Client/src/routes/my/assignments/+page.svelte`
+- `Client/src/routes/manager/objectives/+page.svelte`
+- `Client/src/lib/components/common/Sidebar.svelte`
+
+Status:
+- `Server/Document Repository/Module/Current_Status.md`
+
+### Verification
+
+- `Server npm run build` passed.
+- Objective predefined seeding no longer happens from the objective assignment list/read path.
+- `Client npm run check` still fails due to large existing app-wide issues outside Module 6 scope.
+- Targeted review did not surface new blocking Module 6 type errors in:
+  - objective API service
+  - objective workspace
+  - employee objective page
+  - manager objective page
+
+### Remaining Gaps / Follow-up
+
+- Objective attachments currently behave as reference metadata in the PMS flow; full binary document-center style upload/download integration can be expanded later if business requires it.
+- A richer manager team filter/search experience can still be added later, but it is not blocking the current objective workflow baseline.
+- Quarterly Manager Review remains the next runtime module to build on top of approved objectives.
+
+---
+
+May 18
+
+## Starting Next - Module 7 Quarterly Manager Review
+
+### Current Baseline Observed
+
+- Backend already has partial quarter review runtime routes:
+  - `POST /pms/quarter-reviews/:id/submit`
+  - `POST /pms/quarter-reviews/:id/finalize`
+  - `POST /pms/quarter-reviews/:id/reopen`
+- Backend quarter review service already supports:
+  - manager-only submit
+  - admin finalize
+  - admin reopen with reason
+  - quarter review value persistence
+  - transition to `MANAGER_REVIEW_SUBMITTED`
+  - finalization to `QUARTER_FINALIZED`
+- Frontend does not yet have a dedicated Module 7 manager review workspace screen.
+
+### Known Module 7 Gaps To Close Next
+
+- no manager review list/detail workspace API
+- no frontend manager quarter review screen
+- no draft-save flow for manager review
+- no dedicated load-and-review experience for approved objectives
+- no explicit employee read-only quarter review visibility screen
+- current validation is still lighter than the approved Module 7 checklist
+
+---
+
+May 18
+
+## Module 7 - Quarterly Manager Review Baseline
+
+### Completed
+
+- Backend quarter review is now extended into a real workspace flow:
+  - manager/employee assignment listing for quarter review workspace
+  - single quarter review assignment detail loading
+  - manager draft save
+  - manager submit
+  - admin finalize
+  - admin reopen with mandatory reason
+- Backend quarter review data now loads approved objectives for review input and visibility.
+- Backend quarter review submission validation now includes:
+  - manager review window enforcement
+  - manager-only draft/save/submit access
+  - approved objectives required before manager review
+  - objective ratings must reference approved objectives
+  - all approved objectives must be rated before submit
+  - required submit fields:
+    - manager comments
+    - achievements
+    - development observations
+    - score
+- Backend quarter review now persists richer review content:
+  - objective ratings/comments
+  - overall score
+  - overall rating
+  - recommendation
+  - achievements
+  - development observations
+  - attachments metadata
+- Backend quarter assignment summary cache is updated from quarter review data so downstream annual modules can read quarter score/rating/summary.
+- Frontend quarter review runtime workspace is now available:
+  - `/manager/reviews`
+  - `/my/reviews`
+- Frontend manager workspace now supports:
+  - select assigned quarter assignment
+  - load approved objectives
+  - enter per-objective ratings/comments
+  - save draft
+  - submit quarter review
+- Frontend employee workspace now supports:
+  - read-only review visibility for available quarter review records
+- Frontend/admin runtime action support added inside the same workspace:
+  - finalize submitted quarter review
+  - reopen finalized quarter review with reason
+- Sidebar PMS navigation now includes:
+  - Manager -> Quarter Reviews
+  - My Items -> Quarter Reviews
+
+### Files Changed
+
+Backend:
+- `Server/src/services/quarterReview.service.ts`
+- `Server/src/routes/quarterReview.routes.ts`
+- `Server/src/models/pms-quarter-review.model.ts`
+
+Frontend:
+- `Client/src/lib/types/pms.ts`
+- `Client/src/lib/services/api/pmsQuarterReviews.ts`
+- `Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte`
+- `Client/src/routes/manager/reviews/+page.svelte`
+- `Client/src/routes/my/reviews/+page.svelte`
+- `Client/src/lib/components/common/Sidebar.svelte`
+
+Status:
+- `Server/Document Repository/Module/Current_Status.md`
+
+### APIs Added
+
+- `GET /pms/quarter-reviews/assignments?mode=manager|employee`
+- `GET /pms/quarter-reviews/assignments/:id`
+- `POST /pms/quarter-reviews/:id/draft`
+
+### Verification
+
+- `Server npm run build` passed.
+- `Client npm run build` passed.
+- Frontend build still reports existing app-wide warnings/a11y issues outside Module 7 scope.
+
+### Remaining Gaps / Follow-up
+
+- Review attachments currently persist as metadata in the PMS review record; full binary upload/download integration can be expanded later if business requires it.
+- Rating/score validation is now stricter than before, but deep template-driven scoring/formula enforcement still belongs to the later scoring engine work.
+- A dedicated management quarter-summary screen is still not added; current backend access remains compatible with later annual appraisal views.
+
+---
+
+May 18
+
+## Module 7 - Quarterly Manager Review Closure
+
+### Completed
+
+- Closed the final known Module 7 validation gap.
+- Quarter review backend now derives rating/score constraints from the locked PMS template version for the reviewed annual assignment.
+- Manager draft/save/submit validation now enforces template-aware objective rating bounds and allowed score options when configured.
+- Quarter overall score input now respects template-derived maximum scoring limits.
+- Frontend review workspace now surfaces the active review scoring configuration so manager input follows backend rules.
+
+### Files Changed
+
+Backend:
+- `RTE-AMS-Backend/src/services/quarterReview.service.ts`
+
+Frontend:
+- `RTE-AMS-Frontend/src/lib/types/pms.ts`
+- `RTE-AMS-Frontend/src/lib/services/api/pmsQuarterReviews.ts`
+- `RTE-AMS-Frontend/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte`
+
+### Verification
+
+- `RTE-AMS-Backend npm run build` passed.
+- `RTE-AMS-Frontend npm run build` passed.
+
+### Remaining Gaps / Follow-up
+
+- No Module 7 blocking implementation gaps remain for the approved PMS v2 baseline.
+- Full formula-engine scoring and binary attachment lifecycle remain broader cross-module enhancements, not Module 7 blockers.
+
+---
+
+May 18
+
+## Module 8 - Annual Appraisal Decision
+
+### Completed
+
+- Backend annual decision flow was verified and completed against the module document instead of duplicated.
+- Existing backend baseline retained:
+  - annual assignment list
+  - annual summary from quarter assignments/objectives/reviews
+  - annual decision draft
+  - annual decision submit
+  - annual decision freeze
+  - visibility masking and visibility governance
+- Management decision write access is now aligned to the module requirement:
+  - `MANAGEMENT`
+  - `ADMIN`
+  - `SUPER_ADMIN`
+  can save, submit, freeze, reopen, and update annual decision visibility.
+- Decision eligibility check is now enforced across the annual decision flow:
+  - draft save blocked until all applicable quarters are `QUARTER_FINALIZED` or `CLOSED_BY_ADMIN`
+  - submit blocked until all applicable quarters are `QUARTER_FINALIZED` or `CLOSED_BY_ADMIN`
+  - freeze still requires all applicable quarters to be `QUARTER_FINALIZED` or `CLOSED_BY_ADMIN`
+- Annual decision validation now enforces:
+  - `isGradeApplied`
+  - `isMeritApplied`
+  - derived `appraisalOutcomeType`
+  - meaningful `gradeDetails` when grade is applied
+  - meaningful `meritDetails` when merit is applied
+  - `nilReason` when neither grade nor merit is applied
+- Added formal annual decision reopen flow:
+  - mandatory reopen reason
+  - frozen/visible decision reset back to draft
+  - visibility flags disabled during reopen
+  - edit remains blocked after freeze unless formal reopen is done
+- Added pre-reopen snapshot capture using performance history snapshots.
+- Added annual decision correction history entries for reopen actions.
+- Frontend annual decision workspace now supports:
+  - reopen reason entry
+  - reopen action
+  - correction history visibility
+  - pre-reopen snapshot visibility
+- Existing management/admin/super-admin annual decision pages continue using the shared workspace with the completed Module 8 behavior.
+
+### Files Changed
+
+Backend:
+- `RTE-AMS-Backend/src/services/annualDecision.service.ts`
+- `RTE-AMS-Backend/src/routes/annualDecision.routes.ts`
+
+Frontend:
+- `RTE-AMS-Frontend/src/lib/types/pms.ts`
+- `RTE-AMS-Frontend/src/lib/services/api/pmsAnnualDecisions.ts`
+- `RTE-AMS-Frontend/src/lib/components/pms/annual-decisions/AnnualDecisionWorkspace.svelte`
+
+Status:
+- `RTE-AMS-Backend/Document Repository/Module/Current_Status.md`
+
+### APIs Added / Updated
+
+- Added:
+  - `POST /pms/annual-assignments/:id/decision/reopen`
+- Existing Module 8 APIs confirmed and completed:
+  - `GET /pms/annual-assignments`
+  - `GET /pms/annual-assignments/:id/summary`
+  - `PUT /pms/annual-assignments/:id/decision/draft`
+  - `POST /pms/annual-assignments/:id/decision/submit`
+  - `POST /pms/annual-assignments/:id/decision/freeze`
+  - `POST /pms/annual-assignments/:id/visibility`
+
+### Verification
+
+- `RTE-AMS-Backend npm run build` passed.
+- `RTE-AMS-Frontend npm run build` passed.
+- Frontend build still emits existing repo-wide warnings/a11y notices outside PMS Module 8 scope, but the production build completes successfully.
+
+### Remaining Gaps / Follow-up
+
+- No Module 8 blocking implementation gaps remain for the approved PMS v2 baseline.
+- Broader scoring-engine and immutable final score snapshot work remain separate cross-module enhancements outside this annual decision module scope.
