@@ -4,7 +4,6 @@ import { RequestContext } from '../types/context';
 import {
   AnnualAssignment,
   QuarterAssignment,
-  CommunicationDispatch,
   User,
   BulkOperationJob,
   QuarterCycle,
@@ -795,7 +794,7 @@ export class PmsBulkOperationsService extends BaseService {
     cycleId: string,
     employeeIds: string[]
   ): Promise<any> {
-    const actor = this.assertAdminActor();
+    this.assertAdminActor();
     const tracker = await this.createJobTracker('COMMUNICATION', cycleId);
 
     const preview = await this.previewBulkCommunication(cycleId, employeeIds);
@@ -947,7 +946,7 @@ export class PmsBulkOperationsService extends BaseService {
     employeeIds: string[],
     reason: string
   ): Promise<any> {
-    const actor = this.assertAdminActor();
+    this.assertAdminActor();
 
     if (!reason || !reason.trim()) {
       throw new Error('Closure reason is strictly mandatory to execute bulk administrative closures.');
