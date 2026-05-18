@@ -179,14 +179,13 @@ export class ObjectiveService extends BaseService {
 
   async listAssignments(mode: AssignmentMode): Promise<AssignmentRecord[]> {
     const actor = this.requireActor();
-    const mappedRole = accessService.mapRole(actor.actorRole);
     const filter: Record<string, unknown> = { isDeleted: false };
 
-    if (mode === 'employee' && mappedRole !== PmsRole.ADMIN && mappedRole !== PmsRole.SUPER_ADMIN) {
+    if (mode === 'employee') {
       filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
     }
 
-    if (mode === 'manager' && mappedRole !== PmsRole.ADMIN && mappedRole !== PmsRole.SUPER_ADMIN) {
+    if (mode === 'manager') {
       filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
     }
 

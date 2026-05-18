@@ -14,11 +14,7 @@ export async function pmsAuditRoutes(fastify: FastifyInstance) {
 
     // Fetch the assignment to check visibility state
     const annualDecision = await AnnualDecision.findOne({ annualAssignmentId }).lean();
-    if (!annualDecision) {
-      return reply.status(404).send({ success: false, message: 'Annual decision not found' });
-    }
-
-    const isVisibilityEnabled = annualDecision.decisionStatus === 'VISIBILITY_ENABLED';
+    const isVisibilityEnabled = annualDecision ? annualDecision.decisionStatus === 'VISIBILITY_ENABLED' : false;
 
     // Get all audit logs for this assignment
     const logs = await auditService.getHistory(annualAssignmentId);

@@ -176,19 +176,12 @@ export class QuarterReviewService extends BaseService {
 
   async listAssignments(mode: QuarterReviewWorkspaceMode): Promise<QuarterReviewAssignmentRecord[]> {
     const actor = this.requireActor();
-    const mappedRole = normalizePmsRole(actor.actorRole);
     const filter: Record<string, unknown> = { isDeleted: false };
 
-    if (
-      mappedRole !== PmsRole.ADMIN &&
-      mappedRole !== PmsRole.SUPER_ADMIN &&
-      mappedRole !== PmsRole.MANAGEMENT
-    ) {
-      if (mode === 'manager') {
-        filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
-      } else {
-        filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
-      }
+    if (mode === 'employee') {
+      filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
+    } else {
+      filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
     }
 
     const quarterAssignments = await QuarterAssignment.find(filter)
