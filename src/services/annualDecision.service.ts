@@ -10,6 +10,7 @@ import {
   QuarterWorkflowState,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { Objective } from '../models/pms-objective.model';
@@ -32,6 +33,37 @@ export interface AnnualSummaryResult {
   quarterReviews: IQuarterReview[];
   visibilityConfiguration: Record<string, unknown> | null;
   annualDecision: Record<string, unknown> | null;
+}
+
+export interface AnnualDecisionListQuery {
+  cycleId?: string;
+  search?: string;
+  finalDecisionStatus?: string;
+  annualState?: string;
+}
+
+export interface AnnualDecisionListItem {
+  annualAssignmentId: string;
+  cycleId: string;
+  cycleName: string;
+  employeeId: string;
+  employeeName: string;
+  managerId: string;
+  managerName: string;
+  annualState: string;
+  finalDecisionStatus: string;
+  quarterProgress: {
+    total: number;
+    completed: number;
+  };
+  visibility: {
+    employeeReviewVisible: boolean;
+    employeeGradeVisible: boolean;
+    employeeMeritVisible: boolean;
+    managerGradeVisible: boolean;
+    managerMeritVisible: boolean;
+  };
+  availableActions: Array<'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY'>;
 }
 
 export interface SaveDecisionDraftInput {
@@ -58,6 +90,106 @@ export interface UpdateVisibilityInput {
 export class AnnualDecisionService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
+  }
+
+  async listAssignments(query: AnnualDecisionListQuery = {}): Promise<AnnualDecisionListItem[]> {
+    const filter: Record<string, unknown> = { isDeleted: false };
+    this.applyScopedAssignmentFilter(filter);
+
+    if (query.cycleId?.trim()) {
+      filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
+    }
+
+    if (query.finalDecisionStatus && query.finalDecisionStatus !== 'ALL') {
+      filter.finalDecisionStatus = query.finalDecisionStatus;
+    }
+
+    if (query.annualState && query.annualState !== 'ALL') {
+      filter.annualState = query.annualState;
+    }
+
+    if (query.search?.trim()) {
+      const search = query.search.trim();
+      filter.$or = [
+        { 'employeeSnapshot.name': { $regex: search, $options: 'i' } },
+        { 'employeeSnapshot.employeeCode': { $regex: search, $options: 'i' } },
+        { 'managerSnapshot.name': { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const annualAssignments = await AnnualAssignment.find(filter)
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .lean();
+
+    if (annualAssignments.length === 0) {
+      return [];
+    }
+
+    const [quarterAssignments, annualDecisions, cycles] = await Promise.all([
+      QuarterAssignment.find({
+        annualAssignmentId: { $in: annualAssignments.map((item) => item._id) },
+        isDeleted: false,
+      }).lean(),
+      AnnualDecision.find({
+        annualAssignmentId: { $in: annualAssignments.map((item) => item._id) },
+        isDeleted: false,
+      }).lean(),
+      AnnualCycle.find({
+        _id: { $in: annualAssignments.map((item) => item.cycleId) },
+        isDeleted: false,
+      }).lean(),
+    ]);
+
+    const quarterAssignmentsByAnnualAssignmentId = new Map<string, typeof quarterAssignments>();
+    for (const quarterAssignment of quarterAssignments) {
+      const key = quarterAssignment.annualAssignmentId.toString();
+      const bucket = quarterAssignmentsByAnnualAssignmentId.get(key) ?? [];
+      bucket.push(quarterAssignment);
+      quarterAssignmentsByAnnualAssignmentId.set(key, bucket);
+    }
+
+    const decisionByAnnualAssignmentId = new Map(
+      annualDecisions.map((item) => [item.annualAssignmentId.toString(), item]),
+    );
+    const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
+
+    return annualAssignments.map((annualAssignment) => {
+      const relatedQuarters = quarterAssignmentsByAnnualAssignmentId.get(annualAssignment._id.toString()) ?? [];
+      const decision = decisionByAnnualAssignmentId.get(annualAssignment._id.toString());
+      const cycle = cycleMap.get(annualAssignment.cycleId.toString());
+      const completedQuarters = relatedQuarters.filter(
+        (quarter) =>
+          quarter.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
+          quarter.quarterState === QuarterWorkflowState.CLOSED_BY_ADMIN,
+      ).length;
+
+      return {
+        annualAssignmentId: annualAssignment._id.toString(),
+        cycleId: annualAssignment.cycleId.toString(),
+        cycleName: cycle?.name ?? 'Performance Cycle',
+        employeeId: annualAssignment.employeeId.toString(),
+        employeeName: String(annualAssignment.employeeSnapshot?.name ?? 'Employee'),
+        managerId: annualAssignment.assignedManagerId.toString(),
+        managerName: String(annualAssignment.managerSnapshot?.name ?? 'Manager'),
+        annualState: annualAssignment.annualState,
+        finalDecisionStatus: decision?.decisionStatus ?? annualAssignment.finalDecisionStatus ?? AnnualDecisionStatus.DRAFT,
+        quarterProgress: {
+          total: annualAssignment.applicableQuarters.length,
+          completed: completedQuarters,
+        },
+        visibility: {
+          employeeReviewVisible: annualAssignment.visibility.employeeReviewVisible,
+          employeeGradeVisible: annualAssignment.visibility.employeeGradeVisible,
+          employeeMeritVisible: annualAssignment.visibility.employeeMeritVisible,
+          managerGradeVisible: annualAssignment.visibility.managerGradeVisible,
+          managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
+        },
+        availableActions: this.resolveAvailableActions(
+          annualAssignment.finalDecisionStatus ?? decision?.decisionStatus ?? AnnualDecisionStatus.DRAFT,
+          completedQuarters === annualAssignment.applicableQuarters.length,
+        ),
+      };
+    });
   }
 
   async getSummary(annualAssignmentId: string): Promise<AnnualSummaryResult> {
@@ -350,6 +482,25 @@ export class AnnualDecisionService extends BaseService {
     return AppraisalOutcomeType.NIL;
   }
 
+  private resolveAvailableActions(
+    finalDecisionStatus: string,
+    allQuartersComplete: boolean,
+  ): Array<'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY'> {
+    if (finalDecisionStatus === AnnualDecisionStatus.VISIBILITY_ENABLED) {
+      return ['UPDATE_VISIBILITY'];
+    }
+
+    if (finalDecisionStatus === AnnualDecisionStatus.FROZEN) {
+      return ['UPDATE_VISIBILITY'];
+    }
+
+    if (finalDecisionStatus === AnnualDecisionStatus.SUBMITTED) {
+      return allQuartersComplete ? ['FREEZE'] : [];
+    }
+
+    return ['SAVE_DRAFT', 'SUBMIT'];
+  }
+
   private validateDecisionInput(
     input: SaveDecisionDraftInput,
     outcomeType: AppraisalOutcomeTypeType,
@@ -471,6 +622,31 @@ export class AnnualDecisionService extends BaseService {
     }
   }
 
+  private applyScopedAssignmentFilter(filter: Record<string, unknown>): void {
+    const actor = this.requireActor();
+    const mappedRole = normalizePmsRole(actor.actorRole);
+
+    if (
+      mappedRole === PmsRole.ADMIN ||
+      mappedRole === PmsRole.SUPER_ADMIN ||
+      mappedRole === PmsRole.MANAGEMENT
+    ) {
+      return;
+    }
+
+    if (mappedRole === PmsRole.EMPLOYEE) {
+      filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
+      return;
+    }
+
+    if (mappedRole === PmsRole.MANAGER) {
+      filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
+      return;
+    }
+
+    throw new Error('PMS access denied');
+  }
+
   private assertAdmin(action: string): void {
     const access = accessService.canPerform({
       actor: this.requireActor(),
@@ -494,6 +670,14 @@ export class AnnualDecisionService extends BaseService {
     }
 
     return annualAssignment;
+  }
+
+  private toObjectId(value: string, fieldName: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(value)) {
+      throw new Error(`Invalid ${fieldName}`);
+    }
+
+    return new Types.ObjectId(value);
   }
 
   private requireActor() {

@@ -85,6 +85,7 @@ export type ObjectiveStatus =
   (typeof ObjectiveStatus)[keyof typeof ObjectiveStatus];
 
 export const ObjectiveSource = {
+  PREDEFINED: 'PREDEFINED',
   EMPLOYEE_CREATED: 'EMPLOYEE_CREATED',
   MANAGER_CREATED: 'MANAGER_CREATED',
 } as const;

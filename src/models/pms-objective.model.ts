@@ -22,6 +22,7 @@ export interface IObjective extends Document {
   assignedManagerId: Types.ObjectId;
   objectiveNo?: number;
   source: ObjectiveSourceType;
+  templateObjectiveKey?: string;
   title: string;
   description?: string;
   targetMetric?: string;
@@ -97,6 +98,11 @@ const objectiveSchema = new Schema<IObjective>(
       required: true,
       enum: Object.values(ObjectiveSource),
     },
+    templateObjectiveKey: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     title: {
       type: String,
       required: true,
@@ -159,5 +165,6 @@ objectiveSchema.index({ annualAssignmentId: 1, quarterCode: 1 });
 objectiveSchema.index({ employeeId: 1, cycleId: 1 });
 objectiveSchema.index({ assignedManagerId: 1, status: 1 });
 objectiveSchema.index({ status: 1 });
+objectiveSchema.index({ quarterAssignmentId: 1, templateObjectiveKey: 1 });
 
 export const Objective = mongoose.model<IObjective>('Objective', objectiveSchema);
