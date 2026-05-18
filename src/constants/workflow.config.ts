@@ -149,6 +149,7 @@ export const annualTransitions: Record<
   ],
   [AnnualWorkflowState.ANNUAL_FINALIZED]: [
     AnnualWorkflowState.VISIBILITY_ENABLED,
+    AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
   ],
   [AnnualWorkflowState.VISIBILITY_ENABLED]: [
     AnnualWorkflowState.COMMUNICATION_READY,

@@ -11,6 +11,7 @@ import {
   PmsTemplateSectionType,
   PmsTemplateStatus,
   QuarterWorkflowState,
+  WorkflowEntityType,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
@@ -23,6 +24,7 @@ import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { User } from '../models/user.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { workflowService } from './workflow.service';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type {
@@ -584,6 +586,47 @@ export class AssignmentService extends BaseService {
     );
 
     return { annualAssignment, quarterAssignments };
+  }
+
+  async adminReopenAnnual(assignmentId: string, input: AssignmentStateInput): Promise<{
+    annualAssignment: IAnnualAssignment;
+  }> {
+    this.assertAdmin('assignment.reopenAnnual');
+    if (!input.reason?.trim()) {
+      throw new Error('Reopen reason is required');
+    }
+
+    const annualAssignment = await this.getAnnualAssignment(assignmentId);
+    if (annualAssignment.annualState !== AnnualWorkflowState.ANNUAL_FINALIZED) {
+      throw new Error('Only finalized annual assignments can be reopened');
+    }
+
+    const transition = workflowService.transition({
+      entityType: WorkflowEntityType.ANNUAL_ASSIGNMENT,
+      entityId: annualAssignment._id.toString(),
+      currentState: annualAssignment.annualState,
+      nextState: AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+      actorId: this.context.user?._id.toString() ?? '',
+      actorRole: this.context.user?.role ?? '',
+      reason: input.reason.trim(),
+    });
+
+    const previousValue = annualAssignment.toObject();
+    
+    annualAssignment.annualState = transition.currentState as AnnualWorkflowState;
+    annualAssignment.updatedBy = this.actorIdObject();
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+
+    await this.audit(
+      'PMS_ASSIGNMENT_APPRAISAL_REOPENED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignment._id.toString(),
+      previousValue,
+      { annualAssignment, reason: input.reason.trim() },
+    );
+
+    return { annualAssignment };
   }
 
   async listExceptions(cycleId: string, status = 'OPEN'): Promise<unknown[]> {
