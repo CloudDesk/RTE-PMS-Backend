@@ -30,12 +30,16 @@ export interface IQuarterReview extends Document {
   overallRating?: string;
   finalQuarterRemarks?: string;
   recommendation?: string;
+  achievements?: string;
+  developmentObservations?: string;
   attachments: IPmsAttachment[];
   submittedAt?: Date;
   finalizedAt?: Date;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
+  actingDelegateUserId?: Types.ObjectId;
+  originalOwnerUserId?: Types.ObjectId;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -107,6 +111,8 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     overallRating: String,
     finalQuarterRemarks: String,
     recommendation: String,
+    achievements: String,
+    developmentObservations: String,
     attachments: {
       type: [attachmentSchema],
       default: [],
@@ -116,6 +122,8 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    actingDelegateUserId: { type: Schema.Types.ObjectId, ref: 'User' },
+    originalOwnerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     version: { type: Number, default: 1 },
   },
   {

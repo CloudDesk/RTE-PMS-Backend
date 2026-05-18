@@ -20,12 +20,20 @@ export class AuditService {
         newValue: input.newValue,
         reason: input.reason,
         metadata: input.metadata,
+        assignmentId: input.assignmentId ? this.toObjectIdIfValid(input.assignmentId) : undefined,
+        correlationId: input.correlationId,
         timestamp: createdAt,
         createdAt,
       },
     ], { session });
 
     return auditLog;
+  }
+
+  async getHistory(assignmentId: string): Promise<IAuditLog[]> {
+    return AuditLog.find({ assignmentId: this.toObjectIdIfValid(assignmentId) })
+      .sort({ timestamp: -1 })
+      .lean();
   }
 
   private toObjectIdIfValid(value: string): Types.ObjectId | string {

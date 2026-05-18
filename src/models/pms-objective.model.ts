@@ -22,6 +22,7 @@ export interface IObjective extends Document {
   assignedManagerId: Types.ObjectId;
   objectiveNo?: number;
   source: ObjectiveSourceType;
+  templateObjectiveKey?: string;
   title: string;
   description?: string;
   targetMetric?: string;
@@ -35,6 +36,8 @@ export interface IObjective extends Document {
   createdByUserId: Types.ObjectId;
   createdBy: Types.ObjectId;
   updatedBy?: Types.ObjectId;
+  actingDelegateUserId?: Types.ObjectId;
+  originalOwnerUserId?: Types.ObjectId;
   submittedAt?: Date;
   approvedAt?: Date;
   approvedBy?: Types.ObjectId;
@@ -97,6 +100,11 @@ const objectiveSchema = new Schema<IObjective>(
       required: true,
       enum: Object.values(ObjectiveSource),
     },
+    templateObjectiveKey: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     title: {
       type: String,
       required: true,
@@ -137,6 +145,8 @@ const objectiveSchema = new Schema<IObjective>(
       ref: 'User',
     },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    actingDelegateUserId: { type: Schema.Types.ObjectId, ref: 'User' },
+    originalOwnerUserId: { type: Schema.Types.ObjectId, ref: 'User' },
     submittedAt: Date,
     approvedAt: Date,
     approvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -159,5 +169,6 @@ objectiveSchema.index({ annualAssignmentId: 1, quarterCode: 1 });
 objectiveSchema.index({ employeeId: 1, cycleId: 1 });
 objectiveSchema.index({ assignedManagerId: 1, status: 1 });
 objectiveSchema.index({ status: 1 });
+objectiveSchema.index({ quarterAssignmentId: 1, templateObjectiveKey: 1 });
 
 export const Objective = mongoose.model<IObjective>('Objective', objectiveSchema);

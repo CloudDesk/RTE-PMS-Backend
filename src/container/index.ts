@@ -43,6 +43,9 @@ import { ObjectiveService } from '../services/objective.service';
 import { QuarterReviewService } from '../services/quarterReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
 import { PmsCommunicationService } from '../services/pmsCommunication.service';
+import { DelegationService } from '../services/delegation.service';
+import { PmsDashboardService } from '../services/pmsDashboard.service';
+import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
 
 export class Container {
   private static instance: Container;
@@ -108,8 +111,12 @@ export class Container {
       quarterReviewService: new QuarterReviewService(context),
       annualDecisionService: new AnnualDecisionService(context),
       pmsCommunicationService: new PmsCommunicationService(context),
+      delegationService: new DelegationService(context),
+      pmsDashboardService: new PmsDashboardService(context),
+      pmsBulkOperationsService: new PmsBulkOperationsService(context),
     };
   }
+
 
   clearScope(requestId: string): void {
     this.context.delete(requestId);

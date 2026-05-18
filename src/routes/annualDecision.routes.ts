@@ -3,6 +3,8 @@ import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
+  AnnualDecisionListQuery,
+  ReopenDecisionInput,
   SaveDecisionDraftInput,
   UpdateVisibilityInput,
 } from '../services/annualDecision.service';
@@ -10,6 +12,21 @@ import type {
 export const annualDecisionRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
+  fastify.get(
+    '/',
+    { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
+    async (request, reply) => {
+      try {
+        const assignments = await request.container!.annualDecisionService.listAssignments(
+          request.query as AnnualDecisionListQuery,
+        );
+        return reply.send(successResponse('Annual decision assignments fetched successfully', assignments));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.get(
     '/:id/summary',
     { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
@@ -63,6 +80,23 @@ export const annualDecisionRoutes: RouteHandler = async (
         const { id } = request.params as { id: string };
         const decision = await request.container!.annualDecisionService.freezeDecision(id);
         return reply.send(successResponse('Annual decision frozen successfully', decision));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/decision/reopen',
+    { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const decision = await request.container!.annualDecisionService.reopenDecision(
+          id,
+          request.body as ReopenDecisionInput,
+        );
+        return reply.send(successResponse('Annual decision reopened successfully', decision));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

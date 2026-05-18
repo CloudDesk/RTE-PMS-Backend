@@ -5,9 +5,13 @@ import {
   AnnualDecisionStatus,
   AnnualWorkflowState,
   normalizePmsRole,
+  ObjectiveSource,
+  ObjectiveStatus,
   PmsRole,
+  PmsTemplateSectionType,
   PmsTemplateStatus,
   QuarterWorkflowState,
+  WorkflowEntityType,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
@@ -15,12 +19,19 @@ import { AssignmentExceptionQueue } from '../models/pms-assignment-exception-que
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { Reassignment } from '../models/pms-reassignment.model';
+import { Objective } from '../models/pms-objective.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { User } from '../models/user.model';
+import { Delegation } from '../models/pms-delegation.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { workflowService } from './workflow.service';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
+import type {
+  ITemplatePredefinedObjective,
+  ITemplateSection,
+} from '../models/pms-template-version.model';
 
 type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
 
@@ -253,6 +264,7 @@ export class AssignmentService extends BaseService {
       (quarterAssignment) => quarterAssignment._id,
     );
     await annualAssignment.save();
+    await this.seedPredefinedObjectives(annualAssignment, quarterAssignments);
 
     if (annualCycle.templateVersionId) {
       await this.lockTemplateVersion(annualCycle.templateVersionId);
@@ -362,7 +374,7 @@ export class AssignmentService extends BaseService {
     assignmentHistory: unknown[];
   }> {
     const annualAssignment = await this.getAnnualAssignment(assignmentId);
-    this.assertAssignmentAccess('assignment.detail', annualAssignment);
+    await this.assertAssignmentAccess('assignment.detail', annualAssignment);
 
     const [quarterAssignments, assignmentHistory] = await Promise.all([
       QuarterAssignment.find({
@@ -577,6 +589,47 @@ export class AssignmentService extends BaseService {
     return { annualAssignment, quarterAssignments };
   }
 
+  async adminReopenAnnual(assignmentId: string, input: AssignmentStateInput): Promise<{
+    annualAssignment: IAnnualAssignment;
+  }> {
+    this.assertAdmin('assignment.reopenAnnual');
+    if (!input.reason?.trim()) {
+      throw new Error('Reopen reason is required');
+    }
+
+    const annualAssignment = await this.getAnnualAssignment(assignmentId);
+    if (annualAssignment.annualState !== AnnualWorkflowState.ANNUAL_FINALIZED) {
+      throw new Error('Only finalized annual assignments can be reopened');
+    }
+
+    const transition = workflowService.transition({
+      entityType: WorkflowEntityType.ANNUAL_ASSIGNMENT,
+      entityId: annualAssignment._id.toString(),
+      currentState: annualAssignment.annualState,
+      nextState: AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+      actorId: this.context.user?._id.toString() ?? '',
+      actorRole: this.context.user?.role ?? '',
+      reason: input.reason.trim(),
+    });
+
+    const previousValue = annualAssignment.toObject();
+    
+    annualAssignment.annualState = transition.currentState as AnnualWorkflowState;
+    annualAssignment.updatedBy = this.actorIdObject();
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+
+    await this.audit(
+      'PMS_ASSIGNMENT_APPRAISAL_REOPENED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignment._id.toString(),
+      previousValue,
+      { annualAssignment, reason: input.reason.trim() },
+    );
+
+    return { annualAssignment };
+  }
+
   async listExceptions(cycleId: string, status = 'OPEN'): Promise<unknown[]> {
     this.assertAdmin('assignment.exceptions.list');
     const filter: Record<string, unknown> = {
@@ -650,6 +703,103 @@ export class AssignmentService extends BaseService {
         createdBy: this.actorIdObject(),
       };
     });
+  }
+
+  private async seedPredefinedObjectives(
+    annualAssignment: IAnnualAssignment,
+    quarterAssignments: IQuarterAssignment[],
+  ): Promise<void> {
+    const templateVersionId = annualAssignment.templateVersionId?.toString();
+    if (!templateVersionId) {
+      return;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId).lean();
+    if (!templateVersion) {
+      return;
+    }
+
+    const actorId = this.actorIdObject();
+    const objectivePayloads: Array<Record<string, unknown>> = [];
+
+    for (const quarterAssignment of quarterAssignments) {
+      const config = this.resolveTemplateObjectiveConfig(
+        templateVersion.sections ?? [],
+        quarterAssignment.quarterCode,
+      );
+
+      if (!config || config.predefinedObjectives.length === 0) {
+        continue;
+      }
+
+      for (const [index, predefinedObjective] of config.predefinedObjectives.entries()) {
+        if (!predefinedObjective.key) {
+          continue;
+        }
+
+        objectivePayloads.push({
+          quarterAssignmentId: quarterAssignment._id,
+          annualAssignmentId: quarterAssignment.annualAssignmentId,
+          cycleId: quarterAssignment.cycleId,
+          quarterCode: quarterAssignment.quarterCode,
+          employeeId: quarterAssignment.employeeId,
+          assignedManagerId: quarterAssignment.assignedManagerId,
+          objectiveNo: index + 1,
+          source: ObjectiveSource.PREDEFINED,
+          templateObjectiveKey: predefinedObjective.key,
+          title: predefinedObjective.title,
+          description: predefinedObjective.description,
+          targetMetric: predefinedObjective.kpi,
+          targetValue: predefinedObjective.targetValue,
+          weightage: predefinedObjective.weightage,
+          successCriteria: predefinedObjective.successCriteria,
+          status: ObjectiveStatus.OBJECTIVE_DRAFT,
+          attachments: [],
+          createdByRole: 'SYSTEM',
+          createdByUserId: actorId,
+          createdBy: actorId,
+        });
+      }
+    }
+
+    if (objectivePayloads.length > 0) {
+      await Objective.insertMany(objectivePayloads);
+    }
+  }
+
+  private resolveTemplateObjectiveConfig(
+    sections: ITemplateSection[],
+    quarterCode: QuarterCode,
+  ) {
+    const objectiveSection = sections.find((section) => {
+      if (section.sectionType !== PmsTemplateSectionType.OBJECTIVES) return false;
+      if (section.level !== 'QUARTER') return false;
+
+      const allowedQuarters = [
+        ...(section.quarterScope ?? []),
+        ...(section.repeatFor ?? []),
+      ];
+
+      return allowedQuarters.length === 0 || allowedQuarters.includes(quarterCode);
+    });
+
+    if (!objectiveSection?.objectiveConfig) {
+      return undefined;
+    }
+
+    return {
+      predefinedObjectives: (objectiveSection.objectiveConfig.predefinedObjectives ?? []).map(
+        (objective: ITemplatePredefinedObjective) => ({
+          key: objective.objectiveKey,
+          title: objective.title,
+          description: objective.description,
+          kpi: objective.kpi,
+          targetValue: objective.targetValue,
+          weightage: objective.weightage,
+          successCriteria: objective.successCriteria,
+        }),
+      ),
+    };
   }
 
   private async lockTemplateVersion(templateVersionId: Types.ObjectId): Promise<void> {
@@ -826,7 +976,7 @@ export class AssignmentService extends BaseService {
     throw new Error('PMS access denied');
   }
 
-  private assertAssignmentAccess(action: string, annualAssignment: IAnnualAssignment): void {
+  private async assertAssignmentAccess(action: string, annualAssignment: IAnnualAssignment): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
     if (mappedRole === PmsRole.MANAGEMENT) {
@@ -842,9 +992,25 @@ export class AssignmentService extends BaseService {
       },
     });
 
-    if (!access.allowed) {
-      throw new Error(access.message ?? 'Access denied');
+    if (access.allowed) {
+      return;
     }
+
+    // Check delegation
+    const delegation = await Delegation.findOne({
+      delegateUserId: new Types.ObjectId(actor.actorId),
+      delegatorUserId: annualAssignment.assignedManagerId,
+      status: 'ACTIVE',
+      validFrom: { $lte: new Date() },
+      validTo: { $gte: new Date() },
+      isDeleted: false,
+    }).lean();
+
+    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES' || delegation.scopeType === 'PMS_REVIEWS')) {
+      return;
+    }
+
+    throw new Error(access.message ?? 'Access denied');
   }
 
   private toObjectId(value: string, fieldName: string): Types.ObjectId {

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import handlebars from 'handlebars';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
@@ -357,10 +358,13 @@ export class PmsCommunicationService extends BaseService {
   }
 
   private renderTemplate(template: string, data: Record<string, unknown>): string {
-    return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, key: string) => {
-      const value = data[key];
-      return value === undefined || value === null ? '' : String(value);
-    });
+    try {
+      const compiledTemplate = handlebars.compile(template);
+      return compiledTemplate(data);
+    } catch (err) {
+      console.error('Error rendering template with handlebars:', err);
+      return template;
+    }
   }
 
   private hashRenderedContent(input: {

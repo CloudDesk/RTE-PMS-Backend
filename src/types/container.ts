@@ -42,6 +42,9 @@ import { ObjectiveService } from '../services/objective.service';
 import { QuarterReviewService } from '../services/quarterReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
 import { PmsCommunicationService } from '../services/pmsCommunication.service';
+import { DelegationService } from '../services/delegation.service';
+import { PmsDashboardService } from '../services/pmsDashboard.service';
+import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -88,4 +91,8 @@ export interface ServiceContainer {
   quarterReviewService: QuarterReviewService;
   annualDecisionService: AnnualDecisionService;
   pmsCommunicationService: PmsCommunicationService;
+  delegationService: DelegationService;
+  pmsDashboardService: PmsDashboardService;
+  pmsBulkOperationsService: PmsBulkOperationsService;
 } 
+

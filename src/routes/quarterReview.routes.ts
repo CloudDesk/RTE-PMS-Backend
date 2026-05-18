@@ -4,12 +4,59 @@ import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
   ReopenQuarterAssignmentInput,
+  SaveQuarterReviewDraftInput,
   SubmitQuarterReviewInput,
+  QuarterReviewWorkspaceMode,
 } from '../services/quarterReview.service';
 
 export const quarterReviewRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
+  fastify.get(
+    '/assignments',
+    { onRequest: [authenticate], schema: { tags: ['PMS Manager Quarterly Review'] } },
+    async (request, reply) => {
+      try {
+        const { mode = 'manager' } = request.query as { mode?: QuarterReviewWorkspaceMode };
+        const result = await request.container!.quarterReviewService.listAssignments(mode);
+        return reply.send(successResponse('Quarter review assignments fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/assignments/:id',
+    { onRequest: [authenticate], schema: { tags: ['PMS Manager Quarterly Review'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.quarterReviewService.getAssignment(id);
+        return reply.send(successResponse('Quarter review assignment fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/draft',
+    { onRequest: [authenticate], schema: { tags: ['PMS Manager Quarterly Review'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.quarterReviewService.saveQuarterReviewDraft(
+          id,
+          request.body as SaveQuarterReviewDraftInput,
+        );
+        return reply.send(successResponse('Quarter review draft saved successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/:id/submit',
     { onRequest: [authenticate], schema: { tags: ['PMS Manager Quarterly Review'] } },

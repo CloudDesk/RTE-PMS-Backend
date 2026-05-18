@@ -88,6 +88,8 @@ export interface CreateAuditLogInput {
   newValue?: unknown;
   reason?: string;
   metadata?: Record<string, unknown>;
+  correlationId?: string;
+  assignmentId?: string;
 }
 
 export interface VisibilityMaskContext {
