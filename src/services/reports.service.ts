@@ -252,9 +252,59 @@ export class ReportService extends BaseService {
             const [result] = await collection.aggregate(pipeline).toArray();
             console.log("Query result:", result);
 
+            let returnedData = result?.data || [];
+
+            // Check if this collection contains Grade/Merit data
+            const lowColl = targetCollection.toLowerCase();
+            if (
+                lowColl === 'annual_assignments' ||
+                lowColl === 'annual_decisions' ||
+                lowColl === 'pmsannualassignments' ||
+                lowColl === 'pmsannualdecisions'
+            ) {
+                const actorRole = this.context.user?.role || 'staff';
+
+                // Get all annualAssignmentIds from the returned data
+                const assignmentIds = returnedData.map((item: any) => {
+                    if (lowColl === 'annual_assignments' || lowColl === 'pmsannualassignments') {
+                        return item._id;
+                    }
+                    return item.annualAssignmentId;
+                }).filter(Boolean);
+
+                // Load visibility configs in bulk
+                const { VisibilityConfiguration } = await import('../models/pms-visibility-configuration.model');
+                const visConfigs = await VisibilityConfiguration.find({
+                    annualAssignmentId: { $in: assignmentIds },
+                    isDeleted: false
+                }).lean();
+
+                const visMap = new Map<string, any>();
+                for (const cfg of visConfigs) {
+                    visMap.set(cfg.annualAssignmentId.toString(), cfg);
+                }
+
+                const { visibilityMaskService } = await import('./visibilityMask.service');
+
+                returnedData = returnedData.map((item: any) => {
+                    const assId = (lowColl === 'annual_assignments' || lowColl === 'pmsannualassignments' ? item._id : item.annualAssignmentId)?.toString();
+                    const cfg = visMap.get(assId);
+
+                    const maskCtx = {
+                        actorRole,
+                        employeeGradeVisible: cfg?.employeeGradeVisible ?? false,
+                        employeeMeritVisible: cfg?.employeeMeritVisible ?? false,
+                        managerGradeVisible: cfg?.managerGradeVisible ?? false,
+                        managerMeritVisible: cfg?.managerMeritVisible ?? false,
+                    };
+
+                    return visibilityMaskService.mask(item, maskCtx);
+                });
+            }
+
             return {
-                data: result.data || [],
-                count: result.metadata[0]?.total || 0,
+                data: returnedData,
+                count: result?.metadata?.[0]?.total || 0,
                 queryExecuted: {
                     filter: queryConfig.filter,
                     projection: queryConfig.projection,

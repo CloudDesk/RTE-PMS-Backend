@@ -8,6 +8,7 @@ import {
   SlaEvent,
   CommunicationDispatch,
   AuditLog,
+  AssignmentExceptionQueue,
 } from '../models';
 import { visibilityMaskService } from './visibilityMask.service';
 
@@ -238,6 +239,25 @@ export class PmsDashboardService extends BaseService {
       .limit(10)
       .lean();
 
+    // 7. Assignment Exception Queue Metrics
+    const [totalExceptions, openExceptions, resolvedExceptions, recentExceptions] = await Promise.all([
+      AssignmentExceptionQueue.countDocuments(query),
+      AssignmentExceptionQueue.countDocuments({ ...query, status: 'OPEN' }),
+      AssignmentExceptionQueue.countDocuments({ ...query, status: 'RESOLVED' }),
+      AssignmentExceptionQueue.find(query)
+        .populate('employeeId', 'name email employeeCode')
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean(),
+    ]);
+
+    const exceptionQueueStatus = {
+      total: totalExceptions,
+      open: openExceptions,
+      resolved: resolvedExceptions,
+      recent: recentExceptions,
+    };
+
     return {
       annualProgress,
       quarterProgress,
@@ -245,6 +265,7 @@ export class PmsDashboardService extends BaseService {
       appraisalReadiness,
       communicationStatus,
       reopenLogs: reopenTrackingLogs,
+      exceptionQueueStatus,
     };
   }
 

@@ -3,6 +3,10 @@ import { emailService } from './email.service';
 import { User } from '../models/user.model';
 import { Types } from 'mongoose';
 
+import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { AnnualDecision } from '../models/pms-annual-decision.model';
+
 export class PmsNotificationService {
   async triggerNotification(
     recipientUserId: string,
@@ -24,8 +28,144 @@ export class PmsNotificationService {
 
     // FSD: "do not expose grade/merit in notification before visibility"
     // Clean sanitize subject/body to prevent early leaks of Grade and Merit terms if visibility config is not enabled.
+    let gradeVisible = true;
+    let meritVisible = true;
+
+    const recipientRole = user.role?.toLowerCase();
+
+    // Admin, Super Admin, and Management can always see grade and merit
+    if (recipientRole !== 'admin' && recipientRole !== 'super_admin' && recipientRole !== 'management') {
+      let annualAssignment: any = null;
+
+      if (entityType === 'ANNUAL_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
+        annualAssignment = await AnnualAssignment.findById(entityId).lean();
+      } else if (entityType === 'QUARTER_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
+        const qa = await QuarterAssignment.findById(entityId).lean();
+        if (qa?.annualAssignmentId) {
+          annualAssignment = await AnnualAssignment.findById(qa.annualAssignmentId).lean();
+        }
+      } else if (cycleId && Types.ObjectId.isValid(cycleId)) {
+        // FallExp Search
+        if (recipientRole === 'employee' || recipientRole === 'staff') {
+          annualAssignment = await AnnualAssignment.findOne({
+            employeeId: new Types.ObjectId(recipientUserId),
+            cycleId: new Types.ObjectId(cycleId),
+            isDeleted: false,
+          }).lean();
+        } else if (recipientRole === 'manager') {
+          annualAssignment = await AnnualAssignment.findOne({
+            assignedManagerId: new Types.ObjectId(recipientUserId),
+            cycleId: new Types.ObjectId(cycleId),
+            isDeleted: false,
+          }).lean();
+        }
+      }
+
+      if (annualAssignment) {
+        const vis = annualAssignment.visibility ?? {};
+        if (recipientRole === 'employee' || recipientRole === 'staff') {
+          gradeVisible = vis.employeeGradeVisible === true;
+          meritVisible = vis.employeeMeritVisible === true;
+        } else if (recipientRole === 'manager') {
+          gradeVisible = vis.managerGradeVisible === true;
+          meritVisible = vis.managerMeritVisible === true;
+        } else {
+          gradeVisible = false;
+          meritVisible = false;
+        }
+      } else {
+        // Safe default if assignment cannot be resolved
+        gradeVisible = false;
+        meritVisible = false;
+      }
+    }
+
     let sanitizedSubject = subject;
     let sanitizedBody = body;
+
+    // Apply strict sanitization of exact values if resolved
+    if (!gradeVisible || !meritVisible) {
+      let annualAssignment: any = null;
+
+      if (entityType === 'ANNUAL_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
+        annualAssignment = await AnnualAssignment.findById(entityId).lean();
+      } else if (entityType === 'QUARTER_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
+        const qa = await QuarterAssignment.findById(entityId).lean();
+        if (qa?.annualAssignmentId) {
+          annualAssignment = await AnnualAssignment.findById(qa.annualAssignmentId).lean();
+        }
+      }
+
+      if (annualAssignment) {
+        const decision = await AnnualDecision.findOne({
+          annualAssignmentId: annualAssignment._id,
+          isDeleted: false,
+        }).lean();
+
+        if (decision) {
+          if (!gradeVisible) {
+            const finalGrade = decision.gradeDetails?.gradeValue ?? decision.gradeDetails?.grade ?? decision.gradeDetails?.finalGrade;
+            if (finalGrade) {
+              const gradeStr = String(finalGrade);
+              const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regex = new RegExp(`\\b${escapeRegExp(gradeStr)}\\b`, 'gi');
+              sanitizedSubject = sanitizedSubject.replace(regex, '[REDACTED]');
+              sanitizedBody = sanitizedBody.replace(regex, '[REDACTED]');
+            }
+            if (decision.finalRating) {
+              const regex = new RegExp(`\\b${String(decision.finalRating)}\\b`, 'gi');
+              sanitizedSubject = sanitizedSubject.replace(regex, '[REDACTED]');
+              sanitizedBody = sanitizedBody.replace(regex, '[REDACTED]');
+            }
+            if (decision.finalScore !== undefined && decision.finalScore !== null) {
+              const regex = new RegExp(`\\b${decision.finalScore}\\b`, 'g');
+              sanitizedSubject = sanitizedSubject.replace(regex, '[REDACTED]');
+              sanitizedBody = sanitizedBody.replace(regex, '[REDACTED]');
+            }
+          }
+
+          if (!meritVisible) {
+            const meritAmount = decision.meritDetails?.meritAmount;
+            if (meritAmount !== undefined && meritAmount !== null) {
+              const regex = new RegExp(`\\b${meritAmount}\\b`, 'g');
+              sanitizedSubject = sanitizedSubject.replace(regex, '[REDACTED]');
+              sanitizedBody = sanitizedBody.replace(regex, '[REDACTED]');
+            }
+            const meritPercentage = decision.meritDetails?.meritPercentage;
+            if (meritPercentage !== undefined && meritPercentage !== null) {
+              const regex = new RegExp(`\\b${meritPercentage}%?\\b`, 'g');
+              sanitizedSubject = sanitizedSubject.replace(regex, '[REDACTED]');
+              sanitizedBody = sanitizedBody.replace(regex, '[REDACTED]');
+            }
+          }
+        }
+      }
+    }
+
+    // Secondary regex cleanup to hide key phrasing structures
+    if (!gradeVisible) {
+      sanitizedSubject = sanitizedSubject
+        .replace(/\b[Gg]rade\s*:\s*\S+/g, 'Grade: [REDACTED]')
+        .replace(/\b[Rr]ating\s*:\s*\S+/g, 'Rating: [REDACTED]')
+        .replace(/\b[Ss]core\s*:\s*\d+(\.\d+)?/g, 'Score: [REDACTED]');
+
+      sanitizedBody = sanitizedBody
+        .replace(/\b[Gg]rade\s*:\s*\S+/g, 'Grade: [REDACTED]')
+        .replace(/\b[Rr]ating\s*:\s*\S+/g, 'Rating: [REDACTED]')
+        .replace(/\b[Ss]core\s*:\s*\d+(\.\d+)?/g, 'Score: [REDACTED]');
+    }
+
+    if (!meritVisible) {
+      sanitizedSubject = sanitizedSubject
+        .replace(/\b[Mm]erit\b/gi, '[REDACTED]')
+        .replace(/\b[Hh]ike\s*:\s*\d+(\.\d+)?%/gi, 'Hike: [REDACTED]')
+        .replace(/\b\d+(\.\d+)?%/g, '[REDACTED]');
+
+      sanitizedBody = sanitizedBody
+        .replace(/\b[Mm]erit\b/gi, '[REDACTED]')
+        .replace(/\b[Hh]ike\s*:\s*\d+(\.\d+)?%/gi, 'Hike: [REDACTED]')
+        .replace(/\b\d+(\.\d+)?%/g, '[REDACTED]');
+    }
 
     const channelsToSend = channel === 'BOTH' ? ['EMAIL', 'IN_APP'] : [channel];
     const results = [];

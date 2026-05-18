@@ -293,7 +293,7 @@ export class ObjectiveService extends BaseService {
     const source = this.resolveObjectiveSource(actor.actorRole);
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
 
-    this.assertAssignmentAccess('objective.create', quarterAssignment);
+    await this.assertAssignmentAccess('objective.create', quarterAssignment);
     this.assertObjectiveWindow(quarterAssignment, 'setting');
     this.validateObjectiveInput(input);
     this.validateCreateAgainstConfig(source, objectiveConfig);
@@ -1381,7 +1381,7 @@ export class ObjectiveService extends BaseService {
     }));
   }
 
-  private assertAssignmentAccess(action: string, quarterAssignment: IQuarterAssignment): void {
+  private async assertAssignmentAccess(action: string, quarterAssignment: IQuarterAssignment): Promise<void> {
     const actor = this.requireActor();
     const access = accessService.canPerform({
       actor,
@@ -1392,9 +1392,25 @@ export class ObjectiveService extends BaseService {
       },
     });
 
-    if (!access.allowed) {
-      throw new Error(access.message ?? 'Access denied');
+    if (access.allowed) {
+      return;
     }
+
+    // Check delegation
+    const delegation = await Delegation.findOne({
+      delegateUserId: new Types.ObjectId(actor.actorId),
+      delegatorUserId: quarterAssignment.assignedManagerId,
+      status: 'ACTIVE',
+      validFrom: { $lte: new Date() },
+      validTo: { $gte: new Date() },
+      isDeleted: false,
+    }).lean();
+
+    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+      return;
+    }
+
+    throw new Error(access.message ?? 'Access denied');
   }
 
   private async assertObjectiveAccess(

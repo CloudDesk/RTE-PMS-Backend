@@ -20,6 +20,8 @@ export class AuditService {
         newValue: input.newValue,
         reason: input.reason,
         metadata: input.metadata,
+        assignmentId: input.assignmentId ? this.toObjectIdIfValid(input.assignmentId) : undefined,
+        correlationId: input.correlationId,
         timestamp: createdAt,
         createdAt,
       },

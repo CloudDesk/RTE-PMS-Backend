@@ -8,11 +8,13 @@ import {
   User,
   BulkOperationJob,
   QuarterCycle,
-  NotificationEvent
+  NotificationEvent,
+  VisibilityConfiguration
 } from '../models';
 import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
 import { auditService } from './audit.service';
 import { AssignmentService } from './assignment.service';
+import { PmsCommunicationService } from './pmsCommunication.service';
 
 export interface BulkAssignInputItem {
   employeeId: string;
@@ -587,10 +589,66 @@ export class PmsBulkOperationsService extends BaseService {
 
         const previousValue = annual.toObject();
 
-        // Update the cached visibility object
+        // 1. Fetch or create the VisibilityConfiguration
+        let visibilityConfig = await VisibilityConfiguration.findOne({
+          annualAssignmentId: annual._id,
+        });
+
+        if (!visibilityConfig) {
+          visibilityConfig = await VisibilityConfiguration.create({
+            annualAssignmentId: annual._id,
+            cycleId: annual.cycleId,
+            employeeId: annual.employeeId,
+            employeeReviewVisible: annual.visibility?.employeeReviewVisible ?? false,
+            employeeGradeVisible: annual.visibility?.employeeGradeVisible ?? false,
+            employeeMeritVisible: annual.visibility?.employeeMeritVisible ?? false,
+            managerGradeVisible: annual.visibility?.managerGradeVisible ?? false,
+            managerMeritVisible: annual.visibility?.managerMeritVisible ?? false,
+            createdBy: new Types.ObjectId(actor.actorId),
+          });
+        }
+
+        // 2. Update the VisibilityConfiguration document
+        visibilityConfig.employeeReviewVisible =
+          visibilityUpdate.employeeReviewVisible ?? visibilityConfig.employeeReviewVisible;
+        visibilityConfig.employeeGradeVisible =
+          visibilityUpdate.employeeGradeVisible ?? visibilityConfig.employeeGradeVisible;
+        visibilityConfig.employeeMeritVisible =
+          visibilityUpdate.employeeMeritVisible ?? visibilityConfig.employeeMeritVisible;
+        visibilityConfig.managerGradeVisible =
+          visibilityUpdate.managerGradeVisible ?? visibilityConfig.managerGradeVisible;
+        visibilityConfig.managerMeritVisible =
+          visibilityUpdate.managerMeritVisible ?? visibilityConfig.managerMeritVisible;
+        
+        const anyVisible = [
+          visibilityConfig.employeeReviewVisible,
+          visibilityConfig.employeeGradeVisible,
+          visibilityConfig.employeeMeritVisible,
+          visibilityConfig.managerGradeVisible,
+          visibilityConfig.managerMeritVisible,
+        ].some(Boolean);
+
+        if (anyVisible) {
+          visibilityConfig.enabledBy = new Types.ObjectId(actor.actorId);
+          visibilityConfig.enabledAt = new Date();
+          visibilityConfig.disabledBy = undefined;
+          visibilityConfig.disabledAt = undefined;
+        } else {
+          visibilityConfig.disabledBy = new Types.ObjectId(actor.actorId);
+          visibilityConfig.disabledAt = new Date();
+        }
+
+        visibilityConfig.updatedBy = new Types.ObjectId(actor.actorId);
+        visibilityConfig.version += 1;
+        await visibilityConfig.save();
+
+        // 3. Keep the assignment cache in perfect sync
         annual.visibility = {
-          ...annual.visibility,
-          ...visibilityUpdate,
+          employeeReviewVisible: visibilityConfig.employeeReviewVisible,
+          employeeGradeVisible: visibilityConfig.employeeGradeVisible,
+          employeeMeritVisible: visibilityConfig.employeeMeritVisible,
+          managerGradeVisible: visibilityConfig.managerGradeVisible,
+          managerMeritVisible: visibilityConfig.managerMeritVisible,
         };
         annual.version += 1;
         annual.updatedBy = new Types.ObjectId(actor.actorId);
@@ -766,25 +824,11 @@ export class PmsBulkOperationsService extends BaseService {
 
         if (!annual) throw new Error('Annual assignment not found');
 
-        // Create the communication dispatch record
-        const dispatch = await CommunicationDispatch.create({
-          annualAssignmentId: annual._id,
-          employeeId: empObjectId,
-          letterTemplateId: new Types.ObjectId(), // mock resolved template
-          channel: 'EMAIL',
-          dispatchStatus: 'SENT',
-          sentAt: new Date(),
-          recipientEmail: 'employee@company.com', // mock email
-          pdfUrl: `/public/pdfs/appraisal_${annual._id.toString()}.pdf`, // mock pdf
-          createdBy: new Types.ObjectId(actor.actorId),
+        // Route communication through the standard PmsCommunicationService to trigger actual letter rendering and dispatching
+        const communicationService = new PmsCommunicationService(this.context);
+        const dispatch = await communicationService.sendCommunication({
+          annualAssignmentId: annual._id.toString(),
         });
-
-        // Move assignment state to COMMUNICATION_SENT
-        annual.annualState = 'COMMUNICATION_SENT';
-        annual.communicationStatus = 'DISPATCHED';
-        annual.version += 1;
-        annual.updatedBy = new Types.ObjectId(actor.actorId);
-        await annual.save();
 
         results.push({
           employeeId: record.employeeId,
@@ -793,16 +837,6 @@ export class PmsBulkOperationsService extends BaseService {
           dispatchId: dispatch._id.toString(),
         });
         tracker.successCount += 1;
-
-        // Log individual audit
-        await auditService.createAuditLog({
-          actorId: actor.actorId,
-          actorRole: actor.actorRole,
-          action: 'PMS_COMMUNICATION_SENT',
-          entityType: 'PMS_COMMUNICATION_DISPATCH',
-          entityId: dispatch._id.toString(),
-          newValue: dispatch.toObject(),
-        });
       } catch (err: any) {
         const msg = err?.message || 'Dispatch failed';
         results.push({
@@ -946,13 +980,11 @@ export class PmsBulkOperationsService extends BaseService {
 
         if (!annual) throw new Error('Annual assignment not found');
 
-        const previousValue = annual.toObject();
-
-        // Close the annual assignment
-        annual.annualState = 'CLOSED';
-        annual.version += 1;
-        annual.updatedBy = new Types.ObjectId(actor.actorId);
-        await annual.save();
+        // Route the closure through the official AssignmentService closeAssignment method to preserve all hooks and state transitions
+        const assignmentService = new AssignmentService(this.context);
+        await assignmentService.closeAssignment(annual._id.toString(), {
+          reason: reason.trim(),
+        });
 
         results.push({
           employeeId: record.employeeId,
@@ -960,18 +992,6 @@ export class PmsBulkOperationsService extends BaseService {
           message: 'Appraisal assignment successfully closed',
         });
         tracker.successCount += 1;
-
-        // Log standard audit trail log
-        await auditService.createAuditLog({
-          actorId: actor.actorId,
-          actorRole: actor.actorRole,
-          action: 'PMS_CYCLE_CLOSED',
-          entityType: 'PMS_ANNUAL_ASSIGNMENT',
-          entityId: annual._id.toString(),
-          previousValue: previousValue.annualState,
-          newValue: 'CLOSED',
-          reason: reason.trim(),
-        });
       } catch (err: any) {
         const msg = err?.message || 'Closure failed';
         results.push({

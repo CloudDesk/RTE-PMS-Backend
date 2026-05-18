@@ -20,6 +20,7 @@ import { Objective } from '../models/pms-objective.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
 import { accessService } from './access.service';
+import { Delegation } from '../models/pms-delegation.model';
 import { auditService } from './audit.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -203,7 +204,7 @@ export class AnnualDecisionService extends BaseService {
 
   async getSummary(annualAssignmentId: string): Promise<AnnualSummaryResult> {
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
-    this.assertAssignmentAccess('annualAssignment.summary', annualAssignment);
+    await this.assertAssignmentAccess('annualAssignment.summary', annualAssignment);
 
     const quarterAssignments = await QuarterAssignment.find({
       annualAssignmentId: annualAssignment._id,
@@ -823,7 +824,7 @@ export class AnnualDecisionService extends BaseService {
     });
   }
 
-  private assertAssignmentAccess(action: string, annualAssignment: IAnnualAssignment): void {
+  private async assertAssignmentAccess(action: string, annualAssignment: IAnnualAssignment): Promise<void> {
     const actor = this.requireActor();
     if (normalizePmsRole(actor.actorRole) === PmsRole.MANAGEMENT) {
       return;
@@ -838,9 +839,25 @@ export class AnnualDecisionService extends BaseService {
       },
     });
 
-    if (!access.allowed) {
-      throw new Error(access.message ?? 'Access denied');
+    if (access.allowed) {
+      return;
     }
+
+    // Check delegation
+    const delegation = await Delegation.findOne({
+      delegateUserId: new Types.ObjectId(actor.actorId),
+      delegatorUserId: annualAssignment.assignedManagerId,
+      status: 'ACTIVE',
+      validFrom: { $lte: new Date() },
+      validTo: { $gte: new Date() },
+      isDeleted: false,
+    }).lean();
+
+    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES' || delegation.scopeType === 'PMS_REVIEWS')) {
+      return;
+    }
+
+    throw new Error(access.message ?? 'Access denied');
   }
 
   private applyScopedAssignmentFilter(filter: Record<string, unknown>): void {
