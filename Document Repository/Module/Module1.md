@@ -1,0 +1,51 @@
+Module 1 :: Shared Constants, Enums & Base Setup
+
+Implement PMS v2 shared constants and base types first.
+
+Create fixed role enum:
+EMPLOYEE
+MANAGER
+ADMIN
+MANAGEMENT
+SUPER_ADMIN
+
+Create approved quarter workflow states:
+NOT_STARTED
+OBJECTIVE_SETTING_OPEN
+OBJECTIVE_DRAFT
+OBJECTIVE_SUBMITTED
+OBJECTIVE_REVISION_REQUIRED
+OBJECTIVE_APPROVED
+MANAGER_REVIEW_OPEN
+MANAGER_REVIEW_SUBMITTED
+QUARTER_FINALIZED
+REOPENED_BY_ADMIN
+CLOSED_BY_ADMIN
+
+Create approved annual workflow states:
+DRAFT
+SCHEDULED
+ACTIVE
+IN_PROGRESS
+ALL_QUARTERS_FINALIZED
+APPRAISAL_WINDOW_OPEN
+MANAGEMENT_DECISION_DRAFT
+MANAGEMENT_DECISION_SUBMITTED
+ANNUAL_FINALIZED
+VISIBILITY_ENABLED
+COMMUNICATION_READY
+COMMUNICATION_SENT
+CLOSED
+ARCHIVED
+CANCELLED
+
+Create appraisal outcome enum:
+BOTH
+MERIT_ONLY
+GRADE_ONLY
+NIL
+
+Create shared API response wrapper, error codes, audit action constants, and permission helper placeholders.
+
+Do not implement dynamic roles now.
+Do not add unsupported states.
