@@ -293,7 +293,7 @@ export class ObjectiveService extends BaseService {
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
 
     await this.assertAssignmentAccess('objective.create', quarterAssignment);
-    this.assertObjectiveWindow(quarterAssignment, 'setting');
+    await this.assertObjectiveWindow(quarterAssignment, 'setting');
     this.validateObjectiveInput(input);
     this.validateCreateAgainstConfig(source, objectiveConfig);
     await this.validateQuarterObjectiveRules(quarterAssignment, input.weightage);
@@ -389,7 +389,7 @@ export class ObjectiveService extends BaseService {
 
     await this.assertObjectiveAccess('objective.edit', objective, false);
     this.assertRegularObjectiveEditAccess(objective);
-    this.assertObjectiveWindow(quarterAssignment, 'setting');
+    await this.assertObjectiveWindow(quarterAssignment, 'setting');
     this.validateObjectiveInput({
       quarterAssignmentId: objective.quarterAssignmentId.toString(),
       title: input.title ?? objective.title,
@@ -479,7 +479,7 @@ export class ObjectiveService extends BaseService {
     const objective = await this.getObjective(objectiveId);
     const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
     await this.assertObjectiveAccess('objective.submit', objective, true);
-    this.assertObjectiveWindow(quarterAssignment, 'setting');
+    await this.assertObjectiveWindow(quarterAssignment, 'setting');
 
     if (objective.source === ObjectiveSource.MANAGER_CREATED) {
       throw new Error('Employee cannot submit manager-created objective');
@@ -523,7 +523,7 @@ export class ObjectiveService extends BaseService {
     const objective = await this.getObjective(objectiveId);
     const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
     await this.assertObjectiveAccess('objective.approve', objective, false);
-    this.assertObjectiveWindow(quarterAssignment, 'approval');
+    await this.assertObjectiveWindow(quarterAssignment, 'approval');
 
     if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
       throw new Error('Only submitted objectives can be approved');
@@ -584,7 +584,7 @@ export class ObjectiveService extends BaseService {
     const objective = await this.getObjective(objectiveId);
     const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
     await this.assertObjectiveAccess('objective.return', objective, false);
-    this.assertObjectiveWindow(quarterAssignment, 'approval');
+    await this.assertObjectiveWindow(quarterAssignment, 'approval');
 
     if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
       throw new Error('Only submitted objectives can be returned for revision');
