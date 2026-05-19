@@ -8,17 +8,13 @@ export async function pmsAuditRoutes(fastify: FastifyInstance) {
   fastify.get('/:annualAssignmentId', { preHandler: [authenticate] }, async (request, reply) => {
     const { annualAssignmentId } = request.params as { annualAssignmentId: string };
     const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
-    const isSuperAdmin = userRole === PmsRole.SUPER_ADMIN;
+    const isDirector = userRole === PmsRole.DIRECTOR;
     const isAdmin = userRole === PmsRole.ADMIN;
     const isManagement = userRole === PmsRole.MANAGEMENT;
 
     // Fetch the assignment to check visibility state
     const annualDecision = await AnnualDecision.findOne({ annualAssignmentId }).lean();
-    if (!annualDecision) {
-      return reply.status(404).send({ success: false, message: 'Annual decision not found' });
-    }
-
-    const isVisibilityEnabled = annualDecision.decisionStatus === 'VISIBILITY_ENABLED';
+    const isVisibilityEnabled = annualDecision ? annualDecision.decisionStatus === 'VISIBILITY_ENABLED' : false;
 
     // Get all audit logs for this assignment
     const logs = await auditService.getHistory(annualAssignmentId);
@@ -27,7 +23,7 @@ export async function pmsAuditRoutes(fastify: FastifyInstance) {
     // "ADMIN, SUPER_ADMIN, and authorized MANAGEMENT can view full audit where permitted. EMPLOYEE and MANAGER see only visible historical fields."
     let filteredLogs = logs;
 
-    if (!isSuperAdmin && !isAdmin && !isManagement) {
+    if (!isDirector && !isAdmin && !isManagement) {
       // It's a Manager or Employee
       filteredLogs = logs.filter(log => {
         // Redact actions that are invisible until visibility is enabled

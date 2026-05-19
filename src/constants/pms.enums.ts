@@ -3,7 +3,7 @@ export const PmsRole = {
   MANAGER: 'MANAGER',
   ADMIN: 'ADMIN',
   MANAGEMENT: 'MANAGEMENT',
-  SUPER_ADMIN: 'SUPER_ADMIN',
+  DIRECTOR: 'DIRECTOR',
 } as const;
 
 export type PmsRole = (typeof PmsRole)[keyof typeof PmsRole];
@@ -13,7 +13,7 @@ export const PmsRoleLabel: Record<PmsRole, string> = {
   [PmsRole.MANAGER]: 'Manager',
   [PmsRole.ADMIN]: 'Admin',
   [PmsRole.MANAGEMENT]: 'Management',
-  [PmsRole.SUPER_ADMIN]: 'Super Admin',
+  [PmsRole.DIRECTOR]: 'Director',
 };
 
 export const QuarterWorkflowState = {
@@ -277,7 +277,7 @@ export function normalizePmsRole(value: string): PmsRole | null {
   const normalized = value.replace(/[ /-]/g, '_').toUpperCase();
   if (normalized === 'STAFF') return PmsRole.EMPLOYEE;
   if (normalized === 'HR_ADMIN' || normalized === 'HRADMIN') return PmsRole.ADMIN;
-  if (normalized === 'SUPERADMIN') return PmsRole.SUPER_ADMIN;
+  if (normalized === 'SUPERADMIN' || normalized === 'SUPER_ADMIN' || normalized === 'DIRECTOR') return PmsRole.DIRECTOR;
   return pmsRoles.includes(normalized) ? (normalized as PmsRole) : null;
 }
 

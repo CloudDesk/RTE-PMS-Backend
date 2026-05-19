@@ -40,8 +40,8 @@ export class PmsBulkOperationsService extends BaseService {
   private assertAdminActor() {
     const actor = this.requireActor();
     const role = normalizePmsRole(actor.actorRole);
-    if (role !== PmsRole.ADMIN && role !== PmsRole.SUPER_ADMIN) {
-      throw new Error('Access denied. Admin or Super Admin role is required to perform bulk operations.');
+    if (role !== PmsRole.ADMIN) {
+      throw new Error('Access denied. Admin role is required to perform bulk operations.');
     }
     return actor;
   }

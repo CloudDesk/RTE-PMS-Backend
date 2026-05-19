@@ -46,7 +46,7 @@ export class VisibilityMaskService {
     }
 
     const role = context.actorRole.toLowerCase();
-    if (role === 'admin' || role === 'super_admin' || role === 'management') {
+    if (role === 'admin' || role === 'director' || role === 'management') {
       return { ...data };
     }
 
@@ -72,7 +72,7 @@ export class VisibilityMaskService {
 
   private canViewGrade(context: VisibilityMaskContext): boolean {
     const role = context.actorRole.toLowerCase();
-    if (role === 'admin' || role === 'super_admin' || role === 'management') return true;
+    if (role === 'admin' || role === 'director' || role === 'management') return true;
     if (role === 'staff' || role === 'employee') return context.employeeGradeVisible === true;
     if (role === 'manager') return context.managerGradeVisible === true;
     return false;
@@ -80,7 +80,7 @@ export class VisibilityMaskService {
 
   private canViewMerit(context: VisibilityMaskContext): boolean {
     const role = context.actorRole.toLowerCase();
-    if (role === 'admin' || role === 'super_admin' || role === 'management') return true;
+    if (role === 'admin' || role === 'director' || role === 'management') return true;
     if (role === 'staff' || role === 'employee') return context.employeeMeritVisible === true;
     if (role === 'manager') return context.managerMeritVisible === true;
     return false;

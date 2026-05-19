@@ -26,6 +26,7 @@ import { Delegation } from '../models/pms-delegation.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { workflowService } from './workflow.service';
+import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type {
@@ -118,7 +119,7 @@ export class AssignmentService extends BaseService {
       isDeleted: false,
     };
 
-    this.applyScopedAssignmentFilter(filter);
+    await this.applyScopedAssignmentFilter(filter);
 
     if (query.annualState && query.annualState !== 'ALL') {
       filter.annualState = query.annualState;
@@ -955,11 +956,11 @@ export class AssignmentService extends BaseService {
     return annualAssignment;
   }
 
-  private applyScopedAssignmentFilter(filter: Record<string, unknown>): void {
+  private async applyScopedAssignmentFilter(filter: Record<string, unknown>): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
 
-    if (mappedRole === PmsRole.ADMIN || mappedRole === PmsRole.SUPER_ADMIN || mappedRole === PmsRole.MANAGEMENT) {
+    if (mappedRole === PmsRole.ADMIN) {
       return;
     }
 
@@ -973,14 +974,26 @@ export class AssignmentService extends BaseService {
       return;
     }
 
+    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
+      const subordinateIds = await getSubordinateUserIds(actor.actorId);
+      filter.employeeId = { $in: subordinateIds };
+      return;
+    }
+
     throw new Error('PMS access denied');
   }
 
   private async assertAssignmentAccess(action: string, annualAssignment: IAnnualAssignment): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
-    if (mappedRole === PmsRole.MANAGEMENT) {
-      return;
+
+    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
+      const subordinateIds = await getSubordinateUserIds(actor.actorId);
+      const isSubordinate = subordinateIds.some(subId => subId.toString() === annualAssignment.employeeId.toString());
+      if (isSubordinate) {
+        return;
+      }
+      throw new Error('Access denied. Employee is not in your reporting hierarchy.');
     }
 
     const access = accessService.canPerform({

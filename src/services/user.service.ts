@@ -63,7 +63,7 @@ interface IUserCreate {
   role: string;
   specificRole?: string;
   departmentId: string;
-  managerId: string; // Required
+  managerId?: string;
   employeeCode: string;
   biometricId?: string | null;
   active?: boolean;
@@ -186,6 +186,10 @@ interface IUserUpdate {
   pfJoinDate?: Date; // Optional - PF join date
   academicDetails?: IAcademicDetails[];
   experienceDetails?: IExperienceDetails[];
+}
+
+function isDirectorRole(role?: string) {
+  return (role || '').trim().toLowerCase() === 'director';
 }
 
 interface IResignationState {
@@ -960,7 +964,7 @@ export class UserService extends BaseService {
     console.log('📋 Data keys:', Object.keys(data || {}));
 
     // Validate required fields
-    if (!data.managerId) {
+    if (!isDirectorRole(data.role) && !data.managerId) {
       throw new Error('Manager ID is required');
     }
     if (!data.joiningDate) {
@@ -1125,7 +1129,8 @@ export class UserService extends BaseService {
     // All field restrictions have been removed - employees can edit everything on their own profile
 
     // Validate required fields if being updated
-    if (data.managerId !== undefined && !data.managerId) {
+    const nextRole = data.role ?? user.role;
+    if (!isDirectorRole(nextRole) && data.managerId !== undefined && !data.managerId) {
       throw new Error('Manager ID is required');
     }
     if (data.joiningDate !== undefined && !data.joiningDate) {

@@ -169,7 +169,7 @@ export interface ITemplateSection {
   repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
   repeatable?: boolean;
   displayOrder?: number;
-  layout?: 'vertical' | 'grid';
+  layout?: 'vertical' | 'grid' | 'table';
   renderingScope?: 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
   quarterScope?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
   sectionScoringConfig?: {
@@ -343,7 +343,7 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     },
     repeatable: { type: Boolean, default: false },
     displayOrder: { type: Number, default: 0 },
-    layout: { type: String, enum: ['vertical', 'grid'], default: 'vertical' },
+    layout: { type: String, enum: ['vertical', 'grid', 'table'], default: 'vertical' },
     renderingScope: {
       type: String,
       enum: ['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'],

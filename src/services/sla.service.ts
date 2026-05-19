@@ -5,6 +5,7 @@ import { pmsNotificationService } from './pms-notification.service';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { User } from '../models/user.model';
+import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { Types } from 'mongoose';
 
 export class SlaService {
@@ -71,10 +72,69 @@ export class SlaService {
   }
 
   /**
+   * Automatically synchronizes and creates SlaEvent records for open workflow steps
+   * that match active SLA rules (e.g. pending objective submissions).
+   */
+  async syncSlaEvents(): Promise<number> {
+    let createdCount = 0;
+    try {
+      const activeRules = await SlaRule.find({ isActive: true, isDeleted: false }).lean();
+      if (activeRules.length === 0) return 0;
+
+      for (const rule of activeRules) {
+        if (rule.eventType === 'objective_submission_pending') {
+          const pendingAssignments = await QuarterAssignment.find({
+            quarterState: { $in: ['NOT_STARTED', 'OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'] },
+            isDeleted: false
+          }).lean();
+
+          for (const qa of pendingAssignments) {
+            const exists = await SlaEvent.findOne({
+              slaType: rule.eventType,
+              entityType: 'QUARTER_ASSIGNMENT',
+              entityId: qa._id,
+              isDeleted: false
+            });
+
+            if (!exists) {
+              const cycle = await AnnualCycle.findById(qa.cycleId).lean();
+              let baseDate = qa.createdAt || new Date();
+              if (cycle && cycle.startDate) {
+                baseDate = new Date(cycle.startDate);
+              }
+
+              const dueAt = new Date(baseDate);
+              dueAt.setDate(dueAt.getDate() + rule.offsetDays);
+
+              await SlaEvent.create({
+                slaType: rule.eventType,
+                entityType: 'QUARTER_ASSIGNMENT',
+                entityId: qa._id,
+                cycleId: qa.cycleId,
+                ownerUserId: qa.employeeId,
+                dueAt,
+                status: 'OPEN',
+                escalationTargetUserId: qa.assignedManagerId,
+              });
+              createdCount++;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error syncing SLA events:', error);
+    }
+    return createdCount;
+  }
+
+  /**
    * Process all outstanding SLA and Reminder rules.
    * Runs checks for pre-due, due-date, overdue, and escalation triggers.
    */
   async processSlas(): Promise<{ processed: number; notificationsSent: number }> {
+    // Automatically synchronize/seed SLA Event records for open workflow steps
+    await this.syncSlaEvents();
+
     const openSlas = await SlaEvent.find({ status: 'OPEN', isDeleted: false });
     let processedCount = 0;
     let sentCount = 0;

@@ -6,10 +6,10 @@ import { errorResponse, successResponse } from '../utilis/apiResponse';
 export const pmsBulkOperationsRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
-  // Middleware to ensure user is ADMIN or SUPER_ADMIN
+  // Middleware to ensure user is ADMIN
   const ensureAdmin = async (request: any, reply: FastifyReply) => {
     const role = request.user?.role?.toLowerCase();
-    if (!['admin', 'super_admin'].includes(role)) {
+    if (role !== 'admin') {
       return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Administrative role required'));
     }
   };

@@ -35,7 +35,6 @@ export class DelegationService extends BaseService {
 
     // Authorization: Only Admin, Super Admin, or the delegator themselves can set up a delegation.
     if (
-      actorRole !== PmsRole.SUPER_ADMIN &&
       actorRole !== PmsRole.ADMIN &&
       actorId !== delegatorId
     ) {
@@ -130,7 +129,6 @@ export class DelegationService extends BaseService {
 
     // Authorization Check
     if (
-      actorRole !== PmsRole.SUPER_ADMIN &&
       actorRole !== PmsRole.ADMIN &&
       actorId !== delegatorId
     ) {

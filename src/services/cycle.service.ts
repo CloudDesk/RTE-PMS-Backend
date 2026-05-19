@@ -1302,7 +1302,7 @@ export class CycleService extends BaseService {
     const mappedRole = accessService.mapRole(user.role);
     const allowedRoles = [
       PmsRole.ADMIN,
-      PmsRole.SUPER_ADMIN,
+      PmsRole.DIRECTOR,
       PmsRole.MANAGEMENT,
       PmsRole.EMPLOYEE,
       PmsRole.MANAGER,
@@ -1322,7 +1322,7 @@ export class CycleService extends BaseService {
     const mappedRole = accessService.mapRole(user.role);
     if (
       mappedRole === PmsRole.ADMIN ||
-      mappedRole === PmsRole.SUPER_ADMIN ||
+      mappedRole === PmsRole.DIRECTOR ||
       mappedRole === PmsRole.MANAGEMENT
     ) {
       return;
@@ -1344,7 +1344,7 @@ export class CycleService extends BaseService {
     const mappedRole = accessService.mapRole(user.role);
     if (
       mappedRole === PmsRole.ADMIN ||
-      mappedRole === PmsRole.SUPER_ADMIN ||
+      mappedRole === PmsRole.DIRECTOR ||
       mappedRole === PmsRole.MANAGEMENT
     ) {
       return undefined;
