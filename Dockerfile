@@ -2,11 +2,9 @@
 # Stage 1: Build stage
 FROM node:20-slim AS builder
  
- 
-# Install build dependencies and LibreOffice
+# Install build dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    libreoffice \
     python3 \
     make \
     g++ && \
@@ -32,6 +30,7 @@ RUN npm ci
 # Copy source code
 COPY . .
  
+
  
  
 # Build the application
@@ -45,10 +44,9 @@ RUN npm run build
 FROM node:20-slim AS production
  
  
-# Install runtime dependencies: LibreOffice and Chromium for PDF generation
+# Install runtime dependencies: Chromium for browser automation
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    libreoffice \
     chromium \
     fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf libxss1 \
     --no-install-recommends && \
@@ -77,9 +75,6 @@ COPY --from=builder /app/dist ./dist
  
 # Copy templates directory (for runtime template access)
 COPY --from=builder /app/templates ./templates
- 
-# Copy root-level template files (payslip templates, etc.)
-COPY --from=builder /app/*.docx ./
  
 # Create uploads directory and non-root user for security
 RUN mkdir -p /app/uploads && \

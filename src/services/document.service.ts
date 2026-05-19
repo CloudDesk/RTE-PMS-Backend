@@ -9,7 +9,6 @@ import { BaseService } from "./base.service";
 import { ITimesheet, IUser, Payroll, Timesheet, User, Payslip } from "../models";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
-import libreoffice from 'libreoffice-convert';
 import { promisify } from 'util';
 import { Document, IDocument } from "../models/document.model";
 import { emailService } from "./email.service";
@@ -81,8 +80,10 @@ interface IdentityDocumentResult {
     pfUan?: string;
 }
 
-// Promisify the libreoffice convert method
-const convertToPdf = promisify(libreoffice.convert);
+// LibreOffice PDF conversion removed - functionality no longer available
+const convertToPdf = () => {
+    throw new Error('LibreOffice PDF conversion is no longer available. Please use an alternative PDF generation method.');
+};
 
 export class DocumentService extends BaseService {
     protected context: RequestContext;

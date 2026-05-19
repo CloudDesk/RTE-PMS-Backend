@@ -4,12 +4,12 @@ import { promises as fsPromises } from 'fs';
 import path from 'path';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
-import libreoffice from 'libreoffice-convert';
-import { promisify } from 'util';
 import { formatCurrency } from '../utilis/currency';
 
-// Promisify the libreoffice convert method (it uses callbacks, not Promises)
-const convertToPdf = promisify(libreoffice.convert);
+// LibreOffice PDF conversion removed - functionality no longer available
+const convertToPdf = () => {
+    throw new Error('LibreOffice PDF conversion is no longer available. Please use an alternative PDF generation method.');
+};
 
 // Helper to match Payslip Service Logic
 async function convertDocxToPDF(docxPath: string, pdfPath: string): Promise<void> {

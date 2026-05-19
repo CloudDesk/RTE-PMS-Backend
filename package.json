@@ -56,7 +56,6 @@
   "handlebars": "^4.7.8",
   "json-2-csv": "^5.5.9",
   "json2csv": "^6.0.0-alpha.2",
-  "libreoffice-convert": "^1.6.1",
   "mongodb": "^6.18.0",
   "mongoose": "^7.6.3",
   "node-cron": "^3.0.3",

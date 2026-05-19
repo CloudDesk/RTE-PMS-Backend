@@ -7,8 +7,6 @@ import Docxtemplater from "docxtemplater";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
 import path from "path";
-import libreoffice from 'libreoffice-convert';
-import { promisify } from 'util';
 import { formatCurrency } from '../utilis/currency';
 import { emailService } from './email.service';
 import { BaseService } from './base.service';
@@ -48,8 +46,10 @@ export interface IPayslipQuery {
   limit?: number;
 }
 
-// Promisify the libreoffice convert method
-const convertToPdf = promisify(libreoffice.convert);
+// LibreOffice PDF conversion removed - functionality no longer available
+const convertToPdf = () => {
+    throw new Error('LibreOffice PDF conversion is no longer available. Please use an alternative PDF generation method.');
+};
 
 interface IdentityDocumentResult {
   panNumber?: string;
