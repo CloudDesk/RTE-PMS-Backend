@@ -103,6 +103,18 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
     return reply.send({ success: true, data: reminder });
   });
 
+  fastify.delete('/reminders/:id', { preHandler: [authenticate] }, async (request, reply) => {
+    const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
+    if (userRole !== PmsRole.ADMIN) {
+      return reply.status(403).send({ success: false, message: 'Unauthorized config access' });
+    }
+
+    const { id } = request.params as { id: string };
+    await ReminderRule.findByIdAndUpdate(id, { isDeleted: true });
+
+    return reply.send({ success: true, message: 'Reminder deleted successfully' });
+  });
+
   // Trigger processing SLA engine manually
   fastify.post('/trigger-check', { preHandler: [authenticate] }, async (_request, reply) => {
     const result = await slaService.processSlas();
