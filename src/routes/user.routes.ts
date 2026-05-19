@@ -296,7 +296,7 @@ export const userRoutes: RouteHandler = async (
             },
             role: {
               type: 'string',
-              enum: ['admin', 'manager', 'staff', 'external'],
+              enum: ['admin', 'manager', 'staff', 'director', 'external'],
               description: 'Filter by user role'
             },
             status: {
