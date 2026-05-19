@@ -1180,11 +1180,31 @@ export class PmsTemplateService extends BaseService {
     if (visibleTo.length > 0 && !visibleTo.includes(context.role)) return false;
 
     const visibleStates = this.stringArrayFromRule(rules, 'visibleStates');
-    if (visibleStates.length > 0 && !visibleStates.includes(context.workflowState)) return false;
+    if (visibleStates.length > 0) {
+      let isMatched = visibleStates.includes(context.workflowState);
+      if (!isMatched && visibleStates.includes('OBJECTIVE_SETTING_OPEN')) {
+        const allowedStates = [
+          'NOT_STARTED',
+          'OBJECTIVE_SETTING_OPEN',
+          'OBJECTIVE_DRAFT',
+          'OBJECTIVE_REVISION_REQUIRED',
+          'OBJECTIVE_SUBMITTED',
+          'OBJECTIVE_APPROVED',
+          'MANAGER_REVIEW_OPEN',
+          'MANAGER_REVIEW_SUBMITTED',
+          'QUARTER_FINALIZED',
+        ];
+        if (allowedStates.includes(context.workflowState)) {
+          isMatched = true;
+        }
+      }
+      if (!isMatched) return false;
+    }
 
     const hierarchyScopes = this.stringArrayFromRule(rules, 'hierarchyScopes');
     if (
       hierarchyScopes.length > 0 &&
+      context.hierarchyScope !== 'self' &&
       (!context.hierarchyScope || !hierarchyScopes.includes(context.hierarchyScope))
     ) {
       return false;
@@ -1216,7 +1236,21 @@ export class PmsTemplateService extends BaseService {
     if (editableBy.length > 0 && !editableBy.includes(role)) return false;
 
     const editableStates = this.stringArrayFromRule(field.editabilityRules, 'editableStates');
-    if (editableStates.length > 0 && !editableStates.includes(workflowState)) return false;
+    if (editableStates.length > 0) {
+      let isMatched = editableStates.includes(workflowState);
+      if (!isMatched && editableStates.includes('OBJECTIVE_SETTING_OPEN')) {
+        const allowedEditStates = [
+          'NOT_STARTED',
+          'OBJECTIVE_SETTING_OPEN',
+          'OBJECTIVE_DRAFT',
+          'OBJECTIVE_REVISION_REQUIRED',
+        ];
+        if (allowedEditStates.includes(workflowState)) {
+          isMatched = true;
+        }
+      }
+      if (!isMatched) return false;
+    }
 
     return editableBy.includes(role);
   }
