@@ -7,10 +7,10 @@ import { slaService } from '../services/sla.service';
 import { PmsRole } from '../constants/pms.enums';
 
 export async function pmsSlaRoutes(fastify: FastifyInstance) {
-  // Config routes - restricted to SUPER_ADMIN & ADMIN
+  // Config routes - restricted to ADMIN
   fastify.get('/rules', { preHandler: [authenticate] }, async (request, reply) => {
     const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
-    if (userRole !== PmsRole.SUPER_ADMIN && userRole !== PmsRole.ADMIN) {
+    if (userRole !== PmsRole.ADMIN) {
       return reply.status(403).send({ success: false, message: 'Unauthorized config access' });
     }
 
@@ -20,7 +20,7 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
 
   fastify.post('/rules', { preHandler: [authenticate] }, async (request, reply) => {
     const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
-    if (userRole !== PmsRole.SUPER_ADMIN && userRole !== PmsRole.ADMIN) {
+    if (userRole !== PmsRole.ADMIN) {
       return reply.status(403).send({ success: false, message: 'Unauthorized config access' });
     }
 
@@ -35,7 +35,7 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
 
   fastify.put('/rules/:id', { preHandler: [authenticate] }, async (request, reply) => {
     const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
-    if (userRole !== PmsRole.SUPER_ADMIN && userRole !== PmsRole.ADMIN) {
+    if (userRole !== PmsRole.ADMIN) {
       return reply.status(403).send({ success: false, message: 'Unauthorized config access' });
     }
 
@@ -53,7 +53,7 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
 
   fastify.delete('/rules/:id', { preHandler: [authenticate] }, async (request, reply) => {
     const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
-    if (userRole !== PmsRole.SUPER_ADMIN && userRole !== PmsRole.ADMIN) {
+    if (userRole !== PmsRole.ADMIN) {
       return reply.status(403).send({ success: false, message: 'Unauthorized config access' });
     }
 
@@ -72,7 +72,7 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
 
   fastify.post('/reminders', { preHandler: [authenticate] }, async (request, reply) => {
     const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
-    if (userRole !== PmsRole.SUPER_ADMIN && userRole !== PmsRole.ADMIN) {
+    if (userRole !== PmsRole.ADMIN) {
       return reply.status(403).send({ success: false, message: 'Unauthorized config access' });
     }
 
@@ -87,7 +87,7 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
 
   fastify.put('/reminders/:id', { preHandler: [authenticate] }, async (request, reply) => {
     const userRole = (request.user as any).role.replace(/[ /-]/g, '_').toUpperCase();
-    if (userRole !== PmsRole.SUPER_ADMIN && userRole !== PmsRole.ADMIN) {
+    if (userRole !== PmsRole.ADMIN) {
       return reply.status(403).send({ success: false, message: 'Unauthorized config access' });
     }
 

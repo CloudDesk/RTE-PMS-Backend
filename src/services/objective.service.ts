@@ -1001,8 +1001,11 @@ export class ObjectiveService extends BaseService {
 
     if (actorRole && typeof actorRole === 'string') {
       const normalizedRole = accessService.mapRole(actorRole);
-      if (normalizedRole === PmsRole.ADMIN || normalizedRole === PmsRole.SUPER_ADMIN) {
+      if (normalizedRole === PmsRole.ADMIN) {
         return 'Admin';
+      }
+      if (normalizedRole === PmsRole.DIRECTOR) {
+        return 'Director';
       }
       if (normalizedRole === PmsRole.MANAGEMENT) {
         return 'Management';
@@ -1132,8 +1135,8 @@ export class ObjectiveService extends BaseService {
     const actor = this.requireActor();
     const mappedRole = accessService.mapRole(actor.actorRole);
 
-    if (mappedRole === PmsRole.ADMIN || mappedRole === PmsRole.SUPER_ADMIN) {
-      throw new Error('Admin and Super Admin must use approved correction flow for objective overrides');
+    if (mappedRole === PmsRole.ADMIN) {
+      throw new Error('Admin must use approved correction flow for objective overrides');
     }
 
     if (objective.status === ObjectiveStatus.OBJECTIVE_APPROVED) {

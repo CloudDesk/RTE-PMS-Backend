@@ -23,6 +23,7 @@ import { accessService } from './access.service';
 import { Delegation } from '../models/pms-delegation.model';
 import { auditService } from './audit.service';
 import { visibilityMaskService } from './visibilityMask.service';
+import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualDecision } from '../models/pms-annual-decision.model';
 import type { IObjective } from '../models/pms-objective.model';
@@ -104,7 +105,7 @@ export class AnnualDecisionService extends BaseService {
 
   async listAssignments(query: AnnualDecisionListQuery = {}): Promise<AnnualDecisionListItem[]> {
     const filter: Record<string, unknown> = { isDeleted: false };
-    this.applyScopedAssignmentFilter(filter);
+    await this.applyScopedAssignmentFilter(filter);
 
     if (query.cycleId?.trim()) {
       filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
@@ -860,15 +861,11 @@ export class AnnualDecisionService extends BaseService {
     throw new Error(access.message ?? 'Access denied');
   }
 
-  private applyScopedAssignmentFilter(filter: Record<string, unknown>): void {
+  private async applyScopedAssignmentFilter(filter: Record<string, unknown>): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
 
-    if (
-      mappedRole === PmsRole.ADMIN ||
-      mappedRole === PmsRole.SUPER_ADMIN ||
-      mappedRole === PmsRole.MANAGEMENT
-    ) {
+    if (mappedRole === PmsRole.ADMIN) {
       return;
     }
 
@@ -882,6 +879,12 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
+    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
+      const subordinateIds = await getSubordinateUserIds(actor.actorId);
+      filter.employeeId = { $in: subordinateIds };
+      return;
+    }
+
     throw new Error('PMS access denied');
   }
 
@@ -889,11 +892,7 @@ export class AnnualDecisionService extends BaseService {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
 
-    if (
-      mappedRole === PmsRole.ADMIN ||
-      mappedRole === PmsRole.SUPER_ADMIN ||
-      mappedRole === PmsRole.MANAGEMENT
-    ) {
+    if (mappedRole === PmsRole.ADMIN) {
       return;
     }
 

@@ -34,7 +34,7 @@ export class PmsNotificationService {
     const recipientRole = user.role?.toLowerCase();
 
     // Admin, Super Admin, and Management can always see grade and merit
-    if (recipientRole !== 'admin' && recipientRole !== 'super_admin' && recipientRole !== 'management') {
+    if (recipientRole !== 'admin' && recipientRole !== 'director' && recipientRole !== 'management') {
       let annualAssignment: any = null;
 
       if (entityType === 'ANNUAL_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {

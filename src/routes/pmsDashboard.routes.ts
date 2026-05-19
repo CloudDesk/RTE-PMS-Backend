@@ -56,7 +56,7 @@ export const pmsDashboardRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const role = request.user.role?.toLowerCase();
-        if (!['manager', 'admin', 'super_admin', 'management'].includes(role)) {
+        if (!['manager', 'admin', 'director', 'management'].includes(role)) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Manager role required'));
         }
 
@@ -92,7 +92,7 @@ export const pmsDashboardRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const role = request.user.role?.toLowerCase();
-        if (!['admin', 'super_admin'].includes(role)) {
+        if (!['admin', 'director'].includes(role)) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Admin role required'));
         }
 
@@ -124,7 +124,7 @@ export const pmsDashboardRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const role = request.user.role?.toLowerCase();
-        if (!['management', 'admin', 'super_admin'].includes(role)) {
+        if (!['management', 'admin', 'director'].includes(role)) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Management role required'));
         }
 

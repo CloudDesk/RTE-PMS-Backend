@@ -24,7 +24,7 @@ export class AccessService {
       };
     }
 
-    if (mappedRole === PmsRole.ADMIN || mappedRole === PmsRole.SUPER_ADMIN) {
+    if (mappedRole === PmsRole.ADMIN) {
       return { allowed: true, mappedRole };
     }
 
