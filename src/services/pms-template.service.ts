@@ -69,7 +69,7 @@ export interface ResolvedTemplateSection {
   title: string;
   module: string;
   level: 'quarter' | 'annual';
-  layout: 'vertical' | 'grid';
+  layout: 'vertical' | 'grid' | 'table';
   fields: ResolvedTemplateField[];
 }
 
@@ -870,7 +870,7 @@ export class PmsTemplateService extends BaseService {
         repeatFor,
         repeatable: section.repeatable ?? false,
         displayOrder: section.displayOrder ?? legacyOrder ?? index + 1,
-        layout: section.layout === 'grid' ? 'grid' : 'vertical',
+        layout: ['grid', 'table'].includes(section.layout as string) ? (section.layout as 'grid' | 'table') : 'vertical',
         renderingScope: this.normalizeRenderingScope(
           section.renderingScope as string | undefined,
           section.level ?? PmsTemplateSectionLevel.ANNUAL,
@@ -1370,7 +1370,7 @@ export class PmsTemplateService extends BaseService {
         }
       }
 
-      if (section.layout && !['vertical', 'grid'].includes(section.layout)) {
+      if (section.layout && !['vertical', 'grid', 'table'].includes(section.layout)) {
         throw new Error(`Invalid section layout in section ${section.sectionKey}`);
       }
 
