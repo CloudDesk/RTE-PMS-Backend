@@ -84,6 +84,23 @@ export const assignmentRoutes: RouteHandler = async (
   );
 
   fastify.get(
+    '/:id/reassignments',
+    { onRequest: [authenticate], schema: { tags: ['PMS Assignment Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.assignmentService.listReassignments(
+          id,
+          request.query as { employeeId?: string; managerId?: string; assignmentId?: string },
+        );
+        return reply.send(successResponse('PMS reassignment history fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
     '/:cycleId/assignments/:assignmentId',
     { onRequest: [authenticate], schema: { tags: ['PMS Assignment Management'] } },
     async (request, reply) => {

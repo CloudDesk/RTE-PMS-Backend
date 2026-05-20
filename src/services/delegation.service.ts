@@ -94,23 +94,54 @@ export class DelegationService extends BaseService {
     delegatorUserId?: string;
     delegateUserId?: string;
     status?: string;
+    cycleId?: string;
+    activeOn?: Date | string;
   }): Promise<any[]> {
+    const actor = this.requireActor();
+    const actorRole = normalizePmsRole(actor.actorRole) ?? 'UNKNOWN';
     const filter: Record<string, any> = { isDeleted: false };
+
+    if (actorRole !== PmsRole.ADMIN) {
+      filter.$or = [
+        { delegatorUserId: this.toObjectId(actor.actorId, 'actorId') },
+        { delegateUserId: this.toObjectId(actor.actorId, 'actorId') },
+      ];
+    }
+
     if (query.delegatorUserId) {
+      if (actorRole !== PmsRole.ADMIN && query.delegatorUserId !== actor.actorId) {
+        throw new Error('Unauthorized to view delegations for this delegator.');
+      }
       filter.delegatorUserId = this.toObjectId(query.delegatorUserId, 'delegatorUserId');
     }
     if (query.delegateUserId) {
+      if (actorRole !== PmsRole.ADMIN && query.delegateUserId !== actor.actorId) {
+        throw new Error('Unauthorized to view delegations for this delegate.');
+      }
       filter.delegateUserId = this.toObjectId(query.delegateUserId, 'delegateUserId');
     }
     if (query.status) {
       filter.status = query.status;
     }
+    if (query.cycleId) {
+      filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
+    }
 
-    return await Delegation.find(filter)
+    const activeOn = query.activeOn ? new Date(query.activeOn) : new Date();
+    const delegations = await Delegation.find(filter)
       .populate('delegatorUserId', 'name email employeeCode')
       .populate('delegateUserId', 'name email employeeCode')
+      .populate('cycleId', 'name startDate endDate')
       .sort({ createdAt: -1 })
       .lean();
+
+    return delegations.map((delegation) => ({
+      ...delegation,
+      isCurrentlyActive:
+        delegation.status === 'ACTIVE' &&
+        delegation.validFrom <= activeOn &&
+        delegation.validTo >= activeOn,
+    }));
   }
 
   /**
@@ -161,7 +192,8 @@ export class DelegationService extends BaseService {
   async getActiveDelegation(
     delegateUserId: string,
     delegatorUserId: string,
-    scope: string
+    scope: string,
+    cycleId?: string,
   ): Promise<any | null> {
     const now = new Date();
     const delegation = await Delegation.findOne({
@@ -177,6 +209,14 @@ export class DelegationService extends BaseService {
 
     // Check scope match
     if (delegation.scopeType !== 'ALL' && delegation.scopeType !== scope) {
+      return null;
+    }
+
+    if (delegation.cycleId && cycleId && delegation.cycleId.toString() !== cycleId) {
+      return null;
+    }
+
+    if (delegation.cycleId && !cycleId) {
       return null;
     }
 

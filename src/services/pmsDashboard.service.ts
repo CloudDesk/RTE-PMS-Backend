@@ -9,6 +9,8 @@ import {
   CommunicationDispatch,
   AuditLog,
   AssignmentExceptionQueue,
+  Delegation,
+  Reassignment,
 } from '../models';
 import { visibilityMaskService } from './visibilityMask.service';
 
@@ -91,6 +93,15 @@ export class PmsDashboardService extends BaseService {
     };
 
     const maskedAnnualAssignment = visibilityMaskService.mask(annualAssignment, maskContext);
+    const reassignmentHistory = await Reassignment.find({
+      annualAssignmentId: annualAssignment._id,
+      employeeId: new Types.ObjectId(employeeId),
+      isDeleted: false,
+    })
+      .populate('fromManagerId', 'name email employeeCode')
+      .populate('toManagerId', 'name email employeeCode')
+      .sort({ effectiveFrom: -1, createdAt: -1 })
+      .lean();
 
     return {
       hasAssignment: true,
@@ -98,6 +109,7 @@ export class PmsDashboardService extends BaseService {
       quarterAssignments,
       objectiveStats,
       quarterReviews,
+      reassignmentHistory,
       visibilityConfig: maskContext,
     };
   }
@@ -150,6 +162,36 @@ export class PmsDashboardService extends BaseService {
       isDeleted: false,
     });
 
+    const [activeDelegationsIn, activeDelegationsOut, recentReassignments] = await Promise.all([
+      Delegation.countDocuments({
+        delegateUserId: managerObjectId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }),
+      Delegation.countDocuments({
+        delegatorUserId: managerObjectId,
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }),
+      Reassignment.find({
+        $or: [
+          { fromManagerId: managerObjectId },
+          { toManagerId: managerObjectId },
+        ],
+        isDeleted: false,
+      })
+        .populate('employeeId', 'name email employeeCode')
+        .populate('fromManagerId', 'name email employeeCode')
+        .populate('toManagerId', 'name email employeeCode')
+        .sort({ effectiveFrom: -1, createdAt: -1 })
+        .limit(10)
+        .lean(),
+    ]);
+
     return {
       teamStats: {
         totalDirectReports: employeeIds.length,
@@ -157,11 +199,14 @@ export class PmsDashboardService extends BaseService {
         pendingApprovalsCount: pendingObjectives.length,
         pendingReviewsCount: quarterReviewQueue.length,
         overdueItemsCount: overdueSlas.length,
+        activeDelegationsIn,
+        activeDelegationsOut,
       },
       queues: {
         pendingObjectives,
         quarterReviewQueue,
         overdueSlas,
+        recentReassignments,
       },
     };
   }
@@ -258,6 +303,33 @@ export class PmsDashboardService extends BaseService {
       recent: recentExceptions,
     };
 
+    const [activeDelegationsCount, recentDelegations, recentReassignments] = await Promise.all([
+      Delegation.countDocuments({
+        status: 'ACTIVE',
+        validFrom: { $lte: new Date() },
+        validTo: { $gte: new Date() },
+        isDeleted: false,
+      }),
+      Delegation.find({
+        isDeleted: false,
+      })
+        .populate('delegatorUserId', 'name email employeeCode')
+        .populate('delegateUserId', 'name email employeeCode')
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean(),
+      Reassignment.find({
+        isDeleted: false,
+      })
+        .populate('employeeId', 'name email employeeCode')
+        .populate('fromManagerId', 'name email employeeCode')
+        .populate('toManagerId', 'name email employeeCode')
+        .populate('approvedBy', 'name email employeeCode')
+        .sort({ effectiveFrom: -1, createdAt: -1 })
+        .limit(10)
+        .lean(),
+    ]);
+
     return {
       annualProgress,
       quarterProgress,
@@ -266,6 +338,13 @@ export class PmsDashboardService extends BaseService {
       communicationStatus,
       reopenLogs: reopenTrackingLogs,
       exceptionQueueStatus,
+      delegationMetrics: {
+        activeCount: activeDelegationsCount,
+        recent: recentDelegations,
+      },
+      reassignmentMetrics: {
+        recent: recentReassignments,
+      },
     };
   }
 
@@ -337,12 +416,29 @@ export class PmsDashboardService extends BaseService {
       annualState: 'VISIBILITY_ENABLED',
     });
 
+    const [decisionDraftCount, frozenDecisionCount, reopenCount] = await Promise.all([
+      AnnualAssignment.countDocuments({
+        ...query,
+        annualState: 'MANAGEMENT_DECISION_DRAFT',
+      }),
+      AnnualAssignment.countDocuments({
+        ...query,
+        annualState: 'ANNUAL_FINALIZED',
+      }),
+      AuditLog.countDocuments({
+        action: { $regex: /reopen/i },
+      }),
+    ]);
+
     return {
       appraisalStates,
       gradeDistribution,
       meritSummary: meritStats[0] || { totalMeritAmount: 0, avgMeritAmount: 0, count: 0 },
       nilOutcomesCount,
       communicationReadinessCount,
+      decisionDraftCount,
+      frozenDecisionCount,
+      reopenCount,
     };
   }
 }

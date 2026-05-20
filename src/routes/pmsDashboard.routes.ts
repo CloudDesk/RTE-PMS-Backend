@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
+import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
 
 export const pmsDashboardRoutes: RouteHandler = async (
   fastify: FastifyInstance,
@@ -24,8 +25,8 @@ export const pmsDashboardRoutes: RouteHandler = async (
     },
     async (request, reply) => {
       try {
-        const role = request.user.role?.toLowerCase();
-        if (role === 'director' || role === 'management') {
+        const role = normalizePmsRole(request.user.role);
+        if (role === PmsRole.MANAGEMENT) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Employee dashboard is not available for director/management role'));
         }
 
@@ -60,8 +61,8 @@ export const pmsDashboardRoutes: RouteHandler = async (
     },
     async (request, reply) => {
       try {
-        const role = request.user.role?.toLowerCase();
-        if (!['manager', 'admin'].includes(role)) {
+        const role = normalizePmsRole(request.user.role) ?? request.user.role?.replace(/[ /-]/g, '_').toUpperCase();
+        if (!['MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(role)) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Manager role required'));
         }
 
@@ -96,8 +97,8 @@ export const pmsDashboardRoutes: RouteHandler = async (
     },
     async (request, reply) => {
       try {
-        const role = request.user.role?.toLowerCase();
-        if (!['admin'].includes(role)) {
+        const role = normalizePmsRole(request.user.role) ?? request.user.role?.replace(/[ /-]/g, '_').toUpperCase();
+        if (!['ADMIN', 'SUPER_ADMIN'].includes(role)) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Admin role required'));
         }
 
@@ -128,8 +129,8 @@ export const pmsDashboardRoutes: RouteHandler = async (
     },
     async (request, reply) => {
       try {
-        const role = request.user.role?.toLowerCase();
-        if (!['management', 'admin', 'director'].includes(role)) {
+        const role = normalizePmsRole(request.user.role) ?? request.user.role?.replace(/[ /-]/g, '_').toUpperCase();
+        if (!['MANAGEMENT', 'DIRECTOR', 'ADMIN', 'SUPER_ADMIN'].includes(role)) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Management role required'));
         }
 

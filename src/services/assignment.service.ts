@@ -391,6 +391,53 @@ export class AssignmentService extends BaseService {
     return { annualAssignment, quarterAssignments, assignmentHistory };
   }
 
+  async listReassignments(
+    cycleId: string,
+    query: {
+      employeeId?: string;
+      managerId?: string;
+      assignmentId?: string;
+    },
+  ): Promise<unknown[]> {
+    this.assertAdmin('assignment.reassignManager');
+
+    const filter: Record<string, unknown> = {
+      isDeleted: false,
+    };
+
+    if (query.assignmentId) {
+      filter.annualAssignmentId = this.toObjectId(query.assignmentId, 'assignmentId');
+    } else {
+      const annualAssignments = await AnnualAssignment.find({
+        cycleId: this.toObjectId(cycleId, 'cycleId'),
+        isDeleted: false,
+      })
+        .select('_id')
+        .lean();
+      filter.annualAssignmentId = { $in: annualAssignments.map((item) => item._id) };
+    }
+
+    if (query.employeeId) {
+      filter.employeeId = this.toObjectId(query.employeeId, 'employeeId');
+    }
+
+    if (query.managerId) {
+      const managerObjectId = this.toObjectId(query.managerId, 'managerId');
+      filter.$or = [
+        { fromManagerId: managerObjectId },
+        { toManagerId: managerObjectId },
+      ];
+    }
+
+    return Reassignment.find(filter)
+      .populate('employeeId', 'name email employeeCode')
+      .populate('fromManagerId', 'name email employeeCode')
+      .populate('toManagerId', 'name email employeeCode')
+      .populate('approvedBy', 'name email employeeCode')
+      .sort({ effectiveFrom: -1, createdAt: -1 })
+      .lean();
+  }
+
   async reassignManager(
     assignmentId: string,
     input: ReassignManagerInput,
