@@ -82,7 +82,7 @@ export class BulkAttendanceUploadService {
    */
   async parseExcelFile(fileBuffer: Buffer): Promise<IBulkUploadRow[]> {
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(fileBuffer);
+    await workbook.xlsx.load(fileBuffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
     
     const worksheet = workbook.getWorksheet(1); // First sheet
     if (!worksheet) {
@@ -1311,7 +1311,7 @@ export class BulkAttendanceUploadService {
     await this.createShiftsReferenceSheet(workbook, shifts);
     await this.createInstructionsSheet(workbook);
 
-    return await workbook.xlsx.writeBuffer() as Buffer;
+    return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
   /**

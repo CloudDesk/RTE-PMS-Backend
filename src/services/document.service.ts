@@ -9,7 +9,6 @@ import { BaseService } from "./base.service";
 import { ITimesheet, IUser, Payroll, Timesheet, User, Payslip } from "../models";
 import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
-import { promisify } from 'util';
 import { Document, IDocument } from "../models/document.model";
 import { emailService } from "./email.service";
 import { SalaryAssignment, SalaryStructure } from "../models";
@@ -81,7 +80,11 @@ interface IdentityDocumentResult {
 }
 
 // LibreOffice PDF conversion removed - functionality no longer available
-const convertToPdf = () => {
+const convertToPdf = async (
+    _docxBuffer: Buffer,
+    _outputFormat: string,
+    _filter?: unknown
+): Promise<Buffer> => {
     throw new Error('LibreOffice PDF conversion is no longer available. Please use an alternative PDF generation method.');
 };
 

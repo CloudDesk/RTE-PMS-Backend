@@ -47,7 +47,11 @@ export interface IPayslipQuery {
 }
 
 // LibreOffice PDF conversion removed - functionality no longer available
-const convertToPdf = () => {
+const convertToPdf = async (
+    _docxBuffer: Buffer,
+    _outputFormat: string,
+    _filter?: unknown
+): Promise<Buffer> => {
     throw new Error('LibreOffice PDF conversion is no longer available. Please use an alternative PDF generation method.');
 };
 
