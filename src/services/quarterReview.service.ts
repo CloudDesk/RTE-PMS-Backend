@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
@@ -20,6 +21,8 @@ import { QuarterReview } from '../models/pms-quarter-review.model';
 import { QuarterReviewValue } from '../models/pms-quarter-review-value.model';
 import { Delegation } from '../models/pms-delegation.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
+import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
@@ -127,6 +130,18 @@ type QuarterReviewRecord = {
     documentId?: string;
     uploadedAt?: string;
   }>;
+  reviewValues: Array<{
+    templateFieldId?: string;
+    fieldKey: string;
+    sectionKey: string;
+    roleCode: string;
+    actorUserId?: string;
+    workflowStage: string;
+    valueJson?: unknown;
+    valueText?: string;
+    valueNumber?: number;
+    valueDate?: string;
+  }>;
   submittedAt?: string;
   finalizedAt?: string;
   isDraft: boolean;
@@ -144,6 +159,7 @@ export type QuarterReviewAssignmentRecord = {
   employeeName: string;
   managerId: string;
   managerName: string;
+  templateVersionId?: string;
   reviewConfig: {
     objectiveRating: {
       scoreType: string;
@@ -165,9 +181,29 @@ type ReviewScoringRule = {
   allowedScores?: number[];
 };
 
+type QuarterReviewScoringFieldConfig = {
+  fieldKey: string;
+  sectionKey: string;
+  fieldType: string;
+  scoreType: string;
+  weightage: number;
+  formula?: string;
+  fixedScore?: number;
+  maxScore?: number;
+};
+
+type QuarterReviewSectionConfig = {
+  sectionKey: string;
+  weightage: number;
+  aggregationMethod: 'WEIGHTED_AVERAGE' | 'SIMPLE_AVERAGE' | 'SUM' | 'MAX_FIELD';
+  maxSectionScore: number | null;
+  scoringFields: QuarterReviewScoringFieldConfig[];
+};
+
 type QuarterReviewConfig = {
   objectiveRatingRule: ReviewScoringRule | null;
   overallScoreMax: number | null;
+  sections: QuarterReviewSectionConfig[];
 };
 
 export class QuarterReviewService extends BaseService {
@@ -198,7 +234,7 @@ export class QuarterReviewService extends BaseService {
       .map((item) => item.cycleId)
       .filter((value): value is Types.ObjectId => Boolean(value));
 
-    const [annualAssignments, cycles, approvedObjectives, quarterReviews] = await Promise.all([
+    const [annualAssignments, cycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
       AnnualAssignment.find({
         _id: { $in: annualAssignmentIds },
         isDeleted: false,
@@ -218,6 +254,10 @@ export class QuarterReviewService extends BaseService {
         quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
+      QuarterReviewValue.find({
+        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+        isDeleted: false,
+      }).lean(),
     ]);
 
     const annualAssignmentMap = new Map(
@@ -228,6 +268,15 @@ export class QuarterReviewService extends BaseService {
     const quarterReviewByQuarterAssignmentId = new Map(
       quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
     );
+    const reviewValuesByReviewId = new Map<string, typeof quarterReviewValues>();
+    for (const val of quarterReviewValues) {
+      if (val.quarterReviewId) {
+        const key = val.quarterReviewId.toString();
+        const bucket = reviewValuesByReviewId.get(key) ?? [];
+        bucket.push(val);
+        reviewValuesByReviewId.set(key, bucket);
+      }
+    }
 
     for (const objective of approvedObjectives) {
       const key = objective.quarterAssignmentId.toString();
@@ -269,6 +318,7 @@ export class QuarterReviewService extends BaseService {
         employeeName: String(annualAssignment?.employeeSnapshot?.name ?? 'Employee'),
         managerId: quarterAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
+        templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
@@ -282,7 +332,13 @@ export class QuarterReviewService extends BaseService {
           successCriteria: objective.successCriteria ?? '',
           weightage: objective.weightage,
         })),
-        quarterReview: review ? this.mapQuarterReviewRecord(review, isReviewVisible) : null,
+        quarterReview: review
+          ? this.mapQuarterReviewRecord(
+              review,
+              isReviewVisible,
+              reviewValuesByReviewId.get(review._id.toString()) ?? [],
+            )
+          : null,
         backendConnected: true,
       };
     }));
@@ -314,8 +370,9 @@ export class QuarterReviewService extends BaseService {
     }
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const reviewConfig = await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode);
+    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig);
 
-    this.validateDraftInput(input, approvedObjectives, reviewConfig);
+    this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
 
     const existingReview = await QuarterReview.findOne({
       quarterAssignmentId: quarterAssignment._id,
@@ -356,8 +413,8 @@ export class QuarterReviewService extends BaseService {
       reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_OPEN,
       ratings: this.normalizeRatings(input.ratings ?? []),
       comments: input.comments?.trim(),
-      score: input.score,
-      overallScore: input.score,
+      score: scoringResolution.overallScore,
+      overallScore: scoringResolution.overallScore,
       overallRating: input.overallRating?.trim(),
       finalQuarterRemarks: input.comments?.trim(),
       recommendation: input.recommendation?.trim(),
@@ -385,7 +442,16 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Unable to save quarter review draft');
     }
 
-    await this.persistQuarterReviewValues(quarterReview, quarterAssignment, input, false);
+    await this.persistQuarterReviewValues(
+      quarterReview,
+      quarterAssignment,
+      {
+        ...input,
+        score: scoringResolution.overallScore,
+        reviewValues: scoringResolution.reviewValues,
+      },
+      false,
+    );
     await this.syncQuarterAssignmentReviewSummary(quarterAssignment, quarterReview);
 
     await this.audit(
@@ -417,7 +483,8 @@ export class QuarterReviewService extends BaseService {
     const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const reviewConfig = await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode);
-    this.validateReviewInput(input, approvedObjectives, reviewConfig);
+    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig);
+    this.validateReviewInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
 
     const existingReview = await QuarterReview.findOne({
       quarterAssignmentId: quarterAssignment._id,
@@ -458,8 +525,8 @@ export class QuarterReviewService extends BaseService {
       reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
       ratings: this.normalizeRatings(input.ratings),
       comments: input.comments.trim(),
-      score: Number(input.score),
-      overallScore: Number(input.score),
+      score: scoringResolution.overallScore,
+      overallScore: scoringResolution.overallScore,
       overallRating: input.overallRating?.trim(),
       finalQuarterRemarks: input.comments.trim(),
       recommendation: input.recommendation?.trim(),
@@ -488,7 +555,16 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Unable to submit quarter review');
     }
 
-    await this.persistQuarterReviewValues(quarterReview, quarterAssignment, input, true);
+    await this.persistQuarterReviewValues(
+      quarterReview,
+      quarterAssignment,
+      {
+        ...input,
+        score: scoringResolution.overallScore,
+        reviewValues: scoringResolution.reviewValues,
+      },
+      true,
+    );
     await this.syncQuarterAssignmentReviewSummary(quarterAssignment, quarterReview);
 
     const updatedQuarterAssignment = await transitionQuarterAssignmentState(
@@ -554,6 +630,7 @@ export class QuarterReviewService extends BaseService {
 
     if (finalizedReview) {
       await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, finalizedReview);
+      await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, finalizedReview);
     }
 
     await this.audit(
@@ -582,6 +659,11 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Only finalized quarters can be reopened');
     }
 
+    const finalizedReviewBeforeReopen = await QuarterReview.findOne({
+      quarterAssignmentId: quarterAssignment._id,
+      isDeleted: false,
+    }).lean();
+
     const updatedQuarterAssignment = await transitionQuarterAssignmentState(
       quarterAssignment._id.toString(),
       QuarterWorkflowState.REOPENED_BY_ADMIN,
@@ -600,6 +682,12 @@ export class QuarterReviewService extends BaseService {
         $inc: { version: 1 },
       },
       { new: true },
+    );
+
+    await this.createQuarterReopenCorrectionLayer(
+      quarterAssignment,
+      finalizedReviewBeforeReopen,
+      input.reason,
     );
 
     await this.audit(
@@ -644,7 +732,7 @@ export class QuarterReviewService extends BaseService {
       .map((item) => item.cycleId)
       .filter((value): value is Types.ObjectId => Boolean(value));
 
-    const [annualAssignments, cycles, approvedObjectives, quarterReviews] = await Promise.all([
+    const [annualAssignments, cycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
       AnnualAssignment.find({
         _id: { $in: annualAssignmentIds },
         isDeleted: false,
@@ -664,6 +752,10 @@ export class QuarterReviewService extends BaseService {
         quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
+      QuarterReviewValue.find({
+        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+        isDeleted: false,
+      }).lean(),
     ]);
 
     const annualAssignmentMap = new Map(
@@ -674,6 +766,15 @@ export class QuarterReviewService extends BaseService {
     const quarterReviewByQuarterAssignmentId = new Map(
       quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
     );
+    const reviewValuesByReviewId = new Map<string, typeof quarterReviewValues>();
+    for (const val of quarterReviewValues) {
+      if (val.quarterReviewId) {
+        const key = val.quarterReviewId.toString();
+        const bucket = reviewValuesByReviewId.get(key) ?? [];
+        bucket.push(val);
+        reviewValuesByReviewId.set(key, bucket);
+      }
+    }
 
     for (const objective of approvedObjectives) {
       const key = objective.quarterAssignmentId.toString();
@@ -715,6 +816,7 @@ export class QuarterReviewService extends BaseService {
         employeeName: String(annualAssignment?.employeeSnapshot?.name ?? 'Employee'),
         managerId: quarterAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
+        templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
@@ -728,13 +830,19 @@ export class QuarterReviewService extends BaseService {
           successCriteria: objective.successCriteria ?? '',
           weightage: objective.weightage,
         })),
-        quarterReview: review ? this.mapQuarterReviewRecord(review, isReviewVisible) : null,
+        quarterReview: review
+          ? this.mapQuarterReviewRecord(
+              review,
+              isReviewVisible,
+              reviewValuesByReviewId.get(review._id.toString()) ?? [],
+            )
+          : null,
         backendConnected: true,
       };
     }));
   }
 
-  private mapQuarterReviewRecord(review: Record<string, any>, isReviewVisible = true): QuarterReviewRecord {
+  private mapQuarterReviewRecord(review: Record<string, any>, isReviewVisible = true, reviewValues: any[] = []): QuarterReviewRecord {
     if (!isReviewVisible) {
       return {
         id: review._id.toString(),
@@ -752,6 +860,7 @@ export class QuarterReviewService extends BaseService {
         achievements: '',
         developmentObservations: '',
         attachments: [],
+        reviewValues: [],
         submittedAt: review.submittedAt ? new Date(review.submittedAt).toISOString() : undefined,
         finalizedAt: review.finalizedAt ? new Date(review.finalizedAt).toISOString() : undefined,
         isDraft: !review.submittedAt,
@@ -785,6 +894,18 @@ export class QuarterReviewService extends BaseService {
           ? new Date(attachment.uploadedAt).toISOString()
           : undefined,
       })),
+      reviewValues: reviewValues.map((val) => ({
+        templateFieldId: val.templateFieldId,
+        fieldKey: val.fieldKey,
+        sectionKey: val.sectionKey,
+        roleCode: val.roleCode,
+        actorUserId: val.actorUserId?.toString?.(),
+        workflowStage: val.workflowStage,
+        valueJson: val.valueJson,
+        valueText: val.valueText,
+        valueNumber: val.valueNumber,
+        valueDate: val.valueDate ? new Date(val.valueDate).toISOString() : undefined,
+      })),
       submittedAt: review.submittedAt ? new Date(review.submittedAt).toISOString() : undefined,
       finalizedAt: review.finalizedAt ? new Date(review.finalizedAt).toISOString() : undefined,
       isDraft: !review.submittedAt,
@@ -795,12 +916,13 @@ export class QuarterReviewService extends BaseService {
     input: SaveQuarterReviewDraftInput,
     approvedObjectives: Array<Record<string, any>>,
     reviewConfig: QuarterReviewConfig,
+    resolvedScore?: number,
   ): void {
     if (input.score !== undefined && Number.isNaN(Number(input.score))) {
       throw new Error('Review score must be a valid number');
     }
 
-    if (Number(input.score) < 0) {
+    if (resolvedScore !== undefined && resolvedScore < 0) {
       throw new Error('Review score cannot be negative');
     }
 
@@ -810,13 +932,14 @@ export class QuarterReviewService extends BaseService {
       false,
       reviewConfig,
     );
-    this.validateOverallScoreAgainstTemplate(input.score, reviewConfig);
+    this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
   }
 
   private validateReviewInput(
     input: SubmitQuarterReviewInput,
     approvedObjectives: Array<Record<string, any>>,
     reviewConfig: QuarterReviewConfig,
+    resolvedScore?: number,
   ): void {
     if (!Array.isArray(input.ratings) || input.ratings.length === 0) {
       throw new Error('At least one review rating is required');
@@ -834,11 +957,11 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Development observations are required on submit');
     }
 
-    if (input.score === undefined || input.score === null || Number.isNaN(Number(input.score))) {
+    if (resolvedScore === undefined || resolvedScore === null || Number.isNaN(Number(resolvedScore))) {
       throw new Error('Review score is required');
     }
 
-    if (Number(input.score) < 0) {
+    if (resolvedScore < 0) {
       throw new Error('Review score cannot be negative');
     }
 
@@ -848,7 +971,27 @@ export class QuarterReviewService extends BaseService {
       true,
       reviewConfig,
     );
-    this.validateOverallScoreAgainstTemplate(input.score, reviewConfig);
+    this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
+  }
+
+  private resolveQuarterReviewScoring(
+    input: QuarterReviewBaseInput,
+    reviewConfig: QuarterReviewConfig,
+  ): { overallScore: number | undefined; reviewValues: QuarterReviewValueInput[] } {
+    const mergedReviewValues = this.mergeComputedReviewValues(
+      input.reviewValues ?? [],
+      this.buildComputedReviewValues(input, reviewConfig),
+    );
+    const sectionScores = this.calculateSectionScores(mergedReviewValues, reviewConfig);
+    const computedOverallScore = this.calculateOverallScore(sectionScores, reviewConfig);
+    const manualScore = input.score === undefined || input.score === null
+      ? undefined
+      : Number(input.score);
+
+    return {
+      overallScore: computedOverallScore ?? manualScore,
+      reviewValues: mergedReviewValues,
+    };
   }
 
   private validateRatingsAgainstObjectives(
@@ -1090,6 +1233,212 @@ export class QuarterReviewService extends BaseService {
     }));
   }
 
+  private buildComputedReviewValues(
+    input: QuarterReviewBaseInput,
+    reviewConfig: QuarterReviewConfig,
+  ): QuarterReviewValueInput[] {
+    if (reviewConfig.sections.length === 0) {
+      return [];
+    }
+
+    const numericValueContext = this.buildReviewNumericContext(input);
+    const computedValues: QuarterReviewValueInput[] = [];
+
+    for (const section of reviewConfig.sections) {
+      for (const field of section.scoringFields) {
+        if (field.scoreType === 'FIXED' && Number.isFinite(field.fixedScore)) {
+          numericValueContext[field.fieldKey] = Number(field.fixedScore);
+          computedValues.push({
+            fieldKey: field.fieldKey,
+            sectionKey: field.sectionKey,
+            valueNumber: Number(field.fixedScore),
+            workflowStage: 'MANAGER_REVIEW',
+            roleCode: 'MANAGER',
+          });
+          continue;
+        }
+
+        if (
+          (field.scoreType === 'FORMULA' || field.fieldType === PmsTemplateFieldType.FORMULA) &&
+          field.formula?.trim()
+        ) {
+          const formulaValue = this.evaluateFormulaExpression(field.formula, numericValueContext);
+          if (formulaValue !== undefined) {
+            const normalizedValue = field.maxScore && formulaValue > field.maxScore
+              ? field.maxScore
+              : formulaValue;
+            numericValueContext[field.fieldKey] = normalizedValue;
+            computedValues.push({
+              fieldKey: field.fieldKey,
+              sectionKey: field.sectionKey,
+              valueNumber: normalizedValue,
+              workflowStage: 'MANAGER_REVIEW',
+              roleCode: 'MANAGER',
+            });
+          }
+        }
+      }
+    }
+
+    return computedValues;
+  }
+
+  private buildReviewNumericContext(input: QuarterReviewBaseInput): Record<string, number> {
+    const context: Record<string, number> = {};
+
+    for (const value of input.reviewValues ?? []) {
+      if (
+        value.fieldKey?.trim() &&
+        value.valueNumber !== undefined &&
+        value.valueNumber !== null &&
+        Number.isFinite(Number(value.valueNumber))
+      ) {
+        context[value.fieldKey] = Number(value.valueNumber);
+      }
+    }
+
+    const ratingNumbers = (input.ratings ?? [])
+      .map((rating) => Number(rating.rating))
+      .filter((value) => Number.isFinite(value));
+
+    if (ratingNumbers.length > 0) {
+      const sum = ratingNumbers.reduce((total, value) => total + value, 0);
+      context.OBJECTIVE_RATING_SUM = sum;
+      context.OBJECTIVE_RATING_AVG = sum / ratingNumbers.length;
+      context.OBJECTIVE_RATING_MAX = Math.max(...ratingNumbers);
+      context.OBJECTIVE_RATING_MIN = Math.min(...ratingNumbers);
+      context.OBJECTIVE_COUNT = ratingNumbers.length;
+    }
+
+    return context;
+  }
+
+  private evaluateFormulaExpression(
+    formula: string,
+    context: Record<string, number>,
+  ): number | undefined {
+    const substituted = formula.replace(/\{([A-Za-z0-9_]+)\}/g, (_match, key: string) => {
+      const value = context[key];
+      return Number.isFinite(value) ? String(value) : '0';
+    });
+
+    if (/[A-Za-z_]/.test(substituted)) {
+      return undefined;
+    }
+
+    if (!/^[0-9+\-*/().\s]+$/.test(substituted)) {
+      return undefined;
+    }
+
+    try {
+      const result = Function(`"use strict"; return (${substituted});`)();
+      return Number.isFinite(Number(result)) ? Number(result) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private mergeComputedReviewValues(
+    reviewValues: QuarterReviewValueInput[],
+    computedReviewValues: QuarterReviewValueInput[],
+  ): QuarterReviewValueInput[] {
+    const merged = new Map<string, QuarterReviewValueInput>();
+
+    for (const value of reviewValues) {
+      merged.set(`${value.sectionKey}::${value.fieldKey}`, value);
+    }
+
+    for (const value of computedReviewValues) {
+      const key = `${value.sectionKey}::${value.fieldKey}`;
+      merged.set(key, {
+        ...merged.get(key),
+        ...value,
+      });
+    }
+
+    return Array.from(merged.values());
+  }
+
+  private calculateSectionScores(
+    reviewValues: QuarterReviewValueInput[],
+    reviewConfig: QuarterReviewConfig,
+  ): Array<{ sectionKey: string; score: number; weightage: number }> {
+    const valueMap = new Map(
+      reviewValues
+        .filter((value) => value.fieldKey?.trim() && value.sectionKey?.trim())
+        .map((value) => [`${value.sectionKey}::${value.fieldKey}`, value]),
+    );
+
+    return reviewConfig.sections
+      .map((section) => {
+        const fieldScores = section.scoringFields
+          .map((field) => {
+            const matchedValue = valueMap.get(`${field.sectionKey}::${field.fieldKey}`);
+            const numericScore = matchedValue?.valueNumber;
+            return numericScore !== undefined && numericScore !== null && Number.isFinite(Number(numericScore))
+              ? { score: Number(numericScore), weightage: field.weightage }
+              : null;
+          })
+          .filter((value): value is { score: number; weightage: number } => Boolean(value));
+
+        if (fieldScores.length === 0) {
+          return null;
+        }
+
+        let score: number;
+        switch (section.aggregationMethod) {
+          case 'SUM':
+            score = fieldScores.reduce((total, item) => total + item.score, 0);
+            break;
+          case 'MAX_FIELD':
+            score = Math.max(...fieldScores.map((item) => item.score));
+            break;
+          case 'SIMPLE_AVERAGE':
+            score = fieldScores.reduce((total, item) => total + item.score, 0) / fieldScores.length;
+            break;
+          case 'WEIGHTED_AVERAGE':
+          default: {
+            const totalWeight = fieldScores.reduce((total, item) => total + item.weightage, 0);
+            score = totalWeight > 0
+              ? fieldScores.reduce((total, item) => total + (item.score * item.weightage), 0) / totalWeight
+              : fieldScores.reduce((total, item) => total + item.score, 0) / fieldScores.length;
+            break;
+          }
+        }
+
+        const normalizedScore = section.maxSectionScore !== null && score > section.maxSectionScore
+          ? section.maxSectionScore
+          : score;
+
+        return {
+          sectionKey: section.sectionKey,
+          score: normalizedScore,
+          weightage: section.weightage,
+        };
+      })
+      .filter((value): value is { sectionKey: string; score: number; weightage: number } => Boolean(value));
+  }
+
+  private calculateOverallScore(
+    sectionScores: Array<{ sectionKey: string; score: number; weightage: number }>,
+    reviewConfig: QuarterReviewConfig,
+  ): number | undefined {
+    if (sectionScores.length === 0) {
+      return undefined;
+    }
+
+    const totalWeight = sectionScores.reduce((total, item) => total + item.weightage, 0);
+    const rawScore = totalWeight > 0
+      ? sectionScores.reduce((total, item) => total + (item.score * item.weightage), 0) / totalWeight
+      : sectionScores.reduce((total, item) => total + item.score, 0) / sectionScores.length;
+
+    if (reviewConfig.overallScoreMax !== null && rawScore > reviewConfig.overallScoreMax) {
+      return reviewConfig.overallScoreMax;
+    }
+
+    return rawScore;
+  }
+
   private async syncQuarterAssignmentReviewSummary(
     quarterAssignment: IQuarterAssignment,
     quarterReview: IQuarterReview,
@@ -1109,6 +1458,91 @@ export class QuarterReviewService extends BaseService {
     quarterAssignment.updatedBy = this.actorIdObject();
     quarterAssignment.version += 1;
     await quarterAssignment.save();
+  }
+
+  private async createQuarterFinalizationSnapshot(
+    quarterAssignment: IQuarterAssignment,
+    quarterReview: IQuarterReview,
+  ): Promise<void> {
+    const annualAssignment = await AnnualAssignment.findById(quarterAssignment.annualAssignmentId).lean();
+    if (!annualAssignment?.templateVersionId || !quarterAssignment.cycleId) {
+      return;
+    }
+
+    const [approvedObjectives, reviewValues] = await Promise.all([
+      Objective.find({
+        quarterAssignmentId: quarterAssignment._id,
+        isDeleted: false,
+        status: ObjectiveStatus.OBJECTIVE_APPROVED,
+      })
+        .sort({ objectiveNo: 1, createdAt: 1 })
+        .lean(),
+      QuarterReviewValue.find({
+        quarterReviewId: quarterReview._id,
+        isDeleted: false,
+      })
+        .sort({ createdAt: 1 })
+        .lean(),
+    ]);
+
+    const snapshotPayload = {
+      annualAssignmentId: annualAssignment._id.toString(),
+      cycleId: annualAssignment.cycleId?.toString?.() ?? quarterAssignment.cycleId.toString(),
+      employeeId: annualAssignment.employeeId.toString(),
+      templateVersionId: annualAssignment.templateVersionId.toString(),
+      quarterSnapshots: {
+        [quarterAssignment.quarterCode]: {
+          quarterAssignment: quarterAssignment.toObject(),
+          quarterReview: quarterReview.toObject(),
+          approvedObjectives,
+          reviewValues,
+        },
+      },
+    };
+
+    const snapshotHash = createHash('sha256')
+      .update(JSON.stringify(snapshotPayload))
+      .digest('hex');
+
+    await PerformanceHistorySnapshot.create({
+      annualAssignmentId: annualAssignment._id,
+      cycleId: annualAssignment.cycleId,
+      employeeId: annualAssignment.employeeId,
+      templateVersionId: annualAssignment.templateVersionId,
+      quarterSnapshots: snapshotPayload.quarterSnapshots,
+      snapshotHash,
+      createdBy: this.actorIdObject(),
+      updatedBy: this.actorIdObject(),
+    });
+  }
+
+  private async createQuarterReopenCorrectionLayer(
+    quarterAssignment: IQuarterAssignment,
+    quarterReview: Record<string, any> | null,
+    reason: string,
+  ): Promise<void> {
+    await CorrectionLayer.create({
+      entityType: 'QUARTER_ASSIGNMENT',
+      entityId: quarterAssignment._id,
+      fieldKey: 'REOPEN_QUARTER',
+      originalValue: {
+        quarterState: quarterAssignment.quarterState,
+        quarterScore: quarterAssignment.quarterScore,
+        quarterRating: quarterAssignment.quarterRating,
+        quarterSummary: quarterAssignment.quarterSummary,
+        reviewStatus: quarterReview?.reviewStatus,
+        finalizedAt: quarterReview?.finalizedAt,
+      },
+      correctedValue: {
+        quarterState: QuarterWorkflowState.REOPENED_BY_ADMIN,
+        reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
+      },
+      correctionReason: reason,
+      correctedBy: this.actorIdObject(),
+      correctedAt: new Date(),
+      createdBy: this.actorIdObject(),
+      updatedBy: this.actorIdObject(),
+    });
   }
 
   private async getApprovedObjectives(quarterAssignmentId: Types.ObjectId) {
@@ -1175,9 +1609,43 @@ export class QuarterReviewService extends BaseService {
       objectiveRatingRule?.maxScore ??
       null;
 
+    const sections = applicableSections
+      .map((section) => ({
+        sectionKey: section.sectionKey,
+        weightage: Number(section.sectionScoringConfig?.weightage ?? 0),
+        aggregationMethod: (
+          section.sectionScoringConfig?.aggregationMethod as QuarterReviewSectionConfig['aggregationMethod']
+        ) ?? 'WEIGHTED_AVERAGE',
+        maxSectionScore: Number.isFinite(Number(section.sectionScoringConfig?.maxSectionScore))
+          ? Number(section.sectionScoringConfig?.maxSectionScore)
+          : null,
+        scoringFields: (section.fields ?? [])
+          .filter(
+            (field) =>
+              this.isManagerEditableReviewField(field) &&
+              field.scoringConfig?.participatesInScoring === true,
+          )
+          .map((field) => ({
+            fieldKey: field.fieldKey,
+            sectionKey: section.sectionKey,
+            fieldType: String(field.fieldType),
+            scoreType: String(field.scoringConfig?.scoreType ?? 'MANUAL'),
+            weightage: Number(field.scoringConfig?.weight ?? field.scoringConfig?.weightage ?? 0),
+            formula: typeof field.scoringConfig?.formula === 'string' ? field.scoringConfig.formula : undefined,
+            fixedScore: Number.isFinite(Number(field.scoringConfig?.fixedScore))
+              ? Number(field.scoringConfig?.fixedScore)
+              : undefined,
+            maxScore: Number.isFinite(Number(field.scoringConfig?.maxScore))
+              ? Number(field.scoringConfig?.maxScore)
+              : undefined,
+          })),
+      }))
+      .filter((section) => section.scoringFields.length > 0);
+
     return {
       objectiveRatingRule,
       overallScoreMax,
+      sections,
     };
   }
 
@@ -1185,6 +1653,7 @@ export class QuarterReviewService extends BaseService {
     return {
       objectiveRatingRule: null,
       overallScoreMax: null,
+      sections: [],
     };
   }
 

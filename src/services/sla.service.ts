@@ -7,6 +7,7 @@ import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { User } from '../models/user.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { Types } from 'mongoose';
+import { NotificationEvent } from '../models/pms-notification-event.model';
 
 export class SlaService {
   /**
@@ -82,42 +83,52 @@ export class SlaService {
       if (activeRules.length === 0) return 0;
 
       for (const rule of activeRules) {
-        if (rule.eventType === 'objective_submission_pending') {
-          const pendingAssignments = await QuarterAssignment.find({
-            quarterState: { $in: ['NOT_STARTED', 'OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'] },
-            isDeleted: false
-          }).lean();
+        const pendingAssignments = await this.getPendingAssignmentsForRule(rule.eventType);
+        const activeAssignmentIds = new Set(pendingAssignments.map((assignment) => assignment._id.toString()));
 
-          for (const qa of pendingAssignments) {
-            const exists = await SlaEvent.findOne({
+        const existingEvents = await SlaEvent.find({
+          slaType: rule.eventType,
+          entityType: 'QUARTER_ASSIGNMENT',
+          isDeleted: false,
+        });
+
+        for (const event of existingEvents) {
+          if (!activeAssignmentIds.has(event.entityId.toString()) && event.status !== 'CLOSED') {
+            event.status = 'CLOSED';
+            event.updatedAt = new Date();
+            await event.save();
+          }
+        }
+
+        for (const qa of pendingAssignments) {
+          const exists = existingEvents.find(
+            (event) => event.entityId.toString() === qa._id.toString(),
+          );
+
+          if (!exists) {
+            const dueAt = await this.calculateDueDate(
+              rule.baseDatePointer,
+              rule.offsetDays,
+              {
+                cycleId: qa.cycleId?.toString(),
+                quarterCycleId: qa.cycleQuarterId?.toString(),
+                previousTransitionDate: qa.lastTransitionAt,
+                fixedDate: rule.fixedDate,
+              },
+            );
+
+            await SlaEvent.create({
               slaType: rule.eventType,
               entityType: 'QUARTER_ASSIGNMENT',
               entityId: qa._id,
-              isDeleted: false
+              cycleId: qa.cycleId,
+              quarterCode: qa.quarterCode,
+              ownerUserId: this.resolveOwnerUserIdForRule(rule.eventType, qa),
+              dueAt,
+              status: 'OPEN',
+              escalationTargetUserId: this.resolveEscalationTargetForRule(rule.eventType, qa),
             });
-
-            if (!exists) {
-              const cycle = await AnnualCycle.findById(qa.cycleId).lean();
-              let baseDate = qa.createdAt || new Date();
-              if (cycle && cycle.startDate) {
-                baseDate = new Date(cycle.startDate);
-              }
-
-              const dueAt = new Date(baseDate);
-              dueAt.setDate(dueAt.getDate() + rule.offsetDays);
-
-              await SlaEvent.create({
-                slaType: rule.eventType,
-                entityType: 'QUARTER_ASSIGNMENT',
-                entityId: qa._id,
-                cycleId: qa.cycleId,
-                ownerUserId: qa.employeeId,
-                dueAt,
-                status: 'OPEN',
-                escalationTargetUserId: qa.assignedManagerId,
-              });
-              createdCount++;
-            }
+            createdCount++;
           }
         }
       }
@@ -179,6 +190,20 @@ export class SlaService {
               ? sla.escalationTargetUserId.toString()
               : sla.ownerUserId.toString();
 
+            const alreadySent = await NotificationEvent.findOne({
+              eventType: `${sla.slaType}_${rem.reminderType}`,
+              recipientUserId: new Types.ObjectId(recipientId),
+              entityType: sla.entityType,
+              entityId: sla.entityId,
+              channel: rem.channel === 'BOTH' ? { $in: ['EMAIL', 'IN_APP'] } : rem.channel,
+              deliveryStatus: { $in: ['PENDING', 'SENT'] },
+              isDeleted: false,
+            }).lean();
+
+            if (alreadySent) {
+              continue;
+            }
+
             const user = await User.findById(recipientId).lean();
             if (user) {
               // Custom text formatting
@@ -220,6 +245,51 @@ export class SlaService {
     }
 
     return { processed: processedCount, notificationsSent: sentCount };
+  }
+
+  private async getPendingAssignmentsForRule(eventType: string) {
+    if (eventType === 'objective_submission_pending') {
+      return QuarterAssignment.find({
+        quarterState: { $in: ['NOT_STARTED', 'OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'] },
+        isDeleted: false,
+      }).lean();
+    }
+
+    if (eventType === 'objective_approval_pending') {
+      return QuarterAssignment.find({
+        quarterState: 'OBJECTIVE_SUBMITTED',
+        isDeleted: false,
+      }).lean();
+    }
+
+    if (eventType === 'quarter_review_pending') {
+      return QuarterAssignment.find({
+        quarterState: { $in: ['OBJECTIVE_APPROVED', 'MANAGER_REVIEW_OPEN'] },
+        isDeleted: false,
+      }).lean();
+    }
+
+    return [];
+  }
+
+  private resolveOwnerUserIdForRule(eventType: string, assignment: any) {
+    if (eventType === 'objective_submission_pending') {
+      return assignment.employeeId;
+    }
+
+    if (eventType === 'objective_approval_pending' || eventType === 'quarter_review_pending') {
+      return assignment.assignedManagerId;
+    }
+
+    return assignment.employeeId;
+  }
+
+  private resolveEscalationTargetForRule(eventType: string, assignment: any) {
+    if (eventType === 'objective_submission_pending') {
+      return assignment.assignedManagerId;
+    }
+
+    return undefined;
   }
 }
 

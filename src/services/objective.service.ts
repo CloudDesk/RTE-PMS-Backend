@@ -206,6 +206,8 @@ export class ObjectiveService extends BaseService {
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
 
+    await this.ensurePredefinedObjectivesForAssignments(annualAssignments, quarterAssignments);
+
     const objectives = await Objective.find({
       quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
       isDeleted: false,
@@ -258,6 +260,7 @@ export class ObjectiveService extends BaseService {
         managerName: this.getManagerName(annualAssignment, quarterAssignment.assignedManagerId.toString()),
         objectiveWeightageCap: 100,
         backendConnected: true,
+        templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         objectiveConfig,
         objectives: objectiveRecords,
       };
@@ -767,6 +770,128 @@ export class ObjectiveService extends BaseService {
     );
 
     return objective;
+  }
+
+  private async ensurePredefinedObjectivesForAssignments(
+    annualAssignments: Array<IAnnualAssignment | Record<string, any>>,
+    quarterAssignments: Array<IQuarterAssignment | Record<string, any>>,
+  ): Promise<void> {
+    if (annualAssignments.length === 0 || quarterAssignments.length === 0) {
+      return;
+    }
+
+    const templateVersionIds = Array.from(
+      new Set(
+        annualAssignments
+          .map((item) => item.templateVersionId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    if (templateVersionIds.length === 0) {
+      return;
+    }
+
+    const [templateVersions, existingObjectives] = await Promise.all([
+      PmsTemplateVersion.find({
+        _id: { $in: templateVersionIds },
+        isDeleted: false,
+      }).lean(),
+      Objective.find({
+        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+        isDeleted: false,
+      })
+        .select('quarterAssignmentId source templateObjectiveKey objectiveNo')
+        .lean(),
+    ]);
+
+    const templateVersionMap = new Map(
+      templateVersions.map((item) => [item._id.toString(), item]),
+    );
+    const annualAssignmentMap = new Map(
+      annualAssignments.map((item) => [item._id.toString(), item]),
+    );
+    const predefinedKeysByQuarterAssignment = new Map<string, Set<string>>();
+    const maxObjectiveNoByQuarterAssignment = new Map<string, number>();
+
+    for (const objective of existingObjectives) {
+      const quarterAssignmentId = objective.quarterAssignmentId.toString();
+      const currentMax = maxObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 0;
+      maxObjectiveNoByQuarterAssignment.set(
+        quarterAssignmentId,
+        Math.max(currentMax, objective.objectiveNo ?? 0),
+      );
+
+      if (
+        objective.source === ObjectiveSource.PREDEFINED &&
+        typeof objective.templateObjectiveKey === 'string' &&
+        objective.templateObjectiveKey.trim().length > 0
+      ) {
+        const existingKeys = predefinedKeysByQuarterAssignment.get(quarterAssignmentId) ?? new Set<string>();
+        existingKeys.add(objective.templateObjectiveKey);
+        predefinedKeysByQuarterAssignment.set(quarterAssignmentId, existingKeys);
+      }
+    }
+
+    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    const objectivePayloads: Array<Record<string, unknown>> = [];
+
+    for (const quarterAssignment of quarterAssignments) {
+      const annualAssignment = annualAssignmentMap.get(quarterAssignment.annualAssignmentId.toString());
+      const templateVersion = annualAssignment?.templateVersionId
+        ? templateVersionMap.get(annualAssignment.templateVersionId.toString())
+        : undefined;
+      const objectiveConfig = templateVersion
+        ? this.resolveTemplateObjectiveConfig(templateVersion.sections ?? [], quarterAssignment.quarterCode)
+        : undefined;
+
+      if (!objectiveConfig || objectiveConfig.predefinedObjectives.length === 0) {
+        continue;
+      }
+
+      const quarterAssignmentId = quarterAssignment._id.toString();
+      const existingKeys = predefinedKeysByQuarterAssignment.get(quarterAssignmentId) ?? new Set<string>();
+      let nextObjectiveNo = maxObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 0;
+
+      for (const predefinedObjective of objectiveConfig.predefinedObjectives) {
+        if (!predefinedObjective.key || existingKeys.has(predefinedObjective.key)) {
+          continue;
+        }
+
+        nextObjectiveNo += 1;
+        existingKeys.add(predefinedObjective.key);
+
+        objectivePayloads.push({
+          quarterAssignmentId: quarterAssignment._id,
+          annualAssignmentId: quarterAssignment.annualAssignmentId,
+          cycleId: quarterAssignment.cycleId,
+          quarterCode: quarterAssignment.quarterCode,
+          employeeId: quarterAssignment.employeeId,
+          assignedManagerId: quarterAssignment.assignedManagerId,
+          objectiveNo: nextObjectiveNo,
+          source: ObjectiveSource.PREDEFINED,
+          templateObjectiveKey: predefinedObjective.key,
+          title: predefinedObjective.title,
+          description: predefinedObjective.description,
+          targetMetric: predefinedObjective.kpi,
+          targetValue: predefinedObjective.targetValue,
+          weightage: predefinedObjective.weightage,
+          successCriteria: predefinedObjective.successCriteria,
+          status: ObjectiveStatus.OBJECTIVE_DRAFT,
+          attachments: [],
+          createdByRole: 'SYSTEM',
+          createdByUserId: actorId,
+          createdBy: actorId,
+        });
+      }
+
+      maxObjectiveNoByQuarterAssignment.set(quarterAssignmentId, nextObjectiveNo);
+      predefinedKeysByQuarterAssignment.set(quarterAssignmentId, existingKeys);
+    }
+
+    if (objectivePayloads.length > 0) {
+      await Objective.insertMany(objectivePayloads);
+    }
   }
 
   private async buildObjectiveConfigMap(
