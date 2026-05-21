@@ -53,6 +53,9 @@ export class DelegationService extends BaseService {
     if (!delegator) throw new Error('Delegator not found.');
     if (!delegate) throw new Error('Delegate not found.');
 
+    this.assertEligibleManagerRole(delegator.role, 'Delegator');
+    this.assertEligibleManagerRole(delegate.role, 'Delegate');
+
     const fromDate = new Date(input.validFrom);
     const toDate = new Date(input.validTo);
 
@@ -63,6 +66,15 @@ export class DelegationService extends BaseService {
     if (fromDate > toDate) {
       throw new Error('validFrom date cannot be after validTo date.');
     }
+
+    await this.assertNoOverlappingDelegation({
+      delegatorUserId: delegatorId,
+      delegateUserId: delegateId,
+      scopeType: input.scopeType ?? 'ALL',
+      cycleId: input.cycleId,
+      validFrom: fromDate,
+      validTo: toDate,
+    });
 
     const delegation = await Delegation.create({
       delegatorUserId: new Types.ObjectId(delegatorId),
@@ -95,6 +107,7 @@ export class DelegationService extends BaseService {
     delegateUserId?: string;
     status?: string;
     cycleId?: string;
+    scopeType?: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
     activeOn?: Date | string;
   }): Promise<any[]> {
     const actor = this.requireActor();
@@ -125,6 +138,9 @@ export class DelegationService extends BaseService {
     }
     if (query.cycleId) {
       filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
+    }
+    if (query.scopeType) {
+      filter.scopeType = query.scopeType;
     }
 
     const activeOn = query.activeOn ? new Date(query.activeOn) : new Date();
@@ -183,6 +199,58 @@ export class DelegationService extends BaseService {
     );
 
     return delegation;
+  }
+
+  private assertEligibleManagerRole(role: string | undefined, label: string): void {
+    const mappedRole = role ? normalizePmsRole(role) : null;
+    if (mappedRole !== PmsRole.MANAGER) {
+      throw new Error(`${label} must have Manager role for scoped PMS delegation.`);
+    }
+  }
+
+  private async assertNoOverlappingDelegation(input: {
+    delegatorUserId: string;
+    delegateUserId: string;
+    scopeType: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
+    cycleId?: string;
+    validFrom: Date;
+    validTo: Date;
+  }): Promise<void> {
+    const scopeCandidates =
+      input.scopeType === 'ALL'
+        ? ['ALL', 'PMS_OBJECTIVES', 'PMS_REVIEWS']
+        : ['ALL', input.scopeType];
+
+    const cycleConditions = input.cycleId
+      ? [
+          { cycleId: this.toObjectId(input.cycleId, 'cycleId') },
+          { cycleId: { $exists: false } },
+          { cycleId: null },
+        ]
+      : [{ cycleId: { $exists: true } }, { cycleId: null }, { cycleId: { $exists: false } }];
+
+    const overlappingDelegation = await Delegation.findOne({
+      delegatorUserId: this.toObjectId(input.delegatorUserId, 'delegatorUserId'),
+      status: 'ACTIVE',
+      isDeleted: false,
+      scopeType: { $in: scopeCandidates },
+      $or: cycleConditions,
+      validFrom: { $lte: input.validTo },
+      validTo: { $gte: input.validFrom },
+    }).lean();
+
+    if (!overlappingDelegation) {
+      return;
+    }
+
+    const isSameDelegate =
+      overlappingDelegation.delegateUserId?.toString() === input.delegateUserId;
+
+    if (isSameDelegate) {
+      throw new Error('An overlapping active delegation already exists for this delegator, delegate, scope, and cycle.');
+    }
+
+    throw new Error('A conflicting active delegation already exists for this delegator within the selected scope, cycle, and date range.');
   }
 
   /**

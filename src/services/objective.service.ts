@@ -9,6 +9,7 @@ import {
   QuarterWorkflowState,
 } from '../constants/pms.enums';
 import { Objective } from '../models/pms-objective.model';
+import { ObjectiveValue } from '../models/pms-objective-value.model';
 import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
 import { ObjectiveComment } from '../models/pms-objective-comment.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
@@ -16,9 +17,9 @@ import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
-import { Delegation } from '../models/pms-delegation.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { DelegationService } from './delegation.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 import type { IObjective } from '../models/pms-objective.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
@@ -41,6 +42,20 @@ interface ObjectiveAttachmentInput {
   visibilityRules?: Record<string, unknown>;
 }
 
+interface ObjectiveValueInput {
+  templateFieldId?: string;
+  fieldKey: string;
+  sectionKey: string;
+  roleCode?: string;
+  actorUserId?: string;
+  workflowStage?: string;
+  valueJson?: unknown;
+  valueText?: string;
+  valueNumber?: number;
+  valueDate?: Date | string;
+  valueStatus?: string;
+}
+
 export interface CreateObjectiveInput {
   quarterAssignmentId: string;
   title: string;
@@ -51,6 +66,7 @@ export interface CreateObjectiveInput {
   weightage?: number;
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
+  objectiveValues?: ObjectiveValueInput[];
 }
 
 export interface UpdateObjectiveInput {
@@ -62,6 +78,7 @@ export interface UpdateObjectiveInput {
   weightage?: number;
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
+  objectiveValues?: ObjectiveValueInput[];
 }
 
 export interface ReturnObjectiveInput {
@@ -83,6 +100,7 @@ export interface CorrectObjectiveInput {
   weightage?: number;
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
+  objectiveValues?: ObjectiveValueInput[];
 }
 
 type AssignmentMode = 'employee' | 'manager';
@@ -136,6 +154,19 @@ type ObjectiveRecord = {
   createdByUserId: string;
   createdByName: string;
   comments: ObjectiveCommentRecord[];
+  objectiveValues: Array<{
+    templateFieldId?: string;
+    fieldKey: string;
+    sectionKey: string;
+    roleCode: string;
+    actorUserId?: string;
+    workflowStage: string;
+    valueJson?: unknown;
+    valueText?: string;
+    valueNumber?: number;
+    valueDate?: string;
+    valueStatus?: string;
+  }>;
   attachments: Array<{
     id: string;
     fileName: string;
@@ -206,6 +237,19 @@ export class ObjectiveService extends BaseService {
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
 
+    const quarterCycles = await QuarterCycle.find({
+      _id: {
+        $in: quarterAssignments
+          .map((item) => item.cycleQuarterId)
+          .filter(Boolean),
+      },
+      isDeleted: false,
+    }).lean();
+
+    const quarterCycleMap = new Map(
+      quarterCycles.map((item) => [item._id.toString(), item]),
+    );
+
     await this.ensurePredefinedObjectivesForAssignments(annualAssignments, quarterAssignments);
 
     const objectives = await Objective.find({
@@ -221,8 +265,15 @@ export class ObjectiveService extends BaseService {
     })
       .sort({ createdAt: 1 })
       .lean();
+    const objectiveValues = await ObjectiveValue.find({
+      objectiveId: { $in: objectives.map((item) => item._id) },
+      isDeleted: false,
+    })
+      .sort({ createdAt: 1 })
+      .lean();
 
     const commentsByObjectiveId = this.groupCommentsByObjective(comments);
+    const objectiveValuesByObjectiveId = this.groupObjectiveValuesByObjective(objectiveValues);
     const objectivesByQuarterAssignmentId = new Map<string, typeof objectives>();
 
     for (const objective of objectives) {
@@ -236,6 +287,9 @@ export class ObjectiveService extends BaseService {
 
     return quarterAssignments.map((quarterAssignment) => {
       const annualAssignment = annualAssignmentMap.get(quarterAssignment.annualAssignmentId.toString());
+      const quarterCycle = quarterAssignment.cycleQuarterId
+        ? quarterCycleMap.get(quarterAssignment.cycleQuarterId.toString())
+        : undefined;
       const objectiveConfig = configMap.get(quarterAssignment._id.toString()) ?? this.defaultObjectiveConfig();
       const objectiveRecords = (objectivesByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? [])
         .map((objective) =>
@@ -243,6 +297,7 @@ export class ObjectiveService extends BaseService {
             objective,
             annualAssignment,
             commentsByObjectiveId.get(objective._id.toString()) ?? [],
+            objectiveValuesByObjectiveId.get(objective._id.toString()) ?? [],
           ),
         );
 
@@ -254,6 +309,7 @@ export class ObjectiveService extends BaseService {
         cycleName: this.getCycleName(annualAssignment),
         quarter: quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
+        quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
         employeeName: this.getEmployeeName(annualAssignment, quarterAssignment.employeeId.toString()),
         managerId: quarterAssignment.assignedManagerId.toString(),
@@ -280,11 +336,18 @@ export class ObjectiveService extends BaseService {
     })
       .sort({ createdAt: 1 })
       .lean();
+    const objectiveValues = await ObjectiveValue.find({
+      objectiveId: objective._id,
+      isDeleted: false,
+    })
+      .sort({ createdAt: 1 })
+      .lean();
 
     return this.mapObjectiveRecord(
       objective.toObject(),
       annualAssignment,
       comments,
+      objectiveValues,
     );
   }
 
@@ -324,16 +387,13 @@ export class ObjectiveService extends BaseService {
     let originalOwnerUserId: Types.ObjectId | undefined;
 
     if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
-      const delegation = await Delegation.findOne({
-        delegateUserId: actorObjectId,
-        delegatorUserId: quarterAssignment.assignedManagerId,
-        status: 'ACTIVE',
-        validFrom: { $lte: new Date() },
-        validTo: { $gte: new Date() },
-        isDeleted: false,
-      }).lean();
+      const delegation = await this.getObjectiveDelegation(
+        actor.actorId,
+        quarterAssignment.assignedManagerId.toString(),
+        quarterAssignment.cycleId?.toString(),
+      );
 
-      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+      if (delegation) {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = quarterAssignment.assignedManagerId;
       }
@@ -369,6 +429,12 @@ export class ObjectiveService extends BaseService {
     });
 
     await this.replaceObjectiveAttachments(objective, input.attachments ?? [], actor.actorRole);
+    await this.persistObjectiveValues(
+      objective,
+      quarterAssignment,
+      input.objectiveValues ?? [],
+      false,
+    );
 
     await this.audit(
       source === ObjectiveSource.MANAGER_CREATED
@@ -414,16 +480,13 @@ export class ObjectiveService extends BaseService {
     let originalOwnerUserId: Types.ObjectId | undefined;
 
     if (actor.actorId !== objective.assignedManagerId.toString()) {
-      const delegation = await Delegation.findOne({
-        delegateUserId: new Types.ObjectId(actor.actorId),
-        delegatorUserId: objective.assignedManagerId,
-        status: 'ACTIVE',
-        validFrom: { $lte: new Date() },
-        validTo: { $gte: new Date() },
-        isDeleted: false,
-      }).lean();
+      const delegation = await this.getObjectiveDelegation(
+        actor.actorId,
+        objective.assignedManagerId.toString(),
+        objective.cycleId?.toString(),
+      );
 
-      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+      if (delegation) {
         actingDelegateUserId = new Types.ObjectId(actor.actorId);
         originalOwnerUserId = objective.assignedManagerId;
       }
@@ -466,6 +529,12 @@ export class ObjectiveService extends BaseService {
     if (input.attachments !== undefined) {
       await this.replaceObjectiveAttachments(objective, input.attachments, actor.actorRole);
     }
+    await this.persistObjectiveValues(
+      objective,
+      quarterAssignment,
+      input.objectiveValues ?? [],
+      objective.status === ObjectiveStatus.OBJECTIVE_SUBMITTED || objective.status === ObjectiveStatus.OBJECTIVE_APPROVED,
+    );
 
     await this.audit(
       'PMS_OBJECTIVE_DRAFT_UPDATED',
@@ -510,6 +579,16 @@ export class ObjectiveService extends BaseService {
     objective.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
     objective.version += 1;
     await objective.save();
+    await ObjectiveValue.updateMany(
+      { objectiveId: objective._id, isDeleted: false },
+      {
+        $set: {
+          valueStatus: 'ACTIVE',
+          submittedAt: objective.submittedAt,
+          updatedBy: objective.updatedBy,
+        },
+      },
+    );
 
     await this.audit(
       'PMS_OBJECTIVE_SUBMITTED',
@@ -538,16 +617,13 @@ export class ObjectiveService extends BaseService {
     let originalOwnerUserId: Types.ObjectId | undefined;
 
     if (actor.actorId !== objective.assignedManagerId.toString()) {
-      const delegation = await Delegation.findOne({
-        delegateUserId: actorObjectId,
-        delegatorUserId: objective.assignedManagerId,
-        status: 'ACTIVE',
-        validFrom: { $lte: new Date() },
-        validTo: { $gte: new Date() },
-        isDeleted: false,
-      }).lean();
+      const delegation = await this.getObjectiveDelegation(
+        actor.actorId,
+        objective.assignedManagerId.toString(),
+        objective.cycleId?.toString(),
+      );
 
-      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+      if (delegation) {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = objective.assignedManagerId;
       }
@@ -599,16 +675,13 @@ export class ObjectiveService extends BaseService {
     let originalOwnerUserId: Types.ObjectId | undefined;
 
     if (actor.actorId !== objective.assignedManagerId.toString()) {
-      const delegation = await Delegation.findOne({
-        delegateUserId: actorObjectId,
-        delegatorUserId: objective.assignedManagerId,
-        status: 'ACTIVE',
-        validFrom: { $lte: new Date() },
-        validTo: { $gte: new Date() },
-        isDeleted: false,
-      }).lean();
+      const delegation = await this.getObjectiveDelegation(
+        actor.actorId,
+        objective.assignedManagerId.toString(),
+        objective.cycleId?.toString(),
+      );
 
-      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+      if (delegation) {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = objective.assignedManagerId;
       }
@@ -986,6 +1059,7 @@ export class ObjectiveService extends BaseService {
     objective: IObjective | Record<string, any>,
     annualAssignment: IAnnualAssignment | Record<string, any> | null | undefined,
     comments: Array<Record<string, any>>,
+    objectiveValues: Array<Record<string, any>>,
   ): ObjectiveRecord {
     const objectiveId = objective._id.toString();
     const employeeId = objective.employeeId.toString();
@@ -1031,6 +1105,19 @@ export class ObjectiveService extends BaseService {
         ),
         createdAt: new Date(comment.createdAt).toISOString(),
       })),
+      objectiveValues: objectiveValues.map((value) => ({
+        templateFieldId: value.templateFieldId,
+        fieldKey: value.fieldKey,
+        sectionKey: value.sectionKey,
+        roleCode: value.roleCode,
+        actorUserId: value.actorUserId?.toString?.(),
+        workflowStage: value.workflowStage,
+        valueJson: value.valueJson,
+        valueText: value.valueText,
+        valueNumber: value.valueNumber,
+        valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+        valueStatus: value.valueStatus,
+      })),
       attachments: (objective.attachments ?? []).map((attachment: Record<string, any>, index: number) => ({
         id: `${objectiveId}-${attachment.documentId ?? attachment.fileName ?? index}`,
         fileName: attachment.fileName ?? 'Attachment',
@@ -1063,6 +1150,36 @@ export class ObjectiveService extends BaseService {
       grouped.set(key, bucket);
     }
     return grouped;
+  }
+
+  private groupObjectiveValuesByObjective(values: Array<Record<string, any>>) {
+    const grouped = new Map<string, Array<Record<string, any>>>();
+    for (const value of values) {
+      const key = value.objectiveId.toString();
+      const bucket = grouped.get(key) ?? [];
+      bucket.push(value);
+      grouped.set(key, bucket);
+    }
+    return grouped;
+  }
+
+  private mapQuarterWindows(quarterCycle?: Record<string, any>) {
+    if (!quarterCycle) return undefined;
+
+    const mapWindow = (window?: { startDate?: Date; endDate?: Date }) => {
+      if (!window?.startDate || !window?.endDate) return undefined;
+      return {
+        startDate: new Date(window.startDate).toISOString(),
+        endDate: new Date(window.endDate).toISOString(),
+      };
+    };
+
+    return {
+      objectiveSetting: mapWindow(quarterCycle.objectiveSettingWindow),
+      objectiveApproval: mapWindow(quarterCycle.objectiveApprovalWindow),
+      managerReview: mapWindow(quarterCycle.managerReviewWindow),
+      quarterFinalization: mapWindow(quarterCycle.quarterFinalizationWindow),
+    };
   }
 
   private getCycleName(annualAssignment?: IAnnualAssignment | Record<string, any> | null): string {
@@ -1180,6 +1297,74 @@ export class ObjectiveService extends BaseService {
     if (!objective.successCriteria?.trim()) {
       throw new Error('Objective success criteria is required on submit');
     }
+  }
+
+  private async persistObjectiveValues(
+    objective: IObjective,
+    quarterAssignment: IQuarterAssignment,
+    objectiveValues: ObjectiveValueInput[],
+    isSubmitted: boolean,
+  ): Promise<void> {
+    const actor = this.requireActor();
+    const actorUserId = new Types.ObjectId(actor.actorId);
+    const effectiveAt = isSubmitted
+      ? (objective.submittedAt ?? new Date())
+      : new Date();
+    const baseValue = {
+      objectiveId: objective._id,
+      quarterAssignmentId: quarterAssignment._id,
+      annualAssignmentId: quarterAssignment.annualAssignmentId,
+      cycleId: quarterAssignment.cycleId,
+      employeeId: quarterAssignment.employeeId,
+      roleCode: actor.actorRole,
+      actorUserId,
+      workflowStage: 'OBJECTIVE_SETTING',
+      valueStatus: isSubmitted ? 'ACTIVE' : 'DRAFT',
+      submittedAt: isSubmitted ? effectiveAt : undefined,
+      createdBy: actorUserId,
+      updatedBy: actorUserId,
+    };
+
+    const valuesToCreate = this.normalizeObjectiveValues(
+      objectiveValues,
+      actorUserId,
+      effectiveAt,
+      baseValue,
+      isSubmitted,
+    );
+
+    await ObjectiveValue.deleteMany({ objectiveId: objective._id });
+    if (valuesToCreate.length > 0) {
+      await ObjectiveValue.insertMany(valuesToCreate);
+    }
+  }
+
+  private normalizeObjectiveValues(
+    objectiveValues: ObjectiveValueInput[],
+    defaultActorUserId: Types.ObjectId,
+    effectiveAt: Date,
+    baseValue: Record<string, unknown>,
+    isSubmitted: boolean,
+  ) {
+    return objectiveValues
+      .filter((value) => value.fieldKey?.trim() && value.sectionKey?.trim())
+      .map((objectiveValue) => ({
+        ...baseValue,
+        templateFieldId: objectiveValue.templateFieldId,
+        fieldKey: objectiveValue.fieldKey,
+        sectionKey: objectiveValue.sectionKey,
+        roleCode: objectiveValue.roleCode ?? String(baseValue.roleCode ?? 'EMPLOYEE'),
+        actorUserId: objectiveValue.actorUserId && Types.ObjectId.isValid(objectiveValue.actorUserId)
+          ? new Types.ObjectId(objectiveValue.actorUserId)
+          : defaultActorUserId,
+        workflowStage: objectiveValue.workflowStage ?? String(baseValue.workflowStage ?? 'OBJECTIVE_SETTING'),
+        valueJson: objectiveValue.valueJson,
+        valueText: objectiveValue.valueText,
+        valueNumber: objectiveValue.valueNumber,
+        valueDate: objectiveValue.valueDate ? new Date(objectiveValue.valueDate) : undefined,
+        valueStatus: objectiveValue.valueStatus ?? (isSubmitted ? 'ACTIVE' : 'DRAFT'),
+        submittedAt: isSubmitted ? effectiveAt : undefined,
+      }));
   }
 
   private async validateQuarterObjectiveRules(
@@ -1334,6 +1519,7 @@ export class ObjectiveService extends BaseService {
       [QuarterWorkflowState.NOT_STARTED]: [QuarterWorkflowState.OBJECTIVE_SETTING_OPEN],
       [QuarterWorkflowState.OBJECTIVE_SETTING_OPEN]: [
         QuarterWorkflowState.OBJECTIVE_DRAFT,
+        QuarterWorkflowState.OBJECTIVE_SUBMITTED,
         QuarterWorkflowState.OBJECTIVE_APPROVED,
       ],
       [QuarterWorkflowState.OBJECTIVE_DRAFT]: [QuarterWorkflowState.OBJECTIVE_SUBMITTED],
@@ -1524,16 +1710,13 @@ export class ObjectiveService extends BaseService {
     }
 
     // Check delegation
-    const delegation = await Delegation.findOne({
-      delegateUserId: new Types.ObjectId(actor.actorId),
-      delegatorUserId: quarterAssignment.assignedManagerId,
-      status: 'ACTIVE',
-      validFrom: { $lte: new Date() },
-      validTo: { $gte: new Date() },
-      isDeleted: false,
-    }).lean();
+    const delegation = await this.getObjectiveDelegation(
+      actor.actorId,
+      quarterAssignment.assignedManagerId.toString(),
+      quarterAssignment.cycleId?.toString(),
+    );
 
-    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+    if (delegation) {
       return;
     }
 
@@ -1565,16 +1748,13 @@ export class ObjectiveService extends BaseService {
     }
 
     // Check delegation
-    const delegation = await Delegation.findOne({
-      delegateUserId: new Types.ObjectId(actor.actorId),
-      delegatorUserId: objective.assignedManagerId,
-      status: 'ACTIVE',
-      validFrom: { $lte: new Date() },
-      validTo: { $gte: new Date() },
-      isDeleted: false,
-    }).lean();
+    const delegation = await this.getObjectiveDelegation(
+      actor.actorId,
+      objective.assignedManagerId.toString(),
+      objective.cycleId?.toString(),
+    );
 
-    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES')) {
+    if (delegation) {
       return;
     }
 
@@ -1643,7 +1823,7 @@ export class ObjectiveService extends BaseService {
       return;
     }
 
-    const now = new Date();
+    const now = this.getCurrentDate();
     const start = new Date(window.startDate);
     const end = new Date(window.endDate);
 
@@ -1654,6 +1834,23 @@ export class ObjectiveService extends BaseService {
           : 'Objective approval window is closed for this quarter',
       );
     }
+  }
+
+  private async getObjectiveDelegation(
+    delegateUserId: string,
+    delegatorUserId: string,
+    cycleId?: string,
+  ): Promise<any | null> {
+    return new DelegationService(this.context).getActiveDelegation(
+      delegateUserId,
+      delegatorUserId,
+      'PMS_OBJECTIVES',
+      cycleId,
+    );
+  }
+
+  private getCurrentDate(): Date {
+    return this.context.pmsCurrentDate ?? new Date();
   }
 
   private resolveObjectiveSource(actorRole: string): ObjectiveSourceType {
@@ -1710,6 +1907,7 @@ export class ObjectiveService extends BaseService {
     reason?: string,
   ): Promise<void> {
     const actor = this.requireActor();
+    const assignmentId = await this.resolveAuditAssignmentId(entityType, entityId);
 
     await auditService.createAuditLog({
       actorId: actor.actorId,
@@ -1717,9 +1915,42 @@ export class ObjectiveService extends BaseService {
       action,
       entityType,
       entityId,
+      assignmentId,
       previousValue,
       newValue,
       reason,
     });
+  }
+
+  private async resolveAuditAssignmentId(entityType: string, entityId: string): Promise<string | undefined> {
+    if (entityType === 'ANNUAL_ASSIGNMENT') {
+      return entityId;
+    }
+
+    if (entityType === 'QUARTER_ASSIGNMENT') {
+      const quarterAssignment = await QuarterAssignment.findById(entityId)
+        .select('annualAssignmentId')
+        .lean();
+      return quarterAssignment?.annualAssignmentId?.toString();
+    }
+
+    if (entityType === 'OBJECTIVE') {
+      const objective = await Objective.findById(entityId)
+        .select('annualAssignmentId quarterAssignmentId')
+        .lean();
+
+      if (objective?.annualAssignmentId) {
+        return objective.annualAssignmentId.toString();
+      }
+
+      if (objective?.quarterAssignmentId) {
+        const quarterAssignment = await QuarterAssignment.findById(objective.quarterAssignmentId)
+          .select('annualAssignmentId')
+          .lean();
+        return quarterAssignment?.annualAssignmentId?.toString();
+      }
+    }
+
+    return undefined;
   }
 }

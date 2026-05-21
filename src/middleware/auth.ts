@@ -33,6 +33,18 @@ const isValidObjectId = (id: string): boolean => {
   return Types.ObjectId.isValid(id) && String(new Types.ObjectId(id)) === id;
 };
 
+const getPmsCurrentDateOverride = (request: FastifyRequest): Date | undefined => {
+  const rawHeader = request.headers["x-pms-current-date"];
+  const rawValue = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  if (!rawValue) return undefined;
+
+  const value = String(rawValue).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+
+  const date = new Date(`${value}T12:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
+
 export const authenticate = async (
   request: RequestWithCookies,
   reply: FastifyReply
@@ -157,6 +169,7 @@ export const authenticate = async (
           requestId: request.id,
           user: userContext,
           reqRole: user.role.toUpperCase(),
+          pmsCurrentDate: getPmsCurrentDateOverride(request),
         };
         container.clearScope(request.id);
         request.container = container.createScope(request.id, updatedContext);
@@ -206,6 +219,7 @@ export const authenticate = async (
           requestId: request.id,
           user,
           reqRole: decoded.role.toUpperCase(),
+          pmsCurrentDate: getPmsCurrentDateOverride(request),
         };
         // Clear and recreate the scope with updated context
         container.clearScope(request.id);

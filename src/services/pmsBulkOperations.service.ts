@@ -3,16 +3,22 @@ import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
   AnnualAssignment,
+  AnnualDecision,
+  CommunicationDispatch,
   QuarterAssignment,
   User,
   BulkOperationJob,
   QuarterCycle,
   NotificationEvent,
-  VisibilityConfiguration
 } from '../models';
-import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
+import {
+  AnnualDecisionStatus,
+  normalizePmsRole,
+  PmsRole,
+} from '../constants/pms.enums';
 import { auditService } from './audit.service';
 import { AssignmentService } from './assignment.service';
+import { AnnualDecisionService } from './annualDecision.service';
 import { PmsCommunicationService } from './pmsCommunication.service';
 
 export interface BulkAssignInputItem {
@@ -72,6 +78,7 @@ export class PmsBulkOperationsService extends BaseService {
       failureCount: 0,
       failureSummary: [],
       startedAt: new Date(),
+      metadata: {},
       createdBy: new Types.ObjectId(actor.actorId),
     });
   }
@@ -201,6 +208,13 @@ export class PmsBulkOperationsService extends BaseService {
   ): Promise<any> {
     const actor = this.assertAdminActor();
     const tracker = await this.createJobTracker('ASSIGNMENT', cycleId);
+    tracker.metadata = {
+      request: {
+        cycleId,
+        assignments,
+      },
+    };
+    await tracker.save();
 
     const assignmentService = new AssignmentService(this.context);
     const results: any[] = [];
@@ -278,7 +292,7 @@ export class PmsBulkOperationsService extends BaseService {
         });
 
         if (isDuplicate) {
-          tracker.successCount += 1; // Skipped records are counted under handled items
+          // Duplicate rows are intentionally skipped and tracked separately in the result summary.
         } else {
           tracker.failureCount += 1;
           tracker.failureSummary.push({
@@ -292,6 +306,16 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.totalCount = assignments.length;
     tracker.status = tracker.failureCount > 0 ? 'PARTIAL_SUCCESS' : 'SUCCESS';
     tracker.completedAt = new Date();
+    tracker.metadata = {
+      ...(tracker.metadata ?? {}),
+      resultSummary: {
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        skippedCount: results.filter(r => r.status === 'SKIPPED').length,
+        exceptionCount: results.filter(r => r.status === 'EXCEPTION').length,
+        failureCount: tracker.failureCount,
+      },
+    };
     tracker.version += 1;
     await tracker.save();
 
@@ -314,6 +338,8 @@ export class PmsBulkOperationsService extends BaseService {
       status: tracker.status,
       totalCount: tracker.totalCount,
       successCount: tracker.successCount,
+      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
+      exceptionCount: results.filter(r => r.status === 'EXCEPTION').length,
       failureCount: tracker.failureCount,
       records: results,
     };
@@ -403,6 +429,15 @@ export class PmsBulkOperationsService extends BaseService {
   ): Promise<any> {
     const actor = this.assertAdminActor();
     const tracker = await this.createJobTracker('REMINDER', cycleId);
+    tracker.metadata = {
+      request: {
+        cycleId,
+        targetType,
+        subject,
+        message,
+      },
+    };
+    await tracker.save();
 
     const preview = await this.previewBulkReminder(cycleId, targetType);
     const results: any[] = [];
@@ -453,6 +488,15 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.totalCount = preview.records.length;
     tracker.status = tracker.failureCount > 0 ? 'PARTIAL_SUCCESS' : 'SUCCESS';
     tracker.completedAt = new Date();
+    tracker.metadata = {
+      ...(tracker.metadata ?? {}),
+      resultSummary: {
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        skippedCount: results.filter(r => r.status === 'SKIPPED').length,
+        failureCount: tracker.failureCount,
+      },
+    };
     tracker.version += 1;
     await tracker.save();
 
@@ -475,6 +519,7 @@ export class PmsBulkOperationsService extends BaseService {
       status: tracker.status,
       totalCount: tracker.totalCount,
       successCount: tracker.successCount,
+      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
       failureCount: tracker.failureCount,
       records: results,
     };
@@ -517,6 +562,30 @@ export class PmsBulkOperationsService extends BaseService {
           continue;
         }
 
+        const decision = await AnnualDecision.findOne({
+          annualAssignmentId: annual._id,
+          isDeleted: false,
+        })
+          .select('decisionStatus')
+          .lean();
+
+        if (
+          !decision ||
+          (
+            decision.decisionStatus !== AnnualDecisionStatus.FROZEN &&
+            decision.decisionStatus !== AnnualDecisionStatus.VISIBILITY_ENABLED
+          )
+        ) {
+          results.push({
+            employeeId: empId,
+            employeeName: (annual.employeeId as any)?.name || 'Employee',
+            employeeCode: (annual.employeeId as any)?.employeeCode || '',
+            status: 'SKIPPED',
+            message: 'Visibility can be updated only after annual decision is frozen',
+          });
+          continue;
+        }
+
         results.push({
           employeeId: empId,
           employeeName: (annual.employeeId as any)?.name || 'Employee',
@@ -540,6 +609,7 @@ export class PmsBulkOperationsService extends BaseService {
     return {
       totalCount: employeeIds.length,
       eligibleCount: results.filter(r => r.status === 'ELIGIBLE').length,
+      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
       failedCount: results.filter(r => r.status === 'FAILED').length,
       records: results,
     };
@@ -555,22 +625,33 @@ export class PmsBulkOperationsService extends BaseService {
   ): Promise<any> {
     const actor = this.assertAdminActor();
     const tracker = await this.createJobTracker('VISIBILITY', cycleId);
+    tracker.metadata = {
+      request: {
+        cycleId,
+        employeeIds,
+        visibilityUpdate,
+      },
+    };
+    await tracker.save();
 
     const preview = await this.previewBulkVisibility(cycleId, employeeIds, visibilityUpdate);
     const results: any[] = [];
+    const annualDecisionService = new AnnualDecisionService(this.context);
 
     for (const record of preview.records) {
       if (record.status !== 'ELIGIBLE') {
         results.push({
           employeeId: record.employeeId,
-          status: 'FAILED',
+          status: record.status,
           message: record.message || 'Record not eligible for updates',
         });
-        tracker.failureCount += 1;
-        tracker.failureSummary.push({
-          employeeId: new Types.ObjectId(record.employeeId),
-          reason: record.message || 'Not eligible',
-        });
+        if (record.status === 'FAILED') {
+          tracker.failureCount += 1;
+          tracker.failureSummary.push({
+            employeeId: new Types.ObjectId(record.employeeId),
+            reason: record.message || 'Not eligible',
+          });
+        }
         continue;
       }
 
@@ -585,73 +666,10 @@ export class PmsBulkOperationsService extends BaseService {
         });
 
         if (!annual) throw new Error('Annual assignment not found');
-
-        const previousValue = annual.toObject();
-
-        // 1. Fetch or create the VisibilityConfiguration
-        let visibilityConfig = await VisibilityConfiguration.findOne({
-          annualAssignmentId: annual._id,
+        await annualDecisionService.updateVisibility(annual._id.toString(), {
+          ...visibilityUpdate,
+          reason: 'Bulk visibility update',
         });
-
-        if (!visibilityConfig) {
-          visibilityConfig = await VisibilityConfiguration.create({
-            annualAssignmentId: annual._id,
-            cycleId: annual.cycleId,
-            employeeId: annual.employeeId,
-            employeeReviewVisible: annual.visibility?.employeeReviewVisible ?? false,
-            employeeGradeVisible: annual.visibility?.employeeGradeVisible ?? false,
-            employeeMeritVisible: annual.visibility?.employeeMeritVisible ?? false,
-            managerGradeVisible: annual.visibility?.managerGradeVisible ?? false,
-            managerMeritVisible: annual.visibility?.managerMeritVisible ?? false,
-            createdBy: new Types.ObjectId(actor.actorId),
-          });
-        }
-
-        // 2. Update the VisibilityConfiguration document
-        visibilityConfig.employeeReviewVisible =
-          visibilityUpdate.employeeReviewVisible ?? visibilityConfig.employeeReviewVisible;
-        visibilityConfig.employeeGradeVisible =
-          visibilityUpdate.employeeGradeVisible ?? visibilityConfig.employeeGradeVisible;
-        visibilityConfig.employeeMeritVisible =
-          visibilityUpdate.employeeMeritVisible ?? visibilityConfig.employeeMeritVisible;
-        visibilityConfig.managerGradeVisible =
-          visibilityUpdate.managerGradeVisible ?? visibilityConfig.managerGradeVisible;
-        visibilityConfig.managerMeritVisible =
-          visibilityUpdate.managerMeritVisible ?? visibilityConfig.managerMeritVisible;
-        
-        const anyVisible = [
-          visibilityConfig.employeeReviewVisible,
-          visibilityConfig.employeeGradeVisible,
-          visibilityConfig.employeeMeritVisible,
-          visibilityConfig.managerGradeVisible,
-          visibilityConfig.managerMeritVisible,
-        ].some(Boolean);
-
-        if (anyVisible) {
-          visibilityConfig.enabledBy = new Types.ObjectId(actor.actorId);
-          visibilityConfig.enabledAt = new Date();
-          visibilityConfig.disabledBy = undefined;
-          visibilityConfig.disabledAt = undefined;
-        } else {
-          visibilityConfig.disabledBy = new Types.ObjectId(actor.actorId);
-          visibilityConfig.disabledAt = new Date();
-        }
-
-        visibilityConfig.updatedBy = new Types.ObjectId(actor.actorId);
-        visibilityConfig.version += 1;
-        await visibilityConfig.save();
-
-        // 3. Keep the assignment cache in perfect sync
-        annual.visibility = {
-          employeeReviewVisible: visibilityConfig.employeeReviewVisible,
-          employeeGradeVisible: visibilityConfig.employeeGradeVisible,
-          employeeMeritVisible: visibilityConfig.employeeMeritVisible,
-          managerGradeVisible: visibilityConfig.managerGradeVisible,
-          managerMeritVisible: visibilityConfig.managerMeritVisible,
-        };
-        annual.version += 1;
-        annual.updatedBy = new Types.ObjectId(actor.actorId);
-        await annual.save();
 
         results.push({
           employeeId: record.employeeId,
@@ -660,17 +678,6 @@ export class PmsBulkOperationsService extends BaseService {
         });
 
         tracker.successCount += 1;
-
-        // Log audit log per modified assignment
-        await auditService.createAuditLog({
-          actorId: actor.actorId,
-          actorRole: actor.actorRole,
-          action: 'PMS_VISIBILITY_UPDATED',
-          entityType: 'PMS_ANNUAL_ASSIGNMENT',
-          entityId: annual._id.toString(),
-          previousValue: previousValue.visibility,
-          newValue: annual.visibility,
-        });
       } catch (err: any) {
         const msg = err?.message || 'Visibility update failed';
         results.push({
@@ -689,14 +696,39 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.totalCount = employeeIds.length;
     tracker.status = tracker.failureCount > 0 ? 'PARTIAL_SUCCESS' : 'SUCCESS';
     tracker.completedAt = new Date();
+    tracker.metadata = {
+      ...(tracker.metadata ?? {}),
+      resultSummary: {
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        skippedCount: results.filter(r => r.status === 'SKIPPED').length,
+        failureCount: tracker.failureCount,
+      },
+    };
     tracker.version += 1;
     await tracker.save();
+
+    await auditService.createAuditLog({
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+      action: 'PMS_BULK_VISIBILITY_EXECUTED',
+      entityType: 'PMS_CYCLE',
+      entityId: cycleId,
+      newValue: {
+        jobId: tracker._id.toString(),
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        failureCount: tracker.failureCount,
+        visibilityUpdate,
+      },
+    });
 
     return {
       jobId: tracker._id.toString(),
       status: tracker.status,
       totalCount: tracker.totalCount,
       successCount: tracker.successCount,
+      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
       failureCount: tracker.failureCount,
       records: results,
     };
@@ -717,6 +749,7 @@ export class PmsBulkOperationsService extends BaseService {
 
     const results: any[] = [];
     const cycleObjectId = new Types.ObjectId(cycleId);
+    const communicationService = new PmsCommunicationService(this.context);
 
     for (const empId of employeeIds) {
       try {
@@ -738,16 +771,18 @@ export class PmsBulkOperationsService extends BaseService {
           continue;
         }
 
-        // Validate preconditions for appraisal letter communication
-        if (
-          annual.annualState !== 'ANNUAL_FINALIZED' &&
-          annual.annualState !== 'VISIBILITY_ENABLED' &&
-          annual.annualState !== 'CLOSED'
-        ) {
+        const existingDispatch = await CommunicationDispatch.findOne({
+          annualAssignmentId: annual._id,
+          dispatchStatus: 'SENT',
+          resendOf: null,
+        }).lean();
+        if (existingDispatch) {
           results.push({
             employeeId: empId,
+            employeeName: (annual.employeeId as any)?.name || 'Employee',
+            employeeCode: (annual.employeeId as any)?.employeeCode || '',
             status: 'SKIPPED',
-            message: `Precondition failed. Assignment state must be finalized or visible. Current: ${annual.annualState}`,
+            message: 'Communication already sent for this annual assignment.',
           });
           continue;
         }
@@ -755,8 +790,25 @@ export class PmsBulkOperationsService extends BaseService {
         if (!annual.appraisalOutcomeType || annual.appraisalOutcomeType === 'NIL') {
           results.push({
             employeeId: empId,
+            employeeName: (annual.employeeId as any)?.name || 'Employee',
+            employeeCode: (annual.employeeId as any)?.employeeCode || '',
             status: 'SKIPPED',
             message: `Outcome type is NIL or missing. No letter communication required.`,
+          });
+          continue;
+        }
+
+        try {
+          await communicationService.previewCommunication({
+            annualAssignmentId: annual._id.toString(),
+          });
+        } catch (previewError: any) {
+          results.push({
+            employeeId: empId,
+            employeeName: (annual.employeeId as any)?.name || 'Employee',
+            employeeCode: (annual.employeeId as any)?.employeeCode || '',
+            status: 'SKIPPED',
+            message: previewError?.message || 'Communication dispatch is not eligible for this assignment.',
           });
           continue;
         }
@@ -794,8 +846,15 @@ export class PmsBulkOperationsService extends BaseService {
     cycleId: string,
     employeeIds: string[]
   ): Promise<any> {
-    this.assertAdminActor();
+    const actor = this.assertAdminActor();
     const tracker = await this.createJobTracker('COMMUNICATION', cycleId);
+    tracker.metadata = {
+      request: {
+        cycleId,
+        employeeIds,
+      },
+    };
+    await tracker.save();
 
     const preview = await this.previewBulkCommunication(cycleId, employeeIds);
     const results: any[] = [];
@@ -807,7 +866,6 @@ export class PmsBulkOperationsService extends BaseService {
           status: record.status,
           message: record.message || 'Skipped from communication dispatch',
         });
-        tracker.successCount += 1; // count skipped as handled
         continue;
       }
 
@@ -854,14 +912,38 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.totalCount = employeeIds.length;
     tracker.status = tracker.failureCount > 0 ? 'PARTIAL_SUCCESS' : 'SUCCESS';
     tracker.completedAt = new Date();
+    tracker.metadata = {
+      ...(tracker.metadata ?? {}),
+      resultSummary: {
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        skippedCount: results.filter(r => r.status === 'SKIPPED').length,
+        failureCount: tracker.failureCount,
+      },
+    };
     tracker.version += 1;
     await tracker.save();
+
+    await auditService.createAuditLog({
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+      action: 'PMS_BULK_COMMUNICATION_EXECUTED',
+      entityType: 'PMS_CYCLE',
+      entityId: cycleId,
+      newValue: {
+        jobId: tracker._id.toString(),
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        failureCount: tracker.failureCount,
+      },
+    });
 
     return {
       jobId: tracker._id.toString(),
       status: tracker.status,
       totalCount: tracker.totalCount,
       successCount: tracker.successCount,
+      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
       failureCount: tracker.failureCount,
       records: results,
     };
@@ -946,13 +1028,21 @@ export class PmsBulkOperationsService extends BaseService {
     employeeIds: string[],
     reason: string
   ): Promise<any> {
-    this.assertAdminActor();
+    const actor = this.assertAdminActor();
 
     if (!reason || !reason.trim()) {
       throw new Error('Closure reason is strictly mandatory to execute bulk administrative closures.');
     }
 
     const tracker = await this.createJobTracker('CLOSE', cycleId);
+    tracker.metadata = {
+      request: {
+        cycleId,
+        employeeIds,
+        reason: reason.trim(),
+      },
+    };
+    await tracker.save();
     const preview = await this.previewBulkClose(cycleId, employeeIds);
     const results: any[] = [];
 
@@ -963,7 +1053,6 @@ export class PmsBulkOperationsService extends BaseService {
           status: record.status,
           message: record.message || 'Skipped from bulk closure',
         });
-        tracker.successCount += 1;
         continue;
       }
 
@@ -1009,8 +1098,31 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.totalCount = employeeIds.length;
     tracker.status = tracker.failureCount > 0 ? 'PARTIAL_SUCCESS' : 'SUCCESS';
     tracker.completedAt = new Date();
+    tracker.metadata = {
+      ...(tracker.metadata ?? {}),
+      resultSummary: {
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        failureCount: tracker.failureCount,
+      },
+    };
     tracker.version += 1;
     await tracker.save();
+
+    await auditService.createAuditLog({
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+      action: 'PMS_BULK_CLOSE_EXECUTED',
+      entityType: 'PMS_CYCLE',
+      entityId: cycleId,
+      reason: reason.trim(),
+      newValue: {
+        jobId: tracker._id.toString(),
+        totalCount: tracker.totalCount,
+        successCount: tracker.successCount,
+        failureCount: tracker.failureCount,
+      },
+    });
 
     return {
       jobId: tracker._id.toString(),

@@ -70,6 +70,20 @@ export const cycleRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/:id/history',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.cycleService.getCycleAuditHistory(id);
+        return reply.send(successResponse('PMS cycle audit history fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.put(
     '/:id',
     { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
