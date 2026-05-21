@@ -22,6 +22,8 @@ export interface IPmsLetterTemplate extends Document {
   name: string;
   outcomeType: AppraisalOutcomeTypeType | LetterTemplateTypeType;
   channel: LetterTemplateChannelType;
+  templateId: Types.ObjectId;
+  templateVersionId: Types.ObjectId;
   status: PmsTemplateStatusType;
   currentVersionId?: Types.ObjectId;
   isDeleted: boolean;
@@ -34,6 +36,7 @@ export interface IPmsLetterTemplate extends Document {
 
 export interface IPmsLetterTemplateVersion extends Document {
   letterTemplateId: Types.ObjectId;
+  templateVersionId: Types.ObjectId;
   versionNo: number;
   status: PmsTemplateStatusType;
   subjectTemplate: string;
@@ -81,6 +84,18 @@ const pmsLetterTemplateSchema = new Schema<IPmsLetterTemplate>(
       enum: Object.values(LetterTemplateChannel),
       default: LetterTemplateChannel.EMAIL,
     },
+    templateId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+      ref: 'PmsTemplate',
+      index: true,
+    },
+    templateVersionId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+      ref: 'PmsTemplateVersion',
+      index: true,
+    },
     status: {
       type: String,
       required: true,
@@ -119,6 +134,12 @@ const pmsLetterTemplateVersionSchema = new Schema<IPmsLetterTemplateVersion>(
       ref: 'PmsLetterTemplate',
       index: true,
     },
+    templateVersionId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+      ref: 'PmsTemplateVersion',
+      index: true,
+    },
     versionNo: { type: Number, required: true },
     status: {
       type: String,
@@ -154,11 +175,13 @@ pmsLetterTemplateSchema.index(
   { unique: true, name: 'idx_letter_template_code' },
 );
 pmsLetterTemplateSchema.index({ outcomeType: 1, channel: 1, status: 1 });
+pmsLetterTemplateSchema.index({ templateId: 1, templateVersionId: 1, isDeleted: 1 });
 
 pmsLetterTemplateVersionSchema.index(
   { letterTemplateId: 1, versionNo: 1 },
   { unique: true, name: 'idx_letter_template_version' },
 );
+pmsLetterTemplateVersionSchema.index({ templateVersionId: 1, status: 1, isDeleted: 1 });
 
 export const PmsLetterTemplate = mongoose.model<IPmsLetterTemplate>(
   'PmsLetterTemplate',

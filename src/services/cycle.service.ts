@@ -188,6 +188,12 @@ export class CycleService extends BaseService {
     return { annualCycle, quarterCycles };
   }
 
+  async getCycleAuditHistory(cycleId: string) {
+    const annualCycle = await this.getCycleForAction(cycleId);
+    await this.assertCycleReadAccess(annualCycle);
+    return auditService.getEntityHistory('ANNUAL_CYCLE', annualCycle._id.toString());
+  }
+
   async listCommunicationRules(): Promise<CycleCommunicationRuleOption[]> {
     this.assertAdmin('cycle.communication.read');
 

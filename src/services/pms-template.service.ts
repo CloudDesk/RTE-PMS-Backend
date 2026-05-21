@@ -3,6 +3,7 @@ import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
+  AnnualDecisionStatus,
   AppraisalOutcomeType,
   PmsTemplateFieldType,
   normalizePmsRole,
@@ -19,6 +20,9 @@ import {
 } from '../models/pms-letter-template.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
+import { AnnualDecision } from '../models/pms-annual-decision.model';
+import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
+import { User } from '../models/user.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
   IPmsTemplateVersion,
@@ -31,6 +35,7 @@ import type {
 } from '../models/pms-letter-template.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import type { AuditHistoryEntry } from './audit.service';
 
 export type TemplateSection = IPmsTemplateVersion['sections'][number];
 export type TemplateField = TemplateSection['fields'][number];
@@ -46,6 +51,7 @@ export interface ResolveTemplateVersionInput {
 }
 
 export interface ResolvedTemplateField {
+  id: string;
   key: string;
   label: string;
   type: string;
@@ -97,6 +103,8 @@ export interface TemplateListQuery {
 export interface LetterTemplateListQuery {
   status?: string;
   search?: string;
+  templateId?: string;
+  templateVersionId?: string;
   page?: string | number;
   limit?: string | number;
 }
@@ -126,6 +134,9 @@ export interface CreateTemplateVersionInput {
 }
 
 export interface CreateLetterTemplateInput {
+  templateId: string;
+  versionId?: string;
+  templateVersionId?: string;
   name: string;
   code: string;
   type?: string;
@@ -133,6 +144,20 @@ export interface CreateLetterTemplateInput {
   channel: string;
   versionNo?: number;
   versionNumber?: number;
+  subject?: string;
+  subjectTemplate?: string;
+  body?: string;
+  bodyTemplate?: string;
+  placeholders?: string[];
+  placeholderRules?: {
+    required?: string[];
+    conditional?: string[];
+  };
+  conditionalBlocks?: Array<string | { blockKey: string; condition: string }>;
+}
+
+export interface UpdateLetterTemplateVersionInput {
+  name?: string;
   subject?: string;
   subjectTemplate?: string;
   body?: string;
@@ -350,7 +375,7 @@ export class PmsTemplateService extends BaseService {
     this.assertAdmin('templateVersion.activate');
     const version = await this.getEditableOrExistingVersion(versionId, false);
     this.validateSections(version.sections);
-    this.validateTemplateVersionForActivation(version);
+    await this.validateTemplateVersionForActivation(version);
 
     await PmsTemplateVersion.updateMany(
       {
@@ -405,6 +430,37 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Template not found');
     }
     return template;
+  }
+
+  async getTemplateAuditHistory(id: string): Promise<AuditHistoryEntry[]> {
+    this.assertAdmin('template.audit');
+    const template = await PmsTemplate.findOne({ _id: id, isDeleted: false }).lean();
+    if (!template) {
+      throw new Error('Template not found');
+    }
+
+    const versions = await PmsTemplateVersion.find({
+      templateId: template._id,
+      isDeleted: false,
+    })
+      .select('_id')
+      .lean();
+
+    const versionHistories = await Promise.all(
+      versions.map((version) =>
+        auditService.getEntityHistory('PMS_TEMPLATE_VERSION', version._id.toString()),
+      ),
+    );
+
+    const templateHistory = await auditService.getEntityHistory(
+      'PMS_TEMPLATE',
+      template._id.toString(),
+    );
+
+    return [...templateHistory, ...versionHistories.flat()].sort(
+      (left, right) =>
+        new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
+    );
   }
 
   async listTemplateVersions(templateId: string): Promise<IPmsTemplateVersion[]> {
@@ -639,9 +695,21 @@ export class PmsTemplateService extends BaseService {
     letterTemplateVersion: IPmsLetterTemplateVersion;
   }> {
     this.assertAdmin('letterTemplate.create');
+    const templateId = input.templateId;
+    const templateVersionId = input.templateVersionId ?? input.versionId;
+    if (!templateId || !templateVersionId) {
+      throw new Error('templateId and templateVersionId are required for letter templates');
+    }
+    const templateVersion = await this.getScopedTemplateVersion(templateId, templateVersionId);
     const subjectTemplate = input.subjectTemplate ?? input.subject ?? '';
     const bodyTemplate = input.bodyTemplate ?? input.body;
-    const versionNo = input.versionNo ?? input.versionNumber ?? 1;
+    const versionNo =
+      input.versionNo ??
+      input.versionNumber ??
+      ((await PmsLetterTemplateVersion.countDocuments({
+        templateVersionId: new Types.ObjectId(templateVersionId),
+        isDeleted: false,
+      })) + 1);
     const outcomeType = input.outcomeType ?? input.type;
     const placeholderRules = input.placeholderRules ?? {
       required: input.placeholders ?? [],
@@ -668,12 +736,15 @@ export class PmsTemplateService extends BaseService {
       name: input.name,
       outcomeType,
       channel: input.channel,
+      templateId: templateVersion.templateId,
+      templateVersionId: templateVersion._id,
       status: PmsTemplateStatus.DRAFT,
       createdBy: this.actorIdObject(),
     });
 
     const letterTemplateVersion = await PmsLetterTemplateVersion.create({
       letterTemplateId: letterTemplate._id,
+      templateVersionId: templateVersion._id,
       versionNo,
       status: PmsTemplateStatus.DRAFT,
       subjectTemplate,
@@ -690,22 +761,125 @@ export class PmsTemplateService extends BaseService {
     return { letterTemplate, letterTemplateVersion };
   }
 
+  async updateLetterTemplateVersion(
+    letterTemplateVersionId: string,
+    input: UpdateLetterTemplateVersionInput,
+  ): Promise<IPmsLetterTemplateVersion> {
+    this.assertAdmin('letterTemplate.update');
+    const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
+    const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
+    const subjectTemplate = input.subjectTemplate ?? input.subject ?? letterTemplateVersion.subjectTemplate ?? '';
+    const bodyTemplate = input.bodyTemplate ?? input.body ?? letterTemplateVersion.bodyTemplate;
+    const placeholderRules = input.placeholderRules ?? {
+      required: input.placeholders ?? letterTemplateVersion.placeholderRules.required ?? [],
+      conditional: letterTemplateVersion.placeholderRules.conditional ?? [],
+    };
+    const conditionalBlocks = this.normalizeConditionalBlocks(
+      input.conditionalBlocks ?? letterTemplateVersion.conditionalBlocks,
+    );
+
+    this.validateLetterTemplate(
+      bodyTemplate,
+      placeholderRules.required ?? [],
+      conditionalBlocks.map((block) => block.blockKey),
+    );
+
+    if (input.name?.trim()) {
+      parentTemplate.name = input.name.trim();
+      parentTemplate.updatedBy = this.actorIdObject();
+      parentTemplate.version += 1;
+      await parentTemplate.save();
+    }
+
+    letterTemplateVersion.subjectTemplate = subjectTemplate;
+    letterTemplateVersion.bodyTemplate = bodyTemplate;
+    letterTemplateVersion.placeholderRules = placeholderRules;
+    letterTemplateVersion.conditionalBlocks = conditionalBlocks;
+    letterTemplateVersion.updatedBy = this.actorIdObject();
+    letterTemplateVersion.version += 1;
+    await letterTemplateVersion.save();
+
+    await this.audit(
+      'PMS_LETTER_TEMPLATE_UPDATED',
+      'PMS_LETTER_TEMPLATE_VERSION',
+      letterTemplateVersion._id.toString(),
+      undefined,
+      letterTemplateVersion.toObject(),
+    );
+    return letterTemplateVersion;
+  }
+
+  async createLetterTemplateVersion(letterTemplateId: string): Promise<IPmsLetterTemplateVersion> {
+    this.assertAdmin('letterTemplateVersion.create');
+    const parentTemplate = await this.getLetterTemplate(letterTemplateId);
+    const latestVersion =
+      (parentTemplate.currentVersionId
+        ? await PmsLetterTemplateVersion.findById(parentTemplate.currentVersionId)
+        : null) ??
+      (await PmsLetterTemplateVersion.findOne({
+        letterTemplateId: parentTemplate._id,
+        isDeleted: false,
+      }).sort({ versionNo: -1, createdAt: -1 }));
+    if (!latestVersion) {
+      throw new Error('Source letter template version not found');
+    }
+    const sourceVersion = latestVersion;
+    const nextVersionNo = (sourceVersion.versionNo ?? 0) + 1;
+
+    const newVersion = await PmsLetterTemplateVersion.create({
+      letterTemplateId: parentTemplate._id,
+      templateVersionId: sourceVersion.templateVersionId,
+      versionNo: nextVersionNo,
+      status: PmsTemplateStatus.DRAFT,
+      subjectTemplate: sourceVersion.subjectTemplate,
+      bodyTemplate: sourceVersion.bodyTemplate,
+      placeholderRules: sourceVersion.placeholderRules ?? {},
+      conditionalBlocks: sourceVersion.conditionalBlocks ?? [],
+      createdBy: this.actorIdObject(),
+    });
+
+    await this.audit(
+      'PMS_LETTER_TEMPLATE_VERSION_CREATED',
+      'PMS_LETTER_TEMPLATE_VERSION',
+      newVersion._id.toString(),
+      { sourceVersionId: sourceVersion._id.toString() },
+      newVersion.toObject(),
+    );
+    return newVersion;
+  }
+
   async previewLetterTemplate(
     letterTemplateVersionId: string,
     data: Record<string, unknown>,
+    annualAssignmentId?: string,
   ): Promise<{ subject?: string; body: string }> {
     const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
+    const resolvedData = annualAssignmentId
+      ? await this.buildLetterTemplatePreviewData(annualAssignmentId)
+      : {
+          employeeName: 'Preview Employee',
+          finalGrade: 'A',
+          meritAmount: '10%',
+          cycleName: 'Preview Cycle',
+          managerName: 'Preview Manager',
+          ...data,
+        };
     return {
       subject: letterTemplate.subjectTemplate
-        ? this.renderTemplate(letterTemplate.subjectTemplate, data)
+        ? this.renderTemplate(letterTemplate.subjectTemplate, resolvedData)
         : undefined,
-      body: this.renderTemplate(letterTemplate.bodyTemplate, data),
+      body: this.renderTemplate(letterTemplate.bodyTemplate, resolvedData),
     };
   }
 
   async activateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
     this.assertAdmin('letterTemplate.activate');
     const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
+    const parentTemplate = await this.getLetterTemplate(letterTemplate.letterTemplateId.toString());
+    await this.getScopedTemplateVersion(
+      parentTemplate.templateId.toString(),
+      parentTemplate.templateVersionId.toString(),
+    );
     this.validateLetterTemplate(
       letterTemplate.bodyTemplate,
       letterTemplate.placeholderRules.required ?? [],
@@ -746,6 +920,35 @@ export class PmsTemplateService extends BaseService {
     return letterTemplate;
   }
 
+  async deactivateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
+    this.assertAdmin('letterTemplate.deactivate');
+    const letterTemplateVersion = await this.getLetterTemplateVersion(letterTemplateVersionId);
+    const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
+
+    letterTemplateVersion.status = PmsTemplateStatus.INACTIVE;
+    letterTemplateVersion.deactivatedAt = new Date();
+    letterTemplateVersion.updatedBy = this.actorIdObject();
+    letterTemplateVersion.version += 1;
+    await letterTemplateVersion.save();
+
+    if (parentTemplate.currentVersionId?.toString() === letterTemplateVersion._id.toString()) {
+      parentTemplate.status = PmsTemplateStatus.INACTIVE;
+      parentTemplate.currentVersionId = undefined;
+      parentTemplate.updatedBy = this.actorIdObject();
+      parentTemplate.version += 1;
+      await parentTemplate.save();
+    }
+
+    await this.audit(
+      'PMS_LETTER_TEMPLATE_DEACTIVATED',
+      'PMS_LETTER_TEMPLATE_VERSION',
+      letterTemplateVersion._id.toString(),
+      undefined,
+      { status: letterTemplateVersion.status },
+    );
+    return letterTemplateVersion;
+  }
+
   async listLetterTemplates(query: LetterTemplateListQuery = {}): Promise<{
     items: IPmsLetterTemplate[];
     total: number;
@@ -759,6 +962,12 @@ export class PmsTemplateService extends BaseService {
 
     if (query.status?.trim()) {
       filter.status = query.status.trim();
+    }
+    if (query.templateId?.trim()) {
+      filter.templateId = new Types.ObjectId(query.templateId.trim());
+    }
+    if (query.templateVersionId?.trim()) {
+      filter.templateVersionId = new Types.ObjectId(query.templateVersionId.trim());
     }
     if (query.search?.trim()) {
       const search = query.search.trim();
@@ -826,11 +1035,45 @@ export class PmsTemplateService extends BaseService {
   }
 
   async getLetterTemplateVersion(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
+    this.assertAdmin('letterTemplateVersion.get');
     const letterTemplate = await PmsLetterTemplateVersion.findById(letterTemplateVersionId);
     if (!letterTemplate) {
       throw new Error('Letter template version not found');
     }
     return letterTemplate;
+  }
+
+  async deleteLetterTemplateVersion(letterTemplateVersionId: string): Promise<void> {
+    this.assertAdmin('letterTemplate.delete');
+    const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
+    const siblingCount = await PmsLetterTemplateVersion.countDocuments({
+      letterTemplateId: letterTemplateVersion.letterTemplateId,
+      isDeleted: false,
+      _id: { $ne: letterTemplateVersion._id },
+    });
+
+    letterTemplateVersion.isDeleted = true;
+    letterTemplateVersion.updatedBy = this.actorIdObject();
+    letterTemplateVersion.version += 1;
+    await letterTemplateVersion.save();
+
+    if (siblingCount === 0) {
+      await PmsLetterTemplate.findByIdAndUpdate(letterTemplateVersion.letterTemplateId, {
+        $set: {
+          isDeleted: true,
+          updatedBy: this.actorIdObject(),
+        },
+        $inc: { version: 1 },
+      });
+    }
+
+    await this.audit(
+      'PMS_LETTER_TEMPLATE_DELETED',
+      'PMS_LETTER_TEMPLATE_VERSION',
+      letterTemplateVersion._id.toString(),
+      letterTemplateVersion.toObject(),
+      undefined,
+    );
   }
 
   private normalizeConditionalBlocks(
@@ -843,6 +1086,85 @@ export class PmsTemplateService extends BaseService {
 
       return block;
     });
+  }
+
+  private async getScopedTemplateVersion(
+    templateId: string,
+    templateVersionId: string,
+  ): Promise<IPmsTemplateVersion> {
+    const version = await PmsTemplateVersion.findOne({
+      _id: templateVersionId,
+      templateId: new Types.ObjectId(templateId),
+      isDeleted: false,
+    });
+    if (!version) {
+      throw new Error('Linked PMS template version not found');
+    }
+    return version;
+  }
+
+  private async getEditableLetterTemplateVersion(
+    letterTemplateVersionId: string,
+  ): Promise<IPmsLetterTemplateVersion> {
+    const version = await this.getLetterTemplateVersion(letterTemplateVersionId);
+    if (version.isLocked || version.status === PmsTemplateStatus.ACTIVE) {
+      throw new Error('Active or locked letter template version cannot be modified');
+    }
+    return version;
+  }
+
+  private async buildLetterTemplatePreviewData(
+    annualAssignmentId: string,
+  ): Promise<Record<string, unknown>> {
+    const annualAssignment = await AnnualAssignment.findById(annualAssignmentId);
+    if (!annualAssignment) {
+      throw new Error('Annual assignment not found');
+    }
+
+    const annualDecision = await AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id });
+    if (!annualDecision) {
+      throw new Error('Annual decision not found');
+    }
+    if (annualDecision.decisionStatus !== AnnualDecisionStatus.VISIBILITY_ENABLED) {
+      throw new Error('Preview requires visibility-enabled annual decision data');
+    }
+
+    const visibility = await VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id });
+    const hasAnyVisibility =
+      visibility &&
+      [
+        visibility.employeeReviewVisible,
+        visibility.employeeGradeVisible,
+        visibility.employeeMeritVisible,
+        visibility.managerGradeVisible,
+        visibility.managerMeritVisible,
+      ].some(Boolean);
+    if (!hasAnyVisibility) {
+      throw new Error('Preview requires visible appraisal communication data');
+    }
+
+    const [employee, manager, cycle] = await Promise.all([
+      User.findById(annualAssignment.employeeId).lean(),
+      annualAssignment.assignedManagerId ? User.findById(annualAssignment.assignedManagerId).lean() : null,
+      AnnualCycle.findById(annualAssignment.cycleId).lean(),
+    ]);
+    const gradeDetails = annualDecision.gradeDetails ?? {};
+    const meritDetails = annualDecision.meritDetails ?? {};
+
+    return {
+      employeeName: annualAssignment.employeeSnapshot?.name ?? employee?.name ?? '',
+      employeeCode: annualAssignment.employeeSnapshot?.employeeCode ?? employee?.employeeCode ?? '',
+      cycleName: cycle?.name ?? '',
+      managerName: annualAssignment.managerSnapshot?.name ?? manager?.name ?? '',
+      appraisalOutcomeType: annualDecision.appraisalOutcomeType,
+      finalGrade: gradeDetails.gradeValue ?? gradeDetails.finalGrade ?? '',
+      meritAmount: meritDetails.meritAmount ?? '',
+      meritPercentage: meritDetails.meritPercentage ?? '',
+      finalScore: annualDecision.finalScore ?? '',
+      finalRating: annualDecision.finalRating ?? '',
+      nilReason: annualDecision.nilReason ?? '',
+      managementRemarks: annualDecision.managementRemarks ?? '',
+    };
   }
 
   private normalizeSections(
@@ -1142,6 +1464,7 @@ export class PmsTemplateService extends BaseService {
     const behavior = this.findBehavior(field, context.role, context.workflowState);
     const requiredFor = this.stringArrayFromRule(field.validationRules, 'requiredFor');
     return {
+      id: field.fieldKey,
       key: field.fieldKey,
       label: field.fieldLabel,
       type: this.mapFieldTypeForClient(field.fieldType),
@@ -1601,7 +1924,7 @@ export class PmsTemplateService extends BaseService {
     this.assertNoConditionalCycles(conditionalDependencies);
   }
 
-  private validateTemplateVersionForActivation(version: IPmsTemplateVersion): void {
+  private async validateTemplateVersionForActivation(version: IPmsTemplateVersion): Promise<void> {
     if (version.sections.length === 0) {
       throw new Error('Template version must contain at least one section before activation');
     }
@@ -1668,6 +1991,47 @@ export class PmsTemplateService extends BaseService {
       }
       if (!mapping.letterTemplateVersionId?.trim()) {
         throw new Error(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
+      }
+
+      const mappedLetterVersion = await PmsLetterTemplateVersion.findOne({
+        _id: mapping.letterTemplateVersionId.trim(),
+        templateVersionId: version._id,
+        isDeleted: false,
+      }).lean();
+      if (!mappedLetterVersion) {
+        throw new Error(
+          `Outcome mapping ${mapping.outcomeType} references a missing or out-of-scope letter template version`,
+        );
+      }
+
+      const mappedLetterTemplate = await PmsLetterTemplate.findOne({
+        _id: mappedLetterVersion.letterTemplateId,
+        templateId: version.templateId,
+        templateVersionId: version._id,
+        isDeleted: false,
+      }).lean();
+      if (!mappedLetterTemplate) {
+        throw new Error(
+          `Outcome mapping ${mapping.outcomeType} references a letter template outside this PMS template version`,
+        );
+      }
+
+      const letterStatusReady =
+        mappedLetterVersion.status === PmsTemplateStatus.ACTIVE || mappedLetterVersion.isLocked;
+      if (!letterStatusReady) {
+        throw new Error(
+          `Outcome mapping ${mapping.outcomeType} must use an active or locked letter template version`,
+        );
+      }
+
+      const allowedOutcomeTypes = new Set([
+        mapping.outcomeType,
+        'GENERIC_APPRAISAL',
+      ]);
+      if (!allowedOutcomeTypes.has(mappedLetterTemplate.outcomeType)) {
+        throw new Error(
+          `Outcome mapping ${mapping.outcomeType} points to incompatible letter template outcome ${mappedLetterTemplate.outcomeType}`,
+        );
       }
     }
   }

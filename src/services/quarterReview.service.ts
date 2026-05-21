@@ -19,12 +19,12 @@ import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
 import { QuarterReviewValue } from '../models/pms-quarter-review-value.model';
-import { Delegation } from '../models/pms-delegation.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { DelegationService } from './delegation.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -93,7 +93,7 @@ export interface ReopenQuarterAssignmentInput {
   reason: string;
 }
 
-export type QuarterReviewWorkspaceMode = 'manager' | 'employee';
+export type QuarterReviewWorkspaceMode = 'manager' | 'employee' | 'admin';
 
 type ApprovedObjectiveRecord = {
   id: string;
@@ -147,6 +147,11 @@ type QuarterReviewRecord = {
   isDraft: boolean;
 };
 
+type QuarterWindowRecord = {
+  startDate: string;
+  endDate: string;
+};
+
 export type QuarterReviewAssignmentRecord = {
   id: string;
   annualAssignmentId: string;
@@ -155,6 +160,12 @@ export type QuarterReviewAssignmentRecord = {
   cycleName: string;
   quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   quarterState: string;
+  quarterWindows?: {
+    objectiveSetting?: QuarterWindowRecord;
+    objectiveApproval?: QuarterWindowRecord;
+    managerReview?: QuarterWindowRecord;
+    quarterFinalization?: QuarterWindowRecord;
+  };
   employeeId: string;
   employeeName: string;
   managerId: string;
@@ -213,10 +224,14 @@ export class QuarterReviewService extends BaseService {
 
   async listAssignments(mode: QuarterReviewWorkspaceMode): Promise<QuarterReviewAssignmentRecord[]> {
     const actor = this.requireActor();
+    const actorRole = normalizePmsRole(actor.actorRole);
     const filter: Record<string, unknown> = { isDeleted: false };
 
     if (mode === 'employee') {
       filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
+    } else if (mode === 'admin' && actorRole === PmsRole.ADMIN) {
+      // Admin review workspace must be able to reach quarter reviews across managers
+      // so submitted reviews can be finalized and finalized reviews can be reopened.
     } else {
       filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
     }
@@ -233,14 +248,21 @@ export class QuarterReviewService extends BaseService {
     const cycleIds = quarterAssignments
       .map((item) => item.cycleId)
       .filter((value): value is Types.ObjectId => Boolean(value));
+    const quarterCycleIds = quarterAssignments
+      .map((item) => item.cycleQuarterId)
+      .filter((value): value is Types.ObjectId => Boolean(value));
 
-    const [annualAssignments, cycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
+    const [annualAssignments, cycles, quarterCycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
       AnnualAssignment.find({
         _id: { $in: annualAssignmentIds },
         isDeleted: false,
       }).lean(),
       AnnualCycle.find({
         _id: { $in: cycleIds },
+        isDeleted: false,
+      }).lean(),
+      QuarterCycle.find({
+        _id: { $in: quarterCycleIds },
         isDeleted: false,
       }).lean(),
       Objective.find({
@@ -264,6 +286,7 @@ export class QuarterReviewService extends BaseService {
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
+    const quarterCycleMap = new Map(quarterCycles.map((item) => [item._id.toString(), item]));
     const objectivesByQuarterAssignmentId = new Map<string, typeof approvedObjectives>();
     const quarterReviewByQuarterAssignmentId = new Map(
       quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
@@ -290,6 +313,9 @@ export class QuarterReviewService extends BaseService {
       const cycle = quarterAssignment.cycleId
         ? cycleMap.get(quarterAssignment.cycleId.toString())
         : undefined;
+      const quarterCycle = quarterAssignment.cycleQuarterId
+        ? quarterCycleMap.get(quarterAssignment.cycleQuarterId.toString())
+        : undefined;
       const review = quarterReviewByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? null;
       const objectives = objectivesByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? [];
       const reviewConfig = annualAssignment
@@ -314,6 +340,7 @@ export class QuarterReviewService extends BaseService {
         ),
         quarter: quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
+        quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
         employeeName: String(annualAssignment?.employeeSnapshot?.name ?? 'Employee'),
         managerId: quarterAssignment.assignedManagerId.toString(),
@@ -389,16 +416,13 @@ export class QuarterReviewService extends BaseService {
     let originalOwnerUserId: Types.ObjectId | undefined;
 
     if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
-      const delegation = await Delegation.findOne({
-        delegateUserId: actorObjectId,
-        delegatorUserId: quarterAssignment.assignedManagerId,
-        status: 'ACTIVE',
-        validFrom: { $lte: new Date() },
-        validTo: { $gte: new Date() },
-        isDeleted: false,
-      }).lean();
+      const delegation = await this.getReviewDelegation(
+        actor.actorId,
+        quarterAssignment.assignedManagerId.toString(),
+        quarterAssignment.cycleId?.toString(),
+      );
 
-      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+      if (delegation) {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = quarterAssignment.assignedManagerId;
       }
@@ -501,28 +525,26 @@ export class QuarterReviewService extends BaseService {
     let originalOwnerUserId: Types.ObjectId | undefined;
 
     if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
-      const delegation = await Delegation.findOne({
-        delegateUserId: actorObjectId,
-        delegatorUserId: quarterAssignment.assignedManagerId,
-        status: 'ACTIVE',
-        validFrom: { $lte: new Date() },
-        validTo: { $gte: new Date() },
-        isDeleted: false,
-      }).lean();
+      const delegation = await this.getReviewDelegation(
+        actor.actorId,
+        quarterAssignment.assignedManagerId.toString(),
+        quarterAssignment.cycleId?.toString(),
+      );
 
-      if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+      if (delegation) {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = quarterAssignment.assignedManagerId;
       }
     }
 
+    const finalizationTimestamp = new Date();
     const reviewPayload = {
       quarterAssignmentId: quarterAssignment._id,
       annualAssignmentId: quarterAssignment.annualAssignmentId,
       cycleId: quarterAssignment.cycleId,
       employeeId: quarterAssignment.employeeId,
       managerId: quarterAssignment.assignedManagerId,
-      reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
+      reviewStatus: QuarterReviewStatus.FINALIZED,
       ratings: this.normalizeRatings(input.ratings),
       comments: input.comments.trim(),
       score: scoringResolution.overallScore,
@@ -535,7 +557,8 @@ export class QuarterReviewService extends BaseService {
       attachments: this.normalizeAttachments(input.attachments ?? []),
       actingDelegateUserId,
       originalOwnerUserId,
-      submittedAt: new Date(),
+      submittedAt: finalizationTimestamp,
+      finalizedAt: finalizationTimestamp,
       updatedBy: this.actorIdObject(),
       createdBy: existingReview?.createdBy ?? this.actorIdObject(),
     };
@@ -565,9 +588,8 @@ export class QuarterReviewService extends BaseService {
       },
       true,
     );
-    await this.syncQuarterAssignmentReviewSummary(quarterAssignment, quarterReview);
 
-    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
+    const submittedQuarterAssignment = await transitionQuarterAssignmentState(
       quarterAssignment._id.toString(),
       QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
       this.requireActor(),
@@ -579,6 +601,23 @@ export class QuarterReviewService extends BaseService {
       quarterReview._id.toString(),
       existingReview?.toObject(),
       quarterReview.toObject(),
+    );
+
+    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
+      submittedQuarterAssignment._id.toString(),
+      QuarterWorkflowState.QUARTER_FINALIZED,
+      this.requireActor(),
+    );
+
+    await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, quarterReview);
+    await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, quarterReview);
+
+    await this.audit(
+      'PMS_QUARTER_ASSIGNMENT_FINALIZED',
+      'QUARTER_ASSIGNMENT',
+      updatedQuarterAssignment._id.toString(),
+      { quarterState: submittedQuarterAssignment.quarterState },
+      { quarterState: updatedQuarterAssignment.quarterState },
     );
 
     return {
@@ -731,14 +770,21 @@ export class QuarterReviewService extends BaseService {
     const cycleIds = quarterAssignments
       .map((item) => item.cycleId)
       .filter((value): value is Types.ObjectId => Boolean(value));
+    const quarterCycleIds = quarterAssignments
+      .map((item) => item.cycleQuarterId)
+      .filter((value): value is Types.ObjectId => Boolean(value));
 
-    const [annualAssignments, cycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
+    const [annualAssignments, cycles, quarterCycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
       AnnualAssignment.find({
         _id: { $in: annualAssignmentIds },
         isDeleted: false,
       }).lean(),
       AnnualCycle.find({
         _id: { $in: cycleIds },
+        isDeleted: false,
+      }).lean(),
+      QuarterCycle.find({
+        _id: { $in: quarterCycleIds },
         isDeleted: false,
       }).lean(),
       Objective.find({
@@ -762,6 +808,7 @@ export class QuarterReviewService extends BaseService {
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
+    const quarterCycleMap = new Map(quarterCycles.map((item) => [item._id.toString(), item]));
     const objectivesByQuarterAssignmentId = new Map<string, typeof approvedObjectives>();
     const quarterReviewByQuarterAssignmentId = new Map(
       quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
@@ -788,6 +835,9 @@ export class QuarterReviewService extends BaseService {
       const cycle = quarterAssignment.cycleId
         ? cycleMap.get(quarterAssignment.cycleId.toString())
         : undefined;
+      const quarterCycle = quarterAssignment.cycleQuarterId
+        ? quarterCycleMap.get(quarterAssignment.cycleQuarterId.toString())
+        : undefined;
       const review = quarterReviewByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? null;
       const objectives = objectivesByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? [];
       const reviewConfig = annualAssignment
@@ -812,6 +862,7 @@ export class QuarterReviewService extends BaseService {
         ),
         quarter: quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
+        quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
         employeeName: String(annualAssignment?.employeeSnapshot?.name ?? 'Employee'),
         managerId: quarterAssignment.assignedManagerId.toString(),
@@ -912,6 +963,25 @@ export class QuarterReviewService extends BaseService {
     };
   }
 
+  private mapQuarterWindows(quarterCycle?: Record<string, any>) {
+    if (!quarterCycle) return undefined;
+
+    const mapWindow = (window?: { startDate?: Date; endDate?: Date }) => {
+      if (!window?.startDate || !window?.endDate) return undefined;
+      return {
+        startDate: new Date(window.startDate).toISOString(),
+        endDate: new Date(window.endDate).toISOString(),
+      };
+    };
+
+    return {
+      objectiveSetting: mapWindow(quarterCycle.objectiveSettingWindow),
+      objectiveApproval: mapWindow(quarterCycle.objectiveApprovalWindow),
+      managerReview: mapWindow(quarterCycle.managerReviewWindow),
+      quarterFinalization: mapWindow(quarterCycle.quarterFinalizationWindow),
+    };
+  }
+
   private validateDraftInput(
     input: SaveQuarterReviewDraftInput,
     approvedObjectives: Array<Record<string, any>>,
@@ -947,14 +1017,6 @@ export class QuarterReviewService extends BaseService {
 
     if (!input.comments?.trim()) {
       throw new Error('Review comments are required');
-    }
-
-    if (!input.achievements?.trim()) {
-      throw new Error('Achievements are required on submit');
-    }
-
-    if (!input.developmentObservations?.trim()) {
-      throw new Error('Development observations are required on submit');
     }
 
     if (resolvedScore === undefined || resolvedScore === null || Number.isNaN(Number(resolvedScore))) {
@@ -1740,16 +1802,13 @@ export class QuarterReviewService extends BaseService {
     }
 
     // Check delegation
-    const delegation = await Delegation.findOne({
-      delegateUserId: new Types.ObjectId(actor.actorId),
-      delegatorUserId: quarterAssignment.assignedManagerId,
-      status: 'ACTIVE',
-      validFrom: { $lte: new Date() },
-      validTo: { $gte: new Date() },
-      isDeleted: false,
-    }).lean();
+    const delegation = await this.getReviewDelegation(
+      actor.actorId,
+      quarterAssignment.assignedManagerId.toString(),
+      quarterAssignment.cycleId?.toString(),
+    );
 
-    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+    if (delegation) {
       return;
     }
 
@@ -1758,7 +1817,7 @@ export class QuarterReviewService extends BaseService {
 
   private async assertQuarterAssignmentViewAccess(
     actorRole: string,
-    quarterAssignment: Pick<IQuarterAssignment, 'employeeId' | 'assignedManagerId'>,
+    quarterAssignment: Pick<IQuarterAssignment, 'employeeId' | 'assignedManagerId' | 'cycleId'>,
   ): Promise<void> {
     const mappedRole = normalizePmsRole(actorRole);
     if (mappedRole === PmsRole.ADMIN) {
@@ -1790,16 +1849,13 @@ export class QuarterReviewService extends BaseService {
     }
 
     // Check delegation
-    const delegation = await Delegation.findOne({
-      delegateUserId: new Types.ObjectId(actor.actorId),
-      delegatorUserId: quarterAssignment.assignedManagerId,
-      status: 'ACTIVE',
-      validFrom: { $lte: new Date() },
-      validTo: { $gte: new Date() },
-      isDeleted: false,
-    }).lean();
+    const delegation = await this.getReviewDelegation(
+      actor.actorId,
+      quarterAssignment.assignedManagerId.toString(),
+      quarterAssignment.cycleId?.toString(),
+    );
 
-    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_REVIEWS')) {
+    if (delegation) {
       return;
     }
 
@@ -1857,13 +1913,30 @@ export class QuarterReviewService extends BaseService {
       return;
     }
 
-    const now = new Date();
+    const now = this.getCurrentDate();
     const start = new Date(quarterCycle.managerReviewWindow.startDate);
     const end = new Date(quarterCycle.managerReviewWindow.endDate);
 
     if (now < start || now > end) {
       throw new Error('Manager review window is closed for this quarter');
     }
+  }
+
+  private async getReviewDelegation(
+    delegateUserId: string,
+    delegatorUserId: string,
+    cycleId?: string,
+  ): Promise<any | null> {
+    return new DelegationService(this.context).getActiveDelegation(
+      delegateUserId,
+      delegatorUserId,
+      'PMS_REVIEWS',
+      cycleId,
+    );
+  }
+
+  private getCurrentDate(): Date {
+    return this.context.pmsCurrentDate ?? new Date();
   }
 
   private actorIdObject(): Types.ObjectId | undefined {
@@ -1902,6 +1975,7 @@ export class QuarterReviewService extends BaseService {
     reason?: string,
   ): Promise<void> {
     const actor = this.requireActor();
+    const assignmentId = await this.resolveAuditAssignmentId(entityType, entityId);
 
     await auditService.createAuditLog({
       actorId: actor.actorId,
@@ -1909,9 +1983,42 @@ export class QuarterReviewService extends BaseService {
       action,
       entityType,
       entityId,
+      assignmentId,
       previousValue,
       newValue,
       reason,
     });
+  }
+
+  private async resolveAuditAssignmentId(entityType: string, entityId: string): Promise<string | undefined> {
+    if (entityType === 'ANNUAL_ASSIGNMENT') {
+      return entityId;
+    }
+
+    if (entityType === 'QUARTER_ASSIGNMENT') {
+      const quarterAssignment = await QuarterAssignment.findById(entityId)
+        .select('annualAssignmentId')
+        .lean();
+      return quarterAssignment?.annualAssignmentId?.toString();
+    }
+
+    if (entityType === 'QUARTER_REVIEW') {
+      const quarterReview = await QuarterReview.findById(entityId)
+        .select('annualAssignmentId quarterAssignmentId')
+        .lean();
+
+      if (quarterReview?.annualAssignmentId) {
+        return quarterReview.annualAssignmentId.toString();
+      }
+
+      if (quarterReview?.quarterAssignmentId) {
+        const quarterAssignment = await QuarterAssignment.findById(quarterReview.quarterAssignmentId)
+          .select('annualAssignmentId')
+          .lean();
+        return quarterAssignment?.annualAssignmentId?.toString();
+      }
+    }
+
+    return undefined;
   }
 }

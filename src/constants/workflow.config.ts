@@ -21,6 +21,7 @@ const quarterTransitionsBase = {
   ],
   [QuarterWorkflowState.OBJECTIVE_SETTING_OPEN]: [
     QuarterWorkflowState.OBJECTIVE_DRAFT,
+    QuarterWorkflowState.OBJECTIVE_SUBMITTED,
     QuarterWorkflowState.OBJECTIVE_APPROVED,
   ],
   [QuarterWorkflowState.OBJECTIVE_DRAFT]: [

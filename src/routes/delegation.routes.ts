@@ -30,7 +30,14 @@ export const delegationRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const result = await request.container!.delegationService.listDelegations(
-          request.query as { delegatorUserId?: string; delegateUserId?: string; status?: string },
+          request.query as {
+            delegatorUserId?: string;
+            delegateUserId?: string;
+            status?: string;
+            cycleId?: string;
+            scopeType?: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
+            activeOn?: string;
+          },
         );
         return reply.send(successResponse('PMS delegations fetched successfully', result));
       } catch (error: unknown) {

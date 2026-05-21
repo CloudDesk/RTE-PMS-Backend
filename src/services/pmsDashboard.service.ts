@@ -119,19 +119,21 @@ export class PmsDashboardService extends BaseService {
    */
   async getManagerDashboard(managerId: string, cycleId?: string): Promise<any> {
     const managerObjectId = new Types.ObjectId(managerId);
+    const cycleObjectId = cycleId ? new Types.ObjectId(cycleId) : undefined;
 
     // Get direct reports and assignments
     const query: Record<string, any> = { assignedManagerId: managerObjectId, isDeleted: false };
-    if (cycleId) {
-      query.cycleId = new Types.ObjectId(cycleId);
+    if (cycleObjectId) {
+      query.cycleId = cycleObjectId;
     }
 
-    const assignedAnnuals = await AnnualAssignment.find(query).select('_id employeeId').lean();
+    const assignedAnnuals = await AnnualAssignment.find(query).select('_id employeeId cycleId').lean();
     const employeeIds = assignedAnnuals.map((a) => a.employeeId);
+    const annualAssignmentIds = assignedAnnuals.map((a) => a._id);
 
     // 1. Objectives Approval Queue (Objectives in SUBMITTED state for direct reports)
     const pendingObjectives = await Objective.find({
-      employeeId: { $in: employeeIds },
+      annualAssignmentId: { $in: annualAssignmentIds },
       status: 'OBJECTIVE_SUBMITTED',
       isDeleted: false,
     })
@@ -142,6 +144,7 @@ export class PmsDashboardService extends BaseService {
     const quarterReviewQueue = await QuarterAssignment.find({
       assignedManagerId: managerObjectId,
       quarterState: { $in: ['MANAGER_REVIEW_OPEN', 'OBJECTIVE_APPROVED'] }, // objectives approved means ready for review
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       isDeleted: false,
     })
       .populate('employeeId', 'name email employeeCode')
@@ -152,6 +155,7 @@ export class PmsDashboardService extends BaseService {
       ownerUserId: managerObjectId,
       status: 'OPEN',
       dueAt: { $lt: new Date() },
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       isDeleted: false,
     }).lean();
 
@@ -159,6 +163,7 @@ export class PmsDashboardService extends BaseService {
     const finalizedQuartersCount = await QuarterAssignment.countDocuments({
       assignedManagerId: managerObjectId,
       quarterState: 'QUARTER_FINALIZED',
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       isDeleted: false,
     });
 
@@ -178,6 +183,9 @@ export class PmsDashboardService extends BaseService {
         isDeleted: false,
       }),
       Reassignment.find({
+        ...(annualAssignmentIds.length > 0
+          ? { annualAssignmentId: { $in: annualAssignmentIds } }
+          : { annualAssignmentId: { $in: [] } }),
         $or: [
           { fromManagerId: managerObjectId },
           { toManagerId: managerObjectId },
@@ -217,10 +225,14 @@ export class PmsDashboardService extends BaseService {
   async getAdminDashboard(cycleId?: string): Promise<any> {
     const query: Record<string, any> = { isDeleted: false };
     const qaQuery: Record<string, any> = { isDeleted: false };
+    const cycleObjectId = cycleId ? new Types.ObjectId(cycleId) : undefined;
     if (cycleId) {
-      query.cycleId = new Types.ObjectId(cycleId);
-      qaQuery.cycleId = new Types.ObjectId(cycleId);
+      query.cycleId = cycleObjectId;
+      qaQuery.cycleId = cycleObjectId;
     }
+
+    const annualAssignments = await AnnualAssignment.find(query).select('_id').lean();
+    const annualAssignmentIds = annualAssignments.map((item) => item._id);
 
     // 1. Cycle Progress (Counts by annual assignment states)
     const annualProgress = await AnnualAssignment.aggregate([
@@ -248,6 +260,7 @@ export class PmsDashboardService extends BaseService {
     const slaBreachesCount = await SlaEvent.countDocuments({
       status: 'OPEN',
       dueAt: { $lt: new Date() },
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       isDeleted: false,
     });
 
@@ -264,8 +277,12 @@ export class PmsDashboardService extends BaseService {
     };
 
     // 5. Communication status (Draft vs Sent vs Ready)
-    const totalDispatches = await CommunicationDispatch.countDocuments({ isDeleted: false });
+    const totalDispatches = await CommunicationDispatch.countDocuments({
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
+      isDeleted: false,
+    });
     const sentDispatches = await CommunicationDispatch.countDocuments({
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       dispatchStatus: 'SENT',
       isDeleted: false,
     });
@@ -279,6 +296,11 @@ export class PmsDashboardService extends BaseService {
     // 6. Reopen tracking (Audits showing transitions to REOPENED)
     const reopenTrackingLogs = await AuditLog.find({
       action: { $regex: /reopen/i },
+      ...(annualAssignmentIds.length > 0
+        ? { assignmentId: { $in: annualAssignmentIds } }
+        : cycleObjectId
+          ? { assignmentId: { $in: [] } }
+          : {}),
     })
       .sort({ createdAt: -1 })
       .limit(10)
@@ -308,9 +330,11 @@ export class PmsDashboardService extends BaseService {
         status: 'ACTIVE',
         validFrom: { $lte: new Date() },
         validTo: { $gte: new Date() },
+        ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
         isDeleted: false,
       }),
       Delegation.find({
+        ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
         isDeleted: false,
       })
         .populate('delegatorUserId', 'name email employeeCode')
@@ -319,6 +343,11 @@ export class PmsDashboardService extends BaseService {
         .limit(10)
         .lean(),
       Reassignment.find({
+        ...(annualAssignmentIds.length > 0
+          ? { annualAssignmentId: { $in: annualAssignmentIds } }
+          : cycleObjectId
+            ? { annualAssignmentId: { $in: [] } }
+            : {}),
         isDeleted: false,
       })
         .populate('employeeId', 'name email employeeCode')
@@ -356,6 +385,9 @@ export class PmsDashboardService extends BaseService {
     if (cycleId) {
       query.cycleId = new Types.ObjectId(cycleId);
     }
+
+    const annualAssignments = await AnnualAssignment.find(query).select('_id').lean();
+    const annualAssignmentIds = annualAssignments.map((item) => item._id);
 
     // 1. Annual Appraisals Pending vs Decision Drafts vs Finalized
     const appraisalStates = await AnnualAssignment.aggregate([
@@ -427,6 +459,11 @@ export class PmsDashboardService extends BaseService {
       }),
       AuditLog.countDocuments({
         action: { $regex: /reopen/i },
+        ...(annualAssignmentIds.length > 0
+          ? { assignmentId: { $in: annualAssignmentIds } }
+          : cycleId
+            ? { assignmentId: { $in: [] } }
+            : {}),
       }),
     ]);
 

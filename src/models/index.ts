@@ -28,6 +28,7 @@ export * from './optional-holiday-request.model';
 export * from './final-settlement.model';
 export * from './pms-quarter-assignment.model';
 export * from './pms-objective.model';
+export * from './pms-objective-value.model';
 export * from './pms-objective-attachment.model';
 export * from './pms-objective-comment.model';
 export * from './pms-objective-evidence.model';

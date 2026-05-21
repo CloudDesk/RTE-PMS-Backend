@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 export interface RequestContext {
   reqRole: string;
   requestId: string;
+  pmsCurrentDate?: Date;
   user?: {
     _id: Types.ObjectId | string;
     email: string;

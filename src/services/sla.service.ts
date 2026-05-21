@@ -8,6 +8,19 @@ import { User } from '../models/user.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { Types } from 'mongoose';
 import { NotificationEvent } from '../models/pms-notification-event.model';
+import { PmsRole } from '../constants/pms.enums';
+
+const SUPPORTED_SLA_RULES = {
+  objective_submission_pending: {
+    quarterStates: ['NOT_STARTED', 'OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'],
+  },
+  objective_approval_pending: {
+    quarterStates: ['OBJECTIVE_SUBMITTED'],
+  },
+  quarter_review_pending: {
+    quarterStates: ['OBJECTIVE_APPROVED', 'MANAGER_REVIEW_OPEN'],
+  },
+} as const;
 
 export class SlaService {
   /**
@@ -79,17 +92,34 @@ export class SlaService {
   async syncSlaEvents(): Promise<number> {
     let createdCount = 0;
     try {
-      const activeRules = await SlaRule.find({ isActive: true, isDeleted: false }).lean();
+      const activeRules = await SlaRule.find({
+        isActive: true,
+        isDeleted: false,
+        eventType: { $in: Object.keys(SUPPORTED_SLA_RULES) },
+        entityType: 'QUARTER_ASSIGNMENT',
+      })
+        .sort({ cycleId: -1, createdAt: 1 })
+        .lean();
       if (activeRules.length === 0) return 0;
+      const scopedRuleCycles = this.buildScopedRuleCycleMap(activeRules);
 
       for (const rule of activeRules) {
-        const pendingAssignments = await this.getPendingAssignmentsForRule(rule.eventType);
+        const pendingAssignments = (await this.getPendingAssignmentsForRule(rule)).filter(
+          (assignment) =>
+            !this.shouldSkipGlobalRuleForCycle(
+              scopedRuleCycles,
+              rule.eventType,
+              rule.cycleId?.toString(),
+              assignment.cycleId?.toString(),
+            ),
+        );
         const activeAssignmentIds = new Set(pendingAssignments.map((assignment) => assignment._id.toString()));
 
         const existingEvents = await SlaEvent.find({
           slaType: rule.eventType,
-          entityType: 'QUARTER_ASSIGNMENT',
+          entityType: rule.entityType,
           isDeleted: false,
+          ...(rule.cycleId ? { cycleId: rule.cycleId } : {}),
         });
 
         for (const event of existingEvents) {
@@ -105,30 +135,60 @@ export class SlaService {
             (event) => event.entityId.toString() === qa._id.toString(),
           );
 
-          if (!exists) {
-            const dueAt = await this.calculateDueDate(
-              rule.baseDatePointer,
-              rule.offsetDays,
-              {
-                cycleId: qa.cycleId?.toString(),
-                quarterCycleId: qa.cycleQuarterId?.toString(),
-                previousTransitionDate: qa.lastTransitionAt,
-                fixedDate: rule.fixedDate,
-              },
-            );
+          const ownerUserId = this.resolveOwnerUserIdForRule(rule.targetRole, qa);
+          if (!ownerUserId) {
+            continue;
+          }
 
+          const dueAt = await this.calculateDueDate(
+            rule.baseDatePointer,
+            rule.offsetDays,
+            {
+              cycleId: qa.cycleId?.toString(),
+              quarterCycleId: qa.cycleQuarterId?.toString(),
+              previousTransitionDate: qa.lastTransitionAt,
+              fixedDate: rule.fixedDate,
+            },
+          );
+
+          const escalationTargetUserId = this.resolveEscalationTargetForRule(rule.targetRole, qa);
+
+          if (!exists) {
             await SlaEvent.create({
               slaType: rule.eventType,
-              entityType: 'QUARTER_ASSIGNMENT',
+              entityType: rule.entityType,
               entityId: qa._id,
               cycleId: qa.cycleId,
               quarterCode: qa.quarterCode,
-              ownerUserId: this.resolveOwnerUserIdForRule(rule.eventType, qa),
+              ownerUserId,
               dueAt,
               status: 'OPEN',
-              escalationTargetUserId: this.resolveEscalationTargetForRule(rule.eventType, qa),
+              escalationTargetUserId,
             });
             createdCount++;
+            continue;
+          }
+
+          let changed = false;
+          if (exists.status === 'CLOSED') {
+            exists.status = 'OPEN';
+            changed = true;
+          }
+          if (exists.ownerUserId.toString() !== ownerUserId.toString()) {
+            exists.ownerUserId = ownerUserId;
+            changed = true;
+          }
+          if ((exists.escalationTargetUserId?.toString() ?? '') !== (escalationTargetUserId?.toString() ?? '')) {
+            exists.escalationTargetUserId = escalationTargetUserId;
+            changed = true;
+          }
+          if (exists.dueAt.getTime() !== dueAt.getTime()) {
+            exists.dueAt = dueAt;
+            changed = true;
+          }
+          if (changed) {
+            exists.updatedAt = new Date();
+            await exists.save();
           }
         }
       }
@@ -146,7 +206,7 @@ export class SlaService {
     // Automatically synchronize/seed SLA Event records for open workflow steps
     await this.syncSlaEvents();
 
-    const openSlas = await SlaEvent.find({ status: 'OPEN', isDeleted: false });
+    const openSlas = await SlaEvent.find({ status: { $in: ['OPEN', 'OVERDUE'] }, isDeleted: false });
     let processedCount = 0;
     let sentCount = 0;
 
@@ -156,7 +216,13 @@ export class SlaService {
       processedCount++;
 
       // Find the SLA rules that apply
-      const slaRules = await SlaRule.find({ eventType: sla.slaType, isActive: true, isDeleted: false });
+      const ruleCandidates = await SlaRule.find({
+        eventType: sla.slaType,
+        entityType: sla.entityType,
+        isActive: true,
+        isDeleted: false,
+      }).lean();
+      const slaRules = this.selectApplicableRulesForEvent(ruleCandidates, sla.cycleId?.toString());
 
       for (const rule of slaRules) {
         const reminderRules = await ReminderRule.find({
@@ -247,49 +313,83 @@ export class SlaService {
     return { processed: processedCount, notificationsSent: sentCount };
   }
 
-  private async getPendingAssignmentsForRule(eventType: string) {
-    if (eventType === 'objective_submission_pending') {
-      return QuarterAssignment.find({
-        quarterState: { $in: ['NOT_STARTED', 'OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'] },
-        isDeleted: false,
-      }).lean();
+  private async getPendingAssignmentsForRule(rule: {
+    eventType: string;
+    entityType: string;
+    cycleId?: Types.ObjectId;
+  }) {
+    const supportedRule = SUPPORTED_SLA_RULES[rule.eventType as keyof typeof SUPPORTED_SLA_RULES];
+    if (!supportedRule || rule.entityType !== 'QUARTER_ASSIGNMENT') {
+      return [];
     }
 
-    if (eventType === 'objective_approval_pending') {
-      return QuarterAssignment.find({
-        quarterState: 'OBJECTIVE_SUBMITTED',
-        isDeleted: false,
-      }).lean();
-    }
-
-    if (eventType === 'quarter_review_pending') {
-      return QuarterAssignment.find({
-        quarterState: { $in: ['OBJECTIVE_APPROVED', 'MANAGER_REVIEW_OPEN'] },
-        isDeleted: false,
-      }).lean();
-    }
-
-    return [];
+    return QuarterAssignment.find({
+      quarterState: { $in: supportedRule.quarterStates },
+      isDeleted: false,
+      ...(rule.cycleId ? { cycleId: rule.cycleId } : {}),
+    }).lean();
   }
 
-  private resolveOwnerUserIdForRule(eventType: string, assignment: any) {
-    if (eventType === 'objective_submission_pending') {
-      return assignment.employeeId;
-    }
-
-    if (eventType === 'objective_approval_pending' || eventType === 'quarter_review_pending') {
+  private resolveOwnerUserIdForRule(targetRole: string, assignment: any) {
+    if (targetRole === PmsRole.MANAGER) {
       return assignment.assignedManagerId;
     }
 
     return assignment.employeeId;
   }
 
-  private resolveEscalationTargetForRule(eventType: string, assignment: any) {
-    if (eventType === 'objective_submission_pending') {
+  private resolveEscalationTargetForRule(targetRole: string, assignment: any) {
+    if (targetRole === PmsRole.EMPLOYEE) {
       return assignment.assignedManagerId;
     }
 
     return undefined;
+  }
+
+  private selectApplicableRulesForEvent<T extends { cycleId?: Types.ObjectId | null }>(
+    rules: T[],
+    cycleId?: string,
+  ): T[] {
+    if (!cycleId) {
+      return rules.filter((rule) => !rule.cycleId);
+    }
+
+    const scopedRules = rules.filter((rule) => rule.cycleId?.toString() === cycleId);
+    if (scopedRules.length > 0) {
+      return scopedRules;
+    }
+
+    return rules.filter((rule) => !rule.cycleId);
+  }
+
+  private buildScopedRuleCycleMap(
+    rules: Array<{ eventType: string; cycleId?: Types.ObjectId | null }>,
+  ): Map<string, Set<string>> {
+    const scopedCycles = new Map<string, Set<string>>();
+
+    for (const rule of rules) {
+      const cycleId = rule.cycleId?.toString();
+      if (!cycleId) continue;
+
+      const eventCycles = scopedCycles.get(rule.eventType) ?? new Set<string>();
+      eventCycles.add(cycleId);
+      scopedCycles.set(rule.eventType, eventCycles);
+    }
+
+    return scopedCycles;
+  }
+
+  private shouldSkipGlobalRuleForCycle(
+    scopedCycles: Map<string, Set<string>>,
+    eventType: string,
+    ruleCycleId: string | undefined,
+    assignmentCycleId: string | undefined,
+  ): boolean {
+    if (ruleCycleId || !assignmentCycleId) {
+      return false;
+    }
+
+    return scopedCycles.get(eventType)?.has(assignmentCycleId) ?? false;
   }
 }
 

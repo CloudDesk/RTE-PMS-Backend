@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
@@ -15,16 +16,20 @@ import {
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
+import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AssignmentExceptionQueue } from '../models/pms-assignment-exception-queue.model';
+import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
+import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { Reassignment } from '../models/pms-reassignment.model';
 import { Objective } from '../models/pms-objective.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { User } from '../models/user.model';
-import { Delegation } from '../models/pms-delegation.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { DelegationService } from './delegation.service';
 import { workflowService } from './workflow.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -646,9 +651,26 @@ export class AssignmentService extends BaseService {
     }
 
     const annualAssignment = await this.getAnnualAssignment(assignmentId);
-    if (annualAssignment.annualState !== AnnualWorkflowState.ANNUAL_FINALIZED) {
-      throw new Error('Only finalized annual assignments can be reopened');
+    const reopenableStates = new Set<AnnualWorkflowState>([
+      AnnualWorkflowState.ANNUAL_FINALIZED,
+      AnnualWorkflowState.VISIBILITY_ENABLED,
+      AnnualWorkflowState.COMMUNICATION_READY,
+      AnnualWorkflowState.COMMUNICATION_SENT,
+    ]);
+    if (!reopenableStates.has(annualAssignment.annualState)) {
+      throw new Error('Only finalized, visibility-enabled, or communication-stage assignments can be reopened');
     }
+
+    const [annualDecision, visibilityConfiguration] = await Promise.all([
+      AnnualDecision.findOne({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }),
+      VisibilityConfiguration.findOne({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }),
+    ]);
 
     const transition = workflowService.transition({
       entityType: WorkflowEntityType.ANNUAL_ASSIGNMENT,
@@ -661,8 +683,135 @@ export class AssignmentService extends BaseService {
     });
 
     const previousValue = annualAssignment.toObject();
-    
+    const actorId = this.actorIdObject();
+    const quarterAssignments = await QuarterAssignment.find({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    }).lean();
+
+    const snapshotPayload = {
+      annualSnapshot: annualAssignment.toObject(),
+      quarterSnapshots: Object.fromEntries(
+        quarterAssignments.map((quarterAssignment) => [
+          quarterAssignment.quarterCode,
+          quarterAssignment,
+        ]),
+      ),
+      finalDecisionSnapshot: {
+        reopenReason: input.reason.trim(),
+        decision: annualDecision?.toObject() ?? null,
+      },
+      visibilitySnapshot: {
+        visibilityConfiguration: visibilityConfiguration?.toObject() ?? null,
+        annualAssignmentVisibility: annualAssignment.visibility,
+      },
+      communicationSnapshot: {
+        communicationStatus: annualAssignment.communicationStatus,
+      },
+    };
+
+    const snapshotHash = createHash('sha256')
+      .update(JSON.stringify(snapshotPayload))
+      .digest('hex');
+
+    await PerformanceHistorySnapshot.create({
+      annualAssignmentId: annualAssignment._id,
+      cycleId: annualAssignment.cycleId,
+      employeeId: annualAssignment.employeeId,
+      templateVersionId: annualAssignment.templateVersionId,
+      annualSnapshot: snapshotPayload.annualSnapshot,
+      quarterSnapshots: snapshotPayload.quarterSnapshots,
+      finalDecisionSnapshot: snapshotPayload.finalDecisionSnapshot,
+      visibilitySnapshot: snapshotPayload.visibilitySnapshot,
+      communicationSnapshot: snapshotPayload.communicationSnapshot,
+      snapshotHash,
+      createdBy: actorId,
+      updatedBy: actorId,
+    });
+
+    await CorrectionLayer.create({
+      entityType: 'ANNUAL_ASSIGNMENT',
+      entityId: annualAssignment._id,
+      fieldKey: 'REOPEN_APPRAISAL',
+      originalValue: {
+        annualState: annualAssignment.annualState,
+        finalDecisionStatus: annualAssignment.finalDecisionStatus,
+        communicationStatus: annualAssignment.communicationStatus,
+        visibility: annualAssignment.visibility,
+        decisionStatus: annualDecision?.decisionStatus,
+      },
+      correctedValue: {
+        annualState: AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+        finalDecisionStatus: AnnualDecisionStatus.DRAFT,
+        communicationStatus: 'NOT_REQUIRED',
+        visibility: {
+          employeeReviewVisible: false,
+          employeeGradeVisible: false,
+          employeeMeritVisible: false,
+          managerGradeVisible: false,
+          managerMeritVisible: false,
+        },
+        decisionStatus: AnnualDecisionStatus.DRAFT,
+      },
+      correctionReason: input.reason.trim(),
+      correctedBy: actorId,
+      correctedAt: new Date(),
+      createdBy: actorId,
+      updatedBy: actorId,
+    });
+
+    if (annualDecision) {
+      const previousDecisionValue = annualDecision.toObject();
+      annualDecision.decisionStatus = AnnualDecisionStatus.DRAFT;
+      annualDecision.submittedAt = undefined;
+      annualDecision.submittedBy = undefined;
+      annualDecision.frozenAt = undefined;
+      annualDecision.frozenBy = undefined;
+      annualDecision.updatedBy = actorId;
+      annualDecision.version += 1;
+      await annualDecision.save();
+
+      await this.audit(
+        'PMS_ASSIGNMENT_APPRAISAL_REOPENED_DECISION_RESET',
+        'ANNUAL_DECISION',
+        annualDecision._id.toString(),
+        previousDecisionValue,
+        annualDecision.toObject(),
+        input.reason.trim(),
+      );
+    }
+
+    if (visibilityConfiguration) {
+      const previousVisibilityValue = visibilityConfiguration.toObject();
+      visibilityConfiguration.employeeReviewVisible = false;
+      visibilityConfiguration.employeeGradeVisible = false;
+      visibilityConfiguration.employeeMeritVisible = false;
+      visibilityConfiguration.managerGradeVisible = false;
+      visibilityConfiguration.managerMeritVisible = false;
+      visibilityConfiguration.disabledBy = actorId;
+      visibilityConfiguration.disabledAt = new Date();
+      visibilityConfiguration.updatedBy = actorId;
+      visibilityConfiguration.version += 1;
+      await visibilityConfiguration.save();
+
+      await this.audit(
+        'PMS_ASSIGNMENT_APPRAISAL_REOPENED_VISIBILITY_RESET',
+        'VISIBILITY_CONFIGURATION',
+        visibilityConfiguration._id.toString(),
+        previousVisibilityValue,
+        visibilityConfiguration.toObject(),
+        input.reason.trim(),
+      );
+    }
+
     annualAssignment.annualState = transition.currentState as AnnualWorkflowState;
+    annualAssignment.finalDecisionStatus = AnnualDecisionStatus.DRAFT;
+    annualAssignment.communicationStatus = 'NOT_REQUIRED';
+    annualAssignment.visibility.employeeReviewVisible = false;
+    annualAssignment.visibility.employeeGradeVisible = false;
+    annualAssignment.visibility.employeeMeritVisible = false;
+    annualAssignment.visibility.managerGradeVisible = false;
+    annualAssignment.visibility.managerMeritVisible = false;
     annualAssignment.updatedBy = this.actorIdObject();
     annualAssignment.version += 1;
     await annualAssignment.save();
@@ -1057,16 +1206,14 @@ export class AssignmentService extends BaseService {
     }
 
     // Check delegation
-    const delegation = await Delegation.findOne({
-      delegateUserId: new Types.ObjectId(actor.actorId),
-      delegatorUserId: annualAssignment.assignedManagerId,
-      status: 'ACTIVE',
-      validFrom: { $lte: new Date() },
-      validTo: { $gte: new Date() },
-      isDeleted: false,
-    }).lean();
+    const delegation = await new DelegationService(this.context).getActiveDelegation(
+      actor.actorId,
+      annualAssignment.assignedManagerId.toString(),
+      'ALL',
+      annualAssignment.cycleId.toString(),
+    );
 
-    if (delegation && (delegation.scopeType === 'ALL' || delegation.scopeType === 'PMS_OBJECTIVES' || delegation.scopeType === 'PMS_REVIEWS')) {
+    if (delegation) {
       return;
     }
 
@@ -1118,6 +1265,7 @@ export class AssignmentService extends BaseService {
     entityId: string,
     previousValue?: unknown,
     newValue?: unknown,
+    reason?: string,
   ): Promise<void> {
     const user = this.context.user;
     if (!user) return;
@@ -1128,8 +1276,10 @@ export class AssignmentService extends BaseService {
       action,
       entityType,
       entityId,
+      assignmentId: entityType === 'ANNUAL_ASSIGNMENT' ? entityId : undefined,
       previousValue,
       newValue,
+      reason,
     });
   }
 }
