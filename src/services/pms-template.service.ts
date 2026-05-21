@@ -21,6 +21,7 @@ import {
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
+import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { User } from '../models/user.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
@@ -48,6 +49,12 @@ export interface ResolveTemplateVersionInput {
   quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   visibilityFlags?: string[];
   values?: Record<string, unknown>;
+}
+
+export interface SimulateTemplateAccessInput extends ResolveTemplateVersionInput {
+  versionId: string;
+  annualAssignmentId?: string;
+  quarterAssignmentId?: string;
 }
 
 export interface ResolvedTemplateField {
@@ -84,13 +91,21 @@ export interface ResolvedTemplateVersion {
   role: string;
   workflowState: string;
   sections: ResolvedTemplateSection[];
+  simulationContext?: {
+    annualAssignmentId?: string;
+    quarterAssignmentId?: string;
+    hierarchyScope?: string;
+    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    visibilityFlags: string[];
+  };
 }
 
 export interface CreateTemplateInput {
   name: string;
   code: string;
   description?: string;
-  effectiveDate?: Date;
+  effectiveDate?: string | Date;
+  status?: string;
 }
 
 export interface TemplateListQuery {
@@ -110,9 +125,10 @@ export interface LetterTemplateListQuery {
 }
 
 export interface UpdateTemplateInput {
+  code?: string;
   name?: string;
   description?: string;
-  effectiveDate?: Date;
+  effectiveDate?: string | Date;
   status?: string;
 }
 
@@ -211,7 +227,15 @@ export class PmsTemplateService extends BaseService {
 
   async createTemplate(input: CreateTemplateInput): Promise<IPmsTemplate> {
     this.assertAdmin('template.create');
+    const name = input.name.trim();
     const code = this.normalizeCode(input.code);
+    const existingByName = await PmsTemplate.findOne({
+      name: this.buildExactCaseInsensitivePattern(name),
+      isDeleted: false,
+    });
+    if (existingByName) {
+      throw new Error('Template name already exists');
+    }
 
     const existing = await PmsTemplate.findOne({ code });
     if (existing) {
@@ -219,8 +243,11 @@ export class PmsTemplateService extends BaseService {
     }
 
     const template = await PmsTemplate.create({
-      ...input,
+      name,
+      description: input.description?.trim() || undefined,
       code,
+      effectiveDate: this.normalizeOptionalDate(input.effectiveDate),
+      status: this.normalizeTemplateStatus(input.status),
       createdBy: this.actorIdObject(),
     });
 
@@ -230,14 +257,62 @@ export class PmsTemplateService extends BaseService {
 
   async updateTemplate(id: string, input: UpdateTemplateInput): Promise<IPmsTemplate> {
     this.assertAdmin('template.update');
+    const existingTemplate = await PmsTemplate.findById(id);
+    if (!existingTemplate) {
+      throw new Error('Template not found');
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      updatedBy: this.actorIdObject(),
+    };
+
+    if (input.name !== undefined) {
+      const name = input.name.trim();
+      if (!name) {
+        throw new Error('Template name is required');
+      }
+
+      const existingByName = await PmsTemplate.findOne({
+        _id: { $ne: id },
+        name: this.buildExactCaseInsensitivePattern(name),
+        isDeleted: false,
+      }).lean();
+      if (existingByName) {
+        throw new Error('Template name already exists');
+      }
+
+      updatePayload.name = name;
+    }
+
+    if (input.code !== undefined) {
+      const code = this.normalizeCode(input.code);
+      const existingByCode = await PmsTemplate.findOne({
+        _id: { $ne: id },
+        code,
+      }).lean();
+      if (existingByCode) {
+        throw new Error('Template code already exists');
+      }
+
+      updatePayload.code = code;
+    }
+
+    if (input.description !== undefined) {
+      updatePayload.description = input.description.trim() || undefined;
+    }
+
+    if (input.effectiveDate !== undefined) {
+      updatePayload.effectiveDate = this.normalizeOptionalDate(input.effectiveDate);
+    }
+
+    if (input.status !== undefined) {
+      updatePayload.status = this.normalizeTemplateStatus(input.status);
+    }
 
     const template = await PmsTemplate.findByIdAndUpdate(
       id,
       {
-        $set: {
-          ...input,
-          updatedBy: this.actorIdObject(),
-        },
+        $set: updatePayload,
       },
       { new: true, runValidators: true },
     );
@@ -687,6 +762,38 @@ export class PmsTemplateService extends BaseService {
       role: input.role,
       workflowState,
       sections,
+      simulationContext: {
+        hierarchyScope: input.hierarchyScope,
+        quarter: input.quarter,
+        visibilityFlags: [...visibilityFlags],
+      },
+    };
+  }
+
+  async simulateTemplateAccess(
+    input: SimulateTemplateAccessInput,
+  ): Promise<ResolvedTemplateVersion> {
+    this.assertAdmin('template.access.simulate');
+
+    const derivedContext = await this.resolveSimulationContext(input);
+    const resolved = await this.resolveTemplateVersion(input.versionId, {
+      role: input.role,
+      workflowState: input.workflowState,
+      hierarchyScope: derivedContext.hierarchyScope,
+      quarter: derivedContext.quarter,
+      visibilityFlags: derivedContext.visibilityFlags,
+      values: input.values,
+    });
+
+    return {
+      ...resolved,
+      simulationContext: {
+        annualAssignmentId: derivedContext.annualAssignmentId,
+        quarterAssignmentId: derivedContext.quarterAssignmentId,
+        hierarchyScope: derivedContext.hierarchyScope,
+        quarter: derivedContext.quarter,
+        visibilityFlags: derivedContext.visibilityFlags,
+      },
     };
   }
 
@@ -726,6 +833,7 @@ export class PmsTemplateService extends BaseService {
     }
 
     this.validateLetterTemplate(
+      subjectTemplate,
       bodyTemplate,
       placeholderRules.required ?? [],
       conditionalBlocks.map((block) => block.blockKey),
@@ -779,6 +887,7 @@ export class PmsTemplateService extends BaseService {
     );
 
     this.validateLetterTemplate(
+      subjectTemplate,
       bodyTemplate,
       placeholderRules.required ?? [],
       conditionalBlocks.map((block) => block.blockKey),
@@ -881,6 +990,7 @@ export class PmsTemplateService extends BaseService {
       parentTemplate.templateVersionId.toString(),
     );
     this.validateLetterTemplate(
+      letterTemplate.subjectTemplate ?? '',
       letterTemplate.bodyTemplate,
       letterTemplate.placeholderRules.required ?? [],
       letterTemplate.conditionalBlocks.map((block) => block.blockKey),
@@ -1822,6 +1932,22 @@ export class PmsTemplateService extends BaseService {
           }
         }
 
+        if (field.scoringConfig?.participatesInScoring === true) {
+          const fieldWeight = Number(field.scoringConfig?.weight ?? (field.scoringConfig as Record<string, unknown> | undefined)?.weightage ?? 0);
+          if (!Number.isFinite(fieldWeight) || fieldWeight < 0 || fieldWeight > 100) {
+            throw new Error(`Scoring field ${field.fieldKey} in section ${section.sectionKey} must have weightage between 0 and 100`);
+          }
+
+          const maxScore = Number(field.scoringConfig?.maxScore ?? 0);
+          if (!Number.isFinite(maxScore) || maxScore <= 0) {
+            throw new Error(`Scoring field ${field.fieldKey} in section ${section.sectionKey} requires a maxScore greater than 0`);
+          }
+
+          if (field.scoringConfig?.scoreType === 'OPTION_BASED') {
+            this.validateOptionScoreConfig(field, section.sectionKey, maxScore);
+          }
+        }
+
         if (field.fieldType === PmsTemplateFieldType.RATING_SCALE) {
           const min = Number(field.optionConfig?.min);
           const max = Number(field.optionConfig?.max);
@@ -1974,6 +2100,13 @@ export class PmsTemplateService extends BaseService {
       | undefined;
     const quarterWeights = annualScoringConfig?.quarterWeights;
     if (quarterWeights && Object.keys(quarterWeights).length > 0) {
+      for (const quarter of ['Q1', 'Q2', 'Q3', 'Q4']) {
+        const weight = Number(quarterWeights[quarter] ?? 0);
+        if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
+          throw new Error(`Annual scoring quarter ${quarter} weightage must be between 0 and 100`);
+        }
+      }
+
       const excluded = new Set(annualScoringConfig?.excludedQuarters ?? []);
       const totalQuarterWeight = ['Q1', 'Q2', 'Q3', 'Q4']
         .filter((quarter) => !excluded.has(quarter))
@@ -2081,6 +2214,56 @@ export class PmsTemplateService extends BaseService {
     }
   }
 
+  private validateOptionScoreConfig(
+    field: TemplateField,
+    sectionKey: string,
+    maxScore: number,
+  ): void {
+    const optionScores = Array.isArray(field.scoringConfig?.optionScores)
+      ? field.scoringConfig?.optionScores
+      : [];
+
+    if (optionScores.length === 0) {
+      throw new Error(`Option-based scoring field ${field.fieldKey} in section ${sectionKey} requires optionScores`);
+    }
+
+    for (const item of optionScores) {
+      const score = Number(item.score);
+      if (!Number.isFinite(score) || score < 0 || score > maxScore) {
+        throw new Error(`Option score for field ${field.fieldKey} in section ${sectionKey} must be between 0 and ${maxScore}`);
+      }
+    }
+
+    const options = Array.isArray(field.options) ? field.options : [];
+    const scoreByMatcher = (matcher: (label: string) => boolean) => {
+      const option = options.find((item) => matcher(String(item.label ?? '').toLowerCase()));
+      if (!option) return null;
+      const score = optionScores.find((item) => item.optionValue === option.value)?.score;
+      return typeof score === 'number' ? score : Number(score ?? option.weight ?? 0);
+    };
+
+    const goodScore = scoreByMatcher((label) => label.includes('good'));
+    const averageScore = scoreByMatcher((label) => label.includes('average'));
+    const needsImprovementScore = scoreByMatcher(
+      (label) =>
+        label.includes('need to be better') ||
+        label.includes('needs improvement') ||
+        label.includes('below average') ||
+        label.includes('poor'),
+    );
+
+    if (
+      goodScore !== null &&
+      averageScore !== null &&
+      needsImprovementScore !== null &&
+      !(goodScore >= averageScore && averageScore >= needsImprovementScore)
+    ) {
+      throw new Error(
+        `Option scores for field ${field.fieldKey} in section ${sectionKey} must follow Good >= Average >= Need to be Better`,
+      );
+    }
+  }
+
   private assertNoConditionalCycles(dependencies: Map<string, string[]>): void {
     for (const fieldKey of dependencies.keys()) {
       const visiting = new Set<string>();
@@ -2110,18 +2293,29 @@ export class PmsTemplateService extends BaseService {
   }
 
   private validateLetterTemplate(
+    subject: string,
     body: string,
     placeholders: string[],
     conditionalBlocks: string[],
   ): void {
+    const content = `${subject ?? ''}\n${body ?? ''}`;
     const declaredPlaceholders = new Set(placeholders);
-    const bodyPlaceholders = [...body.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g)].map(
+    const usedPlaceholders = [...content.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g)].map(
+      (match) => match[1],
+    );
+    const usedConditionalBlocks = [...content.matchAll(/\{\{#if\s+([a-zA-Z][a-zA-Z0-9_]*)\s*\}\}/g)].map(
       (match) => match[1],
     );
 
-    for (const placeholder of bodyPlaceholders) {
+    for (const placeholder of usedPlaceholders) {
       if (!declaredPlaceholders.has(placeholder)) {
         throw new Error(`Missing required placeholder declaration: ${placeholder}`);
+      }
+    }
+
+    for (const placeholder of declaredPlaceholders) {
+      if (!usedPlaceholders.includes(placeholder)) {
+        throw new Error(`Declared placeholder is not used in subject or body: ${placeholder}`);
       }
     }
 
@@ -2129,7 +2323,78 @@ export class PmsTemplateService extends BaseService {
       if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(block)) {
         throw new Error(`Invalid conditional block name: ${block}`);
       }
+      if (!usedConditionalBlocks.includes(block)) {
+        throw new Error(`Declared conditional block is not used in subject or body: ${block}`);
+      }
     }
+
+    for (const block of usedConditionalBlocks) {
+      if (!conditionalBlocks.includes(block)) {
+        throw new Error(`Missing conditional block declaration: ${block}`);
+      }
+    }
+
+    const openConditionalCount = (content.match(/\{\{#if\s+[a-zA-Z][a-zA-Z0-9_]*\s*\}\}/g) || []).length;
+    const closeConditionalCount = (content.match(/\{\{\/if\}\}/g) || []).length;
+    if (openConditionalCount !== closeConditionalCount) {
+      throw new Error('Conditional blocks are not balanced. Check your {{#if}} and {{/if}} tags.');
+    }
+  }
+
+  private async resolveSimulationContext(input: SimulateTemplateAccessInput): Promise<{
+    hierarchyScope?: string;
+    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    visibilityFlags: string[];
+    annualAssignmentId?: string;
+    quarterAssignmentId?: string;
+  }> {
+    const visibilityFlags = new Set(input.visibilityFlags ?? []);
+    let hierarchyScope = input.hierarchyScope;
+    let quarter = input.quarter;
+    let annualAssignmentId = input.annualAssignmentId?.trim() || undefined;
+    let quarterAssignmentId = input.quarterAssignmentId?.trim() || undefined;
+
+    if (quarterAssignmentId) {
+      const quarterAssignment = await QuarterAssignment.findOne({
+        _id: quarterAssignmentId,
+        isDeleted: false,
+      }).lean();
+      if (!quarterAssignment) {
+        throw new Error('Quarter assignment not found');
+      }
+
+      annualAssignmentId = annualAssignmentId ?? quarterAssignment.annualAssignmentId.toString();
+      quarter = quarter ?? quarterAssignment.quarterCode;
+    }
+
+    if (annualAssignmentId) {
+      const annualAssignment = await AnnualAssignment.findOne({
+        _id: annualAssignmentId,
+        isDeleted: false,
+      }).lean();
+      if (!annualAssignment) {
+        throw new Error('Annual assignment not found');
+      }
+
+      const assignmentVisibility = annualAssignment.visibility ?? {};
+      if (assignmentVisibility.employeeReviewVisible) visibilityFlags.add('employee_review');
+      if (assignmentVisibility.employeeGradeVisible) visibilityFlags.add('employee_grade');
+      if (assignmentVisibility.employeeMeritVisible) visibilityFlags.add('employee_merit');
+      if (assignmentVisibility.managerGradeVisible) visibilityFlags.add('manager_grade');
+      if (assignmentVisibility.managerMeritVisible) visibilityFlags.add('manager_merit');
+
+      if (!hierarchyScope) {
+        hierarchyScope = 'direct-report';
+      }
+    }
+
+    return {
+      hierarchyScope,
+      quarter,
+      visibilityFlags: [...visibilityFlags],
+      annualAssignmentId,
+      quarterAssignmentId,
+    };
   }
 
   private renderTemplate(template: string, data: Record<string, unknown>): string {
@@ -2194,5 +2459,46 @@ export class PmsTemplateService extends BaseService {
 
   private normalizeCode(code: string): string {
     return code.trim().toUpperCase();
+  }
+
+  private normalizeTemplateStatus(status?: string) {
+    const normalized = (status || PmsTemplateStatus.DRAFT).trim().toUpperCase();
+    switch (normalized) {
+      case PmsTemplateStatus.ACTIVE:
+      case 'ACTIVE':
+        return PmsTemplateStatus.ACTIVE;
+      case PmsTemplateStatus.INACTIVE:
+      case 'INACTIVE':
+        return PmsTemplateStatus.INACTIVE;
+      case PmsTemplateStatus.ARCHIVED:
+      case 'ARCHIVED':
+        return PmsTemplateStatus.ARCHIVED;
+      case PmsTemplateStatus.DRAFT:
+      case 'DRAFT':
+      case 'DRAFT_TEMPLATE':
+      default:
+        return PmsTemplateStatus.DRAFT;
+    }
+  }
+
+  private normalizeOptionalDate(value?: string | Date) {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    const parsedDate = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new Error('Effective date is invalid');
+    }
+
+    return parsedDate;
+  }
+
+  private buildExactCaseInsensitivePattern(value: string) {
+    return new RegExp(`^${this.escapeRegex(value)}$`, 'i');
+  }
+
+  private escapeRegex(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 }
