@@ -412,12 +412,13 @@ export class PmsTemplateService extends BaseService {
   ): Promise<IPmsTemplateVersion> {
     this.assertAdmin('templateVersion.create');
     await this.ensureTemplateExists(templateId);
+    const templateObjectId = new Types.ObjectId(templateId);
     const versionNo = input.versionNo ?? input.versionNumber;
     if (!versionNo) {
       throw new Error('Template version number is required');
     }
     const existingVersion = await PmsTemplateVersion.findOne({
-      templateId: new Types.ObjectId(templateId),
+      templateId: templateObjectId,
       versionNo,
       isDeleted: false,
     }).lean();
@@ -425,17 +426,28 @@ export class PmsTemplateService extends BaseService {
       throw new Error(`Version ${versionNo} already exists for this template`);
     }
 
-    const sections = this.normalizeSections(input.sections ?? []);
+    const latestVersion = await PmsTemplateVersion.findOne({
+      templateId: templateObjectId,
+      isDeleted: false,
+    })
+      .sort({ versionNo: -1, createdAt: -1 })
+      .lean();
+
+    const versionSections =
+      Array.isArray(input.sections) && input.sections.length > 0
+        ? input.sections
+        : latestVersion?.sections ?? [];
+    const sections = this.normalizeSections(versionSections);
     this.validateSections(sections);
 
     const version = await PmsTemplateVersion.create({
-      templateId: new Types.ObjectId(templateId),
+      templateId: templateObjectId,
       versionNo,
       sections,
-      themeConfig: input.themeConfig ?? {},
-      scoringConfig: input.scoringConfig ?? {},
-      annualScoringConfig: input.annualScoringConfig ?? {},
-      outcomeMappings: input.outcomeMappings ?? [],
+      themeConfig: input.themeConfig ?? latestVersion?.themeConfig ?? {},
+      scoringConfig: input.scoringConfig ?? latestVersion?.scoringConfig ?? {},
+      annualScoringConfig: input.annualScoringConfig ?? latestVersion?.annualScoringConfig ?? {},
+      outcomeMappings: input.outcomeMappings ?? latestVersion?.outcomeMappings ?? [],
       effectiveFrom: input.effectiveFrom,
       effectiveTo: input.effectiveTo,
       status: PmsTemplateStatus.DRAFT,
