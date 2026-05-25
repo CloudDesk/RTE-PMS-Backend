@@ -25,6 +25,7 @@ import type { IObjective } from '../models/pms-objective.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type {
+  IObjectiveBucket,
   ITemplatePredefinedObjective,
   ITemplateSection,
 } from '../models/pms-template-version.model';
@@ -118,6 +119,7 @@ type ObjectiveConfig = {
     weightage?: number;
     successCriteria?: string;
   }>;
+  objectiveBuckets: IObjectiveBucket[];
 };
 
 type ObjectiveCommentRecord = {
@@ -362,7 +364,14 @@ export class ObjectiveService extends BaseService {
     await this.assertObjectiveWindow(quarterAssignment, 'setting');
     this.validateObjectiveInput(input);
     this.validateCreateAgainstConfig(source, objectiveConfig);
-    await this.validateQuarterObjectiveRules(quarterAssignment, input.weightage);
+    await this.validateQuarterObjectiveRules(
+      quarterAssignment,
+      input.weightage,
+      undefined,
+      source,
+      objectiveConfig,
+      false,
+    );
 
     if (quarterAssignment.quarterState === QuarterWorkflowState.NOT_STARTED) {
       await this.ensureQuarterState(
@@ -565,6 +574,16 @@ export class ObjectiveService extends BaseService {
     }
 
     this.validateObjectiveForSubmit(objective);
+    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
+    await this.validateQuarterObjectiveRules(
+      quarterAssignment,
+      objective.weightage,
+      objective._id.toString(),
+      objective.source as ObjectiveSourceType,
+      objectiveConfig,
+      true,
+    );
 
     await this.transitionQuarterIfNeeded(
       objective.quarterAssignmentId.toString(),
@@ -1014,7 +1033,46 @@ export class ObjectiveService extends BaseService {
       allowEmployeeCreated: true,
       allowManagerCreated: true,
       predefinedObjectives: [],
+      objectiveBuckets: this.defaultObjectiveBuckets(),
     };
+  }
+
+  private defaultObjectiveBuckets(): IObjectiveBucket[] {
+    return [
+      {
+        bucketKey: 'template_predefined',
+        label: 'Template Predefined Objectives',
+        source: 'TEMPLATE_PREDEFINED',
+        owner: 'SYSTEM',
+        bucketWeightage: 20,
+        rowWeightMode: 'FIXED_BY_TEMPLATE',
+        editableBy: ['ADMIN'],
+        requiresManagerApproval: false,
+        autoApprove: true,
+      },
+      {
+        bucketKey: 'employee_dynamic',
+        label: 'Employee Objectives',
+        source: 'EMPLOYEE_DYNAMIC',
+        owner: 'EMPLOYEE',
+        bucketWeightage: 50,
+        rowWeightMode: 'OWNER_ENTERED',
+        editableBy: ['EMPLOYEE'],
+        requiresManagerApproval: true,
+        autoApprove: false,
+      },
+      {
+        bucketKey: 'manager_dynamic',
+        label: 'Manager Objectives',
+        source: 'MANAGER_DYNAMIC',
+        owner: 'MANAGER',
+        bucketWeightage: 30,
+        rowWeightMode: 'OWNER_ENTERED',
+        editableBy: ['MANAGER'],
+        requiresManagerApproval: false,
+        autoApprove: true,
+      },
+    ];
   }
 
   private resolveTemplateObjectiveConfig(
@@ -1041,6 +1099,9 @@ export class ObjectiveService extends BaseService {
       mode: objectiveSection.objectiveConfig.mode ?? 'DYNAMIC',
       allowEmployeeCreated: objectiveSection.objectiveConfig.allowEmployeeCreated !== false,
       allowManagerCreated: objectiveSection.objectiveConfig.allowManagerCreated !== false,
+      objectiveBuckets: objectiveSection.objectiveBuckets?.length
+        ? objectiveSection.objectiveBuckets
+        : this.defaultObjectiveBuckets(),
       predefinedObjectives: (objectiveSection.objectiveConfig.predefinedObjectives ?? []).map(
         (objective: ITemplatePredefinedObjective) => ({
           key: objective.objectiveKey,
@@ -1371,6 +1432,9 @@ export class ObjectiveService extends BaseService {
     quarterAssignment: IQuarterAssignment,
     newWeightage?: number,
     editingObjectiveId?: string,
+    source?: ObjectiveSourceType,
+    objectiveConfig?: ObjectiveConfig,
+    requireExactBucketTotal = false,
   ): Promise<void> {
     if (
       quarterAssignment.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
@@ -1381,6 +1445,18 @@ export class ObjectiveService extends BaseService {
     }
 
     if (newWeightage === undefined) return;
+
+    if (source && objectiveConfig?.objectiveBuckets?.length) {
+      await this.validateBucketObjectiveWeightage(
+        quarterAssignment,
+        source,
+        objectiveConfig,
+        newWeightage,
+        editingObjectiveId,
+        requireExactBucketTotal,
+      );
+      return;
+    }
 
     const existingObjectives = await Objective.find({
       quarterAssignmentId: quarterAssignment._id,
@@ -1395,6 +1471,62 @@ export class ObjectiveService extends BaseService {
     if (currentWeightage + newWeightage > 100) {
       throw new Error('Total objective weightage for the quarter cannot exceed 100');
     }
+  }
+
+  private async validateBucketObjectiveWeightage(
+    quarterAssignment: IQuarterAssignment,
+    source: ObjectiveSourceType,
+    objectiveConfig: ObjectiveConfig,
+    newWeightage: number,
+    editingObjectiveId?: string,
+    requireExactBucketTotal = false,
+  ): Promise<void> {
+    const bucket = this.resolveObjectiveBucket(source, objectiveConfig);
+    if (!bucket) {
+      return;
+    }
+
+    const existingObjectives = await Objective.find({
+      quarterAssignmentId: quarterAssignment._id,
+      source,
+      isDeleted: false,
+      ...(editingObjectiveId ? { _id: { $ne: new Types.ObjectId(editingObjectiveId) } } : {}),
+    }).select('weightage').lean();
+
+    const currentWeightage = existingObjectives.reduce(
+      (total, objective) => total + Number(objective.weightage ?? 0),
+      0,
+    );
+    const nextTotal = currentWeightage + Number(newWeightage ?? 0);
+
+    if (requireExactBucketTotal) {
+      if (Math.abs(nextTotal - 100) > 0.001) {
+        throw new Error(
+          `Objective row weightage inside "${bucket.label}" must total 100% before submission (currently ${nextTotal}%)`,
+        );
+      }
+      return;
+    }
+
+    if (nextTotal > 100) {
+      throw new Error(
+        `Objective row weightage inside "${bucket.label}" cannot exceed 100% (currently ${nextTotal}%)`,
+      );
+    }
+  }
+
+  private resolveObjectiveBucket(
+    source: ObjectiveSourceType,
+    objectiveConfig: ObjectiveConfig,
+  ): IObjectiveBucket | undefined {
+    const bucketSource =
+      source === ObjectiveSource.PREDEFINED
+        ? 'TEMPLATE_PREDEFINED'
+        : source === ObjectiveSource.MANAGER_CREATED
+          ? 'MANAGER_DYNAMIC'
+          : 'EMPLOYEE_DYNAMIC';
+
+    return objectiveConfig.objectiveBuckets.find((bucket) => bucket.source === bucketSource);
   }
 
   private validateCreateAgainstConfig(
@@ -1438,6 +1570,9 @@ export class ObjectiveService extends BaseService {
       quarterAssignment,
       nextWeightage,
       objective._id.toString(),
+      objective.source as ObjectiveSourceType,
+      objectiveConfig,
+      false,
     );
   }
 

@@ -1,5 +1,4 @@
 import { getSubordinateUserIds, getManageableExternalUsers } from '../src/utilis/userHierarchy';
-import { User } from '../src/models/user.model';
 import { Types } from 'mongoose';
 
 // Mock data for testing
@@ -55,10 +54,60 @@ const mockUsers = [
   }
 ];
 
+// Smart mock filter function
+const mockFilterUsers = (query: any) => {
+  if (!query) return mockUsers;
+  return mockUsers.filter(user => {
+    if (query.active !== undefined && user.active !== query.active) {
+      return false;
+    }
+    if (query.managerId !== undefined) {
+      const qMgr = query.managerId;
+      const uMgr = user.managerId;
+      if (!uMgr || uMgr.toString() !== qMgr.toString()) {
+        return false;
+      }
+    }
+    if (query.role !== undefined && user.role !== query.role) {
+      return false;
+    }
+    if (query._id !== undefined) {
+      if (query._id.$in && Array.isArray(query._id.$in)) {
+        const idsList = query._id.$in.map((id: any) => id.toString());
+        if (!idsList.includes(user._id.toString())) {
+          return false;
+        }
+      } else {
+        if (user._id.toString() !== query._id.toString()) {
+          return false;
+        }
+      }
+    }
+    return true;
+  });
+};
+
+let lastQuery: any = null;
+
+const mockLean = jest.fn(() => {
+  return mockFilterUsers(lastQuery);
+});
+
+const mockSelect = jest.fn(() => {
+  return {
+    lean: mockLean
+  };
+});
+
 // Mock User.find to return our test data
 jest.mock('../src/models/user.model', () => ({
   User: {
-    find: jest.fn()
+    find: jest.fn((query) => {
+      lastQuery = query;
+      return {
+        select: mockSelect
+      };
+    })
   }
 }));
 
@@ -69,16 +118,6 @@ describe('User Hierarchy Tests', () => {
 
   describe('getSubordinateUserIds', () => {
     it('should return all subordinates for Jey (Admin)', async () => {
-      // Mock User.find to return subordinates
-      (User.find as jest.Mock).mockResolvedValue([
-        mockUsers[1], // Wajith
-        mockUsers[2], // Pravin
-        mockUsers[3], // Hari
-        mockUsers[4], // Ex1
-        mockUsers[5], // Ex2
-        mockUsers[6]  // Ex3
-      ]);
-
       const result = await getSubordinateUserIds('507f1f77bcf86cd799439011');
       
       expect(result).toHaveLength(6);
@@ -91,15 +130,6 @@ describe('User Hierarchy Tests', () => {
     });
 
     it('should return subordinates for Wajith (Manager)', async () => {
-      // Mock User.find to return subordinates
-      (User.find as jest.Mock).mockResolvedValue([
-        mockUsers[2], // Pravin
-        mockUsers[3], // Hari
-        mockUsers[4], // Ex1
-        mockUsers[5], // Ex2
-        mockUsers[6]  // Ex3
-      ]);
-
       const result = await getSubordinateUserIds('507f1f77bcf86cd799439012');
       
       expect(result).toHaveLength(5);
@@ -111,12 +141,6 @@ describe('User Hierarchy Tests', () => {
     });
 
     it('should return subordinates for Pravin (Staff)', async () => {
-      // Mock User.find to return subordinates
-      (User.find as jest.Mock).mockResolvedValue([
-        mockUsers[4], // Ex1
-        mockUsers[5]  // Ex2
-      ]);
-
       const result = await getSubordinateUserIds('507f1f77bcf86cd799439013');
       
       expect(result).toHaveLength(2);
@@ -127,13 +151,6 @@ describe('User Hierarchy Tests', () => {
 
   describe('getManageableExternalUsers', () => {
     it('should return all external users for admin', async () => {
-      // Mock User.find to return all external users
-      (User.find as jest.Mock).mockResolvedValue([
-        mockUsers[4], // Ex1
-        mockUsers[5], // Ex2
-        mockUsers[6]  // Ex3
-      ]);
-
       const result = await getManageableExternalUsers('507f1f77bcf86cd799439011', 'admin');
       
       expect(result).toHaveLength(3);
@@ -143,21 +160,6 @@ describe('User Hierarchy Tests', () => {
     });
 
     it('should return external users under Wajith (Manager)', async () => {
-      // Mock getSubordinateUserIds to return subordinates
-      (User.find as jest.Mock)
-        .mockResolvedValueOnce([ // First call for getSubordinateUserIds
-          mockUsers[2], // Pravin
-          mockUsers[3], // Hari
-          mockUsers[4], // Ex1
-          mockUsers[5], // Ex2
-          mockUsers[6]  // Ex3
-        ])
-        .mockResolvedValueOnce([ // Second call for filtering external users
-          mockUsers[4], // Ex1
-          mockUsers[5], // Ex2
-          mockUsers[6]  // Ex3
-        ]);
-
       const result = await getManageableExternalUsers('507f1f77bcf86cd799439012', 'manager');
       
       expect(result).toHaveLength(3);
@@ -167,17 +169,6 @@ describe('User Hierarchy Tests', () => {
     });
 
     it('should return external users under Pravin (Staff)', async () => {
-      // Mock getSubordinateUserIds to return subordinates
-      (User.find as jest.Mock)
-        .mockResolvedValueOnce([ // First call for getSubordinateUserIds
-          mockUsers[4], // Ex1
-          mockUsers[5]  // Ex2
-        ])
-        .mockResolvedValueOnce([ // Second call for filtering external users
-          mockUsers[4], // Ex1
-          mockUsers[5]  // Ex2
-        ]);
-
       const result = await getManageableExternalUsers('507f1f77bcf86cd799439013', 'staff');
       
       expect(result).toHaveLength(2);
@@ -185,4 +176,4 @@ describe('User Hierarchy Tests', () => {
       expect(result.map(id => id.toString())).toContain('507f1f77bcf86cd799439016'); // Ex2
     });
   });
-}); 
+});

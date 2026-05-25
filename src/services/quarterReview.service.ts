@@ -25,6 +25,7 @@ import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
+import { PmsScoringService } from './pms-scoring.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -201,23 +202,33 @@ type QuarterReviewScoringFieldConfig = {
   formula?: string;
   fixedScore?: number;
   maxScore?: number;
+  options?: any[];
+  matrixConfig?: any;
+  fieldCategory?: string;
+  semanticRole?: string;
+  scoringConfig?: any;
 };
 
 type QuarterReviewSectionConfig = {
   sectionKey: string;
+  sectionType?: string;
   weightage: number;
   aggregationMethod: 'WEIGHTED_AVERAGE' | 'SIMPLE_AVERAGE' | 'SUM' | 'MAX_FIELD';
   maxSectionScore: number | null;
   scoringFields: QuarterReviewScoringFieldConfig[];
+  objectiveBuckets?: any[];
 };
 
 type QuarterReviewConfig = {
   objectiveRatingRule: ReviewScoringRule | null;
   overallScoreMax: number | null;
+  scoringPolicy?: any;
   sections: QuarterReviewSectionConfig[];
 };
 
 export class QuarterReviewService extends BaseService {
+  private readonly scoringService = new PmsScoringService();
+
   constructor(context: RequestContext) {
     super(context);
   }
@@ -397,7 +408,7 @@ export class QuarterReviewService extends BaseService {
     }
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const reviewConfig = await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode);
-    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig);
+    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig, approvedObjectives);
 
     this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
 
@@ -445,6 +456,7 @@ export class QuarterReviewService extends BaseService {
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
       attachments: this.normalizeAttachments(input.attachments ?? []),
+      scoreSnapshot: scoringResolution.scoreSnapshot,
       actingDelegateUserId,
       originalOwnerUserId,
       updatedBy: this.actorIdObject(),
@@ -507,7 +519,7 @@ export class QuarterReviewService extends BaseService {
     const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const reviewConfig = await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode);
-    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig);
+    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig, approvedObjectives);
     this.validateReviewInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
 
     const existingReview = await QuarterReview.findOne({
@@ -537,14 +549,14 @@ export class QuarterReviewService extends BaseService {
       }
     }
 
-    const finalizationTimestamp = new Date();
+    const submissionTimestamp = new Date();
     const reviewPayload = {
       quarterAssignmentId: quarterAssignment._id,
       annualAssignmentId: quarterAssignment.annualAssignmentId,
       cycleId: quarterAssignment.cycleId,
       employeeId: quarterAssignment.employeeId,
       managerId: quarterAssignment.assignedManagerId,
-      reviewStatus: QuarterReviewStatus.FINALIZED,
+      reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
       ratings: this.normalizeRatings(input.ratings),
       comments: input.comments.trim(),
       score: scoringResolution.overallScore,
@@ -555,10 +567,11 @@ export class QuarterReviewService extends BaseService {
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
       attachments: this.normalizeAttachments(input.attachments ?? []),
+      scoreSnapshot: scoringResolution.scoreSnapshot,
       actingDelegateUserId,
       originalOwnerUserId,
-      submittedAt: finalizationTimestamp,
-      finalizedAt: finalizationTimestamp,
+      submittedAt: submissionTimestamp,
+      finalizedAt: undefined,
       updatedBy: this.actorIdObject(),
       createdBy: existingReview?.createdBy ?? this.actorIdObject(),
     };
@@ -603,26 +616,9 @@ export class QuarterReviewService extends BaseService {
       quarterReview.toObject(),
     );
 
-    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
-      submittedQuarterAssignment._id.toString(),
-      QuarterWorkflowState.QUARTER_FINALIZED,
-      this.requireActor(),
-    );
-
-    await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, quarterReview);
-    await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, quarterReview);
-
-    await this.audit(
-      'PMS_QUARTER_ASSIGNMENT_FINALIZED',
-      'QUARTER_ASSIGNMENT',
-      updatedQuarterAssignment._id.toString(),
-      { quarterState: submittedQuarterAssignment.quarterState },
-      { quarterState: updatedQuarterAssignment.quarterState },
-    );
-
     return {
       quarterReview,
-      quarterAssignment: updatedQuarterAssignment,
+      quarterAssignment: submittedQuarterAssignment,
     };
   }
 
@@ -1039,20 +1035,40 @@ export class QuarterReviewService extends BaseService {
   private resolveQuarterReviewScoring(
     input: QuarterReviewBaseInput,
     reviewConfig: QuarterReviewConfig,
-  ): { overallScore: number | undefined; reviewValues: QuarterReviewValueInput[] } {
+    approvedObjectives: any[],
+  ): {
+    overallScore: number | undefined;
+    reviewValues: QuarterReviewValueInput[];
+    scoreSnapshot: any;
+  } {
     const mergedReviewValues = this.mergeComputedReviewValues(
       input.reviewValues ?? [],
       this.buildComputedReviewValues(input, reviewConfig),
     );
-    const sectionScores = this.calculateSectionScores(mergedReviewValues, reviewConfig);
-    const computedOverallScore = this.calculateOverallScore(sectionScores, reviewConfig);
+    const { sectionScores, sectionsSnapshot } = this.scoringService.calculateSectionScores(
+      mergedReviewValues,
+      reviewConfig,
+      approvedObjectives,
+      input.ratings ?? [],
+    );
+    const computedOverallScore = this.scoringService.calculateOverallScore(sectionScores, reviewConfig);
     const manualScore = input.score === undefined || input.score === null
       ? undefined
       : Number(input.score);
 
+    const overallScore = computedOverallScore ?? manualScore;
+    const scoreSnapshot = {
+      overallScore,
+      calculatedScore: computedOverallScore,
+      manualScore,
+      sections: sectionsSnapshot,
+      calculatedAt: new Date(),
+    };
+
     return {
-      overallScore: computedOverallScore ?? manualScore,
+      overallScore,
       reviewValues: mergedReviewValues,
+      scoreSnapshot,
     };
   }
 
@@ -1324,7 +1340,7 @@ export class QuarterReviewService extends BaseService {
           (field.scoreType === 'FORMULA' || field.fieldType === PmsTemplateFieldType.FORMULA) &&
           field.formula?.trim()
         ) {
-          const formulaValue = this.evaluateFormulaExpression(field.formula, numericValueContext);
+          const formulaValue = this.scoringService.evaluateFormulaExpression(field.formula, numericValueContext);
           if (formulaValue !== undefined) {
             const normalizedValue = field.maxScore && formulaValue > field.maxScore
               ? field.maxScore
@@ -1375,7 +1391,7 @@ export class QuarterReviewService extends BaseService {
     return context;
   }
 
-  private evaluateFormulaExpression(
+  evaluateFormulaExpression(
     formula: string,
     context: Record<string, number>,
   ): number | undefined {
@@ -1421,67 +1437,379 @@ export class QuarterReviewService extends BaseService {
     return Array.from(merged.values());
   }
 
-  private calculateSectionScores(
+  private getOptionScore(
+    selectedValue: string,
+    field: any,
+    row?: any,
+  ): number | undefined {
+    if (!selectedValue) return undefined;
+
+    // 1. row options override
+    if (row && Array.isArray(row.options)) {
+      const match = row.options.find((opt: any) => opt.value === selectedValue);
+      if (match && match.score !== undefined && match.score !== null) {
+        return Number(match.score);
+      }
+    }
+
+    // 2. field.matrixConfig.options
+    if (field.matrixConfig && Array.isArray(field.matrixConfig.options)) {
+      const match = field.matrixConfig.options.find((opt: any) => opt.value === selectedValue);
+      if (match && match.score !== undefined && match.score !== null) {
+        return Number(match.score);
+      }
+    }
+
+    // 3. field.options
+    if (Array.isArray(field.options)) {
+      const match = field.options.find((opt: any) => opt.value === selectedValue);
+      if (match && match.score !== undefined && match.score !== null) {
+        return Number(match.score);
+      }
+    }
+
+    // 4. legacy scoringConfig.optionScores
+    if (field.scoringConfig && Array.isArray(field.scoringConfig.optionScores)) {
+      const match = field.scoringConfig.optionScores.find(
+        (opt: any) => opt.optionValue === selectedValue || opt.value === selectedValue,
+      );
+      if (match && match.score !== undefined && match.score !== null) {
+        return Number(match.score);
+      }
+    }
+
+    return undefined;
+  }
+
+  calculateSectionScores(
     reviewValues: QuarterReviewValueInput[],
     reviewConfig: QuarterReviewConfig,
-  ): Array<{ sectionKey: string; score: number; weightage: number }> {
+    approvedObjectives: any[],
+    ratings: QuarterReviewRatingInput[],
+  ): {
+    sectionScores: Array<{ sectionKey: string; score: number; weightage: number }>;
+    sectionsSnapshot: any[];
+  } {
     const valueMap = new Map(
       reviewValues
         .filter((value) => value.fieldKey?.trim() && value.sectionKey?.trim())
         .map((value) => [`${value.sectionKey}::${value.fieldKey}`, value]),
     );
 
-    return reviewConfig.sections
-      .map((section) => {
-        const fieldScores = section.scoringFields
-          .map((field) => {
-            const matchedValue = valueMap.get(`${field.sectionKey}::${field.fieldKey}`);
-            const numericScore = matchedValue?.valueNumber;
-            return numericScore !== undefined && numericScore !== null && Number.isFinite(Number(numericScore))
-              ? { score: Number(numericScore), weightage: field.weightage }
-              : null;
-          })
-          .filter((value): value is { score: number; weightage: number } => Boolean(value));
+    const sectionScores: Array<{ sectionKey: string; score: number; weightage: number }> = [];
+    const sectionsSnapshot: any[] = [];
 
-        if (fieldScores.length === 0) {
-          return null;
+    for (const section of reviewConfig.sections) {
+      let sectionScore = 0;
+      let sectionDetails: any = {};
+
+      if (section.sectionType === PmsTemplateSectionType.OBJECTIVES) {
+        const buckets = section.objectiveBuckets ?? [];
+        const objectivesByBucket = new Map<string, any[]>();
+
+        for (const obj of approvedObjectives) {
+          let bucketKey = 'employee_dynamic';
+          if (obj.source === 'PREDEFINED') bucketKey = 'template_predefined';
+          else if (obj.source === 'EMPLOYEE_CREATED') bucketKey = 'employee_dynamic';
+          else if (obj.source === 'MANAGER_CREATED') bucketKey = 'manager_dynamic';
+
+          const matchedBucket = buckets.find(
+            (b) =>
+              b.bucketKey === bucketKey ||
+              (obj.source === 'PREDEFINED' && b.source === 'TEMPLATE_PREDEFINED') ||
+              (obj.source === 'EMPLOYEE_CREATED' && b.source === 'EMPLOYEE_DYNAMIC') ||
+              (obj.source === 'MANAGER_CREATED' && b.source === 'MANAGER_DYNAMIC'),
+          );
+          const actualBucketKey = matchedBucket ? matchedBucket.bucketKey : bucketKey;
+
+          if (!objectivesByBucket.has(actualBucketKey)) {
+            objectivesByBucket.set(actualBucketKey, []);
+          }
+          objectivesByBucket.get(actualBucketKey)!.push(obj);
         }
 
-        let score: number;
-        switch (section.aggregationMethod) {
-          case 'SUM':
-            score = fieldScores.reduce((total, item) => total + item.score, 0);
-            break;
-          case 'MAX_FIELD':
-            score = Math.max(...fieldScores.map((item) => item.score));
-            break;
-          case 'SIMPLE_AVERAGE':
-            score = fieldScores.reduce((total, item) => total + item.score, 0) / fieldScores.length;
-            break;
-          case 'WEIGHTED_AVERAGE':
-          default: {
-            const totalWeight = fieldScores.reduce((total, item) => total + item.weightage, 0);
-            score = totalWeight > 0
-              ? fieldScores.reduce((total, item) => total + (item.score * item.weightage), 0) / totalWeight
-              : fieldScores.reduce((total, item) => total + item.score, 0) / fieldScores.length;
-            break;
+        const activeBuckets = buckets.filter((b) => {
+          const list = objectivesByBucket.get(b.bucketKey) ?? [];
+          return list.length > 0;
+        });
+
+        const sumOfActiveBucketWeightages = activeBuckets.reduce(
+          (sum, b) => sum + Number(b.bucketWeightage ?? 0),
+          0,
+        );
+
+        const bucketSnapshots: any[] = [];
+        let runningSectionScore = 0;
+
+        for (const bucket of activeBuckets) {
+          const adjustedBucketWeight = sumOfActiveBucketWeightages > 0
+            ? (Number(bucket.bucketWeightage ?? 0) / sumOfActiveBucketWeightages) * 100
+            : 0;
+
+          const bucketObjs = objectivesByBucket.get(bucket.bucketKey) ?? [];
+          let objWeights: number[] = [];
+
+          if (bucket.rowWeightMode === 'EQUAL_DISTRIBUTION') {
+            objWeights = bucketObjs.map(() => 100 / bucketObjs.length);
+          } else {
+            const hasAllWeights = bucketObjs.every(
+              (o) => o.weightage !== undefined && o.weightage !== null && Number(o.weightage) > 0,
+            );
+            if (hasAllWeights) {
+              objWeights = bucketObjs.map((o) => Number(o.weightage));
+            } else {
+              objWeights = bucketObjs.map(() => 100 / bucketObjs.length);
+            }
+          }
+
+          const totalWeightSum = objWeights.reduce((sum, w) => sum + w, 0);
+          const normalizedWeights = objWeights.map((w) =>
+            totalWeightSum > 0 ? (w / totalWeightSum) * 100 : 0,
+          );
+
+          let bucketScoreSum = 0;
+          const objsSnapshot: any[] = [];
+
+          bucketObjs.forEach((obj, idx) => {
+            const rowWeight = normalizedWeights[idx];
+            const ratingMatch = ratings.find(
+              (r) => r.objectiveId?.toString() === obj._id.toString(),
+            );
+            const ratingValue = ratingMatch && ratingMatch.rating !== undefined && ratingMatch.rating !== null
+              ? Number(ratingMatch.rating)
+              : 0;
+
+            const maxRatingScore = reviewConfig.objectiveRatingRule?.maxScore ?? 10;
+            const normalizedRatingScore = maxRatingScore > 0
+              ? (ratingValue / maxRatingScore) * 100
+              : 0;
+
+            const objContribution = (rowWeight / 100) * normalizedRatingScore;
+            bucketScoreSum += objContribution;
+
+            objsSnapshot.push({
+              objectiveId: obj._id.toString(),
+              title: obj.title,
+              weightage: obj.weightage,
+              rowWeight,
+              rating: ratingValue,
+              normalizedRatingScore,
+              contribution: objContribution,
+            });
+          });
+
+          const bucketContribution = (adjustedBucketWeight / 100) * bucketScoreSum;
+          runningSectionScore += bucketContribution;
+
+          bucketSnapshots.push({
+            bucketKey: bucket.bucketKey,
+            label: bucket.label,
+            bucketWeightage: bucket.bucketWeightage,
+            adjustedBucketWeight,
+            rowWeightMode: bucket.rowWeightMode,
+            score: bucketScoreSum,
+            objectives: objsSnapshot,
+          });
+        }
+
+        sectionScore = runningSectionScore;
+        sectionDetails = { activeBuckets: bucketSnapshots };
+      } else {
+        const fieldScores: Array<{ score: number; weightage: number }> = [];
+        const fieldsSnapshot: any[] = [];
+
+        for (const field of section.scoringFields) {
+          const matchedValue = valueMap.get(`${field.sectionKey}::${field.fieldKey}`);
+          let resolvedRawScore: number | undefined;
+          let maxScore = field.maxScore ?? 100;
+          let extraDetails: any = {};
+
+          if (field.fieldType === 'MATRIX') {
+            const matrixConfig = field.matrixConfig;
+            const rows = matrixConfig?.rows ?? [];
+            let matrixScoreSum = 0;
+            const rowsSnapshot: any[] = [];
+
+            let rowWeights: number[] = [];
+            const hasAllWeights = rows.every(
+              (r: any) => r.weightage !== undefined && r.weightage !== null && Number(r.weightage) > 0,
+            );
+            if (hasAllWeights) {
+              rowWeights = rows.map((r: any) => Number(r.weightage));
+            } else {
+              rowWeights = rows.map(() => 100 / rows.length);
+            }
+
+            const totalRowWeightSum = rowWeights.reduce((sum, w) => sum + w, 0);
+            const normalizedRowWeights = rowWeights.map((w) =>
+              totalRowWeightSum > 0 ? (w / totalRowWeightSum) * 100 : 0,
+            );
+
+            let valueJsonMap: Record<string, string> = {};
+            if (matchedValue?.valueJson) {
+              if (typeof matchedValue.valueJson === 'string') {
+                try {
+                  valueJsonMap = JSON.parse(matchedValue.valueJson);
+                } catch {
+                  valueJsonMap = {};
+                }
+              } else if (typeof matchedValue.valueJson === 'object') {
+                valueJsonMap = matchedValue.valueJson as Record<string, string>;
+              }
+            }
+
+            rows.forEach((row: any, idx: number) => {
+              const rowWeight = normalizedRowWeights[idx];
+              const selectedValue = valueJsonMap[row.key] || valueJsonMap.values?.[row.key];
+              let rowScore = 0;
+              let rowMaxScore = maxScore;
+              let resolvedOptScore = selectedValue
+                ? this.getOptionScore(selectedValue, field, row)
+                : undefined;
+
+              if (resolvedOptScore !== undefined) {
+                rowScore = resolvedOptScore;
+              }
+
+              let optMax = 0;
+              const allRowOpts = row.options || field.matrixConfig?.options || field.options || [];
+              allRowOpts.forEach((o: any) => {
+                const s = Number(o.score);
+                if (Number.isFinite(s) && s > optMax) optMax = s;
+              });
+              if (optMax > 0) {
+                rowMaxScore = optMax;
+              }
+
+              const normalizedRowScore = rowMaxScore > 0
+                ? (rowScore / rowMaxScore) * 100
+                : 0;
+
+              const rowContribution = (rowWeight / 100) * normalizedRowScore;
+              matrixScoreSum += rowContribution;
+
+              rowsSnapshot.push({
+                key: row.key,
+                label: row.label,
+                weightage: row.weightage,
+                rowWeight,
+                selectedValue,
+                score: rowScore,
+                maxScore: rowMaxScore,
+                normalizedRowScore,
+                contribution: rowContribution,
+              });
+            });
+
+            resolvedRawScore = matrixScoreSum;
+            maxScore = 100;
+            extraDetails = { rows: rowsSnapshot };
+          } else if (
+            ['DROPDOWN', 'RADIO', 'CHECKBOX_GROUP', 'MULTISELECT'].includes(field.fieldType) ||
+            field.scoreType === 'OPTION_BASED'
+          ) {
+            const selectedValue =
+              matchedValue?.valueText ||
+              (typeof matchedValue?.valueJson === 'string' ? matchedValue.valueJson : undefined);
+            if (selectedValue) {
+              resolvedRawScore = this.getOptionScore(selectedValue, field);
+            }
+          } else if (field.scoreType === 'BOOLEAN' || field.fieldType === 'CHECKBOX') {
+            const isChecked =
+              matchedValue?.valueJson === true ||
+              matchedValue?.valueJson === 'true' ||
+              matchedValue?.valueText === 'true';
+            const checkedScore =
+              field.scoringConfig?.checkedScore !== undefined
+                ? Number(field.scoringConfig.checkedScore)
+                : undefined;
+            const uncheckedScore =
+              field.scoringConfig?.uncheckedScore !== undefined
+                ? Number(field.scoringConfig.uncheckedScore)
+                : undefined;
+
+            if (isChecked) {
+              resolvedRawScore = checkedScore !== undefined ? checkedScore : maxScore;
+            } else {
+              resolvedRawScore = uncheckedScore !== undefined ? uncheckedScore : 0;
+            }
+          } else {
+            if (matchedValue?.valueNumber !== undefined && matchedValue?.valueNumber !== null) {
+              resolvedRawScore = Number(matchedValue.valueNumber);
+            }
+          }
+
+          if (resolvedRawScore !== undefined && Number.isFinite(resolvedRawScore)) {
+            const normalizedFieldScore = maxScore > 0 ? (resolvedRawScore / maxScore) * 100 : 0;
+            fieldScores.push({ score: normalizedFieldScore, weightage: field.weightage });
+
+            fieldsSnapshot.push({
+              fieldKey: field.fieldKey,
+              fieldType: field.fieldType,
+              fieldCategory: field.fieldCategory,
+              rawScore: resolvedRawScore,
+              maxScore,
+              normalizedScore: normalizedFieldScore,
+              weightage: field.weightage,
+              value: matchedValue?.valueNumber ?? matchedValue?.valueText ?? matchedValue?.valueJson,
+              ...extraDetails,
+            });
           }
         }
 
-        const normalizedScore = section.maxSectionScore !== null && score > section.maxSectionScore
-          ? section.maxSectionScore
-          : score;
+        if (fieldScores.length > 0) {
+          let score = 0;
+          switch (section.aggregationMethod) {
+            case 'SUM':
+              score = fieldScores.reduce((total, item) => total + item.score, 0);
+              break;
+            case 'MAX_FIELD':
+              score = Math.max(...fieldScores.map((item) => item.score));
+              break;
+            case 'SIMPLE_AVERAGE':
+              score = fieldScores.reduce((total, item) => total + item.score, 0) / fieldScores.length;
+              break;
+            case 'WEIGHTED_AVERAGE':
+            default: {
+              const totalWeight = fieldScores.reduce((total, item) => total + item.weightage, 0);
+              score = totalWeight > 0
+                ? fieldScores.reduce((total, item) => total + (item.score * item.weightage), 0) / totalWeight
+                : fieldScores.reduce((total, item) => total + item.score, 0) / fieldScores.length;
+              break;
+            }
+          }
 
-        return {
-          sectionKey: section.sectionKey,
-          score: normalizedScore,
-          weightage: section.weightage,
-        };
-      })
-      .filter((value): value is { sectionKey: string; score: number; weightage: number } => Boolean(value));
+          sectionScore = score;
+          sectionDetails = { fields: fieldsSnapshot };
+        }
+      }
+
+      const normalizedScore =
+        section.maxSectionScore !== null && sectionScore > section.maxSectionScore
+          ? section.maxSectionScore
+          : sectionScore;
+
+      sectionScores.push({
+        sectionKey: section.sectionKey,
+        score: normalizedScore,
+        weightage: section.weightage,
+      });
+
+      sectionsSnapshot.push({
+        sectionKey: section.sectionKey,
+        sectionType: section.sectionType,
+        score: normalizedScore,
+        weightage: section.weightage,
+        maxSectionScore: section.maxSectionScore,
+        aggregationMethod: section.aggregationMethod,
+        ...sectionDetails,
+      });
+    }
+
+    return { sectionScores, sectionsSnapshot };
   }
 
-  private calculateOverallScore(
+  calculateOverallScore(
     sectionScores: Array<{ sectionKey: string; score: number; weightage: number }>,
     reviewConfig: QuarterReviewConfig,
   ): number | undefined {
@@ -1627,7 +1955,7 @@ export class QuarterReviewService extends BaseService {
     }
 
     const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
-      .select('sections')
+      .select('sections scoringConfig')
       .lean();
 
     if (!templateVersion) {
@@ -1674,6 +2002,7 @@ export class QuarterReviewService extends BaseService {
     const sections = applicableSections
       .map((section) => ({
         sectionKey: section.sectionKey,
+        sectionType: section.sectionType,
         weightage: Number(section.sectionScoringConfig?.weightage ?? 0),
         aggregationMethod: (
           section.sectionScoringConfig?.aggregationMethod as QuarterReviewSectionConfig['aggregationMethod']
@@ -1681,11 +2010,13 @@ export class QuarterReviewService extends BaseService {
         maxSectionScore: Number.isFinite(Number(section.sectionScoringConfig?.maxSectionScore))
           ? Number(section.sectionScoringConfig?.maxSectionScore)
           : null,
+        scoringPolicy: (section.sectionScoringConfig as Record<string, unknown> | undefined)?.scoringPolicy,
+        objectiveBuckets: section.objectiveBuckets,
         scoringFields: (section.fields ?? [])
           .filter(
             (field) =>
               this.isManagerEditableReviewField(field) &&
-              field.scoringConfig?.participatesInScoring === true,
+              (field.scoringConfig?.participatesInScoring === true || field.fieldCategory === 'SCORING'),
           )
           .map((field) => ({
             fieldKey: field.fieldKey,
@@ -1700,13 +2031,21 @@ export class QuarterReviewService extends BaseService {
             maxScore: Number.isFinite(Number(field.scoringConfig?.maxScore))
               ? Number(field.scoringConfig?.maxScore)
               : undefined,
+            options: field.options,
+            matrixConfig: field.matrixConfig,
+            fieldCategory: field.fieldCategory,
+            semanticRole: field.semanticRole,
+            scoringConfig: field.scoringConfig,
+            scoringPolicy: (field.scoringConfig as Record<string, unknown> | undefined)?.scoringPolicy,
+            conditionalScoring: (field.scoringConfig as Record<string, unknown> | undefined)?.conditionalScoring,
           })),
       }))
-      .filter((section) => section.scoringFields.length > 0);
+      .filter((section) => section.scoringFields.length > 0 || section.sectionType === PmsTemplateSectionType.OBJECTIVES);
 
     return {
       objectiveRatingRule,
       overallScoreMax,
+      scoringPolicy: (templateVersion.scoringConfig as Record<string, unknown> | undefined)?.scoringPolicy as any,
       sections,
     };
   }
@@ -1715,6 +2054,7 @@ export class QuarterReviewService extends BaseService {
     return {
       objectiveRatingRule: null,
       overallScoreMax: null,
+      scoringPolicy: undefined,
       sections: [],
     };
   }
@@ -1723,7 +2063,12 @@ export class QuarterReviewService extends BaseService {
     section: ITemplateSection,
     quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
   ): boolean {
-    if (section.sectionType !== PmsTemplateSectionType.QUARTER_REVIEW) {
+    const allowedTypes: string[] = [
+      PmsTemplateSectionType.QUARTER_REVIEW,
+      PmsTemplateSectionType.OBJECTIVES,
+      PmsTemplateSectionType.COMPETENCIES,
+    ];
+    if (!allowedTypes.includes(section.sectionType)) {
       return false;
     }
 

@@ -132,6 +132,7 @@ export const PmsTemplateSectionType = {
   MERIT: 'MERIT',
   APPRAISAL_COMMUNICATION: 'APPRAISAL_COMMUNICATION',
   OVERALL_FEEDBACK: 'OVERALL_FEEDBACK',
+  VISIBILITY_GOVERNANCE: 'VISIBILITY_GOVERNANCE',
 } as const;
 
 export type PmsTemplateSectionType =
@@ -166,6 +167,35 @@ export const PmsTemplateFieldType = {
 
 export type PmsTemplateFieldType =
   (typeof PmsTemplateFieldType)[keyof typeof PmsTemplateFieldType];
+
+export const FieldCategory = {
+  NORMAL: 'NORMAL',
+  SCORING: 'SCORING',
+  CALCULATED: 'CALCULATED',
+  SYSTEM: 'SYSTEM',
+  CONFIDENTIAL: 'CONFIDENTIAL',
+  HIDDEN: 'HIDDEN',
+} as const;
+
+export type FieldCategory = (typeof FieldCategory)[keyof typeof FieldCategory];
+
+export const SemanticRole = {
+  OBJECTIVE_TITLE: 'OBJECTIVE_TITLE',
+  OBJECTIVE_KPI: 'OBJECTIVE_KPI',
+  OBJECTIVE_TARGET: 'OBJECTIVE_TARGET',
+  OBJECTIVE_WEIGHTAGE: 'OBJECTIVE_WEIGHTAGE',
+  OBJECTIVE_ACHIEVEMENT: 'OBJECTIVE_ACHIEVEMENT',
+  MANAGER_RATING: 'MANAGER_RATING',
+  MANAGER_SCORE: 'MANAGER_SCORE',
+  MANAGER_COMMENT: 'MANAGER_COMMENT',
+  COMPETENCY_RATING: 'COMPETENCY_RATING',
+  COMPETENCY_COMMENT: 'COMPETENCY_COMMENT',
+  FINAL_GRADE: 'FINAL_GRADE',
+  MERIT_PERCENTAGE: 'MERIT_PERCENTAGE',
+  APPRAISAL_OUTCOME: 'APPRAISAL_OUTCOME',
+} as const;
+
+export type SemanticRole = (typeof SemanticRole)[keyof typeof SemanticRole];
 
 export const LetterTemplateType = {
   MERIT: 'MERIT',

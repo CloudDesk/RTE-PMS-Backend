@@ -11,6 +11,8 @@ import {
   PmsTemplateSectionType,
   PmsTemplateStatus,
   QuarterWorkflowState,
+  FieldCategory,
+  PmsRole,
 } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
@@ -49,6 +51,8 @@ export interface ResolveTemplateVersionInput {
   quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   visibilityFlags?: string[];
   values?: Record<string, unknown>;
+  annualAssignmentId?: string;
+  quarterAssignmentId?: string;
 }
 
 export interface SimulateTemplateAccessInput extends ResolveTemplateVersionInput {
@@ -72,6 +76,8 @@ export interface ResolvedTemplateField {
   matrixConfig?: unknown;
   gridConfig?: unknown;
   scoringIncluded?: boolean;
+  fieldCategory?: string;
+  semanticRole?: string;
   scoringConfig?: Record<string, unknown>;
   validationRules?: Record<string, unknown>;
 }
@@ -82,7 +88,7 @@ export interface ResolvedTemplateSection {
   title: string;
   module: string;
   level: 'quarter' | 'annual';
-  layout: 'vertical' | 'grid' | 'table';
+  layout: 'vertical' | 'grid' | 'table' | 'bordered_grid';
   fields: ResolvedTemplateField[];
 }
 
@@ -91,6 +97,12 @@ export interface ResolvedTemplateVersion {
   role: string;
   workflowState: string;
   sections: ResolvedTemplateSection[];
+  scoringParticipants: Array<{
+    sectionKey: string;
+    fieldKey: string;
+    scoreType?: string;
+    weight?: number;
+  }>;
   simulationContext?: {
     annualAssignmentId?: string;
     quarterAssignmentId?: string;
@@ -724,35 +736,37 @@ export class PmsTemplateService extends BaseService {
       throw new Error(`Invalid PMS workflow state: ${workflowState}`);
     }
 
-    const visibilityFlags = new Set(input.visibilityFlags ?? []);
+    const derivedContext = await this.resolveRuntimeContextForTemplate(version, input);
+    const visibilityFlags = new Set(derivedContext.visibilityFlags);
+    const hierarchyScope = derivedContext.hierarchyScope ?? input.hierarchyScope;
+    const quarter = derivedContext.quarter ?? input.quarter;
     const values = input.values ?? {};
 
     const sections = version.sections
-      .filter((section) => this.isSectionInScope(section, input.quarter))
+      .filter((section) => this.isSectionInScope(section, quarter))
       .filter((section) =>
         this.isVisibleByRules(section.visibilityRules, {
           role,
           workflowState,
-          hierarchyScope: input.hierarchyScope,
+          hierarchyScope,
           visibilityFlags,
         }),
       )
       .map((section) => {
+        const visibleFieldKeys = this.resolveVisibleFieldKeys(section.fields ?? [], {
+          role,
+          workflowState,
+          hierarchyScope,
+          visibilityFlags,
+          values,
+        });
         const fields = (section.fields ?? [])
-          .filter((field) =>
-            this.isFieldVisible(field, {
-              role,
-              workflowState,
-              hierarchyScope: input.hierarchyScope,
-              visibilityFlags,
-              values,
-            }),
-          )
+          .filter((field) => visibleFieldKeys.has(field.fieldKey))
           .map((field) =>
             this.toResolvedField(field, {
               role,
               workflowState,
-              hierarchyScope: input.hierarchyScope,
+              hierarchyScope,
               visibilityFlags,
             }),
           );
@@ -769,14 +783,32 @@ export class PmsTemplateService extends BaseService {
       })
       .filter((section) => section.fields.length > 0);
 
+    const scoringParticipants = sections.flatMap((section) =>
+      section.fields
+        .filter((field) => field.scoringIncluded)
+        .map((field) => ({
+          sectionKey: section.key,
+          fieldKey: field.key,
+          scoreType: String(field.scoringConfig?.scoreType ?? ''),
+          weight: Number(
+            field.scoringConfig?.weight ??
+            field.scoringConfig?.weightage ??
+            0,
+          ),
+        })),
+    );
+
     return {
       versionId,
       role: input.role,
       workflowState,
       sections,
+      scoringParticipants,
       simulationContext: {
-        hierarchyScope: input.hierarchyScope,
-        quarter: input.quarter,
+        annualAssignmentId: derivedContext.annualAssignmentId,
+        quarterAssignmentId: derivedContext.quarterAssignmentId,
+        hierarchyScope,
+        quarter,
         visibilityFlags: [...visibilityFlags],
       },
     };
@@ -795,6 +827,8 @@ export class PmsTemplateService extends BaseService {
       quarter: derivedContext.quarter,
       visibilityFlags: derivedContext.visibilityFlags,
       values: input.values,
+      annualAssignmentId: derivedContext.annualAssignmentId,
+      quarterAssignmentId: derivedContext.quarterAssignmentId,
     });
 
     return {
@@ -1314,7 +1348,7 @@ export class PmsTemplateService extends BaseService {
         repeatFor,
         repeatable: section.repeatable ?? false,
         displayOrder: section.displayOrder ?? legacyOrder ?? index + 1,
-        layout: ['grid', 'table'].includes(section.layout as string) ? (section.layout as 'grid' | 'table') : 'vertical',
+        layout: ['grid', 'table', 'bordered_grid'].includes(section.layout as string) ? (section.layout as 'grid' | 'table' | 'bordered_grid') : 'vertical',
         renderingScope: this.normalizeRenderingScope(
           section.renderingScope as string | undefined,
           section.level ?? PmsTemplateSectionLevel.ANNUAL,
@@ -1332,6 +1366,19 @@ export class PmsTemplateService extends BaseService {
         editabilityRules: section.editabilityRules ?? rulePatch.editabilityRules ?? {},
         metadata: section.metadata ?? {},
         objectiveConfig: this.normalizeObjectiveConfig(objectiveConfig),
+        objectiveBuckets: Array.isArray(section.objectiveBuckets)
+          ? section.objectiveBuckets.map((bucket: any) => ({
+              bucketKey: String(bucket.bucketKey ?? '').trim(),
+              label: String(bucket.label ?? '').trim(),
+              source: bucket.source,
+              owner: bucket.owner,
+              bucketWeightage: Number(bucket.bucketWeightage ?? 0),
+              rowWeightMode: bucket.rowWeightMode,
+              editableBy: Array.isArray(bucket.editableBy) ? bucket.editableBy.map(String) : [],
+              requiresManagerApproval: !!bucket.requiresManagerApproval,
+              autoApprove: !!bucket.autoApprove,
+            }))
+          : undefined,
         fields: (section.fields ?? []).map((field, fieldIndex) =>
           this.normalizeField(field, fieldIndex),
         ),
@@ -1362,12 +1409,49 @@ export class PmsTemplateService extends BaseService {
         : {}),
       ...(legacyWeightage !== undefined ? { weightage: legacyWeightage } : {}),
       ...(legacyFormula ? { formula: legacyFormula } : {}),
-    };
+    } as Record<string, any>;
+
+    const isScoring = !!scoringConfig.participatesInScoring;
+    const fieldCategory = field.fieldCategory ?? (isScoring ? FieldCategory.SCORING : FieldCategory.NORMAL);
+    const semanticRole = field.semanticRole;
+
+    const legacyOptionScores = Array.isArray(scoringConfig.optionScores)
+      ? scoringConfig.optionScores
+      : [];
+
+    const normalizedOptions = (field.options ?? []).map((option: any) => {
+      let score = option.score !== undefined ? Number(option.score) : undefined;
+      if (score === undefined) {
+        const legacyMatch = legacyOptionScores.find((item: any) => item.optionValue === option.value);
+        if (legacyMatch && legacyMatch.score !== undefined) {
+          score = Number(legacyMatch.score);
+        }
+      }
+      return {
+        label: option.label,
+        value: option.value,
+        ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
+        ...(score !== undefined ? { score } : {}),
+      };
+    });
+
+    // Bidirectional sync: update scoringConfig.optionScores
+    const syncedOptionScores = normalizedOptions
+      .filter((opt) => opt.score !== undefined)
+      .map((opt) => ({
+        optionValue: opt.value,
+        score: opt.score!,
+      }));
+    if (syncedOptionScores.length > 0) {
+      scoringConfig.optionScores = syncedOptionScores;
+    }
 
     return {
       fieldKey: field.fieldKey ?? legacyKey ?? '',
       fieldLabel: field.fieldLabel ?? legacyLabel ?? '',
       fieldType: field.fieldType ?? legacyType ?? 'SHORT_TEXT',
+      fieldCategory,
+      semanticRole,
       isRequired: field.isRequired ?? legacyRequired ?? false,
       displayOrder: field.displayOrder ?? legacyOrder ?? index + 1,
       placeholder: field.placeholder as string | undefined,
@@ -1384,11 +1468,7 @@ export class PmsTemplateService extends BaseService {
       colSpan: [1, 2, 3, 4].includes(Number(field.colSpan))
         ? (Number(field.colSpan) as 1 | 2 | 3 | 4)
         : 4,
-      options: (field.options ?? []).map((option: any) => ({
-        label: option.label,
-        value: option.value,
-        ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
-      })),
+      options: normalizedOptions,
       behaviors: Array.isArray(field.behaviors)
         ? field.behaviors.map((behavior: any) => ({
             workflowState: behavior.workflowState,
@@ -1408,15 +1488,27 @@ export class PmsTemplateService extends BaseService {
         : undefined,
       matrixConfig: field.matrixConfig
         ? {
-          rows: (field.matrixConfig.rows ?? []).map((row: any) => ({
-            key: row.key ?? row.id,
-            label: row.label,
-            options: (row.options ?? []).map((option: any) => ({
-              label: option.label,
-              value: option.value,
-              ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
-            })),
-          })),
+          rows: (field.matrixConfig.rows ?? []).map((row: any) => {
+            return {
+              key: row.key ?? row.id,
+              label: row.label,
+              options: (row.options ?? []).map((option: any) => {
+                let score = option.score !== undefined ? Number(option.score) : undefined;
+                if (score === undefined) {
+                  const legacyMatch = legacyOptionScores.find((item: any) => item.optionValue === option.value);
+                  if (legacyMatch && legacyMatch.score !== undefined) {
+                    score = Number(legacyMatch.score);
+                  }
+                }
+                return {
+                  label: option.label,
+                  value: option.value,
+                  ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
+                  ...(score !== undefined ? { score } : {}),
+                };
+              }),
+            };
+          }),
           columns: (field.matrixConfig.columns ?? []).map((col: any) => ({
             key: col.key ?? col.id,
             label: col.label,
@@ -1599,10 +1691,52 @@ export class PmsTemplateService extends BaseService {
       options: field.options ?? [],
       matrixConfig: field.matrixConfig,
       gridConfig: field.gridConfig,
-      scoringIncluded: field.scoringConfig?.participatesInScoring === true,
+      scoringIncluded: field.scoringConfig?.participatesInScoring === true || field.fieldCategory === FieldCategory.SCORING,
+      fieldCategory: field.fieldCategory,
+      semanticRole: field.semanticRole,
       scoringConfig: field.scoringConfig,
       validationRules: field.validationRules,
     };
+  }
+
+  private resolveVisibleFieldKeys(
+    fields: ITemplateField[],
+    context: {
+      role: string;
+      workflowState: string;
+      hierarchyScope?: string;
+      visibilityFlags: Set<string>;
+      values: Record<string, unknown>;
+    },
+  ): Set<string> {
+    const fieldByKey = new Map(fields.map((field) => [field.fieldKey, field]));
+    const visibilityMemo = new Map<string, boolean>();
+
+    const isVisible = (field: ITemplateField, trail: Set<string> = new Set()): boolean => {
+      const cached = visibilityMemo.get(field.fieldKey);
+      if (cached !== undefined) return cached;
+
+      if (trail.has(field.fieldKey)) {
+        visibilityMemo.set(field.fieldKey, false);
+        return false;
+      }
+
+      trail.add(field.fieldKey);
+      let visible = this.isFieldVisible(field, context);
+
+      if (visible && field.conditionalRendering?.dependsOn) {
+        const parent = fieldByKey.get(field.conditionalRendering.dependsOn);
+        if (!parent || !isVisible(parent, trail)) {
+          visible = false;
+        }
+      }
+
+      trail.delete(field.fieldKey);
+      visibilityMemo.set(field.fieldKey, visible);
+      return visible;
+    };
+
+    return new Set(fields.filter((field) => isVisible(field)).map((field) => field.fieldKey));
   }
 
   private isVisibleByRules(
@@ -1783,6 +1917,9 @@ export class PmsTemplateService extends BaseService {
     ) {
       return 'Annual Appraisal Decision Management';
     }
+    if (sectionType === PmsTemplateSectionType.VISIBILITY_GOVERNANCE) {
+      return 'Visibility Governance';
+    }
     return 'Objective Management';
   }
 
@@ -1849,7 +1986,7 @@ export class PmsTemplateService extends BaseService {
         }
       }
 
-      if (section.layout && !['vertical', 'grid', 'table'].includes(section.layout)) {
+      if (section.layout && !['vertical', 'grid', 'table', 'bordered_grid'].includes(section.layout)) {
         throw new Error(`Invalid section layout in section ${section.sectionKey}`);
       }
 
@@ -2063,47 +2200,279 @@ export class PmsTemplateService extends BaseService {
   }
 
   private async validateTemplateVersionForActivation(version: IPmsTemplateVersion): Promise<void> {
-    if (version.sections.length === 0) {
-      throw new Error('Template version must contain at least one section before activation');
+    const errors: string[] = [];
+
+    // Check 1: Section existence
+    if (!version.sections || version.sections.length === 0) {
+      errors.push('Template version must contain at least one section before activation');
     }
 
-    for (const section of version.sections) {
-      if ((section.fields ?? []).length === 0) {
-        throw new Error(`Section ${section.sectionKey} must contain at least one field before activation`);
-      }
-    }
-
-    const scoringSections = version.sections.filter(
+    const allFieldKeys = new Set<string>();
+    const scoringSections = (version.sections ?? []).filter(
       (section) => section.sectionScoringConfig?.participatesInScoring === true,
     );
 
+    // Check 2: Field existence (every section has at least one field)
+    for (const section of version.sections ?? []) {
+      if ((section.fields ?? []).length === 0) {
+        errors.push(`Section "${section.sectionLabel || section.sectionKey}" must contain at least one field before activation`);
+      }
+      for (const field of section.fields ?? []) {
+        allFieldKeys.add(field.fieldKey);
+      }
+    }
+
+    // Check 3: Section weights sum to 100%
     if (scoringSections.length > 0) {
       const totalSectionWeight = scoringSections.reduce(
         (total, section) => total + Number(section.sectionScoringConfig?.weightage ?? 0),
         0,
       );
       if (totalSectionWeight !== 100) {
-        throw new Error('Scoring section weightage total must be exactly 100 before activation');
+        errors.push(`Scoring section weightage total must be exactly 100% before activation (currently ${totalSectionWeight}%)`);
       }
+    }
 
-      for (const section of scoringSections) {
-        const scoringFields = (section.fields ?? []).filter(
-          (field) => field.scoringConfig?.participatesInScoring === true,
-        );
-        if (scoringFields.length === 0) {
-          throw new Error(`Scoring section ${section.sectionKey} must contain at least one scoring field`);
-        }
-
+    // Check 4: Field weights sum to 100% inside scoring sections
+    for (const section of scoringSections) {
+      const scoringFields = (section.fields ?? []).filter(
+        (field) => field.scoringConfig?.participatesInScoring === true || field.fieldCategory === 'SCORING',
+      );
+      if (scoringFields.length === 0) {
+        errors.push(`Scoring section "${section.sectionLabel || section.sectionKey}" must contain at least one scoring field`);
+      } else {
         const fieldWeightTotal = scoringFields.reduce(
           (total, field) => total + Number(field.scoringConfig?.weight ?? field.scoringConfig?.weightage ?? 0),
           0,
         );
         if (fieldWeightTotal !== 100) {
-          throw new Error(`Scoring field weightage total in section ${section.sectionKey} must be exactly 100`);
+          errors.push(`Scoring field weightage total in section "${section.sectionLabel || section.sectionKey}" must be exactly 100% (currently ${fieldWeightTotal}%)`);
         }
       }
     }
 
+    // Check 5: Scoring config validity
+    // Check 6: Option score validation
+    // Check 7: Formula parsing validation
+    // Check 8: Behavior rules validation
+    // Check 9: Workflow role validation
+    // Check 12: Quarter scope validity
+    // Check 13: Objective bucket validations
+    // Check 14: Competency matrix validations
+    const allowedQuarters = new Set(['Q1', 'Q2', 'Q3', 'Q4']);
+
+    for (const section of version.sections ?? []) {
+      // Check 12: Quarter scope validity for sections
+      if (section.level === PmsTemplateSectionLevel.QUARTER) {
+        const repeatFor = section.repeatFor ?? [];
+        if (repeatFor.length === 0) {
+          errors.push(`Quarter-level section "${section.sectionLabel || section.sectionKey}" must define repeatFor quarters`);
+        }
+        for (const q of repeatFor) {
+          if (!allowedQuarters.has(q)) {
+            errors.push(`Invalid quarter "${q}" in repeatFor of section "${section.sectionLabel || section.sectionKey}"`);
+          }
+        }
+      }
+      if (section.quarterScope && section.quarterScope.length > 0) {
+        for (const q of section.quarterScope) {
+          if (!allowedQuarters.has(q)) {
+            errors.push(`Invalid quarter "${q}" in quarterScope of section "${section.sectionLabel || section.sectionKey}"`);
+          }
+        }
+      }
+
+      // Check 13: Objective bucket validations
+      if (section.sectionType === PmsTemplateSectionType.OBJECTIVES) {
+        const mode = section.objectiveConfig?.mode ?? 'DYNAMIC';
+        if (mode === 'DYNAMIC' || mode === 'HYBRID') {
+          const buckets = section.objectiveBuckets ?? [];
+          if (buckets.length === 0) {
+            errors.push(`Objectives section "${section.sectionLabel || section.sectionKey}" requires objectiveBuckets configuration when dynamic/hybrid mode is enabled`);
+          } else {
+            const bucketWeightSum = buckets.reduce((sum, b) => sum + Number(b.bucketWeightage ?? 0), 0);
+            if (bucketWeightSum !== 100) {
+              errors.push(`Objective buckets weightage total in section "${section.sectionLabel || section.sectionKey}" must sum to exactly 100% (currently ${bucketWeightSum}%)`);
+            }
+            for (const bucket of buckets) {
+              if (!bucket.bucketKey?.trim()) {
+                errors.push(`Objective bucket in section "${section.sectionLabel || section.sectionKey}" is missing bucketKey`);
+              }
+              if (!bucket.label?.trim()) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" is missing label`);
+              }
+              if (!['TEMPLATE_PREDEFINED', 'EMPLOYEE_DYNAMIC', 'MANAGER_DYNAMIC'].includes(bucket.source)) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid source: ${bucket.source}`);
+              }
+              if (!['SYSTEM', 'EMPLOYEE', 'MANAGER'].includes(bucket.owner)) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid owner: ${bucket.owner}`);
+              }
+              if (!['FIXED_BY_TEMPLATE', 'OWNER_ENTERED', 'EQUAL_DISTRIBUTION'].includes(bucket.rowWeightMode)) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid rowWeightMode: ${bucket.rowWeightMode}`);
+              }
+            }
+          }
+        }
+      }
+
+      for (const field of section.fields ?? []) {
+        const isScoring = field.fieldCategory === 'SCORING' || field.scoringConfig?.participatesInScoring === true;
+
+        // Check 5: Scoring config validity
+        if (isScoring) {
+          const scoreType = field.scoringConfig?.scoreType;
+          const maxScore = Number(field.scoringConfig?.maxScore ?? 0);
+          if (!scoreType) {
+            errors.push(`Scoring field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" is missing scoreType`);
+          }
+          if (!Number.isFinite(maxScore) || maxScore <= 0) {
+            errors.push(`Scoring field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires maxScore > 0 (currently ${maxScore})`);
+          }
+        }
+
+        // Check: Confidential decision fields must have visibility rules
+        if (field.fieldCategory === 'CONFIDENTIAL') {
+          const rules = field.visibilityRules;
+          const hasRules = rules && (
+            (Array.isArray(rules.visibleTo) && rules.visibleTo.length > 0) ||
+            (Array.isArray(rules.hiddenFrom) && rules.hiddenFrom.length > 0) ||
+            (Array.isArray(rules.visibleStates) && rules.visibleStates.length > 0) ||
+            (Array.isArray(rules.publishFlags) && rules.publishFlags.length > 0) ||
+            (rules.publishFlagRequired !== undefined) ||
+            (Object.keys(rules).length > 0)
+          );
+          if (!hasRules) {
+            errors.push(`Confidential field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" must have visibility rules configured`);
+          }
+        }
+
+        // Check 6: Option score validation
+        const isOptionBased = ['DROPDOWN', 'RADIO', 'CHECKBOX_GROUP', 'MULTISELECT'].includes(field.fieldType);
+        const isOptionScoreType = field.scoringConfig?.scoreType === 'OPTION_BASED';
+        if (isScoring && (isOptionBased || isOptionScoreType)) {
+          const maxScore = Number(field.scoringConfig?.maxScore ?? 0);
+          const options = field.options ?? [];
+          if (options.length === 0) {
+            errors.push(`Option-based scoring field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires options`);
+          } else {
+            for (const opt of options) {
+              if (opt.score === undefined || opt.score === null || !Number.isFinite(Number(opt.score))) {
+                errors.push(`Option "${opt.label || opt.value}" in field "${field.fieldLabel || field.fieldKey}" (section "${section.sectionLabel || section.sectionKey}") is missing a numeric score`);
+              } else if (Number(opt.score) < 0 || Number(opt.score) > maxScore) {
+                errors.push(`Option "${opt.label || opt.value}" score (${opt.score}) in field "${field.fieldLabel || field.fieldKey}" (section "${section.sectionLabel || section.sectionKey}") must be between 0 and ${maxScore}`);
+              }
+            }
+          }
+        }
+
+        // Check 7: Formula parsing validation
+        if (field.fieldType === 'FORMULA') {
+          const formula = field.scoringConfig?.formula;
+          if (typeof formula !== 'string' || !formula.trim()) {
+            errors.push(`Formula field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires a non-empty formula expression`);
+          }
+        }
+
+        // Check 8: Behavior rules validation
+        if (!field.behaviors || field.behaviors.length === 0) {
+          errors.push(`Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" must have at least one workflow behavior rule defined`);
+        }
+
+        // Check 9: Workflow role validation
+        for (const behavior of field.behaviors ?? []) {
+          if (!behavior.role?.trim() || !normalizePmsRole(behavior.role)) {
+            errors.push(`Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid behavior role: "${behavior.role}"`);
+          }
+          if (!this.isApprovedWorkflowState(behavior.workflowState)) {
+            errors.push(`Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid workflowState: "${behavior.workflowState}"`);
+          }
+        }
+
+        // Check 14: Competency matrix validations
+        if (field.fieldType === 'MATRIX') {
+          const matrixConfig = field.matrixConfig;
+          if (!matrixConfig) {
+            errors.push(`Matrix field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires matrixConfig`);
+          } else {
+            const rowsWithWeight = (matrixConfig.rows ?? []).filter(r => r.weightage !== undefined && r.weightage !== null);
+            if (rowsWithWeight.length > 0) {
+              const totalRowWeight = rowsWithWeight.reduce((sum, r) => sum + Number(r.weightage ?? 0), 0);
+              if (totalRowWeight !== 100) {
+                errors.push(`Matrix field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" row weightage total must sum to 100% (currently ${totalRowWeight}%)`);
+              }
+            }
+            const colsWithWeight = (matrixConfig.columns ?? []).filter(c => c.weightage !== undefined && c.weightage !== null);
+            if (colsWithWeight.length > 0) {
+              const totalColWeight = colsWithWeight.reduce((sum, c) => sum + Number(c.weightage ?? 0), 0);
+              if (totalColWeight !== 100) {
+                errors.push(`Matrix field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" column weightage total must sum to 100% (currently ${totalColWeight}%)`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Check 10: Conditional dependsOn validation
+    // Check 11: Circular dependency detection
+    const conditionalDependencies = new Map<string, string>();
+    for (const section of version.sections ?? []) {
+      for (const field of section.fields ?? []) {
+        if (field.conditionalRendering?.dependsOn) {
+          const dependsOnKey = field.conditionalRendering.dependsOn;
+          if (!allFieldKeys.has(dependsOnKey)) {
+            errors.push(`Field "${field.fieldLabel || field.fieldKey}" conditional dependency dependsOn field "${dependsOnKey}" which does not exist in the template`);
+          } else {
+            conditionalDependencies.set(field.fieldKey, dependsOnKey);
+          }
+        }
+      }
+    }
+
+    const visited = new Set<string>();
+    const recStack = new Set<string>();
+    const hasCycle = (key: string): boolean => {
+      if (recStack.has(key)) return true;
+      if (visited.has(key)) return false;
+      visited.add(key);
+      recStack.add(key);
+      const parent = conditionalDependencies.get(key);
+      if (parent) {
+        if (hasCycle(parent)) return true;
+      }
+      recStack.delete(key);
+      return false;
+    };
+
+    for (const key of conditionalDependencies.keys()) {
+      if (!visited.has(key)) {
+        if (hasCycle(key)) {
+          errors.push(`Circular conditional rendering dependency detected involving field "${key}"`);
+          break;
+        }
+      }
+    }
+
+    // Check 15: Workflow rendering validation: MANAGER must have at least one visible section in MANAGER_REVIEW_OPEN
+    let managerHasVisibleSection = false;
+    for (const section of version.sections ?? []) {
+      const isVisible = this.isVisibleByRules(section.visibilityRules, {
+        role: 'MANAGER',
+        workflowState: 'MANAGER_REVIEW_OPEN',
+        visibilityFlags: new Set(),
+        hierarchyScope: 'self',
+      });
+      if (isVisible) {
+        managerHasVisibleSection = true;
+        break;
+      }
+    }
+    if (!managerHasVisibleSection) {
+      errors.push('MANAGER role must have at least one visible section in MANAGER_REVIEW_OPEN state');
+    }
+
+    // Other validation checks already present in code:
+    // Annual scoring weights check
     const annualScoringConfig = version.annualScoringConfig as
       | {
           quarterWeights?: Record<string, number>;
@@ -2115,7 +2484,7 @@ export class PmsTemplateService extends BaseService {
       for (const quarter of ['Q1', 'Q2', 'Q3', 'Q4']) {
         const weight = Number(quarterWeights[quarter] ?? 0);
         if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
-          throw new Error(`Annual scoring quarter ${quarter} weightage must be between 0 and 100`);
+          errors.push(`Annual scoring quarter ${quarter} weightage must be between 0 and 100`);
         }
       }
 
@@ -2125,17 +2494,20 @@ export class PmsTemplateService extends BaseService {
         .reduce((total, quarter) => total + Number(quarterWeights[quarter] ?? 0), 0);
 
       if (totalQuarterWeight !== 100) {
-        throw new Error('Annual scoring quarter weightage total must be exactly 100 before activation');
+        errors.push(`Annual scoring quarter weightage total must be exactly 100% before activation (currently ${totalQuarterWeight}%)`);
       }
     }
 
+    // Outcome mappings check
     const outcomeTypes = new Set(Object.values(AppraisalOutcomeType));
     for (const mapping of version.outcomeMappings ?? []) {
       if (!outcomeTypes.has(mapping.outcomeType)) {
-        throw new Error(`Invalid outcome mapping type: ${mapping.outcomeType}`);
+        errors.push(`Invalid outcome mapping type: ${mapping.outcomeType}`);
+        continue;
       }
       if (!mapping.letterTemplateVersionId?.trim()) {
-        throw new Error(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
+        errors.push(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
+        continue;
       }
 
       const mappedLetterVersion = await PmsLetterTemplateVersion.findOne({
@@ -2144,9 +2516,10 @@ export class PmsTemplateService extends BaseService {
         isDeleted: false,
       }).lean();
       if (!mappedLetterVersion) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} references a missing or out-of-scope letter template version`,
         );
+        continue;
       }
 
       const mappedLetterTemplate = await PmsLetterTemplate.findOne({
@@ -2156,15 +2529,16 @@ export class PmsTemplateService extends BaseService {
         isDeleted: false,
       }).lean();
       if (!mappedLetterTemplate) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} references a letter template outside this PMS template version`,
         );
+        continue;
       }
 
       const letterStatusReady =
         mappedLetterVersion.status === PmsTemplateStatus.ACTIVE || mappedLetterVersion.isLocked;
       if (!letterStatusReady) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} must use an active or locked letter template version`,
         );
       }
@@ -2174,10 +2548,15 @@ export class PmsTemplateService extends BaseService {
         'GENERIC_APPRAISAL',
       ]);
       if (!allowedOutcomeTypes.has(mappedLetterTemplate.outcomeType)) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} points to incompatible letter template outcome ${mappedLetterTemplate.outcomeType}`,
         );
       }
+    }
+
+    // Check errors count
+    if (errors.length > 0) {
+      throw new Error(`Activation failed with validation errors:\n${errors.map((e, idx) => `${idx + 1}. ${e}`).join('\n')}`);
     }
   }
 
@@ -2407,6 +2786,127 @@ export class PmsTemplateService extends BaseService {
       annualAssignmentId,
       quarterAssignmentId,
     };
+  }
+
+  private async resolveRuntimeContextForTemplate(
+    version: IPmsTemplateVersion,
+    input: ResolveTemplateVersionInput,
+  ): Promise<{
+    hierarchyScope?: string;
+    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    visibilityFlags: string[];
+    annualAssignmentId?: string;
+    quarterAssignmentId?: string;
+  }> {
+    const visibilityFlags = new Set(input.visibilityFlags ?? []);
+    let hierarchyScope = input.hierarchyScope;
+    let quarter = input.quarter;
+    let annualAssignmentId = input.annualAssignmentId?.trim() || undefined;
+    let quarterAssignmentId = input.quarterAssignmentId?.trim() || undefined;
+    let quarterAssignment: any = null;
+
+    if (!annualAssignmentId && !quarterAssignmentId) {
+      return {
+        hierarchyScope,
+        quarter,
+        visibilityFlags: [...visibilityFlags],
+      };
+    }
+
+    if (quarterAssignmentId) {
+      quarterAssignment = await QuarterAssignment.findOne({
+        _id: quarterAssignmentId,
+        isDeleted: false,
+      }).lean();
+      if (!quarterAssignment) {
+        throw new Error('Quarter assignment not found');
+      }
+      annualAssignmentId = annualAssignmentId ?? quarterAssignment.annualAssignmentId.toString();
+      quarter = quarter ?? quarterAssignment.quarterCode;
+    }
+
+    const annualAssignment = annualAssignmentId
+      ? await AnnualAssignment.findOne({
+          _id: annualAssignmentId,
+          isDeleted: false,
+        }).lean()
+      : null;
+
+    if (!annualAssignment) {
+      throw new Error('Annual assignment not found');
+    }
+
+    if (annualAssignment.templateVersionId?.toString() !== version._id.toString()) {
+      throw new Error('Template version does not belong to the requested assignment');
+    }
+
+    this.assertRuntimeTemplateAccess(annualAssignment, quarterAssignment);
+
+    const assignmentVisibility = annualAssignment.visibility ?? {};
+    if (assignmentVisibility.employeeReviewVisible) visibilityFlags.add('employee_review');
+    if (assignmentVisibility.employeeGradeVisible) visibilityFlags.add('employee_grade');
+    if (assignmentVisibility.employeeMeritVisible) visibilityFlags.add('employee_merit');
+    if (assignmentVisibility.managerGradeVisible) visibilityFlags.add('manager_grade');
+    if (assignmentVisibility.managerMeritVisible) visibilityFlags.add('manager_merit');
+
+    if (!hierarchyScope) {
+      const actorId = this.context.user?._id.toString();
+      if (actorId && actorId === annualAssignment.employeeId?.toString()) {
+        hierarchyScope = 'self';
+      } else if (actorId && actorId === annualAssignment.assignedManagerId?.toString()) {
+        hierarchyScope = 'direct-report';
+      } else {
+        hierarchyScope = 'global';
+      }
+    }
+
+    return {
+      hierarchyScope,
+      quarter,
+      visibilityFlags: [...visibilityFlags],
+      annualAssignmentId,
+      quarterAssignmentId,
+    };
+  }
+
+  private assertRuntimeTemplateAccess(
+    annualAssignment: Record<string, any>,
+    quarterAssignment?: Record<string, any> | null,
+  ): void {
+    const actor = this.context.user;
+    if (!actor) {
+      throw new Error('Authentication required');
+    }
+
+    const mappedRole = accessService.mapRole(actor.role);
+    if (
+      mappedRole === PmsRole.ADMIN ||
+      mappedRole === PmsRole.MANAGEMENT ||
+      mappedRole === PmsRole.DIRECTOR
+    ) {
+      return;
+    }
+
+    const access = accessService.canPerform({
+      actor: {
+        actorId: actor._id.toString(),
+        actorRole: actor.role,
+      },
+      action: 'template.resolve',
+      resource: {
+        employeeId: annualAssignment.employeeId?.toString(),
+        assignedManagerId:
+          quarterAssignment?.assignedManagerId?.toString() ??
+          annualAssignment.assignedManagerId?.toString(),
+        managerId:
+          quarterAssignment?.assignedManagerId?.toString() ??
+          annualAssignment.assignedManagerId?.toString(),
+      },
+    });
+
+    if (!access.allowed) {
+      throw new Error(access.message ?? 'Access denied');
+    }
   }
 
   private renderTemplate(template: string, data: Record<string, unknown>): string {
