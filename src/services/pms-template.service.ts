@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import handlebars from 'handlebars';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
@@ -254,12 +255,17 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Template code already exists');
     }
 
+    const status = this.normalizeTemplateStatus(input.status);
+    if (status === PmsTemplateStatus.ACTIVE) {
+      throw new Error('A new template cannot be created with an Active status. You must first create and activate a template version.');
+    }
+
     const template = await PmsTemplate.create({
       name,
       description: input.description?.trim() || undefined,
       code,
       effectiveDate: this.normalizeOptionalDate(input.effectiveDate),
-      status: this.normalizeTemplateStatus(input.status),
+      status,
       createdBy: this.actorIdObject(),
     });
 
@@ -318,7 +324,11 @@ export class PmsTemplateService extends BaseService {
     }
 
     if (input.status !== undefined) {
-      updatePayload.status = this.normalizeTemplateStatus(input.status);
+      const targetStatus = this.normalizeTemplateStatus(input.status);
+      if (targetStatus === PmsTemplateStatus.ACTIVE && !existingTemplate.currentVersionId) {
+        throw new Error('Template cannot be marked as Active without an activated template version.');
+      }
+      updatePayload.status = targetStatus;
     }
 
     const template = await PmsTemplate.findByIdAndUpdate(
@@ -518,6 +528,15 @@ export class PmsTemplateService extends BaseService {
     version.deactivatedAt = new Date();
     version.updatedBy = this.actorIdObject();
     await version.save();
+
+    const parentTemplate = await PmsTemplate.findById(version.templateId);
+    if (parentTemplate && parentTemplate.currentVersionId?.toString() === version._id.toString()) {
+      parentTemplate.status = PmsTemplateStatus.INACTIVE;
+      parentTemplate.currentVersionId = undefined;
+      parentTemplate.updatedBy = this.actorIdObject();
+      parentTemplate.version += 1;
+      await parentTemplate.save();
+    }
 
     await this.audit('PMS_TEMPLATE_VERSION_DEACTIVATED', 'PMS_TEMPLATE_VERSION', version._id.toString(), undefined, { status: version.status });
     return version;
@@ -2910,10 +2929,13 @@ export class PmsTemplateService extends BaseService {
   }
 
   private renderTemplate(template: string, data: Record<string, unknown>): string {
-    return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, key: string) => {
-      const value = data[key];
-      return value === undefined || value === null ? '' : String(value);
-    });
+    try {
+      const compiledTemplate = handlebars.compile(template);
+      return compiledTemplate(data);
+    } catch (err) {
+      console.error('Error rendering template with handlebars:', err);
+      return template;
+    }
   }
 
   private assertAdmin(action: string): void {
