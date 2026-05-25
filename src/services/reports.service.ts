@@ -262,7 +262,14 @@ export class ReportService extends BaseService {
                 lowColl === 'pmsannualassignments' ||
                 lowColl === 'pmsannualdecisions'
             ) {
-                const actorRole = this.context.user?.role || 'staff';
+                const actorRole = this.context.user?.role || 'employee';
+                
+                const { accessService } = await import('./access.service');
+                const hasVisibilityOverride = this.context.user ? (await accessService.canPerform({
+                    actor: { actorId: this.context.user._id.toString(), actorRole: this.context.user.role },
+                    action: 'assignment.visibility.override',
+                    requiresAdmin: true
+                })).allowed : false;
 
                 // Get all annualAssignmentIds from the returned data
                 const assignmentIds = returnedData.map((item: any) => {
@@ -296,6 +303,8 @@ export class ReportService extends BaseService {
                         employeeMeritVisible: cfg?.employeeMeritVisible ?? false,
                         managerGradeVisible: cfg?.managerGradeVisible ?? false,
                         managerMeritVisible: cfg?.managerMeritVisible ?? false,
+                        visibleFrom: cfg?.visibleFrom,
+                        hasVisibilityOverride,
                     };
 
                     return visibilityMaskService.mask(item, maskCtx);

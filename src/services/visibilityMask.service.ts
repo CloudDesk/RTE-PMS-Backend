@@ -1,4 +1,5 @@
 import type { VisibilityMaskContext } from '../types/pms.types';
+import { normalizePmsRole } from '../constants/pms.enums';
 
 type MaskableRecord = Record<string, unknown>;
 
@@ -45,13 +46,22 @@ export class VisibilityMaskService {
       return data;
     }
 
-    const role = context.actorRole.toLowerCase();
-    if (role === 'admin' || role === 'director' || role === 'management') {
+    if (context.hasVisibilityOverride) {
       return { ...data };
     }
 
-    const gradeVisible = this.canViewGrade(context);
-    const meritVisible = this.canViewMerit(context);
+    // Evaluate visibleFrom date
+    let effectiveContext = { ...context };
+    const visibleFrom = context.visibleFrom ? new Date(context.visibleFrom) : null;
+    if (visibleFrom && !Number.isNaN(visibleFrom.getTime()) && new Date() < visibleFrom) {
+      effectiveContext.employeeGradeVisible = false;
+      effectiveContext.employeeMeritVisible = false;
+      effectiveContext.managerGradeVisible = false;
+      effectiveContext.managerMeritVisible = false;
+    }
+
+    const gradeVisible = this.canViewGrade(effectiveContext);
+    const meritVisible = this.canViewMerit(effectiveContext);
     const shouldHideOutcome = !gradeVisible || !meritVisible;
     const masked: MaskableRecord = {};
 
@@ -59,6 +69,13 @@ export class VisibilityMaskService {
       if (!gradeVisible && gradeFields.has(key)) continue;
       if (!meritVisible && meritFields.has(key)) continue;
       if (shouldHideOutcome && outcomeFields.has(key)) continue;
+
+      // Check dynamic confidential fields from template config
+      if (context.confidentialFields && context.confidentialFields.has(key)) {
+        // Hide dynamic confidential fields unless outcome is fully visible
+        // (Assuming confidential = grade/merit equivalents)
+        if (shouldHideOutcome) continue;
+      }
 
       masked[key] = value;
     }
@@ -70,18 +87,23 @@ export class VisibilityMaskService {
     return this.mask(data, context);
   }
 
+  private getNormalizedRole(actorRole: string): string {
+    const normalized = normalizePmsRole(actorRole) ?? 'EMPLOYEE';
+    return normalized.toLowerCase();
+  }
+
   private canViewGrade(context: VisibilityMaskContext): boolean {
-    const role = context.actorRole.toLowerCase();
-    if (role === 'admin' || role === 'director' || role === 'management') return true;
-    if (role === 'staff' || role === 'employee') return context.employeeGradeVisible === true;
+    if (context.hasVisibilityOverride) return true;
+    const role = this.getNormalizedRole(context.actorRole);
+    if (role === 'employee') return context.employeeGradeVisible === true;
     if (role === 'manager') return context.managerGradeVisible === true;
     return false;
   }
 
   private canViewMerit(context: VisibilityMaskContext): boolean {
-    const role = context.actorRole.toLowerCase();
-    if (role === 'admin' || role === 'director' || role === 'management') return true;
-    if (role === 'staff' || role === 'employee') return context.employeeMeritVisible === true;
+    if (context.hasVisibilityOverride) return true;
+    const role = this.getNormalizedRole(context.actorRole);
+    if (role === 'employee') return context.employeeMeritVisible === true;
     if (role === 'manager') return context.managerMeritVisible === true;
     return false;
   }

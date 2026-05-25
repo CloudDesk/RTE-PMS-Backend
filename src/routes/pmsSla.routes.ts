@@ -134,6 +134,30 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
     return reply.send(successResponse('PMS SLA engine processed successfully', result));
   });
 
+  fastify.post('/events/:id/extend', { preHandler: [authenticate] }, async (request, reply) => {
+    if (!assertAdmin(request, reply)) return;
+
+    const { id } = request.params as { id: string };
+    const { newDueAt, reason } = request.body as any;
+    
+    if (!newDueAt || !reason) {
+      return reply.status(400).send(errorResponse('PMS_SLA_VALIDATION_ERROR', 'newDueAt and reason are required'));
+    }
+
+    const adminUser = request.user as any;
+    const adminRole = normalizePmsRole(adminUser.role || '');
+
+    const slaEvent = await slaService.extendSla(
+      id,
+      new Date(newDueAt),
+      reason,
+      adminUser._id,
+      adminRole
+    );
+
+    return reply.send(successResponse('PMS SLA extended successfully', slaEvent));
+  });
+
   fastify.get('/history/:userId', { preHandler: [authenticate] }, async (request, reply) => {
     if (!assertAdmin(request, reply)) return;
 

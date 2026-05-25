@@ -357,8 +357,28 @@ export class ObjectiveService extends BaseService {
     const actor = this.requireActor();
     const quarterAssignment = await this.getQuarterAssignment(input.quarterAssignmentId);
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
-    const source = this.resolveObjectiveSource(actor.actorRole);
+    const source = this.resolveObjectiveSource(actor.actorRole, quarterAssignment);
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
+
+    const bucket = this.resolveObjectiveBucket(source, objectiveConfig);
+    if (!bucket) {
+      throw new Error(`No matching objective bucket configuration found for source: ${source}`);
+    }
+
+    if (bucket.owner === 'EMPLOYEE' && actor.actorId !== quarterAssignment.employeeId.toString()) {
+      throw new Error('Only the employee can add objectives to the employee-owned bucket');
+    }
+    if (bucket.owner === 'MANAGER') {
+      const isManager = actor.actorId === quarterAssignment.assignedManagerId.toString();
+      const isDelegate = await this.getObjectiveDelegation(
+        actor.actorId,
+        quarterAssignment.assignedManagerId.toString(),
+        quarterAssignment.cycleId?.toString(),
+      );
+      if (!isManager && !isDelegate && accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
+        throw new Error('Only the manager or their delegate can add objectives to the manager-owned bucket');
+      }
+    }
 
     await this.assertAssignmentAccess('objective.create', quarterAssignment);
     await this.assertObjectiveWindow(quarterAssignment, 'setting');
@@ -468,6 +488,13 @@ export class ObjectiveService extends BaseService {
     await this.assertObjectiveAccess('objective.edit', objective, false);
     this.assertRegularObjectiveEditAccess(objective);
     await this.assertObjectiveWindow(quarterAssignment, 'setting');
+
+    // Predefined gating check
+    if (objective.source === ObjectiveSource.PREDEFINED || objectiveConfig.mode === 'PREDEFINED') {
+      if (accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
+        throw new Error('Predefined objectives are read-only and cannot be modified');
+      }
+    }
     this.validateObjectiveInput({
       quarterAssignmentId: objective.quarterAssignmentId.toString(),
       title: input.title ?? objective.title,
@@ -755,7 +782,7 @@ export class ObjectiveService extends BaseService {
   }
 
   async correctObjective(objectiveId: string, input: CorrectObjectiveInput): Promise<IObjective> {
-    this.assertAdmin('objective.correction');
+    await this.assertAdmin('objective.correction');
 
     const reason = input.reason?.trim();
     if (!reason) {
@@ -1831,7 +1858,7 @@ export class ObjectiveService extends BaseService {
 
   private async assertAssignmentAccess(action: string, quarterAssignment: IQuarterAssignment): Promise<void> {
     const actor = this.requireActor();
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor,
       action,
       resource: {
@@ -1869,7 +1896,7 @@ export class ObjectiveService extends BaseService {
       throw new Error('Employee can submit only own objective');
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor,
       action,
       resource: {
@@ -1988,17 +2015,34 @@ export class ObjectiveService extends BaseService {
     return this.context.pmsCurrentDate ?? new Date();
   }
 
-  private resolveObjectiveSource(actorRole: string): ObjectiveSourceType {
-    const mappedRole = accessService.mapRole(actorRole);
+  private resolveObjectiveSource(
+    actorRole: string,
+    quarterAssignment: IQuarterAssignment,
+  ): ObjectiveSourceType {
+    const actor = this.requireActor();
+    const actorId = actor.actorId;
 
+    if (actorId === quarterAssignment.employeeId.toString()) {
+      return ObjectiveSource.EMPLOYEE_CREATED;
+    }
+
+    if (
+      actorId === quarterAssignment.assignedManagerId.toString() ||
+      this.context.reqRole === 'manager' ||
+      accessService.mapRole(actorRole) === PmsRole.MANAGER
+    ) {
+      return ObjectiveSource.MANAGER_CREATED;
+    }
+
+    const mappedRole = accessService.mapRole(actorRole);
     if (mappedRole === PmsRole.EMPLOYEE) return ObjectiveSource.EMPLOYEE_CREATED;
     if (mappedRole === PmsRole.MANAGER) return ObjectiveSource.MANAGER_CREATED;
 
     throw new Error('Only employee or manager can create objectives');
   }
 
-  private assertAdmin(action: string): void {
-    const access = accessService.canPerform({
+  private async assertAdmin(action: string): Promise<void> {
+    const access = await accessService.canPerform({
       actor: this.requireActor(),
       action,
       requiresAdmin: true,
@@ -2043,6 +2087,20 @@ export class ObjectiveService extends BaseService {
   ): Promise<void> {
     const actor = this.requireActor();
     const assignmentId = await this.resolveAuditAssignmentId(entityType, entityId);
+    let metadata: Record<string, unknown> | undefined = undefined;
+
+    if (entityType === 'OBJECTIVE') {
+      const objective = await Objective.findById(entityId).select('assignedManagerId').lean();
+      if (objective && actor.actorId !== objective.assignedManagerId?.toString()) {
+        const delegation = await this.getObjectiveDelegation(
+          actor.actorId,
+          objective.assignedManagerId.toString()
+        );
+        if (delegation) {
+          metadata = { actedAsDelegateFor: objective.assignedManagerId.toString() };
+        }
+      }
+    }
 
     await auditService.createAuditLog({
       actorId: actor.actorId,
@@ -2054,6 +2112,7 @@ export class ObjectiveService extends BaseService {
       previousValue,
       newValue,
       reason,
+      metadata,
     });
   }
 

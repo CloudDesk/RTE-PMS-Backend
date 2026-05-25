@@ -31,6 +31,7 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { workflowService } from './workflow.service';
+import { visibilityMaskService } from './visibilityMask.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
@@ -187,12 +188,46 @@ export class AssignmentService extends BaseService {
       ]);
     }
 
-    return {
-      items: items.map((item) => ({
+    const visConfigs = await VisibilityConfiguration.find({
+      annualAssignmentId: { $in: assignmentIds },
+      isDeleted: false,
+    }).lean();
+
+    const visConfigMap = new Map(
+      visConfigs.map((cfg) => [cfg.annualAssignmentId.toString(), cfg])
+    );
+
+    const actorRole = this.context.user?.role ?? 'employee';
+    const hasVisibilityOverride = this.context.user ? (await accessService.canPerform({
+      actor: { actorId: this.context.user._id.toString(), actorRole: this.context.user.role },
+      action: 'assignment.visibility.override',
+      requiresAdmin: true
+    })).allowed : false;
+
+    const maskedItems = items.map((item) => {
+      const visConfig = visConfigMap.get(item._id.toString());
+      const maskContext = {
+        actorRole,
+        employeeReviewVisible: item.visibility?.employeeReviewVisible ?? false,
+        employeeGradeVisible: item.visibility?.employeeGradeVisible ?? false,
+        employeeMeritVisible: item.visibility?.employeeMeritVisible ?? false,
+        managerGradeVisible: item.visibility?.managerGradeVisible ?? false,
+        managerMeritVisible: item.visibility?.managerMeritVisible ?? false,
+        visibleFrom: visConfig?.visibleFrom,
+        hasVisibilityOverride,
+      };
+
+      const mappedItem = {
         ...item,
         quarterAssignments: quartersByAssignment.get(item._id.toString()) ?? [],
         assignmentHistory: historyByAssignment.get(item._id.toString()) ?? [],
-      })),
+      };
+
+      return visibilityMaskService.mask(mappedItem, maskContext);
+    });
+
+    return {
+      items: maskedItems,
       meta: {
         page,
         limit,
@@ -206,7 +241,7 @@ export class AssignmentService extends BaseService {
     cycleId: string,
     input: AssignEmployeeInput,
   ): Promise<AssignEmployeeResult> {
-    this.assertAdmin('assignment.create');
+    await this.assertAdmin('assignment.create');
     this.validateAssignmentInput(input);
 
     const annualCycle = await AnnualCycle.findById(cycleId);
@@ -291,7 +326,7 @@ export class AssignmentService extends BaseService {
   }
 
   async bulkAssign(cycleId: string, input: BulkAssignInput): Promise<BulkAssignResult> {
-    this.assertAdmin('assignment.bulkCreate');
+    await this.assertAdmin('assignment.bulkCreate');
     if (!Array.isArray(input.assignments) || input.assignments.length === 0) {
       throw new Error('assignments are required');
     }
@@ -404,7 +439,7 @@ export class AssignmentService extends BaseService {
       assignmentId?: string;
     },
   ): Promise<unknown[]> {
-    this.assertAdmin('assignment.reassignManager');
+    await this.assertAdmin('assignment.reassignManager');
 
     const filter: Record<string, unknown> = {
       isDeleted: false,
@@ -452,7 +487,7 @@ export class AssignmentService extends BaseService {
     updatedQuarterAssignments: IQuarterAssignment[];
     preservedQuarterAssignments: IQuarterAssignment[];
   }> {
-    this.assertAdmin('assignment.reassignManager');
+    await this.assertAdmin('assignment.reassignManager');
     if (!input.reason?.trim()) {
       throw new Error('Reassignment reason is required');
     }
@@ -551,7 +586,7 @@ export class AssignmentService extends BaseService {
     annualAssignment: IAnnualAssignment;
     quarterAssignments: IQuarterAssignment[];
   }> {
-    this.assertAdmin('assignment.close');
+    await this.assertAdmin('assignment.close');
     if (!input.reason?.trim()) {
       throw new Error('Close reason is required');
     }
@@ -596,7 +631,7 @@ export class AssignmentService extends BaseService {
     annualAssignment: IAnnualAssignment;
     quarterAssignments: IQuarterAssignment[];
   }> {
-    this.assertAdmin('assignment.reopen');
+    await this.assertAdmin('assignment.reopen');
     if (!input.reason?.trim()) {
       throw new Error('Reopen reason is required');
     }
@@ -645,7 +680,7 @@ export class AssignmentService extends BaseService {
   async adminReopenAnnual(assignmentId: string, input: AssignmentStateInput): Promise<{
     annualAssignment: IAnnualAssignment;
   }> {
-    this.assertAdmin('assignment.reopenAnnual');
+    await this.assertAdmin('assignment.reopenAnnual');
     if (!input.reason?.trim()) {
       throw new Error('Reopen reason is required');
     }
@@ -828,7 +863,7 @@ export class AssignmentService extends BaseService {
   }
 
   async listExceptions(cycleId: string, status = 'OPEN'): Promise<unknown[]> {
-    this.assertAdmin('assignment.exceptions.list');
+    await this.assertAdmin('assignment.exceptions.list');
     const filter: Record<string, unknown> = {
       cycleId: this.toObjectId(cycleId, 'cycleId'),
       isDeleted: false,
@@ -843,7 +878,7 @@ export class AssignmentService extends BaseService {
   }
 
   async resolveException(exceptionId: string, input: ResolveExceptionInput): Promise<unknown> {
-    this.assertAdmin('assignment.exceptions.resolve');
+    await this.assertAdmin('assignment.exceptions.resolve');
     if (!input.resolution?.trim()) {
       throw new Error('resolution is required');
     }
@@ -1152,7 +1187,7 @@ export class AssignmentService extends BaseService {
     return annualAssignment;
   }
 
-  private async applyScopedAssignmentFilter(filter: Record<string, unknown>): Promise<void> {
+  public async applyScopedAssignmentFilter(filter: Record<string, unknown>): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
 
@@ -1192,7 +1227,7 @@ export class AssignmentService extends BaseService {
       throw new Error('Access denied. Employee is not in your reporting hierarchy.');
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor,
       action,
       resource: {
@@ -1235,8 +1270,8 @@ export class AssignmentService extends BaseService {
       : undefined;
   }
 
-  private assertAdmin(action: string): void {
-    const access = accessService.canPerform({
+  private async assertAdmin(action: string): Promise<void> {
+    const access = await accessService.canPerform({
       actor: this.requireActor(),
       action,
       requiresAdmin: true,

@@ -151,7 +151,7 @@ export class SlaService {
             },
           );
 
-          const escalationTargetUserId = this.resolveEscalationTargetForRule(rule.targetRole, qa);
+          const escalationTargetUserId = await this.resolveEscalationTargetForRule(rule.targetRole, qa);
 
           if (!exists) {
             await SlaEvent.create({
@@ -206,7 +206,7 @@ export class SlaService {
     // Automatically synchronize/seed SLA Event records for open workflow steps
     await this.syncSlaEvents();
 
-    const openSlas = await SlaEvent.find({ status: { $in: ['OPEN', 'OVERDUE'] }, isDeleted: false });
+    const openSlas = await SlaEvent.find({ status: { $in: ['OPEN', 'OVERDUE', 'BREACHED'] }, isDeleted: false });
     let processedCount = 0;
     let sentCount = 0;
 
@@ -304,7 +304,13 @@ export class SlaService {
 
       // If overdue, update SLA event status but never auto-progress workflow (FSD Rule)
       if (now > sla.dueAt) {
-        sla.status = 'OVERDUE';
+        if (sla.status === 'OPEN' || sla.status === 'OVERDUE') {
+          sla.status = 'BREACHED';
+          if (!sla.metadata) {
+            sla.metadata = {};
+          }
+          (sla.metadata as any).breachedAt = now;
+        }
       }
 
       await sla.save();
@@ -338,9 +344,16 @@ export class SlaService {
     return assignment.employeeId;
   }
 
-  private resolveEscalationTargetForRule(targetRole: string, assignment: any) {
+  private async resolveEscalationTargetForRule(targetRole: string, assignment: any): Promise<Types.ObjectId | undefined> {
     if (targetRole === PmsRole.EMPLOYEE) {
-      return assignment.assignedManagerId;
+      return assignment.assignedManagerId ? new Types.ObjectId(assignment.assignedManagerId) : undefined;
+    }
+
+    if (targetRole === PmsRole.MANAGER && assignment.assignedManagerId) {
+      const manager = await User.findById(assignment.assignedManagerId).select('managerId').lean();
+      if (manager && manager.managerId) {
+        return new Types.ObjectId(manager.managerId);
+      }
     }
 
     return undefined;
@@ -390,6 +403,74 @@ export class SlaService {
     }
 
     return scopedCycles.get(eventType)?.has(assignmentCycleId) ?? false;
+  }
+
+  /**
+   * Extend the SLA due date for a specific event
+   */
+  async extendSla(
+    slaEventId: string,
+    newDueAt: Date,
+    reason: string,
+    adminUserId: string,
+    adminRole: string
+  ): Promise<any> {
+    if (!reason || reason.trim() === '') {
+      throw new Error('SLA Extension requires a mandatory reason');
+    }
+
+    const slaEvent = await SlaEvent.findById(slaEventId);
+    if (!slaEvent || slaEvent.isDeleted) {
+      throw new Error('SLA Event not found');
+    }
+
+    // Must dynamically import audit service to avoid circular dependency issues if any
+    const { auditService } = await import('./audit.service');
+
+    if (newDueAt <= slaEvent.dueAt) {
+      throw new Error('New due date must be after the current due date');
+    }
+
+    const originalDueAt = slaEvent.dueAt;
+    
+    // Store extension history in metadata
+    const metadata = (slaEvent.metadata as any) || {};
+    if (!metadata.extensions) {
+      metadata.extensions = [];
+    }
+    
+    metadata.extensions.push({
+      originalDueAt,
+      newDueAt,
+      reason,
+      extendedBy: new Types.ObjectId(adminUserId),
+      extendedAt: new Date(),
+    });
+
+    slaEvent.dueAt = newDueAt;
+    slaEvent.metadata = metadata;
+    
+    // If it was breached or overdue, revert to open
+    if (slaEvent.status === 'BREACHED' || slaEvent.status === 'OVERDUE') {
+      slaEvent.status = 'OPEN';
+    }
+
+    slaEvent.updatedAt = new Date();
+    await slaEvent.save();
+
+    await auditService.createAuditLog({
+      actorId: adminUserId,
+      actorRole: adminRole,
+      action: 'PMS_SLA_EXTENDED',
+      entityType: 'SlaEvent',
+      entityId: slaEventId,
+      previousValue: originalDueAt,
+      newValue: newDueAt,
+      reason,
+      metadata: { slaType: slaEvent.slaType },
+    });
+
+    return slaEvent;
   }
 }
 

@@ -30,6 +30,32 @@ export interface AuditHistoryEntry {
 
 export class AuditService {
   async createAuditLog(input: CreateAuditLogInput, session?: mongoose.ClientSession): Promise<IAuditLog> {
+    const sensitiveActions = [
+      'PMS_CYCLE_CANCELLED',
+      'PMS_CYCLE_CLOSED',
+      'PMS_CYCLE_REOPENED',
+      'PMS_ANNUAL_DECISION_REOPENED',
+      'PMS_ANNUAL_ASSIGNMENT_REOPENED',
+      'PMS_ASSIGNMENT_REOPENED',
+      'PMS_ASSIGNMENT_CLOSED',
+      'PMS_OBJECTIVE_RETURNED_FOR_REVISION',
+      'PMS_OBJECTIVE_CORRECTED',
+      'PMS_CORRECTION_APPLIED',
+      'PMS_REASSIGNMENT',
+    ];
+
+    const isSensitive = sensitiveActions.includes(input.action) ||
+      input.action.includes('REOPEN') ||
+      input.action.includes('CANCEL') ||
+      input.action.includes('CORRECT') ||
+      input.action.includes('CLOSE') ||
+      input.action.includes('OVERRIDE') ||
+      input.action.includes('VISIBILITY');
+
+    if (isSensitive && !input.reason?.trim()) {
+      throw new Error(`Reason is strictly mandatory for sensitive audit action: ${input.action}`);
+    }
+
     const createdAt = new Date();
 
     const [auditLog] = await AuditLog.create([

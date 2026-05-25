@@ -7,7 +7,6 @@ import {
   AnnualDecisionStatus,
   AnnualWorkflowState,
   AppraisalOutcomeType,
-  LetterTemplateChannel,
   PmsTemplateStatus,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -61,25 +60,66 @@ export class PmsCommunicationService extends BaseService {
   async previewCommunication(
     input: PreviewPmsCommunicationInput,
   ): Promise<RenderedCommunication> {
-    this.assertAdmin('pmsCommunication.preview');
+    await this.assertAdmin('pmsCommunication.preview');
     return this.renderCommunication(input);
   }
 
   async sendCommunication(
     input: SendPmsCommunicationInput,
   ): Promise<ICommunicationDispatch> {
-    this.assertAdmin('pmsCommunication.send');
-    const rendered = await this.renderCommunication(input);
+    await this.assertAdmin('pmsCommunication.send');
     const actorId = this.actorIdObject();
 
     const existingSent = await CommunicationDispatch.findOne({
-      annualAssignmentId: rendered.annualAssignment._id,
-      dispatchStatus: 'SENT',
+      annualAssignmentId: input.annualAssignmentId, // We use input directly to avoid unneeded renders
+      dispatchStatus: { $in: ['SENT', 'SKIPPED'] },
       resendOf: input.resendOf ? new Types.ObjectId(input.resendOf) : null,
     });
     if (existingSent && !input.resendOf) {
-      throw new Error('Communication already sent for this annual assignment');
+      throw new Error('Communication already processed for this annual assignment');
     }
+
+    const annualAssignment = await AnnualAssignment.findById(input.annualAssignmentId);
+    if (!annualAssignment) throw new Error('Annual assignment not found');
+    
+    const annualDecision = await AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id });
+    if (!annualDecision) throw new Error('Annual decision not found');
+
+    if (annualDecision.appraisalOutcomeType === AppraisalOutcomeType.NIL) {
+      const annualCycle = await AnnualCycle.findById(annualAssignment.cycleId).lean();
+      if (annualCycle?.communicationRuleConfig?.skipNilOutcome === true) {
+        const dispatch = await CommunicationDispatch.create({
+          annualAssignmentId: annualAssignment._id,
+          cycleId: annualAssignment.cycleId,
+          employeeId: annualAssignment.employeeId,
+          appraisalOutcomeType: 'NIL',
+          dispatchStatus: 'SKIPPED',
+          deliveryStatus: { reason: 'Skipped due to NIL outcome configuration' },
+          resendOf: input.resendOf ? new Types.ObjectId(input.resendOf) : undefined,
+          correctionReason: input.correctionReason,
+          createdBy: actorId,
+        });
+
+        annualAssignment.communicationStatus = 'SKIPPED';
+        annualAssignment.annualState = AnnualWorkflowState.COMMUNICATION_SENT;
+        annualAssignment.version += 1;
+        await annualAssignment.save();
+
+        await auditService.createAuditLog({
+          actorId: this.requireActor().actorId,
+          actorRole: this.requireActor().actorRole,
+          action: 'PMS_COMMUNICATION_SKIPPED',
+          entityType: 'COMMUNICATION_DISPATCH',
+          entityId: dispatch._id.toString(),
+          newValue: dispatch.toObject(),
+          reason: 'NIL outcome skipped by config',
+        });
+
+        return dispatch;
+      }
+    }
+
+    const rendered = await this.renderCommunication(input);
 
     const dispatch = await CommunicationDispatch.create({
       annualAssignmentId: rendered.annualAssignment._id,
@@ -167,6 +207,10 @@ export class PmsCommunicationService extends BaseService {
     if (!Types.ObjectId.isValid(dispatchId)) {
       throw new Error('Invalid dispatchId');
     }
+    
+    if (!correctionReason?.trim()) {
+      throw new Error('Correction reason is required for resend');
+    }
 
     const existingDispatch = await CommunicationDispatch.findById(dispatchId);
     if (!existingDispatch) {
@@ -182,7 +226,7 @@ export class PmsCommunicationService extends BaseService {
   }
 
   async getHistory(annualAssignmentId: string): Promise<ICommunicationDispatch[]> {
-    this.assertAdmin('pmsCommunication.history');
+    await this.assertAdmin('pmsCommunication.history');
     if (!Types.ObjectId.isValid(annualAssignmentId)) {
       throw new Error('Invalid annualAssignmentId');
     }
@@ -259,28 +303,28 @@ export class PmsCommunicationService extends BaseService {
     annualDecision: IAnnualDecision,
   ): Promise<{ template: IPmsLetterTemplate; templateVersion: IPmsLetterTemplateVersion } | null> {
     const cycle = await AnnualCycle.findById(annualAssignment.cycleId).lean();
-    const communicationRuleConfig = cycle?.communicationRuleConfig ?? {};
+    const communicationRuleConfig = cycle?.communicationRuleConfig;
+    if (!communicationRuleConfig) {
+      throw new Error(
+        'This cycle does not have a communicationRuleConfig configured. ' +
+        'Please configure outcome-to-template mappings (combinedTemplateId, meritOnlyTemplateId, ' +
+        'gradeOnlyTemplateId, genericTemplateId) on the cycle before dispatching communications.',
+      );
+    }
+
     const configuredTemplateId = this.resolveConfiguredTemplateId(
       annualDecision.appraisalOutcomeType,
       communicationRuleConfig,
     );
 
-    if (configuredTemplateId && Types.ObjectId.isValid(configuredTemplateId)) {
-      return this.getTemplateAndVersionById(configuredTemplateId);
+    if (!configuredTemplateId || !Types.ObjectId.isValid(configuredTemplateId)) {
+      throw new Error(
+        `No letter template configured for outcome type "${annualDecision.appraisalOutcomeType}" ` +
+        'on this cycle. Please set the appropriate template ID in the cycle communicationRuleConfig.',
+      );
     }
 
-    const template = await PmsLetterTemplate.findOne({
-      outcomeType: this.mapOutcomeToTemplateType(annualDecision.appraisalOutcomeType),
-      channel: LetterTemplateChannel.EMAIL,
-      status: PmsTemplateStatus.ACTIVE,
-    });
-
-    if (!template) return null;
-
-    const templateVersion = await PmsLetterTemplateVersion.findById(template.currentVersionId);
-    if (!templateVersion) return null;
-
-    return { template, templateVersion };
+    return this.getTemplateAndVersionById(configuredTemplateId);
   }
 
   private async getTemplateAndVersionById(
@@ -301,36 +345,23 @@ export class PmsCommunicationService extends BaseService {
 
   private resolveConfiguredTemplateId(
     outcomeType: string | undefined,
-    config: Record<string, unknown>,
+    config: import('../models/pms-annual-cycle.model').ICommunicationRuleConfig,
   ): string | undefined {
     switch (outcomeType) {
       case AppraisalOutcomeType.BOTH:
-        return config.combinedTemplateId as string | undefined;
+        return config.combinedTemplateId;
       case AppraisalOutcomeType.MERIT_ONLY:
-        return config.meritOnlyTemplateId as string | undefined;
+        return config.meritOnlyTemplateId;
       case AppraisalOutcomeType.GRADE_ONLY:
-        return config.gradeOnlyTemplateId as string | undefined;
+        return config.gradeOnlyTemplateId;
       case AppraisalOutcomeType.NIL:
-        return config.genericTemplateId as string | undefined;
+        return config.genericTemplateId;
       default:
         return undefined;
     }
   }
 
-  private mapOutcomeToTemplateType(outcomeType: string | undefined): string {
-    switch (outcomeType) {
-      case AppraisalOutcomeType.BOTH:
-        return AppraisalOutcomeType.BOTH;
-      case AppraisalOutcomeType.MERIT_ONLY:
-        return AppraisalOutcomeType.MERIT_ONLY;
-      case AppraisalOutcomeType.GRADE_ONLY:
-        return AppraisalOutcomeType.GRADE_ONLY;
-      case AppraisalOutcomeType.NIL:
-        return AppraisalOutcomeType.NIL;
-      default:
-        return AppraisalOutcomeType.NIL;
-    }
-  }
+
 
   private async buildTemplateData(
     annualAssignment: IAnnualAssignment,
@@ -400,8 +431,8 @@ export class PmsCommunicationService extends BaseService {
     ].some(Boolean);
   }
 
-  private assertAdmin(action: string): void {
-    const access = accessService.canPerform({
+  private async assertAdmin(action: string): Promise<void> {
+    const access = await accessService.canPerform({
       actor: this.requireActor(),
       action,
       requiresAdmin: true,

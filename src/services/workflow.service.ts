@@ -143,6 +143,7 @@ export class WorkflowService {
     ) {
       const reasonRequiredStates: readonly AnnualWorkflowStateType[] = [
         AnnualWorkflowState.CANCELLED,
+        AnnualWorkflowState.APPRAISAL_WINDOW_OPEN, // Reopening annual window requires a reason
       ];
 
       return isAnnualWorkflowState(nextState) && reasonRequiredStates.includes(nextState);

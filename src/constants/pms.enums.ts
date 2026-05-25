@@ -6,9 +6,10 @@ export const PmsRole = {
   DIRECTOR: 'DIRECTOR',
 } as const;
 
-export type PmsRole = (typeof PmsRole)[keyof typeof PmsRole];
+// We change PmsRole to just be a standard string so dynamic roles can be used throughout the app
+export type PmsRole = string;
 
-export const PmsRoleLabel: Record<PmsRole, string> = {
+export const PmsRoleLabel: Record<string, string> = {
   [PmsRole.EMPLOYEE]: 'Employee',
   [PmsRole.MANAGER]: 'Manager',
   [PmsRole.ADMIN]: 'Admin',
@@ -301,18 +302,17 @@ const annualWorkflowStates = Object.values(AnnualWorkflowState) as string[];
 const annualDecisionStatuses = Object.values(AnnualDecisionStatus) as string[];
 const quarterReviewStatuses = Object.values(QuarterReviewStatus) as string[];
 const objectiveStatuses = Object.values(ObjectiveStatus) as string[];
-const pmsRoles = Object.values(PmsRole) as string[];
 
-export function normalizePmsRole(value: string): PmsRole | null {
+export function normalizePmsRole(value: string): string {
   const normalized = value.replace(/[ /-]/g, '_').toUpperCase();
   if (normalized === 'STAFF') return PmsRole.EMPLOYEE;
   if (normalized === 'HR_ADMIN' || normalized === 'HRADMIN') return PmsRole.ADMIN;
-  if (normalized === 'SUPERADMIN' || normalized === 'SUPER_ADMIN' || normalized === 'DIRECTOR') return PmsRole.DIRECTOR;
-  return pmsRoles.includes(normalized) ? (normalized as PmsRole) : null;
+  if (normalized === 'SUPERADMIN' || normalized === 'SUPER_ADMIN') return PmsRole.DIRECTOR;
+  return normalized;
 }
 
-export function isPmsRole(value: string): value is PmsRole {
-  return pmsRoles.includes(value);
+export function isPmsRole(value: string): boolean {
+  return typeof value === 'string'; // Dynamic roles mean any string could be a role
 }
 
 export function isQuarterWorkflowState(

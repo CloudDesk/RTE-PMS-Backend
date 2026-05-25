@@ -98,4 +98,7 @@ export interface VisibilityMaskContext {
   employeeMeritVisible?: boolean;
   managerGradeVisible?: boolean;
   managerMeritVisible?: boolean;
+  visibleFrom?: Date | string;
+  confidentialFields?: Set<string>;
+  hasVisibilityOverride?: boolean;
 }

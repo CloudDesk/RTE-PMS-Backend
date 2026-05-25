@@ -210,7 +210,7 @@ export class PmsTemplateService extends BaseService {
     page: number;
     limit: number;
   }> {
-    this.assertAdmin('template.list');
+    await this.assertAdmin('template.list');
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
@@ -239,7 +239,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async createTemplate(input: CreateTemplateInput): Promise<IPmsTemplate> {
-    this.assertAdmin('template.create');
+    await this.assertAdmin('template.create');
     const name = input.name.trim();
     const code = this.normalizeCode(input.code);
     const existingByName = await PmsTemplate.findOne({
@@ -274,7 +274,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async updateTemplate(id: string, input: UpdateTemplateInput): Promise<IPmsTemplate> {
-    this.assertAdmin('template.update');
+    await this.assertAdmin('template.update');
     const existingTemplate = await PmsTemplate.findById(id);
     if (!existingTemplate) {
       throw new Error('Template not found');
@@ -348,7 +348,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deleteTemplate(id: string): Promise<void> {
-    this.assertAdmin('template.delete');
+    await this.assertAdmin('template.delete');
     const template = await PmsTemplate.findOne({ _id: id, isDeleted: false });
     if (!template) {
       throw new Error('Template not found');
@@ -389,7 +389,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async cloneTemplate(id: string): Promise<IPmsTemplate> {
-    this.assertAdmin('template.clone');
+    await this.assertAdmin('template.clone');
 
     const template = await PmsTemplate.findById(id).lean();
     if (!template) {
@@ -432,7 +432,7 @@ export class PmsTemplateService extends BaseService {
     templateId: string,
     input: CreateTemplateVersionInput,
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.create');
+    await this.assertAdmin('templateVersion.create');
     await this.ensureTemplateExists(templateId);
     const templateObjectId = new Types.ObjectId(templateId);
     const versionNo = input.versionNo ?? input.versionNumber;
@@ -481,7 +481,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async activateTemplateVersion(versionId: string): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.activate');
+    await this.assertAdmin('templateVersion.activate');
     const version = await this.getEditableOrExistingVersion(versionId, false);
     this.validateSections(version.sections);
     await this.validateTemplateVersionForActivation(version);
@@ -521,7 +521,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deactivateTemplateVersion(versionId: string): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.deactivate');
+    await this.assertAdmin('templateVersion.deactivate');
     const version = await this.getEditableOrExistingVersion(versionId, false);
 
     version.status = PmsTemplateStatus.INACTIVE;
@@ -551,7 +551,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async getTemplateAuditHistory(id: string): Promise<AuditHistoryEntry[]> {
-    this.assertAdmin('template.audit');
+    await this.assertAdmin('template.audit');
     const template = await PmsTemplate.findOne({ _id: id, isDeleted: false }).lean();
     if (!template) {
       throw new Error('Template not found');
@@ -582,7 +582,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async listTemplateVersions(templateId: string): Promise<IPmsTemplateVersion[]> {
-    this.assertAdmin('templateVersion.list');
+    await this.assertAdmin('templateVersion.list');
     await this.ensureTemplateExists(templateId);
     return PmsTemplateVersion.find({
       templateId: new Types.ObjectId(templateId),
@@ -591,7 +591,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deleteTemplateVersion(versionId: string): Promise<void> {
-    this.assertAdmin('templateVersion.delete');
+    await this.assertAdmin('templateVersion.delete');
     const version = await PmsTemplateVersion.findOne({ _id: versionId, isDeleted: false });
     if (!version) {
       throw new Error('Template version not found');
@@ -643,7 +643,7 @@ export class PmsTemplateService extends BaseService {
       outcomeMappings?: IPmsTemplateVersion['outcomeMappings'];
     } = {},
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureSections');
+    await this.assertAdmin('templateVersion.configureSections');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const normalizedSections = this.normalizeSections(sections);
     this.validateSections(normalizedSections);
@@ -667,7 +667,7 @@ export class PmsTemplateService extends BaseService {
     sectionKey: string,
     fields: unknown[],
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureFields');
+    await this.assertAdmin('templateVersion.configureFields');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const section = version.sections.find((item) => item.sectionKey === sectionKey);
     if (!section) {
@@ -688,7 +688,7 @@ export class PmsTemplateService extends BaseService {
     sectionKey: string,
     permissions: TemplatePermission[],
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureSectionPermissions');
+    await this.assertAdmin('templateVersion.configureSectionPermissions');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const section = version.sections.find((item) => item.sectionKey === sectionKey);
     if (!section) {
@@ -711,7 +711,7 @@ export class PmsTemplateService extends BaseService {
     fieldKey: string,
     permissions: TemplatePermission[],
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureFieldPermissions');
+    await this.assertAdmin('templateVersion.configureFieldPermissions');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const section = version.sections.find((item) => item.sectionKey === sectionKey);
     const field = section?.fields.find((item) => item.fieldKey === fieldKey);
@@ -836,7 +836,7 @@ export class PmsTemplateService extends BaseService {
   async simulateTemplateAccess(
     input: SimulateTemplateAccessInput,
   ): Promise<ResolvedTemplateVersion> {
-    this.assertAdmin('template.access.simulate');
+    await this.assertAdmin('template.access.simulate');
 
     const derivedContext = await this.resolveSimulationContext(input);
     const resolved = await this.resolveTemplateVersion(input.versionId, {
@@ -866,7 +866,7 @@ export class PmsTemplateService extends BaseService {
     letterTemplate: IPmsLetterTemplate;
     letterTemplateVersion: IPmsLetterTemplateVersion;
   }> {
-    this.assertAdmin('letterTemplate.create');
+    await this.assertAdmin('letterTemplate.create');
     const templateId = input.templateId;
     const templateVersionId = input.templateVersionId ?? input.versionId;
     if (!templateId || !templateVersionId) {
@@ -938,7 +938,7 @@ export class PmsTemplateService extends BaseService {
     letterTemplateVersionId: string,
     input: UpdateLetterTemplateVersionInput,
   ): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplate.update');
+    await this.assertAdmin('letterTemplate.update');
     const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
     const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
     const subjectTemplate = input.subjectTemplate ?? input.subject ?? letterTemplateVersion.subjectTemplate ?? '';
@@ -984,7 +984,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async createLetterTemplateVersion(letterTemplateId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplateVersion.create');
+    await this.assertAdmin('letterTemplateVersion.create');
     const parentTemplate = await this.getLetterTemplate(letterTemplateId);
     const latestVersion =
       (parentTemplate.currentVersionId
@@ -1047,7 +1047,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async activateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplate.activate');
+    await this.assertAdmin('letterTemplate.activate');
     const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
     const parentTemplate = await this.getLetterTemplate(letterTemplate.letterTemplateId.toString());
     await this.getScopedTemplateVersion(
@@ -1096,7 +1096,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deactivateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplate.deactivate');
+    await this.assertAdmin('letterTemplate.deactivate');
     const letterTemplateVersion = await this.getLetterTemplateVersion(letterTemplateVersionId);
     const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
 
@@ -1130,7 +1130,7 @@ export class PmsTemplateService extends BaseService {
     page: number;
     limit: number;
   }> {
-    this.assertAdmin('letterTemplate.list');
+    await this.assertAdmin('letterTemplate.list');
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
@@ -1163,7 +1163,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async getLetterTemplate(letterTemplateId: string): Promise<IPmsLetterTemplate> {
-    this.assertAdmin('letterTemplate.get');
+    await this.assertAdmin('letterTemplate.get');
     const template = await PmsLetterTemplate.findOne({
       _id: letterTemplateId,
       isDeleted: false,
@@ -1175,7 +1175,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async listLetterTemplateVersions(letterTemplateId: string): Promise<IPmsLetterTemplateVersion[]> {
-    this.assertAdmin('letterTemplateVersion.list');
+    await this.assertAdmin('letterTemplateVersion.list');
     const exists = await PmsLetterTemplate.exists({ _id: letterTemplateId, isDeleted: false });
     if (!exists) {
       throw new Error('Letter template not found');
@@ -1210,7 +1210,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async getLetterTemplateVersion(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplateVersion.get');
+    await this.assertAdmin('letterTemplateVersion.get');
     const letterTemplate = await PmsLetterTemplateVersion.findById(letterTemplateVersionId);
     if (!letterTemplate) {
       throw new Error('Letter template version not found');
@@ -1219,7 +1219,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deleteLetterTemplateVersion(letterTemplateVersionId: string): Promise<void> {
-    this.assertAdmin('letterTemplate.delete');
+    await this.assertAdmin('letterTemplate.delete');
     const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
     const siblingCount = await PmsLetterTemplateVersion.countDocuments({
       letterTemplateId: letterTemplateVersion.letterTemplateId,
@@ -2337,6 +2337,23 @@ export class PmsTemplateService extends BaseService {
       for (const field of section.fields ?? []) {
         const isScoring = field.fieldCategory === 'SCORING' || field.scoringConfig?.participatesInScoring === true;
 
+        const nonScorableTypes = new Set<string>([
+          PmsTemplateFieldType.SHORT_TEXT,
+          PmsTemplateFieldType.LONG_TEXT,
+          PmsTemplateFieldType.DATE,
+          PmsTemplateFieldType.ATTACHMENT,
+          PmsTemplateFieldType.STATIC_TEXT,
+          PmsTemplateFieldType.SECTION_DIVIDER,
+          PmsTemplateFieldType.COMMENT_BOX,
+          PmsTemplateFieldType.SIGNATURE,
+        ]);
+
+        if (isScoring && nonScorableTypes.has(field.fieldType)) {
+          errors.push(
+            `Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" has a non-scorable type (${field.fieldType}) but participates in scoring`,
+          );
+        }
+
         // Check 5: Scoring config validity
         if (isScoring) {
           const scoreType = field.scoringConfig?.scoreType;
@@ -2859,7 +2876,7 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Template version does not belong to the requested assignment');
     }
 
-    this.assertRuntimeTemplateAccess(annualAssignment, quarterAssignment);
+    await this.assertRuntimeTemplateAccess(annualAssignment, quarterAssignment);
 
     const assignmentVisibility = annualAssignment.visibility ?? {};
     if (assignmentVisibility.employeeReviewVisible) visibilityFlags.add('employee_review');
@@ -2888,10 +2905,10 @@ export class PmsTemplateService extends BaseService {
     };
   }
 
-  private assertRuntimeTemplateAccess(
+  private async assertRuntimeTemplateAccess(
     annualAssignment: Record<string, any>,
     quarterAssignment?: Record<string, any> | null,
-  ): void {
+  ): Promise<void> {
     const actor = this.context.user;
     if (!actor) {
       throw new Error('Authentication required');
@@ -2906,7 +2923,7 @@ export class PmsTemplateService extends BaseService {
       return;
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor: {
         actorId: actor._id.toString(),
         actorRole: actor.role,
@@ -2938,13 +2955,13 @@ export class PmsTemplateService extends BaseService {
     }
   }
 
-  private assertAdmin(action: string): void {
+  private async assertAdmin(action: string): Promise<void> {
     const user = this.context.user;
     if (!user) {
       throw new Error('Authentication required');
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor: {
         actorId: user._id.toString(),
         actorRole: user.role,

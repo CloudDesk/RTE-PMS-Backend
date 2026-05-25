@@ -127,6 +127,14 @@ export const connectDB = async (): Promise<void> => {
 
         await migrateEmailIndexIfNeeded();
         await migrateTemplateStatusesIfNeeded();
+        
+        try {
+          const { accessService } = await import('../services/access.service');
+          await accessService.initialize();
+        } catch (initErr) {
+          console.error('[DB] Failed to initialize AccessService', initErr);
+        }
+
         registerConnectionListeners();
 
         return;
