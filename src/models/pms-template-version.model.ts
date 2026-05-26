@@ -85,6 +85,7 @@ export interface ITemplateField {
   displayOrder?: number;
   placeholder?: string;
   helpText?: string;
+  hideLabel?: boolean;
   validationRules?: Record<string, unknown>;
   visibilityRules?: Record<string, unknown>;
   editabilityRules?: Record<string, unknown>;
@@ -99,6 +100,8 @@ export interface ITemplateField {
     rows: Array<{ key: string; label: string; weightage?: number; options?: ITemplateOption[] }>;
     columns: Array<{ key: string; label: string; weightage?: number }>;
     allowComments?: boolean;
+    selectionControl?: 'radio' | 'checkbox';
+    borderStyle?: 'standard' | 'paper';
   };
   gridConfig?: {
     columns: Array<{ key: string; label: string; type: string; required?: boolean }>;
@@ -254,6 +257,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
     displayOrder: { type: Number, default: 0 },
     placeholder: String,
     helpText: String,
+    hideLabel: { type: Boolean, default: false },
     validationRules: Schema.Types.Mixed,
     visibilityRules: Schema.Types.Mixed,
     editabilityRules: Schema.Types.Mixed,
@@ -316,6 +320,8 @@ const templateFieldSchema = new Schema<ITemplateField>(
         rows: IMatrixItem[];
         columns: IMatrixItem[];
         allowComments?: boolean;
+        selectionControl?: 'radio' | 'checkbox';
+        borderStyle?: 'standard' | 'paper';
       }>(
         {
           rows: {
@@ -327,6 +333,8 @@ const templateFieldSchema = new Schema<ITemplateField>(
             default: [],
           },
           allowComments: { type: Boolean, default: false },
+          selectionControl: { type: String, enum: ['radio', 'checkbox'], default: 'radio' },
+          borderStyle: { type: String, enum: ['standard', 'paper'], default: 'standard' },
         },
         { _id: false },
       ),

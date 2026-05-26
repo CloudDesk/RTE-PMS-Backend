@@ -24,6 +24,38 @@ describe('QuarterReviewService - Template Engine Scoring Logic', () => {
       expect(score).toBe(8);
     });
 
+    it('uses matrix row-specific option scores for competency rows', () => {
+      const field = {
+        matrixConfig: {
+          rows: [
+            {
+              key: 'job_knowledge',
+              options: [
+                { value: 'INADEQUATE', score: 3 },
+                { value: 'NEEDS_GUIDANCE', score: 6 },
+                { value: 'INDEPENDENT', score: 8 },
+                { value: 'EXCELLENT', score: 10 },
+              ],
+            },
+          ],
+        },
+      };
+
+      const score = service.getOptionScore('INDEPENDENT', field, field.matrixConfig.rows[0]);
+      expect(score).toBe(8);
+    });
+
+    it('falls back to legacy option weight when score is not present', () => {
+      const field = {
+        options: [
+          { value: 'NEEDS_GUIDANCE', weight: 6 },
+        ],
+      };
+
+      const score = service.getOptionScore('NEEDS_GUIDANCE', field);
+      expect(score).toBe(6);
+    });
+
     it('should fallback to legacy scoringConfig.optionScores if options is empty', () => {
       const field = {
         scoringConfig: {
@@ -208,6 +240,90 @@ describe('QuarterReviewService - Template Engine Scoring Logic', () => {
       );
 
       expect(score).toBe(87);
+    });
+
+    it('excludes a field when an INCLUDE condition does not match', () => {
+      const reviewConfig = {
+        objectiveRatingRule: null,
+        overallScoreMax: 100,
+        sections: [
+          {
+            sectionKey: 'review',
+            sectionType: PmsTemplateSectionType.QUARTER_REVIEW,
+            weightage: 100,
+            aggregationMethod: 'SUM',
+            maxSectionScore: null,
+            scoringFields: [
+              {
+                fieldKey: 'bonus',
+                sectionKey: 'review',
+                fieldType: 'NUMBER',
+                scoreType: 'MANUAL',
+                weightage: 100,
+                maxScore: 100,
+                scoringConfig: {
+                  conditionalScoring: [
+                    { dependsOn: 'eligible', operator: 'EQUALS', value: 'YES', action: 'INCLUDE' },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const reviewValues = [
+        { sectionKey: 'review', fieldKey: 'eligible', valueText: 'NO' },
+        { sectionKey: 'review', fieldKey: 'bonus', valueNumber: 100 },
+      ];
+
+      const { sectionScores, sectionsSnapshot } = service.calculateSectionScores(reviewValues, reviewConfig, [], []);
+
+      expect(sectionScores[0].score).toBe(0);
+      expect(sectionsSnapshot[0].fields).toBeUndefined();
+    });
+
+    it('supports comma-separated IN condition values from the builder UI', () => {
+      const reviewConfig = {
+        objectiveRatingRule: null,
+        overallScoreMax: 100,
+        sections: [
+          {
+            sectionKey: 'review',
+            sectionType: PmsTemplateSectionType.QUARTER_REVIEW,
+            weightage: 100,
+            aggregationMethod: 'SUM',
+            maxSectionScore: null,
+            scoringFields: [
+              {
+                fieldKey: 'stretch_bonus',
+                sectionKey: 'review',
+                fieldType: 'NUMBER',
+                scoreType: 'MANUAL',
+                weightage: 100,
+                maxScore: 100,
+                scoringConfig: {
+                  conditionalScoring: [
+                    { dependsOn: 'grade', operator: 'IN', value: 'A,B', action: 'MULTIPLY', multiplier: 1.5 },
+                  ],
+                  scoringPolicy: {
+                    rounding: { method: 'NEAREST', precision: 0 },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const reviewValues = [
+        { sectionKey: 'review', fieldKey: 'grade', valueText: 'B' },
+        { sectionKey: 'review', fieldKey: 'stretch_bonus', valueNumber: 40 },
+      ];
+
+      const { sectionScores } = service.calculateSectionScores(reviewValues, reviewConfig, [], []);
+
+      expect(sectionScores[0].score).toBe(60);
     });
   });
 });
