@@ -72,6 +72,7 @@ export interface ResolvedTemplateField {
   editable: boolean;
   placeholder?: string;
   helpText?: string;
+  hideLabel?: boolean;
   colSpan?: number;
   options?: unknown[];
   matrixConfig?: unknown;
@@ -81,6 +82,7 @@ export interface ResolvedTemplateField {
   semanticRole?: string;
   scoringConfig?: Record<string, unknown>;
   validationRules?: Record<string, unknown>;
+  conditionalRendering?: TemplateField['conditionalRendering'];
 }
 
 export interface ResolvedTemplateSection {
@@ -90,6 +92,7 @@ export interface ResolvedTemplateSection {
   module: string;
   level: 'quarter' | 'annual';
   layout: 'vertical' | 'grid' | 'table' | 'bordered_grid';
+  metadata?: Record<string, unknown>;
   fields: ResolvedTemplateField[];
 }
 
@@ -797,6 +800,7 @@ export class PmsTemplateService extends BaseService {
           module: this.mapSectionModule(section.sectionType),
           level: section.level === PmsTemplateSectionLevel.QUARTER ? 'quarter' : 'annual',
           layout: section.layout ?? 'vertical',
+          metadata: section.metadata ?? {},
           fields,
         } as ResolvedTemplateSection;
       })
@@ -1440,6 +1444,9 @@ export class PmsTemplateService extends BaseService {
 
     const normalizedOptions = (field.options ?? []).map((option: any) => {
       let score = option.score !== undefined ? Number(option.score) : undefined;
+      if (score === undefined && option.weight !== undefined) {
+        score = Number(option.weight);
+      }
       if (score === undefined) {
         const legacyMatch = legacyOptionScores.find((item: any) => item.optionValue === option.value);
         if (legacyMatch && legacyMatch.score !== undefined) {
@@ -1475,6 +1482,7 @@ export class PmsTemplateService extends BaseService {
       displayOrder: field.displayOrder ?? legacyOrder ?? index + 1,
       placeholder: field.placeholder as string | undefined,
       helpText: field.helpText as string | undefined,
+      hideLabel: !!field.hideLabel,
       validationRules: {
         ...(field.validationRules ?? {}),
         ...(rulePatch.validationRules ?? {}),
@@ -1511,10 +1519,17 @@ export class PmsTemplateService extends BaseService {
             return {
               key: row.key ?? row.id,
               label: row.label,
+              weightage: row.weightage,
               options: (row.options ?? []).map((option: any) => {
                 let score = option.score !== undefined ? Number(option.score) : undefined;
+                if (score === undefined && option.weight !== undefined) {
+                  score = Number(option.weight);
+                }
                 if (score === undefined) {
-                  const legacyMatch = legacyOptionScores.find((item: any) => item.optionValue === option.value);
+                  const rowKey = row.key ?? row.id;
+                  const legacyMatch = legacyOptionScores.find(
+                    (item: any) => item.optionValue === option.value || item.optionValue === `${rowKey}:${option.value}`,
+                  );
                   if (legacyMatch && legacyMatch.score !== undefined) {
                     score = Number(legacyMatch.score);
                   }
@@ -1534,6 +1549,8 @@ export class PmsTemplateService extends BaseService {
             weightage: col.weightage,
           })),
           allowComments: !!field.matrixConfig.allowComments,
+          selectionControl: field.matrixConfig.selectionControl === 'checkbox' ? 'checkbox' : 'radio',
+          borderStyle: field.matrixConfig.borderStyle === 'paper' ? 'paper' : 'standard',
         }
         : undefined,
       gridConfig: field.gridConfig
@@ -1706,6 +1723,7 @@ export class PmsTemplateService extends BaseService {
       editable: this.isFieldEditable(field, context.role, context.workflowState, behavior),
       placeholder: field.placeholder,
       helpText: field.helpText,
+      hideLabel: field.hideLabel,
       colSpan: field.colSpan,
       options: field.options ?? [],
       matrixConfig: field.matrixConfig,
@@ -1715,6 +1733,7 @@ export class PmsTemplateService extends BaseService {
       semanticRole: field.semanticRole,
       scoringConfig: field.scoringConfig,
       validationRules: field.validationRules,
+      conditionalRendering: field.conditionalRendering,
     };
   }
 
@@ -2018,6 +2037,13 @@ export class PmsTemplateService extends BaseService {
 
       if (section.sectionType === PmsTemplateSectionType.OBJECTIVES) {
         this.validateObjectiveConfig(section);
+      }
+
+      if (section.sectionScoringConfig?.participatesInScoring === true) {
+        const maxSectionScore = Number(section.sectionScoringConfig.maxSectionScore ?? 100);
+        if (!Number.isFinite(maxSectionScore) || maxSectionScore <= 0 || maxSectionScore > 100) {
+          throw new Error(`Scoring section ${section.sectionKey} maxSectionScore must be between 1 and 100`);
+        }
       }
 
       const fieldKeys = new Set<string>();
@@ -2387,15 +2413,19 @@ export class PmsTemplateService extends BaseService {
         const isOptionScoreType = field.scoringConfig?.scoreType === 'OPTION_BASED';
         if (isScoring && (isOptionBased || isOptionScoreType)) {
           const maxScore = Number(field.scoringConfig?.maxScore ?? 0);
-          const options = field.options ?? [];
+          const matrixOptions = field.fieldType === 'MATRIX'
+            ? (field.matrixConfig?.rows ?? []).flatMap((row) => row.options ?? [])
+            : [];
+          const options = matrixOptions.length > 0 ? matrixOptions : field.options ?? [];
           if (options.length === 0) {
             errors.push(`Option-based scoring field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires options`);
           } else {
             for (const opt of options) {
-              if (opt.score === undefined || opt.score === null || !Number.isFinite(Number(opt.score))) {
+              const score = opt.score ?? opt.weight;
+              if (score === undefined || score === null || !Number.isFinite(Number(score))) {
                 errors.push(`Option "${opt.label || opt.value}" in field "${field.fieldLabel || field.fieldKey}" (section "${section.sectionLabel || section.sectionKey}") is missing a numeric score`);
-              } else if (Number(opt.score) < 0 || Number(opt.score) > maxScore) {
-                errors.push(`Option "${opt.label || opt.value}" score (${opt.score}) in field "${field.fieldLabel || field.fieldKey}" (section "${section.sectionLabel || section.sectionKey}") must be between 0 and ${maxScore}`);
+              } else if (Number(score) < 0 || Number(score) > maxScore) {
+                errors.push(`Option "${opt.label || opt.value}" score (${score}) in field "${field.fieldLabel || field.fieldKey}" (section "${section.sectionLabel || section.sectionKey}") must be between 0 and ${maxScore}`);
               }
             }
           }
@@ -2649,12 +2679,21 @@ export class PmsTemplateService extends BaseService {
     const optionScores = Array.isArray(field.scoringConfig?.optionScores)
       ? field.scoringConfig?.optionScores
       : [];
+    const matrixRows = Array.isArray(field.matrixConfig?.rows) ? field.matrixConfig.rows : [];
+    const matrixOptions = matrixRows.flatMap((row) =>
+      (row.options ?? []).map((option) => ({
+        label: option.label,
+        value: `${row.key}:${option.value}`,
+        score: option.score ?? option.weight,
+      })),
+    );
+    const scoreItems = optionScores.length > 0 ? optionScores : matrixOptions;
 
-    if (optionScores.length === 0) {
+    if (scoreItems.length === 0) {
       throw new Error(`Option-based scoring field ${field.fieldKey} in section ${sectionKey} requires optionScores`);
     }
 
-    for (const item of optionScores) {
+    for (const item of scoreItems) {
       const score = Number(item.score);
       if (!Number.isFinite(score) || score < 0 || score > maxScore) {
         throw new Error(`Option score for field ${field.fieldKey} in section ${sectionKey} must be between 0 and ${maxScore}`);

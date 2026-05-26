@@ -62,16 +62,19 @@ export class PmsScoringService {
     if (row && Array.isArray(row.options)) {
       const match = row.options.find((opt: any) => opt.value === selectedValue);
       if (match?.score !== undefined && match.score !== null) return Number(match.score);
+      if (match?.weight !== undefined && match.weight !== null) return Number(match.weight);
     }
 
     if (field.matrixConfig && Array.isArray(field.matrixConfig.options)) {
       const match = field.matrixConfig.options.find((opt: any) => opt.value === selectedValue);
       if (match?.score !== undefined && match.score !== null) return Number(match.score);
+      if (match?.weight !== undefined && match.weight !== null) return Number(match.weight);
     }
 
     if (Array.isArray(field.options)) {
       const match = field.options.find((opt: any) => opt.value === selectedValue);
       if (match?.score !== undefined && match.score !== null) return Number(match.score);
+      if (match?.weight !== undefined && match.weight !== null) return Number(match.weight);
     }
 
     if (field.scoringConfig && Array.isArray(field.scoringConfig.optionScores)) {
@@ -427,6 +430,7 @@ export class PmsScoringService {
     let multiplier = 1;
     for (const rule of rules) {
       const matched = this.evaluateConditionalRule(rule, valueMap);
+      if (rule.action === 'INCLUDE' && !matched) return 0;
       if (!matched) continue;
       if (rule.action === 'EXCLUDE') return 0;
       if (rule.action === 'MULTIPLY') {
@@ -449,9 +453,9 @@ export class PmsScoringService {
       case 'NOT_EQUALS':
         return String(value) !== String(rule.value);
       case 'IN':
-        return Array.isArray(rule.value) && rule.value.map(String).includes(String(value));
+        return this.normalizeConditionList(rule.value).includes(String(value));
       case 'NOT_IN':
-        return Array.isArray(rule.value) && !rule.value.map(String).includes(String(value));
+        return !this.normalizeConditionList(rule.value).includes(String(value));
       case 'GREATER_THAN':
         return Number(value) > Number(rule.value);
       case 'LESS_THAN':
@@ -471,6 +475,25 @@ export class PmsScoringService {
   ): unknown {
     const match = Array.from(valueMap.entries()).find(([key]) => key.endsWith(`::${fieldKey}`))?.[1];
     return match?.valueNumber ?? match?.valueText ?? match?.valueJson;
+  }
+
+  private normalizeConditionList(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value.map(String);
+    }
+
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    if (value === undefined || value === null) {
+      return [];
+    }
+
+    return [String(value)];
   }
 
   calculateAnnualRollup(
@@ -542,7 +565,7 @@ export class PmsScoringService {
       const rowScore = selectedValue ? (this.getOptionScore(selectedValue, field, row) ?? 0) : 0;
       const allRowOpts = row.options || field.matrixConfig?.options || field.options || [];
       const optionMax = allRowOpts.reduce((max: number, option: any) => {
-        const score = Number(option.score);
+        const score = Number(option.score ?? option.weight);
         return Number.isFinite(score) && score > max ? score : max;
       }, 0);
       const rowMaxScore = optionMax > 0 ? optionMax : defaultMaxScore;
