@@ -502,6 +502,9 @@ export class CycleService extends BaseService {
         cycle,
         AnnualWorkflowState.SCHEDULED,
         'PMS_CYCLE_SCHEDULED',
+        {},
+        undefined,
+        { returnDocument: true },
       );
     }
 
@@ -585,6 +588,9 @@ export class CycleService extends BaseService {
         updatedCycle,
         AnnualWorkflowState.IN_PROGRESS,
         'PMS_CYCLE_IN_PROGRESS',
+        {},
+        undefined,
+        { returnDocument: true },
       );
     }
 
@@ -594,6 +600,8 @@ export class CycleService extends BaseService {
         AnnualWorkflowState.ALL_QUARTERS_FINALIZED,
         'PMS_CYCLE_ALL_QUARTERS_FINALIZED',
         { allQuartersFinalizedAt: completion.completedAt },
+        undefined,
+        { returnDocument: true },
       );
     }
 
@@ -618,6 +626,7 @@ export class CycleService extends BaseService {
     auditEvent: string,
     additionalUpdates: Record<string, unknown> = {},
     reason?: string,
+    options: { returnDocument?: boolean } = {},
   ): Promise<any> {
     const previousState = cycle.status;
     const transition = this.transitionAnnualCycle(cycle, nextState, reason);
@@ -635,6 +644,10 @@ export class CycleService extends BaseService {
       { status: cycle.status },
       reason,
     );
+
+    if (options.returnDocument) {
+      return cycle;
+    }
 
     const obj = cycle.toObject() as any;
     if (cycle.templateVersionId) {

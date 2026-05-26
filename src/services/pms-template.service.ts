@@ -2612,6 +2612,8 @@ export class PmsTemplateService extends BaseService {
       const allowedOutcomeTypes = new Set([
         mapping.outcomeType,
         'GENERIC_APPRAISAL',
+        ...(mapping.outcomeType === 'MERIT_ONLY' ? ['MERIT'] : []),
+        ...(mapping.outcomeType === 'GRADE_ONLY' ? ['GRADE'] : []),
       ]);
       if (!allowedOutcomeTypes.has(mappedLetterTemplate.outcomeType)) {
         errors.push(
