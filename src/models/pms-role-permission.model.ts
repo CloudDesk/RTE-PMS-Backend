@@ -4,7 +4,7 @@ export interface IPmsRolePermission extends Document {
   role: string;
   resource: string;
   action: string;
-  scope: 'OWN' | 'TEAM' | 'ALL' | 'DELEGATED' | 'HIERARCHY';
+  scope: 'OWN' | 'TEAM' | 'ALL' | 'DELEGATED' | 'HIERARCHY' | 'DEPARTMENT' | 'BUSINESS_UNIT' | 'REGION' | 'GLOBAL';
   conditions: Record<string, unknown>;
   isAllowed: boolean;
   priority: number;
@@ -19,7 +19,7 @@ const pmsRolePermissionSchema = new Schema<IPmsRolePermission>(
     action: { type: String, required: true },   // e.g., 'create', 'read', 'update', 'delete', '*'
     scope: { 
       type: String, 
-      enum: ['OWN', 'TEAM', 'ALL', 'DELEGATED', 'HIERARCHY'], 
+      enum: ['OWN', 'TEAM', 'ALL', 'DELEGATED', 'HIERARCHY', 'DEPARTMENT', 'BUSINESS_UNIT', 'REGION', 'GLOBAL'], 
       required: true,
       default: 'OWN'
     },

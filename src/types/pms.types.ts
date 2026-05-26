@@ -62,6 +62,8 @@ export interface AccessResourceContext {
   assignedManagerId?: string;
   ownerId?: string;
   allowedManagerIds?: string[];
+  cycleId?: string;        // For delegation scope check (cycle-scoped delegation)
+  delegatorId?: string;   // For delegation scope check (original owner of the resource)
 }
 
 export interface AccessCheckInput {

@@ -516,18 +516,26 @@ export class CycleService extends BaseService {
     return this.executeTransition(cycle, AnnualWorkflowState.SCHEDULED, 'PMS_CYCLE_SCHEDULED');
   }
 
-  async closeCycle(cycleId: string): Promise<IAnnualCycle> {
+  async closeCycle(cycleId: string, input: { reason: string }): Promise<IAnnualCycle> {
     await this.assertAdmin('cycle.close');
     const cycle = await this.getCycleForAction(cycleId);
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Close reason is required');
+    }
     return this.executeTransition(cycle, AnnualWorkflowState.CLOSED, 'PMS_CYCLE_CLOSED', {
       closedAt: new Date(),
-    });
+    }, reason);
   }
 
-  async archiveCycle(cycleId: string): Promise<IAnnualCycle> {
+  async archiveCycle(cycleId: string, input: { reason: string }): Promise<IAnnualCycle> {
     await this.assertAdmin('cycle.archive');
     const cycle = await this.getCycleForAction(cycleId);
-    return this.executeTransition(cycle, AnnualWorkflowState.ARCHIVED, 'PMS_CYCLE_ARCHIVED');
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Archive reason is required');
+    }
+    return this.executeTransition(cycle, AnnualWorkflowState.ARCHIVED, 'PMS_CYCLE_ARCHIVED', {}, reason);
   }
 
   async cancelCycle(cycleId: string, input: CancelCycleInput): Promise<IAnnualCycle> {

@@ -25,6 +25,7 @@ export interface BulkAssignInputItem {
   employeeId: string;
   managerId?: string;
   assignmentReason?: string;
+  applicableQuarters?: ('Q1' | 'Q2' | 'Q3' | 'Q4')[];
 }
 
 export interface BulkVisibilityUpdateInput {
@@ -224,7 +225,7 @@ export class PmsBulkOperationsService extends BaseService {
         const seenEmployeeIds = new Set<string>();
 
     for (const item of assignments) {
-      const { employeeId, managerId, assignmentReason } = item;
+      const { employeeId, managerId, assignmentReason, applicableQuarters } = item as any;
 
       if (!employeeId) {
         results.push({
@@ -258,7 +259,7 @@ export class PmsBulkOperationsService extends BaseService {
         if (!resolvedManagerId) {
           // Send to exception queue as required by Module 15 business rules
           const exception = await assignmentService.bulkAssign(cycleId, {
-            assignments: [{ employeeId, managerId: undefined, assignmentReason }]
+            assignments: [{ employeeId, managerId: undefined, applicableQuarters, assignmentReason }]
           });
           results.push({
             employeeId,
@@ -273,6 +274,7 @@ export class PmsBulkOperationsService extends BaseService {
         const assignRes = await assignmentService.assignEmployee(cycleId, {
           employeeId,
           managerId: resolvedManagerId.toString(),
+          applicableQuarters,
           assignmentReason: assignmentReason || 'BULK_LAUNCH',
         });
 
