@@ -519,6 +519,28 @@ export class QuarterReviewService extends BaseService {
     await this.assertManagerAccess('quarterReview.submit', quarterAssignment);
     await this.assertReviewWindow(quarterAssignment);
 
+    if (quarterAssignment.quarterState === QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED) {
+      const submittedReview = await QuarterReview.findOne({
+        quarterAssignmentId: quarterAssignment._id,
+        isDeleted: false,
+      });
+
+      if (!submittedReview?.submittedAt) {
+        throw new Error('Submitted quarter review is required before quarter finalization');
+      }
+
+      const finalizedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
+        quarterAssignment,
+        submittedReview,
+        'PMS_QUARTER_ASSIGNMENT_AUTO_FINALIZED_AFTER_MANAGER_SUBMISSION',
+      );
+
+      return {
+        quarterReview: submittedReview,
+        quarterAssignment: finalizedQuarterAssignment,
+      };
+    }
+
     if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
       throw new Error('Quarter review can be submitted only when manager review is open');
     }
@@ -630,9 +652,15 @@ export class QuarterReviewService extends BaseService {
       quarterReview.toObject(),
     );
 
+    const finalizedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
+      submittedQuarterAssignment,
+      quarterReview,
+      'PMS_QUARTER_ASSIGNMENT_AUTO_FINALIZED_AFTER_MANAGER_SUBMISSION',
+    );
+
     return {
       quarterReview,
-      quarterAssignment: submittedQuarterAssignment,
+      quarterAssignment: finalizedQuarterAssignment,
     };
   }
 
@@ -658,36 +686,10 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Submitted quarter review is required before quarter finalization');
     }
 
-    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
-      quarterAssignment._id.toString(),
-      QuarterWorkflowState.QUARTER_FINALIZED,
-      this.requireActor(),
-    );
-
-    const finalizedReview = await QuarterReview.findOneAndUpdate(
-      { quarterAssignmentId: quarterAssignment._id, isDeleted: false },
-      {
-        $set: {
-          finalizedAt: new Date(),
-          reviewStatus: QuarterReviewStatus.FINALIZED,
-          updatedBy: this.actorIdObject(),
-        },
-        $inc: { version: 1 },
-      },
-      { new: true },
-    );
-
-    if (finalizedReview) {
-      await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, finalizedReview);
-      await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, finalizedReview);
-    }
-
-    await this.audit(
+    const updatedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
+      quarterAssignment,
+      quarterReview,
       'PMS_QUARTER_ASSIGNMENT_FINALIZED',
-      'QUARTER_ASSIGNMENT',
-      updatedQuarterAssignment._id.toString(),
-      { quarterState: quarterAssignment.quarterState },
-      { quarterState: updatedQuarterAssignment.quarterState },
     );
 
     return { quarterAssignment: updatedQuarterAssignment };
@@ -1936,6 +1938,49 @@ export class QuarterReviewService extends BaseService {
     quarterAssignment.updatedBy = this.actorIdObject();
     quarterAssignment.version += 1;
     await quarterAssignment.save();
+  }
+
+  private async finalizeSubmittedQuarterReview(
+    quarterAssignment: IQuarterAssignment,
+    quarterReview: IQuarterReview,
+    auditAction: string,
+  ): Promise<IQuarterAssignment> {
+    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
+      quarterAssignment._id.toString(),
+      QuarterWorkflowState.QUARTER_FINALIZED,
+      this.requireActor(),
+    );
+
+    const finalizedReview = await QuarterReview.findOneAndUpdate(
+      { quarterAssignmentId: quarterAssignment._id, isDeleted: false },
+      {
+        $set: {
+          finalizedAt: new Date(),
+          reviewStatus: QuarterReviewStatus.FINALIZED,
+          updatedBy: this.actorIdObject(),
+        },
+        $inc: { version: 1 },
+      },
+      { new: true },
+    );
+
+    if (finalizedReview) {
+      await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, finalizedReview);
+      await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, finalizedReview);
+    } else {
+      await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, quarterReview);
+      await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, quarterReview);
+    }
+
+    await this.audit(
+      auditAction,
+      'QUARTER_ASSIGNMENT',
+      updatedQuarterAssignment._id.toString(),
+      { quarterState: quarterAssignment.quarterState },
+      { quarterState: updatedQuarterAssignment.quarterState },
+    );
+
+    return updatedQuarterAssignment;
   }
 
   private async createQuarterFinalizationSnapshot(
