@@ -411,6 +411,13 @@ export class QuarterReviewService extends BaseService {
     const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig, approvedObjectives);
 
     this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
+    
+    if (annualAssignment.templateVersionId) {
+      const templateVersion = await PmsTemplateVersion.findById(annualAssignment.templateVersionId).lean();
+      if (templateVersion) {
+        this.validateReviewValuesAgainstTemplate(input.reviewValues ?? [], templateVersion);
+      }
+    }
 
     const existingReview = await QuarterReview.findOne({
       quarterAssignmentId: quarterAssignment._id,
@@ -522,6 +529,13 @@ export class QuarterReviewService extends BaseService {
     const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig, approvedObjectives);
     this.validateReviewInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
 
+    if (annualAssignment.templateVersionId) {
+      const templateVersion = await PmsTemplateVersion.findById(annualAssignment.templateVersionId).lean();
+      if (templateVersion) {
+        this.validateReviewValuesAgainstTemplate(input.reviewValues ?? [], templateVersion, true);
+      }
+    }
+
     const existingReview = await QuarterReview.findOne({
       quarterAssignmentId: quarterAssignment._id,
       isDeleted: false,
@@ -626,7 +640,7 @@ export class QuarterReviewService extends BaseService {
     quarterAssignmentId: string,
   ): Promise<FinalizeQuarterAssignmentResult> {
     const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    this.assertAdmin('quarterAssignment.finalize');
+    await this.assertAdmin('quarterAssignment.finalize');
 
     if (
       quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED &&
@@ -684,7 +698,7 @@ export class QuarterReviewService extends BaseService {
     input: ReopenQuarterAssignmentInput,
   ): Promise<FinalizeQuarterAssignmentResult> {
     const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    this.assertAdmin('quarterAssignment.reopen');
+    await this.assertAdmin('quarterAssignment.reopen');
 
     if (!input.reason?.trim()) {
       throw new Error('Reopen reason is required');
@@ -809,6 +823,28 @@ export class QuarterReviewService extends BaseService {
     const quarterReviewByQuarterAssignmentId = new Map(
       quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
     );
+
+    const templateVersionIds = annualAssignments
+      .map((item) => item.templateVersionId)
+      .filter((value): value is Types.ObjectId => Boolean(value));
+
+    const templateVersions = await PmsTemplateVersion.find({
+      _id: { $in: templateVersionIds },
+      isDeleted: false,
+    }).lean();
+
+    const confidentialFieldsByTemplateId = new Map<string, Set<string>>();
+    for (const tv of templateVersions) {
+      const confidentialSet = new Set<string>();
+      for (const section of tv.sections ?? []) {
+        for (const field of section.fields ?? []) {
+          if (field.fieldCategory === 'CONFIDENTIAL') {
+            confidentialSet.add(field.fieldKey);
+          }
+        }
+      }
+      confidentialFieldsByTemplateId.set(tv._id.toString(), confidentialSet);
+    }
     const reviewValuesByReviewId = new Map<string, typeof quarterReviewValues>();
     for (const val of quarterReviewValues) {
       if (val.quarterReviewId) {
@@ -846,6 +882,14 @@ export class QuarterReviewService extends BaseService {
         isReviewVisible = annualAssignment?.visibility?.employeeReviewVisible === true;
       }
 
+      let filteredReviewValues = reviewValuesByReviewId.get(review?._id.toString()) ?? [];
+      if (actorRole === PmsRole.EMPLOYEE && annualAssignment?.templateVersionId) {
+        const confidentialSet = confidentialFieldsByTemplateId.get(annualAssignment.templateVersionId.toString());
+        if (confidentialSet) {
+          filteredReviewValues = filteredReviewValues.filter(val => !confidentialSet.has(val.fieldKey));
+        }
+      }
+
       return {
         id: quarterAssignment._id.toString(),
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
@@ -881,7 +925,7 @@ export class QuarterReviewService extends BaseService {
           ? this.mapQuarterReviewRecord(
               review,
               isReviewVisible,
-              reviewValuesByReviewId.get(review._id.toString()) ?? [],
+              filteredReviewValues,
             )
           : null,
         backendConnected: true,
@@ -976,6 +1020,50 @@ export class QuarterReviewService extends BaseService {
       managerReview: mapWindow(quarterCycle.managerReviewWindow),
       quarterFinalization: mapWindow(quarterCycle.quarterFinalizationWindow),
     };
+  }
+
+  private validateReviewValuesAgainstTemplate(
+    reviewValues: QuarterReviewValueInput[],
+    templateVersion: any,
+    isSubmit = false
+  ): void {
+    if (!templateVersion?.sections) return;
+
+    const fieldsMap = new Map<string, any>();
+    for (const section of templateVersion.sections) {
+      for (const field of section.fields ?? []) {
+        fieldsMap.set(field.fieldKey, field);
+      }
+    }
+
+    for (const val of reviewValues) {
+      const fieldDef = fieldsMap.get(val.fieldKey);
+      if (!fieldDef) continue;
+
+      if (isSubmit && fieldDef.isRequired && val.valueText === undefined && val.valueNumber === undefined && val.valueDate === undefined && val.valueJson === undefined) {
+        throw new Error(`Field ${fieldDef.fieldLabel || val.fieldKey} is required`);
+      }
+
+      if (val.valueText) {
+        const minLength = fieldDef.validationRules?.minLength as number | undefined;
+        const maxLength = fieldDef.validationRules?.maxLength as number | undefined;
+        if (minLength && val.valueText.length < minLength) {
+          throw new Error(`Field ${fieldDef.fieldLabel || val.fieldKey} must be at least ${minLength} characters`);
+        }
+        if (maxLength && val.valueText.length > maxLength) {
+          throw new Error(`Field ${fieldDef.fieldLabel || val.fieldKey} must be at most ${maxLength} characters`);
+        }
+      }
+
+      if (fieldDef.fieldType === 'DROPDOWN' || fieldDef.fieldType === 'RADIO') {
+        if (val.valueText && fieldDef.options) {
+          const allowedValues = fieldDef.options.map((opt: any) => String(opt.value));
+          if (!allowedValues.includes(String(val.valueText))) {
+            throw new Error(`Invalid option for field ${fieldDef.fieldLabel || val.fieldKey}: ${val.valueText}`);
+          }
+        }
+      }
+    }
   }
 
   private validateDraftInput(
@@ -2133,7 +2221,7 @@ export class QuarterReviewService extends BaseService {
 
   private async assertManagerAccess(action: string, quarterAssignment: IQuarterAssignment): Promise<void> {
     const actor = this.requireActor();
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor,
       action,
       resource: {
@@ -2180,7 +2268,7 @@ export class QuarterReviewService extends BaseService {
     }
 
     const actor = this.requireActor();
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor,
       action: 'quarterReview.view',
       resource: {
@@ -2207,8 +2295,8 @@ export class QuarterReviewService extends BaseService {
     throw new Error(access.message ?? 'Access denied');
   }
 
-  private assertAdmin(action: string): void {
-    const access = accessService.canPerform({
+  private async assertAdmin(action: string): Promise<void> {
+    const access = await accessService.canPerform({
       actor: this.requireActor(),
       action,
       requiresAdmin: true,
@@ -2321,6 +2409,23 @@ export class QuarterReviewService extends BaseService {
   ): Promise<void> {
     const actor = this.requireActor();
     const assignmentId = await this.resolveAuditAssignmentId(entityType, entityId);
+    let metadata: Record<string, unknown> | undefined = undefined;
+
+    if (entityType === 'QUARTER_REVIEW') {
+      const review = await QuarterReview.findById(entityId).select('quarterAssignmentId').lean();
+      if (review) {
+        const assignment = await QuarterAssignment.findById(review.quarterAssignmentId).select('assignedManagerId').lean();
+        if (assignment && actor.actorId !== assignment.assignedManagerId?.toString()) {
+          const delegation = await this.getReviewDelegation(
+            actor.actorId,
+            assignment.assignedManagerId.toString()
+          );
+          if (delegation) {
+            metadata = { actedAsDelegateFor: assignment.assignedManagerId.toString() };
+          }
+        }
+      }
+    }
 
     await auditService.createAuditLog({
       actorId: actor.actorId,
@@ -2332,6 +2437,7 @@ export class QuarterReviewService extends BaseService {
       previousValue,
       newValue,
       reason,
+      metadata,
     });
   }
 

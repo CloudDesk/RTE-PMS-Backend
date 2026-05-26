@@ -17,7 +17,7 @@ import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { workflowService } from './workflow.service';
-import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
+import type { IAnnualCycle, ICommunicationRuleConfig } from '../models/pms-annual-cycle.model';
 import type { IQuarterCycle } from '../models/pms-quarter-cycle.model';
 import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constants/pms.enums';
 
@@ -58,7 +58,7 @@ export interface CreateCycleInput {
   templateVersionId: string;
   quarters?: QuarterCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
-  communicationRuleConfig?: Record<string, unknown>;
+  communicationRuleConfig?: ICommunicationRuleConfig;
 }
 
 interface AppraisalWindowConfigInput {
@@ -93,7 +93,7 @@ export interface UpdateCycleInput {
   templateVersionId?: string;
   quarters?: QuarterCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
-  communicationRuleConfig?: Record<string, unknown>;
+  communicationRuleConfig?: ICommunicationRuleConfig;
 }
 
 export interface CycleListQuery {
@@ -235,7 +235,7 @@ export class CycleService extends BaseService {
   }
 
   async listCommunicationRules(): Promise<CycleCommunicationRuleOption[]> {
-    this.assertAdmin('cycle.communication.read');
+    await this.assertAdmin('cycle.communication.read');
 
     const versions = await PmsTemplateVersion.find({
       status: PmsTemplateStatus.ACTIVE,
@@ -279,7 +279,7 @@ export class CycleService extends BaseService {
   }
 
   async createCycle(input: CreateCycleInput): Promise<CreateCycleResult> {
-    this.assertAdmin('cycle.create');
+    await this.assertAdmin('cycle.create');
     this.validateCycleInput(input);
 
     const templateVersionId = await this.validateTemplateVersion(
@@ -358,7 +358,7 @@ export class CycleService extends BaseService {
   }
 
   async updateCycle(cycleId: string, input: UpdateCycleInput): Promise<CycleDetailResult> {
-    this.assertAdmin('cycle.update');
+    await this.assertAdmin('cycle.update');
     const cycle = await this.getCycleForAction(cycleId);
     if (
       cycle.status !== AnnualWorkflowState.DRAFT &&
@@ -493,7 +493,7 @@ export class CycleService extends BaseService {
   }
 
   async launchCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.launch');
+    await this.assertAdmin('cycle.launch');
     let cycle = await this.getCycleForAction(cycleId);
     await this.assertLaunchReady(cycle);
 
@@ -511,13 +511,13 @@ export class CycleService extends BaseService {
   }
 
   async scheduleCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.schedule');
+    await this.assertAdmin('cycle.schedule');
     const cycle = await this.getCycleForAction(cycleId);
     return this.executeTransition(cycle, AnnualWorkflowState.SCHEDULED, 'PMS_CYCLE_SCHEDULED');
   }
 
   async closeCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.close');
+    await this.assertAdmin('cycle.close');
     const cycle = await this.getCycleForAction(cycleId);
     return this.executeTransition(cycle, AnnualWorkflowState.CLOSED, 'PMS_CYCLE_CLOSED', {
       closedAt: new Date(),
@@ -525,13 +525,13 @@ export class CycleService extends BaseService {
   }
 
   async archiveCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.archive');
+    await this.assertAdmin('cycle.archive');
     const cycle = await this.getCycleForAction(cycleId);
     return this.executeTransition(cycle, AnnualWorkflowState.ARCHIVED, 'PMS_CYCLE_ARCHIVED');
   }
 
   async cancelCycle(cycleId: string, input: CancelCycleInput): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.cancel');
+    await this.assertAdmin('cycle.cancel');
     const cycle = await this.getCycleForAction(cycleId);
     const reason = input.reason?.trim();
     if (!reason) {
@@ -550,7 +550,7 @@ export class CycleService extends BaseService {
   }
 
   async syncCycleProgression(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.progression.sync');
+    await this.assertAdmin('cycle.progression.sync');
     const cycle = await this.getCycleForAction(cycleId);
 
     if (
@@ -1425,7 +1425,7 @@ export class CycleService extends BaseService {
     }
 
     const mappedRole = accessService.mapRole(user.role);
-    const allowedRoles = [
+    const allowedRoles: string[] = [
       PmsRole.ADMIN,
       PmsRole.DIRECTOR,
       PmsRole.MANAGEMENT,
@@ -1493,13 +1493,13 @@ export class CycleService extends BaseService {
     return assignments.map((assignment) => assignment.cycleId);
   }
 
-  private assertAdmin(action: string): void {
+  private async assertAdmin(action: string): Promise<void> {
     const user = this.context.user;
     if (!user) {
       throw new Error('Authentication required');
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor: {
         actorId: user._id.toString(),
         actorRole: user.role,

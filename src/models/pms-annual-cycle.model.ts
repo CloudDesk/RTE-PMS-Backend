@@ -2,6 +2,15 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 import { AnnualWorkflowState } from '../constants/pms.enums';
 import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constants/pms.enums';
 
+export interface ICommunicationRuleConfig {
+  combinedTemplateId?: string;
+  meritOnlyTemplateId?: string;
+  gradeOnlyTemplateId?: string;
+  genericTemplateId?: string;
+  skipNilOutcome?: boolean;
+  [key: string]: unknown;
+}
+
 export interface IAnnualCycle extends Document {
   name: string;
   code: string;
@@ -12,7 +21,7 @@ export interface IAnnualCycle extends Document {
   templateVersionId?: Types.ObjectId;
   quarterCycleIds: Types.ObjectId[];
   appraisalWindowConfig?: Record<string, unknown>;
-  communicationRuleConfig?: Record<string, unknown>;
+  communicationRuleConfig?: ICommunicationRuleConfig;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;

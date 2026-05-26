@@ -2,6 +2,7 @@
 import cron from 'node-cron';
 import { updateShiftAssignmentStatuses } from './updateShiftAssignmentStatuses';
 import { processDailyMilestones } from './processMilestones';
+import { slaService } from '../services/sla.service';
 
 cron.schedule('59 23 * * *', async () => {
     try {
@@ -22,5 +23,16 @@ cron.schedule('30 18 * * *', async () => {
         console.log('[CRON] Milestones processed.');
     } catch (err) {
         console.error('[CRON] Error in milestone cron', err);
+    }
+});
+
+// PMS SLA / Reminder / Escalation processing hourly
+cron.schedule('0 * * * *', async () => {
+    try {
+        console.log('[CRON] Running PMS SLA and reminder processor...');
+        const result = await slaService.processSlas();
+        console.log(`[CRON] PMS SLA completed. Processed: ${result.processed}, Notifications Sent: ${result.notificationsSent}`);
+    } catch (err) {
+        console.error('[CRON] Error in PMS SLA cron', err);
     }
 });

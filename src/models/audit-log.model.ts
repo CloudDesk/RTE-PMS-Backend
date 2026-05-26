@@ -56,4 +56,23 @@ auditLogSchema.index({ correlationId: 1 });
 auditLogSchema.index({ timestamp: -1 });
 auditLogSchema.index({ createdAt: -1 });
 
+// Enforce strict append-only constraints to prevent tampering (Gap 12.4)
+const preventMutation = (next: (err?: Error) => void) => {
+  next(new Error('AuditLog collection is append-only and cannot be mutated or deleted.'));
+};
+
+auditLogSchema.pre('save', function (next) {
+  if (!this.isNew) {
+    return next(new Error('AuditLog records are immutable and cannot be updated.'));
+  }
+  next();
+});
+
+auditLogSchema.pre('updateOne', preventMutation);
+auditLogSchema.pre('updateMany', preventMutation);
+auditLogSchema.pre('deleteOne', preventMutation);
+auditLogSchema.pre('deleteMany', preventMutation);
+auditLogSchema.pre('findOneAndDelete', preventMutation);
+auditLogSchema.pre('findOneAndUpdate', preventMutation);
+
 export const AuditLog = model<IAuditLog>('AuditLog', auditLogSchema); 
