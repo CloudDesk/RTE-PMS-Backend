@@ -101,6 +101,7 @@ export interface ITemplateField {
     columns: Array<{ key: string; label: string; weightage?: number }>;
     allowComments?: boolean;
     selectionControl?: 'radio' | 'checkbox';
+    multiSelectScoring?: 'MAX' | 'AVERAGE' | 'SUM_CAPPED';
     borderStyle?: 'standard' | 'paper';
   };
   gridConfig?: {
@@ -321,6 +322,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
         columns: IMatrixItem[];
         allowComments?: boolean;
         selectionControl?: 'radio' | 'checkbox';
+        multiSelectScoring?: 'MAX' | 'AVERAGE' | 'SUM_CAPPED';
         borderStyle?: 'standard' | 'paper';
       }>(
         {
@@ -334,6 +336,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
           },
           allowComments: { type: Boolean, default: false },
           selectionControl: { type: String, enum: ['radio', 'checkbox'], default: 'radio' },
+          multiSelectScoring: { type: String, enum: ['MAX', 'AVERAGE', 'SUM_CAPPED'], default: 'MAX' },
           borderStyle: { type: String, enum: ['standard', 'paper'], default: 'standard' },
         },
         { _id: false },

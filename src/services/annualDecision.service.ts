@@ -77,6 +77,12 @@ export interface AnnualDecisionListItem {
   cycleName: string;
   employeeId: string;
   employeeName: string;
+  employeeCode?: string;
+  employeeNo?: string;
+  designation?: string;
+  employeeDesignation?: string;
+  department?: string;
+  departmentId?: string;
   managerId: string;
   managerName: string;
   annualState: string;
@@ -204,6 +210,20 @@ export class AnnualDecisionService extends BaseService {
       const relatedQuarters = quarterAssignmentsByAnnualAssignmentId.get(annualAssignment._id.toString()) ?? [];
       const decision = decisionByAnnualAssignmentId.get(annualAssignment._id.toString());
       const cycle = cycleMap.get(annualAssignment.cycleId.toString());
+      const employeeSnapshot = annualAssignment.employeeSnapshot ?? {};
+      const employeeCode = String(employeeSnapshot.employeeCode ?? '');
+      const employeeDesignation = String(
+        employeeSnapshot.specificRole ??
+        employeeSnapshot.designation ??
+        employeeSnapshot.role ??
+        '',
+      );
+      const employeeDepartment = String(
+        employeeSnapshot.department ??
+        employeeSnapshot.departmentName ??
+        employeeSnapshot.departmentId ??
+        '',
+      );
       const completedQuarters = relatedQuarters.filter(
         (quarter) =>
           quarter.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
@@ -216,7 +236,13 @@ export class AnnualDecisionService extends BaseService {
         cycleId: annualAssignment.cycleId.toString(),
         cycleName: cycle?.name ?? 'Performance Cycle',
         employeeId: annualAssignment.employeeId.toString(),
-        employeeName: String(annualAssignment.employeeSnapshot?.name ?? 'Employee'),
+        employeeName: String(employeeSnapshot.name ?? 'Employee'),
+        employeeCode,
+        employeeNo: employeeCode,
+        designation: employeeDesignation,
+        employeeDesignation,
+        department: employeeDepartment,
+        departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: annualAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment.managerSnapshot?.name ?? 'Manager'),
         annualState: annualAssignment.annualState,

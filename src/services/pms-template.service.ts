@@ -1550,6 +1550,9 @@ export class PmsTemplateService extends BaseService {
           })),
           allowComments: !!field.matrixConfig.allowComments,
           selectionControl: field.matrixConfig.selectionControl === 'checkbox' ? 'checkbox' : 'radio',
+          multiSelectScoring: ['AVERAGE', 'SUM_CAPPED'].includes(String(field.matrixConfig.multiSelectScoring))
+            ? field.matrixConfig.multiSelectScoring
+            : 'MAX',
           borderStyle: field.matrixConfig.borderStyle === 'paper' ? 'paper' : 'standard',
         }
         : undefined,

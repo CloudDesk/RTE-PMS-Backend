@@ -78,13 +78,39 @@ export class PmsScoringService {
     }
 
     if (field.scoringConfig && Array.isArray(field.scoringConfig.optionScores)) {
+      const rowKey = row?.key ?? row?.id;
       const match = field.scoringConfig.optionScores.find(
-        (opt: any) => opt.optionValue === selectedValue || opt.value === selectedValue,
+        (opt: any) =>
+          opt.optionValue === selectedValue ||
+          opt.value === selectedValue ||
+          (rowKey && opt.optionValue === `${rowKey}:${selectedValue}`),
       );
       if (match?.score !== undefined && match.score !== null) return Number(match.score);
     }
 
     return undefined;
+  }
+
+  private getMatrixSelectionScore(selectedValue: string | string[], field: any, row: any, rowMaxScore: number): number {
+    const selectedValues = Array.isArray(selectedValue)
+      ? (field.matrixConfig?.selectionControl === 'checkbox' ? selectedValue : selectedValue.slice(0, 1)).filter(Boolean)
+      : [selectedValue].filter(Boolean);
+    const scores = selectedValues
+      .map((value) => this.getOptionScore(value, field, row) ?? 0)
+      .filter((score) => Number.isFinite(score));
+
+    if (scores.length === 0) return 0;
+    if (!Array.isArray(selectedValue) || field.matrixConfig?.selectionControl !== 'checkbox') return scores[0];
+
+    switch (field.matrixConfig?.multiSelectScoring ?? 'MAX') {
+      case 'AVERAGE':
+        return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+      case 'SUM_CAPPED':
+        return Math.min(scores.reduce((sum, score) => sum + score, 0), rowMaxScore);
+      case 'MAX':
+      default:
+        return Math.max(...scores);
+    }
   }
 
   evaluateFormulaExpression(formula: string, context: Record<string, number>): number | undefined {
@@ -562,13 +588,13 @@ export class PmsScoringService {
     rows.forEach((row: any, idx: number) => {
       const rowWeight = normalizedRowWeights[idx];
       const selectedValue = valueJsonMap[row.key] || valueJsonMap.values?.[row.key];
-      const rowScore = selectedValue ? (this.getOptionScore(selectedValue, field, row) ?? 0) : 0;
       const allRowOpts = row.options || field.matrixConfig?.options || field.options || [];
       const optionMax = allRowOpts.reduce((max: number, option: any) => {
         const score = Number(option.score ?? option.weight);
         return Number.isFinite(score) && score > max ? score : max;
       }, 0);
       const rowMaxScore = optionMax > 0 ? optionMax : defaultMaxScore;
+      const rowScore = selectedValue ? this.getMatrixSelectionScore(selectedValue, field, row, rowMaxScore) : 0;
       const normalizedRowScore = rowMaxScore > 0 ? (rowScore / rowMaxScore) * 100 : 0;
       const contribution = (rowWeight / 100) * normalizedRowScore;
       matrixScoreSum += contribution;

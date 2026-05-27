@@ -197,6 +197,12 @@ type AssignmentRecord = {
   quarterState: string;
   employeeId: string;
   employeeName: string;
+  employeeCode?: string;
+  employeeNo?: string;
+  designation?: string;
+  employeeDesignation?: string;
+  department?: string;
+  departmentId?: string;
   managerId: string;
   managerName: string;
   objectiveWeightageCap: number;
@@ -303,6 +309,21 @@ export class ObjectiveService extends BaseService {
           ),
         );
 
+      const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
+      const employeeCode = String(employeeSnapshot.employeeCode ?? '');
+      const employeeDesignation = String(
+        employeeSnapshot.specificRole ??
+        employeeSnapshot.designation ??
+        employeeSnapshot.role ??
+        '',
+      );
+      const employeeDepartment = String(
+        employeeSnapshot.department ??
+        employeeSnapshot.departmentName ??
+        employeeSnapshot.departmentId ??
+        '',
+      );
+
       return {
         id: quarterAssignment._id.toString(),
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
@@ -314,6 +335,12 @@ export class ObjectiveService extends BaseService {
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
         employeeName: this.getEmployeeName(annualAssignment, quarterAssignment.employeeId.toString()),
+        employeeCode,
+        employeeNo: employeeCode,
+        designation: employeeDesignation,
+        employeeDesignation,
+        department: employeeDepartment,
+        departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: quarterAssignment.assignedManagerId.toString(),
         managerName: this.getManagerName(annualAssignment, quarterAssignment.assignedManagerId.toString()),
         objectiveWeightageCap: 100,

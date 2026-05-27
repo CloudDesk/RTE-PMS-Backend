@@ -169,6 +169,12 @@ export type QuarterReviewAssignmentRecord = {
   };
   employeeId: string;
   employeeName: string;
+  employeeCode?: string;
+  employeeNo?: string;
+  designation?: string;
+  employeeDesignation?: string;
+  department?: string;
+  departmentId?: string;
   managerId: string;
   managerName: string;
   templateVersionId?: string;
@@ -339,6 +345,21 @@ export class QuarterReviewService extends BaseService {
         isReviewVisible = annualAssignment?.visibility?.employeeReviewVisible === true;
       }
 
+      const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
+      const employeeCode = String(employeeSnapshot.employeeCode ?? '');
+      const employeeDesignation = String(
+        employeeSnapshot.specificRole ??
+        employeeSnapshot.designation ??
+        employeeSnapshot.role ??
+        '',
+      );
+      const employeeDepartment = String(
+        employeeSnapshot.department ??
+        employeeSnapshot.departmentName ??
+        employeeSnapshot.departmentId ??
+        '',
+      );
+
       return {
         id: quarterAssignment._id.toString(),
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
@@ -353,7 +374,13 @@ export class QuarterReviewService extends BaseService {
         quarterState: quarterAssignment.quarterState,
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
-        employeeName: String(annualAssignment?.employeeSnapshot?.name ?? 'Employee'),
+        employeeName: String(employeeSnapshot.name ?? 'Employee'),
+        employeeCode,
+        employeeNo: employeeCode,
+        designation: employeeDesignation,
+        employeeDesignation,
+        department: employeeDepartment,
+        departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: quarterAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
@@ -892,6 +919,21 @@ export class QuarterReviewService extends BaseService {
         }
       }
 
+      const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
+      const employeeCode = String(employeeSnapshot.employeeCode ?? '');
+      const employeeDesignation = String(
+        employeeSnapshot.specificRole ??
+        employeeSnapshot.designation ??
+        employeeSnapshot.role ??
+        '',
+      );
+      const employeeDepartment = String(
+        employeeSnapshot.department ??
+        employeeSnapshot.departmentName ??
+        employeeSnapshot.departmentId ??
+        '',
+      );
+
       return {
         id: quarterAssignment._id.toString(),
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
@@ -906,7 +948,13 @@ export class QuarterReviewService extends BaseService {
         quarterState: quarterAssignment.quarterState,
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
-        employeeName: String(annualAssignment?.employeeSnapshot?.name ?? 'Employee'),
+        employeeName: String(employeeSnapshot.name ?? 'Employee'),
+        employeeCode,
+        employeeNo: employeeCode,
+        designation: employeeDesignation,
+        employeeDesignation,
+        department: employeeDepartment,
+        departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: quarterAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
@@ -1568,8 +1616,12 @@ export class QuarterReviewService extends BaseService {
 
     // 4. legacy scoringConfig.optionScores
     if (field.scoringConfig && Array.isArray(field.scoringConfig.optionScores)) {
+      const rowKey = row?.key ?? row?.id;
       const match = field.scoringConfig.optionScores.find(
-        (opt: any) => opt.optionValue === selectedValue || opt.value === selectedValue,
+        (opt: any) =>
+          opt.optionValue === selectedValue ||
+          opt.value === selectedValue ||
+          (rowKey && opt.optionValue === `${rowKey}:${selectedValue}`),
       );
       if (match && match.score !== undefined && match.score !== null) {
         return Number(match.score);
@@ -1577,6 +1629,33 @@ export class QuarterReviewService extends BaseService {
     }
 
     return undefined;
+  }
+
+  private getMatrixSelectionScore(
+    selectedValue: string | string[],
+    field: any,
+    row: any,
+    rowMaxScore: number,
+  ): number {
+    const selectedValues = Array.isArray(selectedValue)
+      ? (field.matrixConfig?.selectionControl === 'checkbox' ? selectedValue : selectedValue.slice(0, 1)).filter(Boolean)
+      : [selectedValue].filter(Boolean);
+    const scores = selectedValues
+      .map((value) => this.getOptionScore(value, field, row) ?? 0)
+      .filter((score) => Number.isFinite(score));
+
+    if (scores.length === 0) return 0;
+    if (!Array.isArray(selectedValue) || field.matrixConfig?.selectionControl !== 'checkbox') return scores[0];
+
+    switch (field.matrixConfig?.multiSelectScoring ?? 'MAX') {
+      case 'AVERAGE':
+        return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+      case 'SUM_CAPPED':
+        return Math.min(scores.reduce((sum, score) => sum + score, 0), rowMaxScore);
+      case 'MAX':
+      default:
+        return Math.max(...scores);
+    }
   }
 
   calculateSectionScores(
@@ -1743,7 +1822,7 @@ export class QuarterReviewService extends BaseService {
               totalRowWeightSum > 0 ? (w / totalRowWeightSum) * 100 : 0,
             );
 
-            let valueJsonMap: Record<string, string> = {};
+            let valueJsonMap: Record<string, any> = {};
             if (matchedValue?.valueJson) {
               if (typeof matchedValue.valueJson === 'string') {
                 try {
@@ -1752,22 +1831,14 @@ export class QuarterReviewService extends BaseService {
                   valueJsonMap = {};
                 }
               } else if (typeof matchedValue.valueJson === 'object') {
-                valueJsonMap = matchedValue.valueJson as Record<string, string>;
+                valueJsonMap = matchedValue.valueJson as Record<string, any>;
               }
             }
 
             rows.forEach((row: any, idx: number) => {
               const rowWeight = normalizedRowWeights[idx];
               const selectedValue = valueJsonMap[row.key] || valueJsonMap.values?.[row.key];
-              let rowScore = 0;
               let rowMaxScore = maxScore;
-              let resolvedOptScore = selectedValue
-                ? this.getOptionScore(selectedValue, field, row)
-                : undefined;
-
-              if (resolvedOptScore !== undefined) {
-                rowScore = resolvedOptScore;
-              }
 
               let optMax = 0;
               const allRowOpts = row.options || field.matrixConfig?.options || field.options || [];
@@ -1778,6 +1849,9 @@ export class QuarterReviewService extends BaseService {
               if (optMax > 0) {
                 rowMaxScore = optMax;
               }
+              const rowScore = selectedValue
+                ? this.getMatrixSelectionScore(selectedValue, field, row, rowMaxScore)
+                : 0;
 
               const normalizedRowScore = rowMaxScore > 0
                 ? (rowScore / rowMaxScore) * 100
