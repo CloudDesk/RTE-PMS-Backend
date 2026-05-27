@@ -1082,12 +1082,14 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Review score cannot be negative');
     }
 
-    this.validateRatingsAgainstObjectives(
-      input.ratings ?? [],
-      approvedObjectives,
-      false,
-      reviewConfig,
-    );
+    if (this.requiresObjectiveRatings(reviewConfig)) {
+      this.validateRatingsAgainstObjectives(
+        input.ratings ?? [],
+        approvedObjectives,
+        false,
+        reviewConfig,
+      );
+    }
     this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
   }
 
@@ -1097,7 +1099,7 @@ export class QuarterReviewService extends BaseService {
     reviewConfig: QuarterReviewConfig,
     resolvedScore?: number,
   ): void {
-    if (!Array.isArray(input.ratings) || input.ratings.length === 0) {
+    if (this.requiresObjectiveRatings(reviewConfig) && (!Array.isArray(input.ratings) || input.ratings.length === 0)) {
       throw new Error('At least one review rating is required');
     }
 
@@ -1113,13 +1115,19 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Review score cannot be negative');
     }
 
-    this.validateRatingsAgainstObjectives(
-      input.ratings,
-      approvedObjectives,
-      true,
-      reviewConfig,
-    );
+    if (this.requiresObjectiveRatings(reviewConfig)) {
+      this.validateRatingsAgainstObjectives(
+        input.ratings,
+        approvedObjectives,
+        true,
+        reviewConfig,
+      );
+    }
     this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
+  }
+
+  private requiresObjectiveRatings(reviewConfig: QuarterReviewConfig): boolean {
+    return reviewConfig.objectiveRatingRule !== null;
   }
 
   private resolveQuarterReviewScoring(
@@ -2103,14 +2111,28 @@ export class QuarterReviewService extends BaseService {
       return this.defaultQuarterReviewConfig();
     }
 
-    const scoringFields = applicableSections
+    const objectiveScoringFields = applicableSections
+      .filter(
+        (section) =>
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
+          section.sectionScoringConfig?.participatesInScoring === true,
+      )
       .flatMap((section) =>
         (section.fields ?? []).filter((field) => this.isManagerEditableReviewField(field)),
       );
 
     const objectiveRatingField =
-      scoringFields.find((field) => field.scoringConfig?.participatesInScoring === true) ??
-      scoringFields.find((field) =>
+      objectiveScoringFields.find(
+        (field) =>
+          field.scoringConfig?.participatesInScoring === true &&
+          [
+            PmsTemplateFieldType.RATING_SCALE,
+            PmsTemplateFieldType.WEIGHTED_SCORE,
+            PmsTemplateFieldType.NUMERIC_INPUT,
+            PmsTemplateFieldType.PERCENTAGE,
+          ].includes(field.fieldType as never),
+      ) ??
+      objectiveScoringFields.find((field) =>
         [
           PmsTemplateFieldType.RATING_SCALE,
           PmsTemplateFieldType.WEIGHTED_SCORE,
