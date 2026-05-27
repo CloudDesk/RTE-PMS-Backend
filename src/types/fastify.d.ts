@@ -15,6 +15,7 @@ declare module 'fastify' {
       currency: string;
       licenseType: string;
       portalAccess: boolean;
+      scope?: string;
     };
   }
 
@@ -51,6 +52,7 @@ declare module '@fastify/jwt' {
       currency: string;
       licenseType: string;
       portalAccess: boolean;
+      scope?: string;
     };
     user: {
       _id: Types.ObjectId | string;
@@ -64,6 +66,7 @@ declare module '@fastify/jwt' {
       currency: string;
       licenseType: string;
       portalAccess: boolean;
+      scope?: string;
     };
   }
 } 

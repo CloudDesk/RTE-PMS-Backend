@@ -16,5 +16,6 @@ export interface RequestContext {
     currency: string;
     licenseType: string;
     portalAccess: boolean;
+    scope?: string;
   };
 } 
