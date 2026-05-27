@@ -130,7 +130,8 @@ export const pmsDashboardRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const role = normalizePmsRole(request.user.role) ?? request.user.role?.replace(/[ /-]/g, '_').toUpperCase();
-        if (!['MANAGEMENT', 'DIRECTOR', 'ADMIN', 'SUPER_ADMIN'].includes(role)) {
+        const hasScopeAccess = request.user.scope === 'EXECUTIVE' || request.user.scope === 'ALL';
+        if (!['MANAGEMENT', 'DIRECTOR', 'ADMIN', 'SUPER_ADMIN'].includes(role) && !hasScopeAccess) {
           return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Management role required'));
         }
 

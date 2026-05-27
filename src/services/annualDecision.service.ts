@@ -1492,13 +1492,16 @@ export class AnnualDecisionService extends BaseService {
     managerMeritVisible: boolean;
     visibleFrom?: Date | string;
   }) {
-    const actorRole = normalizePmsRole(this.requireActor().actorRole);
+    const actor = this.requireActor();
+    const actorRole = normalizePmsRole(actor.actorRole);
     const effectiveVisibility = this.getEffectiveVisibilityFlags(visibility);
 
     if (
       actorRole === PmsRole.ADMIN ||
       actorRole === PmsRole.DIRECTOR ||
-      actorRole === PmsRole.MANAGEMENT
+      actorRole === PmsRole.MANAGEMENT ||
+      actor.actorScope === 'EXECUTIVE' ||
+      actor.actorScope === 'ALL'
     ) {
       return {
         canSeeGrade: true,
@@ -1685,7 +1688,7 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
-    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
+    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT || actor.actorScope === 'EXECUTIVE' || actor.actorScope === 'ALL') {
       return;
     }
 
@@ -1703,7 +1706,7 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
-    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
+    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT || actor.actorScope === 'EXECUTIVE' || actor.actorScope === 'ALL') {
       return;
     }
 
@@ -1751,6 +1754,7 @@ export class AnnualDecisionService extends BaseService {
     return {
       actorId: user._id.toString(),
       actorRole: user.role,
+      actorScope: user.scope,
     };
   }
 

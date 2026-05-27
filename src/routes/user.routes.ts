@@ -254,6 +254,63 @@ export const userRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
 
+  // Dynamic Priority-Based Manager Fetching Endpoint
+  fastify.get(
+    '/managers-for-role/:role',
+    {
+      onRequest: [authenticate],
+      schema: {
+        tags: ['User Management'],
+        summary: 'Get potential managers for a specific role',
+        description: 'Dynamically fetches active users who have a role with a higher priority (lower priority number) than the provided role.',
+        params: {
+          type: 'object',
+          required: ['role'],
+          properties: {
+            role: { type: 'string', description: 'The role to find managers for (e.g. HR_PARTNER)' }
+          }
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    _id: { type: 'string' },
+                    name: { type: 'string' },
+                    email: { type: 'string' },
+                    role: { type: 'string' },
+                    profilePicture: { type: 'string' }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    async (request, reply) => {
+      try {
+        const { role } = request.params as { role: string };
+        const potentialManagers = await request.container!.userService.getPotentialManagers(role);
+
+        return reply.send({
+          success: true,
+          data: potentialManagers
+        });
+      } catch (error: any) {
+        return reply.status(400).send({
+          success: false,
+          error: { message: error.message }
+        });
+      }
+    }
+  );
+
   // Unified GET users endpoint
   fastify.get(
     '/',
@@ -296,7 +353,6 @@ export const userRoutes: RouteHandler = async (
             },
             role: {
               type: 'string',
-              enum: ['admin', 'manager', 'staff', 'director', 'external'],
               description: 'Filter by user role'
             },
             status: {
