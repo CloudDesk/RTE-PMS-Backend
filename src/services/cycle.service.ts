@@ -483,8 +483,25 @@ export class CycleService extends BaseService {
   }
 
   async updateCommunication(cycleId: string, config: Record<string, unknown>): Promise<IAnnualCycle> {
-    const result = await this.updateCycle(cycleId, { communicationRuleConfig: config });
-    return result.annualCycle;
+    await this.assertAdmin('cycle.communication.update');
+    const cycle = await this.getCycleForAction(cycleId);
+    const previousValue = {
+      communicationRuleConfig: cycle.communicationRuleConfig ?? {},
+    };
+
+    cycle.communicationRuleConfig = config as ICommunicationRuleConfig;
+    cycle.updatedBy = this.actorIdObject();
+    await cycle.save();
+
+    await this.audit(
+      'PMS_CYCLE_COMMUNICATION_UPDATED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      previousValue,
+      { communicationRuleConfig: cycle.communicationRuleConfig ?? {} },
+    );
+
+    return cycle;
   }
 
   async updateAppraisalWindow(cycleId: string, config: Record<string, unknown>): Promise<IAnnualCycle> {
@@ -607,7 +624,7 @@ export class CycleService extends BaseService {
 
     if (
       updatedCycle.status === AnnualWorkflowState.ALL_QUARTERS_FINALIZED &&
-      this.isAppraisalWindowOpen(updatedCycle, completion.completedAt)
+      await this.isAppraisalWindowOpen(updatedCycle, completion.completedAt)
     ) {
       updatedCycle = await this.executeTransition(
         updatedCycle,
@@ -1393,13 +1410,13 @@ export class CycleService extends BaseService {
     return { hasAssignments: true, allComplete: true, completedAt };
   }
 
-  private isAppraisalWindowOpen(cycle: IAnnualCycle, allQuartersCompletedAt: Date): boolean {
+  private async isAppraisalWindowOpen(cycle: IAnnualCycle, allQuartersCompletedAt: Date): Promise<boolean> {
     const config = this.normalizeAppraisalWindowConfig(cycle.appraisalWindowConfig);
     if (!config || Object.keys(config).length === 0) {
       return false;
     }
 
-    const now = new Date();
+    const now = this.getCurrentDate();
     const appraisalConfig = config as AppraisalWindowConfigInput;
     if (appraisalConfig.type === 'FIXED_DATE' || appraisalConfig.type === 'FIXED_RANGE') {
       const startDateInput = appraisalConfig.startDate ?? appraisalConfig.date;
@@ -1410,14 +1427,68 @@ export class CycleService extends BaseService {
       return false;
     }
 
-    const baseDate =
-      appraisalConfig.base === 'ANNUAL_CYCLE_END'
-        ? cycle.endDate
-        : allQuartersCompletedAt;
+    const baseDate = await this.resolveRelativeAppraisalBaseDate(
+      cycle,
+      appraisalConfig,
+      allQuartersCompletedAt,
+    );
     const offsetDays = appraisalConfig.offsetDays ?? 0;
     const openDate = new Date(baseDate);
     openDate.setDate(openDate.getDate() + offsetDays);
     return now >= openDate;
+  }
+
+  private async resolveRelativeAppraisalBaseDate(
+    cycle: IAnnualCycle,
+    config: AppraisalWindowConfigInput,
+    allQuartersCompletedAt: Date,
+  ): Promise<Date | string> {
+    if (config.base === 'ANNUAL_CYCLE_END') {
+      return cycle.endDate;
+    }
+
+    if (config.base === 'Q4_FINALIZATION') {
+      return await this.getQ4FinalizationWindowEndDate(cycle._id) ?? allQuartersCompletedAt;
+    }
+
+    return allQuartersCompletedAt;
+  }
+
+  private async getQ4FinalizationWindowEndDate(
+    cycleId: Types.ObjectId,
+  ): Promise<Date | string | null> {
+    const quarterCycle = await QuarterCycle.findOne({
+      cycleId,
+      quarterCode: 'Q4',
+      isDeleted: false,
+    })
+      .select('quarterFinalizationWindow closureRules')
+      .lean();
+
+    if (!quarterCycle) {
+      return null;
+    }
+
+    const closureRules = quarterCycle.closureRules as Record<string, unknown> | undefined;
+
+    return (
+      this.getWindowEndDate(quarterCycle.quarterFinalizationWindow) ??
+      this.getWindowEndDate(closureRules?.quarterFinalizationWindow) ??
+      this.getWindowEndDate(closureRules?.finalizationWindow) ??
+      null
+    );
+  }
+
+  private getWindowEndDate(window: unknown): Date | string | undefined {
+    if (!window || typeof window !== 'object') {
+      return undefined;
+    }
+
+    return (window as { endDate?: Date | string }).endDate;
+  }
+
+  private getCurrentDate(): Date {
+    return this.context.pmsCurrentDate ?? new Date();
   }
 
   private actorIdObject(): Types.ObjectId | undefined {

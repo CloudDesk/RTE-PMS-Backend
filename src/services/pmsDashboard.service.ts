@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import {
   AnnualAssignment,
+  AnnualDecision,
   QuarterAssignment,
   Objective,
   QuarterReview,
@@ -48,6 +49,11 @@ export class PmsDashboardService extends BaseService {
       .populate('cycleQuarterId', 'name quarterCode')
       .sort({ quarterCode: 1 })
       .lean();
+
+    const annualDecision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    }).lean();
 
     // Query Objectives count for this annual assignment
     const objectives = await Objective.find({
@@ -101,7 +107,16 @@ export class PmsDashboardService extends BaseService {
       hasVisibilityOverride,
     };
 
-    const maskedAnnualAssignment = visibilityMaskService.mask(annualAssignment, maskContext);
+    const annualOutcomeSource = {
+      ...annualAssignment,
+      gradeDetails: annualDecision?.gradeDetails ?? (annualAssignment as Record<string, unknown>).gradeDetails,
+      meritDetails: annualDecision?.meritDetails ?? (annualAssignment as Record<string, unknown>).meritDetails,
+      nilReason: annualDecision?.nilReason ?? (annualAssignment as Record<string, unknown>).nilReason,
+      finalScore: annualDecision?.finalScore ?? (annualAssignment as Record<string, unknown>).finalScore,
+      finalRating: annualDecision?.finalRating ?? (annualAssignment as Record<string, unknown>).finalRating,
+      appraisalOutcomeType: annualDecision?.appraisalOutcomeType ?? annualAssignment.appraisalOutcomeType,
+    };
+    const maskedAnnualAssignment = visibilityMaskService.mask(annualOutcomeSource, maskContext);
     const reassignmentHistory = await Reassignment.find({
       annualAssignmentId: annualAssignment._id,
       employeeId: new Types.ObjectId(employeeId),
