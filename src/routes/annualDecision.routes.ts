@@ -4,6 +4,7 @@ import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
   AnnualDecisionListQuery,
+  OverrideFinalScoreInput,
   ReopenDecisionInput,
   SaveDecisionDraftInput,
   UpdateVisibilityInput,
@@ -66,6 +67,23 @@ export const annualDecisionRoutes: RouteHandler = async (
         const { id } = request.params as { id: string };
         const decision = await request.container!.annualDecisionService.submitDecision(id);
         return reply.send(successResponse('Annual decision submitted successfully', decision));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/decision/final-score/override',
+    { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const decision = await request.container!.annualDecisionService.overrideFinalScore(
+          id,
+          request.body as OverrideFinalScoreInput,
+        );
+        return reply.send(successResponse('Annual final score overridden successfully', decision));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
