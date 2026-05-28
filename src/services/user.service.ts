@@ -2,6 +2,7 @@ import { BaseService } from './base.service';
 import { User } from '../models/user.model';
 import { LOV } from '../models/lov.model';
 import { Document } from '../models/document.model';
+import { PmsRolePermission } from '../models/pms-role-permission.model';
 import { RequestContext } from '../types/context';
 import { Types } from 'mongoose';
 import { emailService } from './email.service';
@@ -229,6 +230,68 @@ export class UserService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
     this.context = context;
+  }
+
+  async getPotentialManagers(role: string): Promise<any[]> {
+    try {
+      // 1. Find the priority of the given role (case-insensitive)
+      const rolePermission = await PmsRolePermission.findOne({ 
+        role: { $regex: new RegExp(`^${role}$`, 'i') } 
+      });
+      
+      // If role not found or has no priority, the user requested to immediately fallback to Admin
+      if (!rolePermission || rolePermission.priority == null) {
+        return await User.find({
+          role: { $regex: new RegExp(`^admin$`, 'i') },
+          active: true
+        }).select('_id name email role profilePicture');
+      }
+
+      const targetPriority = rolePermission.priority;
+
+      // 2. Find all roles with a priority STRICTLY LESS THAN the target role's priority
+      // (lower number = higher authority)
+      const higherAuthorityRoles = await PmsRolePermission.find({
+        priority: { $lt: targetPriority }
+      }).select('role');
+
+      // The roles in PmsRolePermission are often uppercase (e.g. "ADMIN"), 
+      // but User.role is usually lowercase (e.g. "admin"). 
+      let allowedRoleNames = higherAuthorityRoles.map(r => r.role.toLowerCase());
+
+      // Edge case: If the role is Priority 1 (e.g. Admin), no one is < 1. 
+      // We should allow Admins to manage Admins.
+      if (allowedRoleNames.length === 0 && targetPriority === 1) {
+        allowedRoleNames = [role.toLowerCase()];
+      }
+
+      // 3. Query the User collection for active users with those roles
+      if (allowedRoleNames.length === 0) {
+        return [];
+      }
+
+      // Make the query case-insensitive just to be completely safe
+      const roleRegexes = allowedRoleNames.map(r => new RegExp(`^${r}$`, 'i'));
+
+      let potentialManagers = await User.find({
+        role: { $in: roleRegexes },
+        active: true
+      }).select('_id name email role profilePicture');
+
+      // Fallback: If no managers were found based on priority (e.g. no users have those roles yet),
+      // default to fetching users with the 'admin' role so the dropdown isn't empty.
+      if (potentialManagers.length === 0) {
+        potentialManagers = await User.find({
+          role: { $regex: new RegExp(`^admin$`, 'i') },
+          active: true
+        }).select('_id name email role profilePicture');
+      }
+
+      return potentialManagers;
+    } catch (error) {
+      console.error('Error fetching potential managers', error);
+      throw error;
+    }
   }
 
   async getUsers(query: {

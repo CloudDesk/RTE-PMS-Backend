@@ -19,6 +19,7 @@ import { PerformanceHistorySnapshot } from '../models/pms-performance-history-sn
 import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { Objective } from '../models/pms-objective.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { QuarterReview } from '../models/pms-quarter-review.model';
 import { auditService } from './audit.service';
 import { visibilityMaskService } from './visibilityMask.service';
@@ -26,6 +27,7 @@ import {
   PmsTemplateService,
   type ResolvedTemplateVersion,
 } from './pms-template.service';
+import { PmsScoringService } from './pms-scoring.service';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IAnnualDecision } from '../models/pms-annual-decision.model';
@@ -34,6 +36,7 @@ import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model'
 import type { IQuarterReview } from '../models/pms-quarter-review.model';
 import type { AppraisalOutcomeType as AppraisalOutcomeTypeType } from '../constants/pms.enums';
 import type { IAnnualDecisionValue } from '../models/pms-annual-decision-value.model';
+import { PmsTemplateVersion } from '../models/pms-template-version.model';
 
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
@@ -58,6 +61,8 @@ export interface AnnualSummaryResult {
   objectives: IObjective[];
   quarterReviews: IQuarterReview[];
   annualDecisionValues: Array<Record<string, unknown>>;
+  calculatedFinalScore?: number;
+  finalScoreOverride: Record<string, unknown> | null;
   visibilityConfiguration: Record<string, unknown> | null;
   annualDecision: Record<string, unknown> | null;
   correctionHistory: Array<Record<string, unknown>>;
@@ -77,6 +82,12 @@ export interface AnnualDecisionListItem {
   cycleName: string;
   employeeId: string;
   employeeName: string;
+  employeeCode?: string;
+  employeeNo?: string;
+  designation?: string;
+  employeeDesignation?: string;
+  department?: string;
+  departmentId?: string;
   managerId: string;
   managerName: string;
   annualState: string;
@@ -124,6 +135,11 @@ export interface ReopenDecisionInput {
   reason: string;
 }
 
+export interface OverrideFinalScoreInput {
+  overrideScore: number;
+  reason: string;
+}
+
 export interface UpdateVisibilityInput {
   employeeReviewVisible?: boolean;
   employeeGradeVisible?: boolean;
@@ -135,6 +151,8 @@ export interface UpdateVisibilityInput {
 }
 
 export class AnnualDecisionService extends BaseService {
+  private readonly scoringService = new PmsScoringService();
+
   constructor(context: RequestContext) {
     super(context);
   }
@@ -204,6 +222,20 @@ export class AnnualDecisionService extends BaseService {
       const relatedQuarters = quarterAssignmentsByAnnualAssignmentId.get(annualAssignment._id.toString()) ?? [];
       const decision = decisionByAnnualAssignmentId.get(annualAssignment._id.toString());
       const cycle = cycleMap.get(annualAssignment.cycleId.toString());
+      const employeeSnapshot = annualAssignment.employeeSnapshot ?? {};
+      const employeeCode = String(employeeSnapshot.employeeCode ?? '');
+      const employeeDesignation = String(
+        employeeSnapshot.specificRole ??
+        employeeSnapshot.designation ??
+        employeeSnapshot.role ??
+        '',
+      );
+      const employeeDepartment = String(
+        employeeSnapshot.department ??
+        employeeSnapshot.departmentName ??
+        employeeSnapshot.departmentId ??
+        '',
+      );
       const completedQuarters = relatedQuarters.filter(
         (quarter) =>
           quarter.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
@@ -216,7 +248,13 @@ export class AnnualDecisionService extends BaseService {
         cycleId: annualAssignment.cycleId.toString(),
         cycleName: cycle?.name ?? 'Performance Cycle',
         employeeId: annualAssignment.employeeId.toString(),
-        employeeName: String(annualAssignment.employeeSnapshot?.name ?? 'Employee'),
+        employeeName: String(employeeSnapshot.name ?? 'Employee'),
+        employeeCode,
+        employeeNo: employeeCode,
+        designation: employeeDesignation,
+        employeeDesignation,
+        department: employeeDepartment,
+        departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: annualAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment.managerSnapshot?.name ?? 'Manager'),
         annualState: annualAssignment.annualState,
@@ -262,6 +300,7 @@ export class AnnualDecisionService extends BaseService {
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
     ]);
     const appraisalWindowStatus = await this.getAppraisalWindowStatus(annualAssignment, cycle ?? undefined);
+    const calculatedFinalScore = await this.tryCalculateAnnualFinalScore(annualAssignment);
 
     const annualDecisionValues = annualDecision
       ? await AnnualDecisionValue.find({
@@ -289,6 +328,9 @@ export class AnnualDecisionService extends BaseService {
       ])
       : [[], []];
 
+    const latestFinalScoreOverride = correctionHistory.find(
+      (entry) => entry.fieldKey === 'FINAL_SCORE_OVERRIDE',
+    );
     const maskedCorrectionHistory = this.maskCorrectionHistory(
       correctionHistory,
       visibilityConfiguration ?? annualAssignment.visibility,
@@ -297,6 +339,12 @@ export class AnnualDecisionService extends BaseService {
       preReopenSnapshots,
       visibilityConfiguration ?? annualAssignment.visibility,
     );
+    const finalScoreOverride = latestFinalScoreOverride
+      ? this.buildFinalScoreOverrideSummary(
+          latestFinalScoreOverride,
+          visibilityConfiguration ?? annualAssignment.visibility,
+        )
+      : null;
 
     return {
       annualAssignment: {
@@ -317,6 +365,8 @@ export class AnnualDecisionService extends BaseService {
         valueNumber: value.valueNumber,
         valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
       })),
+      calculatedFinalScore,
+      finalScoreOverride,
       visibilityConfiguration: visibilityConfiguration?.toObject() ?? null,
       annualDecision: annualDecision
         ? this.maskDecision(
@@ -349,8 +399,17 @@ export class AnnualDecisionService extends BaseService {
       input.isGradeApplied,
       input.isMeritApplied,
     );
-    this.validateDecisionInput(input, appraisalOutcomeType);
-    await this.validateAnnualTemplateInput(annualAssignment, input);
+    const calculatedFinalScore = await this.calculateAnnualFinalScore(annualAssignment);
+    const effectiveFinalScore = await this.resolveEffectiveAnnualFinalScore(
+      existingDecision?._id,
+      calculatedFinalScore,
+    );
+    const decisionInput: SaveDecisionDraftInput = {
+      ...input,
+      finalScore: effectiveFinalScore,
+    };
+    this.validateDecisionInput(decisionInput, appraisalOutcomeType);
+    await this.validateAnnualTemplateInput(annualAssignment, decisionInput);
 
     const payload = {
       annualAssignmentId: annualAssignment._id,
@@ -363,7 +422,7 @@ export class AnnualDecisionService extends BaseService {
       meritDetails: input.meritDetails,
       nilReason: appraisalOutcomeType === AppraisalOutcomeType.NIL ? input.nilReason : undefined,
       managementRemarks: input.managementRemarks,
-      finalScore: input.finalScore,
+      finalScore: effectiveFinalScore,
       finalRating: input.finalRating,
       decisionStatus: AnnualDecisionStatus.DRAFT,
       decidedBy: this.actorIdObject(),
@@ -385,7 +444,7 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Unable to save annual decision draft');
     }
 
-    await this.persistAnnualDecisionValues(decision, annualAssignment, input);
+    await this.persistAnnualDecisionValues(decision, annualAssignment, decisionInput);
 
     annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.DRAFT;
@@ -424,7 +483,15 @@ export class AnnualDecisionService extends BaseService {
       annualDecisionId: decision._id,
       isDeleted: false,
     }).lean();
-    const decisionInput = this.buildDecisionInputFromRecord(decision, annualDecisionValues);
+    const calculatedFinalScore = await this.calculateAnnualFinalScore(annualAssignment);
+    const effectiveFinalScore = await this.resolveEffectiveAnnualFinalScore(
+      decision._id,
+      calculatedFinalScore,
+    );
+    const decisionInput = {
+      ...this.buildDecisionInputFromRecord(decision, annualDecisionValues),
+      finalScore: effectiveFinalScore,
+    };
     const appraisalOutcomeType = this.deriveOutcome(
       Boolean(decision.isGradeApplied),
       Boolean(decision.isMeritApplied),
@@ -433,12 +500,14 @@ export class AnnualDecisionService extends BaseService {
     await this.validateAnnualTemplateInput(annualAssignment, decisionInput);
 
     const previousValue = decision.toObject();
+    decision.finalScore = effectiveFinalScore;
     decision.decisionStatus = AnnualDecisionStatus.SUBMITTED;
     decision.submittedBy = this.actorIdObject();
     decision.submittedAt = new Date();
     decision.updatedBy = this.actorIdObject();
     decision.version += 1;
     await decision.save();
+    await this.syncAnnualFinalScoreValue(decision, annualAssignment, effectiveFinalScore);
 
     annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.SUBMITTED;
@@ -684,6 +753,86 @@ export class AnnualDecisionService extends BaseService {
     return decision;
   }
 
+  async overrideFinalScore(
+    annualAssignmentId: string,
+    input: OverrideFinalScoreInput,
+  ): Promise<IAnnualDecision> {
+    this.assertDecisionAdmin('annualDecision.finalScore.override');
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Final score override reason is required');
+    }
+
+    const overrideScore = Number(input.overrideScore);
+    if (!Number.isFinite(overrideScore) || overrideScore < 0) {
+      throw new Error('Valid final score override value is required');
+    }
+
+    const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    await this.assertAllQuartersComplete(annualAssignment._id);
+    await this.assertAppraisalWindowOpen(annualAssignment);
+
+    const decision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    });
+    if (!decision) {
+      throw new Error('Annual decision draft must exist before final score override');
+    }
+
+    if (
+      decision.frozenAt ||
+      decision.decisionStatus === AnnualDecisionStatus.FROZEN ||
+      decision.decisionStatus === AnnualDecisionStatus.VISIBILITY_ENABLED
+    ) {
+      throw new Error('Frozen annual decisions must be reopened before final score override');
+    }
+
+    const systemFinalScore = await this.calculateAnnualFinalScore(annualAssignment);
+    const previousEffectiveFinalScore = Number.isFinite(Number(decision.finalScore))
+      ? Number(decision.finalScore)
+      : systemFinalScore;
+    const roundedOverrideScore = this.roundAnnualScore(overrideScore);
+    const previousValue = decision.toObject();
+
+    await CorrectionLayer.create({
+      entityType: 'ANNUAL_DECISION',
+      entityId: decision._id,
+      fieldKey: 'FINAL_SCORE_OVERRIDE',
+      originalValue: {
+        systemFinalScore,
+        previousEffectiveFinalScore,
+        decisionStatus: decision.decisionStatus,
+      },
+      correctedValue: {
+        overriddenFinalScore: roundedOverrideScore,
+        effectiveFinalScore: roundedOverrideScore,
+      },
+      correctionReason: reason,
+      correctedBy: this.actorIdObject(),
+      correctedAt: new Date(),
+      createdBy: this.actorIdObject(),
+      updatedBy: this.actorIdObject(),
+    });
+
+    decision.finalScore = roundedOverrideScore;
+    decision.updatedBy = this.actorIdObject();
+    decision.version += 1;
+    await decision.save();
+    await this.syncAnnualFinalScoreValue(decision, annualAssignment, roundedOverrideScore);
+
+    await this.audit(
+      'PMS_ANNUAL_FINAL_SCORE_OVERRIDDEN',
+      'ANNUAL_DECISION',
+      decision._id.toString(),
+      previousValue,
+      decision.toObject(),
+      reason,
+    );
+
+    return decision;
+  }
+
   async updateVisibility(
     annualAssignmentId: string,
     input: UpdateVisibilityInput,
@@ -884,6 +1033,123 @@ export class AnnualDecisionService extends BaseService {
     }
   }
 
+  private async calculateAnnualFinalScore(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<number> {
+    const completedStates = new Set<QuarterWorkflowState>([
+      QuarterWorkflowState.QUARTER_FINALIZED,
+      QuarterWorkflowState.CLOSED_BY_ADMIN,
+    ]);
+
+    const quarterAssignments = await QuarterAssignment.find({
+      annualAssignmentId: annualAssignment._id,
+      quarterCode: { $in: annualAssignment.applicableQuarters },
+      isDeleted: false,
+    });
+
+    const quarterScores: Record<string, number> = {};
+    for (const quarter of quarterAssignments) {
+      if (!completedStates.has(quarter.quarterState as QuarterWorkflowState)) {
+        throw new Error('Annual final score is blocked until all applicable quarters are finalized or closed');
+      }
+
+      if (!Number.isFinite(Number(quarter.quarterScore))) {
+        throw new Error(`Annual final score requires a score for ${quarter.quarterCode}`);
+      }
+
+      quarterScores[quarter.quarterCode] = Number(quarter.quarterScore);
+    }
+
+    const missingQuarter = annualAssignment.applicableQuarters.find(
+      (quarterCode) => !Number.isFinite(quarterScores[quarterCode]),
+    );
+    if (missingQuarter) {
+      throw new Error(`Annual final score requires a score for ${missingQuarter}`);
+    }
+
+    const annualScoringConfig = await this.resolveAnnualScoringConfig(annualAssignment);
+    const score = this.scoringService.calculateAnnualRollup(
+      quarterScores,
+      annualScoringConfig,
+    );
+
+    if (!Number.isFinite(Number(score))) {
+      throw new Error('Unable to calculate annual final score from quarter scores');
+    }
+
+    return this.roundAnnualScore(Number(score));
+  }
+
+  private async tryCalculateAnnualFinalScore(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<number | undefined> {
+    try {
+      return await this.calculateAnnualFinalScore(annualAssignment);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async resolveEffectiveAnnualFinalScore(
+    decisionId: Types.ObjectId | undefined,
+    systemFinalScore: number,
+  ): Promise<number> {
+    if (!decisionId) {
+      return systemFinalScore;
+    }
+
+    const latestOverride = await this.findLatestFinalScoreOverride(decisionId);
+    const effectiveFinalScore = this.extractEffectiveOverrideScore(latestOverride);
+    return effectiveFinalScore ?? systemFinalScore;
+  }
+
+  private async findLatestFinalScoreOverride(
+    decisionId: Types.ObjectId,
+  ): Promise<Record<string, unknown> | null> {
+    return CorrectionLayer.findOne({
+      entityType: 'ANNUAL_DECISION',
+      entityId: decisionId,
+      fieldKey: 'FINAL_SCORE_OVERRIDE',
+      isDeleted: false,
+    })
+      .sort({ correctedAt: -1, createdAt: -1 })
+      .lean();
+  }
+
+  private extractEffectiveOverrideScore(
+    overrideEntry: Record<string, unknown> | null,
+  ): number | undefined {
+    if (!overrideEntry) {
+      return undefined;
+    }
+
+    const correctedValue = overrideEntry.correctedValue as Record<string, unknown> | undefined;
+    const score = correctedValue?.effectiveFinalScore ?? correctedValue?.overriddenFinalScore;
+    return Number.isFinite(Number(score)) ? this.roundAnnualScore(Number(score)) : undefined;
+  }
+
+  private async resolveAnnualScoringConfig(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<Parameters<PmsScoringService['calculateAnnualRollup']>[1]> {
+    if (!annualAssignment.templateVersionId) {
+      return undefined;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(
+      annualAssignment.templateVersionId,
+    ).lean();
+    const config = templateVersion?.annualScoringConfig;
+    if (!config || typeof config !== 'object') {
+      return undefined;
+    }
+
+    return config as Parameters<PmsScoringService['calculateAnnualRollup']>[1];
+  }
+
+  private roundAnnualScore(score: number): number {
+    return Math.round((score + Number.EPSILON) * 1_000_000) / 1_000_000;
+  }
+
   private async resolveAnnualDecisionTemplate(
     annualAssignment: IAnnualAssignment,
     input: SaveDecisionDraftInput,
@@ -999,6 +1265,9 @@ export class AnnualDecisionService extends BaseService {
 
     for (const decisionValue of input.decisionValues ?? []) {
       if (!decisionValue.fieldKey?.trim()) {
+        continue;
+      }
+      if (this.isFinalScoreFieldKey(decisionValue.fieldKey)) {
         continue;
       }
 
@@ -1146,6 +1415,7 @@ export class AnnualDecisionService extends BaseService {
   ) {
     return decisionValues
       .filter((decisionValue) => decisionValue.fieldKey?.trim() && decisionValue.sectionKey?.trim())
+      .filter((decisionValue) => !this.isFinalScoreFieldKey(decisionValue.fieldKey))
       .map((decisionValue) => ({
         ...baseValue,
         templateFieldId: decisionValue.templateFieldId,
@@ -1161,6 +1431,36 @@ export class AnnualDecisionService extends BaseService {
         valueNumber: decisionValue.valueNumber,
         valueDate: decisionValue.valueDate ? new Date(decisionValue.valueDate) : undefined,
       }));
+  }
+
+  private async syncAnnualFinalScoreValue(
+    decision: IAnnualDecision,
+    annualAssignment: IAnnualAssignment,
+    finalScore: number,
+  ): Promise<void> {
+    const actor = this.requireActor();
+    const actorUserId = new Types.ObjectId(actor.actorId);
+    await AnnualDecisionValue.deleteMany({
+      annualDecisionId: decision._id,
+      fieldKey: { $in: ['final_score', 'finalscore', 'score'] },
+    });
+    await AnnualDecisionValue.create({
+      annualDecisionId: decision._id,
+      annualAssignmentId: annualAssignment._id,
+      fieldKey: 'final_score',
+      sectionKey: 'annual_decision',
+      roleCode: 'ADMIN',
+      actorUserId,
+      valueNumber: finalScore,
+      createdBy: actorUserId,
+      updatedBy: actorUserId,
+    });
+  }
+
+  private isFinalScoreFieldKey(fieldKey: string): boolean {
+    return ['finalscore', 'score'].includes(
+      String(fieldKey || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+    );
   }
 
   private hasMeaningfulDecisionDetails(value?: Record<string, unknown>): boolean {
@@ -1230,8 +1530,13 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Annual appraisal window is blocked until all applicable quarters are finalized or closed');
     }
 
+    const relativeBaseDate = await this.resolveRelativeAppraisalBaseDate(
+      cycle,
+      config,
+      allQuartersCompletedAt,
+    );
     const now = this.getCurrentDate();
-    if (!this.isWithinAppraisalWindow(cycle, config, allQuartersCompletedAt, now)) {
+    if (!this.isWithinAppraisalWindow(config, relativeBaseDate, now)) {
       throw new Error('Annual appraisal window is closed for this cycle');
     }
   }
@@ -1267,13 +1572,14 @@ export class AnnualDecisionService extends BaseService {
       return { isOpen: false };
     }
 
+    const relativeBaseDate = await this.resolveRelativeAppraisalBaseDate(
+      cycle,
+      config,
+      allQuartersCompletedAt,
+    );
+
     return {
-      isOpen: this.isWithinAppraisalWindow(
-        cycle,
-        config,
-        allQuartersCompletedAt,
-        this.getCurrentDate(),
-      ),
+      isOpen: this.isWithinAppraisalWindow(config, relativeBaseDate, this.getCurrentDate()),
     };
   }
 
@@ -1332,10 +1638,62 @@ export class AnnualDecisionService extends BaseService {
     return completedAt.getTime() > 0 ? completedAt : new Date();
   }
 
-  private isWithinAppraisalWindow(
+  private async resolveRelativeAppraisalBaseDate(
     cycle: IAnnualCycle,
     config: AppraisalWindowConfigInput,
     allQuartersCompletedAt: Date,
+  ): Promise<Date | string> {
+    if (config.type !== 'RELATIVE_OFFSET') {
+      return allQuartersCompletedAt;
+    }
+
+    if (config.base === 'ANNUAL_CYCLE_END') {
+      return cycle.endDate;
+    }
+
+    if (config.base === 'Q4_FINALIZATION') {
+      return await this.getQ4FinalizationWindowEndDate(cycle._id) ?? allQuartersCompletedAt;
+    }
+
+    return allQuartersCompletedAt;
+  }
+
+  private async getQ4FinalizationWindowEndDate(
+    cycleId: Types.ObjectId,
+  ): Promise<Date | string | null> {
+    const quarterCycle = await QuarterCycle.findOne({
+      cycleId,
+      quarterCode: 'Q4',
+      isDeleted: false,
+    })
+      .select('quarterFinalizationWindow closureRules')
+      .lean();
+
+    if (!quarterCycle) {
+      return null;
+    }
+
+    const closureRules = quarterCycle.closureRules as Record<string, unknown> | undefined;
+
+    return (
+      this.getWindowEndDate(quarterCycle.quarterFinalizationWindow) ??
+      this.getWindowEndDate(closureRules?.quarterFinalizationWindow) ??
+      this.getWindowEndDate(closureRules?.finalizationWindow) ??
+      null
+    );
+  }
+
+  private getWindowEndDate(window: unknown): Date | string | undefined {
+    if (!window || typeof window !== 'object') {
+      return undefined;
+    }
+
+    return (window as { endDate?: Date | string }).endDate;
+  }
+
+  private isWithinAppraisalWindow(
+    config: AppraisalWindowConfigInput,
+    relativeBaseDate: Date | string,
     now: Date,
   ): boolean {
     if (config.type === 'FIXED_DATE') {
@@ -1354,11 +1712,7 @@ export class AnnualDecisionService extends BaseService {
       return false;
     }
 
-    const baseDate =
-      config.base === 'ANNUAL_CYCLE_END'
-        ? cycle.endDate
-        : allQuartersCompletedAt;
-    const start = this.normalizeStartDate(baseDate);
+    const start = this.normalizeStartDate(relativeBaseDate);
     if (!start) {
       return false;
     }
@@ -1435,6 +1789,35 @@ export class AnnualDecisionService extends BaseService {
     }));
   }
 
+  private buildFinalScoreOverrideSummary(
+    correctionEntry: Record<string, unknown>,
+    visibility: {
+      employeeReviewVisible: boolean;
+      employeeGradeVisible: boolean;
+      employeeMeritVisible: boolean;
+      managerGradeVisible: boolean;
+      managerMeritVisible: boolean;
+      visibleFrom?: Date | string;
+    },
+  ): Record<string, unknown> | null {
+    const permissions = this.getHistoryVisibilityPermissions(visibility);
+    const originalValue = this.maskHistoryValue(correctionEntry.originalValue, permissions);
+    const correctedValue = this.maskHistoryValue(correctionEntry.correctedValue, permissions);
+    if (!originalValue && !correctedValue) {
+      return null;
+    }
+
+    return {
+      _id: correctionEntry._id,
+      fieldKey: correctionEntry.fieldKey,
+      originalValue,
+      correctedValue,
+      correctionReason: correctionEntry.correctionReason,
+      correctedBy: correctionEntry.correctedBy,
+      correctedAt: correctionEntry.correctedAt,
+    };
+  }
+
   private maskPreReopenSnapshots(
     snapshots: Array<Record<string, unknown>>,
     visibility: {
@@ -1466,13 +1849,16 @@ export class AnnualDecisionService extends BaseService {
     managerMeritVisible: boolean;
     visibleFrom?: Date | string;
   }) {
-    const actorRole = normalizePmsRole(this.requireActor().actorRole);
+    const actor = this.requireActor();
+    const actorRole = normalizePmsRole(actor.actorRole);
     const effectiveVisibility = this.getEffectiveVisibilityFlags(visibility);
 
     if (
       actorRole === PmsRole.ADMIN ||
       actorRole === PmsRole.DIRECTOR ||
-      actorRole === PmsRole.MANAGEMENT
+      actorRole === PmsRole.MANAGEMENT ||
+      actor.actorScope === 'EXECUTIVE' ||
+      actor.actorScope === 'ALL'
     ) {
       return {
         canSeeGrade: true,
@@ -1519,6 +1905,10 @@ export class AnnualDecisionService extends BaseService {
       'gradedetails',
       'finalrating',
       'finalscore',
+      'systemfinalscore',
+      'previouseffectivefinalscore',
+      'overriddenfinalscore',
+      'effectivefinalscore',
       'appraisaloutcometype',
       'isgradeapplied',
       'finalgrade',
@@ -1659,7 +2049,7 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
-    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
+    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT || actor.actorScope === 'EXECUTIVE' || actor.actorScope === 'ALL') {
       return;
     }
 
@@ -1677,7 +2067,7 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
-    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
+    if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT || actor.actorScope === 'EXECUTIVE' || actor.actorScope === 'ALL') {
       return;
     }
 
@@ -1725,6 +2115,7 @@ export class AnnualDecisionService extends BaseService {
     return {
       actorId: user._id.toString(),
       actorRole: user.role,
+      actorScope: user.scope,
     };
   }
 

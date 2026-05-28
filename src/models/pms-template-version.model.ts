@@ -4,17 +4,22 @@ import {
   PmsTemplateSectionLevel,
   PmsTemplateSectionType,
   PmsTemplateStatus,
+  FieldCategory,
+  SemanticRole,
 } from '../constants/pms.enums';
 import type {
   PmsTemplateFieldType as PmsTemplateFieldTypeType,
   PmsTemplateSectionLevel as PmsTemplateSectionLevelType,
   PmsTemplateSectionType as PmsTemplateSectionTypeType,
   PmsTemplateStatus as PmsTemplateStatusType,
+  FieldCategory as FieldCategoryType,
+  SemanticRole as SemanticRoleType,
 } from '../constants/pms.enums';
 
 export interface ITemplateOption {
   label: string;
   value: string;
+  score?: number;
   weight?: number;
 }
 
@@ -33,6 +38,18 @@ export interface ITemplateObjectiveConfig {
   allowEmployeeCreated?: boolean;
   allowManagerCreated?: boolean;
   predefinedObjectives?: ITemplatePredefinedObjective[];
+}
+
+export interface IObjectiveBucket {
+  bucketKey: string;
+  label: string;
+  source: 'TEMPLATE_PREDEFINED' | 'EMPLOYEE_DYNAMIC' | 'MANAGER_DYNAMIC';
+  owner: 'SYSTEM' | 'EMPLOYEE' | 'MANAGER';
+  bucketWeightage: number;
+  rowWeightMode: 'FIXED_BY_TEMPLATE' | 'OWNER_ENTERED' | 'EQUAL_DISTRIBUTION';
+  editableBy: string[];
+  requiresManagerApproval: boolean;
+  autoApprove: boolean;
 }
 
 export interface ITemplateBehaviorRule {
@@ -62,10 +79,13 @@ export interface ITemplateField {
   fieldKey: string;
   fieldLabel: string;
   fieldType: PmsTemplateFieldTypeType;
+  fieldCategory?: FieldCategoryType;
+  semanticRole?: SemanticRoleType;
   isRequired?: boolean;
   displayOrder?: number;
   placeholder?: string;
   helpText?: string;
+  hideLabel?: boolean;
   validationRules?: Record<string, unknown>;
   visibilityRules?: Record<string, unknown>;
   editabilityRules?: Record<string, unknown>;
@@ -77,9 +97,12 @@ export interface ITemplateField {
   behaviors?: ITemplateBehaviorRule[];
   conditionalRendering?: ITemplateConditionalRendering;
   matrixConfig?: {
-    rows: Array<{ key: string; label: string; options?: ITemplateOption[] }>;
+    rows: Array<{ key: string; label: string; weightage?: number; options?: ITemplateOption[] }>;
     columns: Array<{ key: string; label: string; weightage?: number }>;
     allowComments?: boolean;
+    selectionControl?: 'radio' | 'checkbox';
+    multiSelectScoring?: 'MAX' | 'AVERAGE' | 'SUM_CAPPED';
+    borderStyle?: 'standard' | 'paper';
   };
   gridConfig?: {
     columns: Array<{ key: string; label: string; type: string; required?: boolean }>;
@@ -113,6 +136,7 @@ const matrixItemSchema = new Schema<IMatrixItem>(
         {
           label: { type: String, required: true },
           value: { type: String, required: true },
+          score: { type: Number },
           weight: { type: Number },
           _id: false,
         },
@@ -169,7 +193,7 @@ export interface ITemplateSection {
   repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
   repeatable?: boolean;
   displayOrder?: number;
-  layout?: 'vertical' | 'grid' | 'table';
+  layout?: 'vertical' | 'grid' | 'table' | 'bordered_grid';
   renderingScope?: 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
   quarterScope?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
   sectionScoringConfig?: {
@@ -181,6 +205,7 @@ export interface ITemplateSection {
   visibilityRules?: Record<string, unknown>;
   editabilityRules?: Record<string, unknown>;
   objectiveConfig?: ITemplateObjectiveConfig;
+  objectiveBuckets?: IObjectiveBucket[];
   metadata?: Record<string, unknown>;
   fields: ITemplateField[];
 }
@@ -220,10 +245,20 @@ const templateFieldSchema = new Schema<ITemplateField>(
       required: true,
       enum: Object.values(PmsTemplateFieldType),
     },
+    fieldCategory: {
+      type: String,
+      enum: Object.values(FieldCategory),
+      default: 'NORMAL',
+    },
+    semanticRole: {
+      type: String,
+      enum: Object.values(SemanticRole),
+    },
     isRequired: { type: Boolean, default: false },
     displayOrder: { type: Number, default: 0 },
     placeholder: String,
     helpText: String,
+    hideLabel: { type: Boolean, default: false },
     validationRules: Schema.Types.Mixed,
     visibilityRules: Schema.Types.Mixed,
     editabilityRules: Schema.Types.Mixed,
@@ -274,6 +309,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
         {
           label: { type: String, required: true },
           value: { type: String, required: true },
+          score: { type: Number },
           weight: { type: Number },
           _id: false,
         },
@@ -285,6 +321,9 @@ const templateFieldSchema = new Schema<ITemplateField>(
         rows: IMatrixItem[];
         columns: IMatrixItem[];
         allowComments?: boolean;
+        selectionControl?: 'radio' | 'checkbox';
+        multiSelectScoring?: 'MAX' | 'AVERAGE' | 'SUM_CAPPED';
+        borderStyle?: 'standard' | 'paper';
       }>(
         {
           rows: {
@@ -296,6 +335,9 @@ const templateFieldSchema = new Schema<ITemplateField>(
             default: [],
           },
           allowComments: { type: Boolean, default: false },
+          selectionControl: { type: String, enum: ['radio', 'checkbox'], default: 'radio' },
+          multiSelectScoring: { type: String, enum: ['MAX', 'AVERAGE', 'SUM_CAPPED'], default: 'MAX' },
+          borderStyle: { type: String, enum: ['standard', 'paper'], default: 'standard' },
         },
         { _id: false },
       ),
@@ -323,6 +365,33 @@ const templateFieldSchema = new Schema<ITemplateField>(
   { _id: false },
 );
 
+const objectiveBucketSchema = new Schema<IObjectiveBucket>(
+  {
+    bucketKey: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    source: {
+      type: String,
+      required: true,
+      enum: ['TEMPLATE_PREDEFINED', 'EMPLOYEE_DYNAMIC', 'MANAGER_DYNAMIC'],
+    },
+    owner: {
+      type: String,
+      required: true,
+      enum: ['SYSTEM', 'EMPLOYEE', 'MANAGER'],
+    },
+    bucketWeightage: { type: Number, required: true, min: 0, max: 100 },
+    rowWeightMode: {
+      type: String,
+      required: true,
+      enum: ['FIXED_BY_TEMPLATE', 'OWNER_ENTERED', 'EQUAL_DISTRIBUTION'],
+    },
+    editableBy: [{ type: String }],
+    requiresManagerApproval: { type: Boolean, default: false },
+    autoApprove: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
 const templateSectionSchema = new Schema<ITemplateSection>(
   {
     sectionKey: { type: String, required: true, trim: true },
@@ -343,7 +412,7 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     },
     repeatable: { type: Boolean, default: false },
     displayOrder: { type: Number, default: 0 },
-    layout: { type: String, enum: ['vertical', 'grid', 'table'], default: 'vertical' },
+    layout: { type: String, enum: ['vertical', 'grid', 'table', 'bordered_grid'], default: 'vertical' },
     renderingScope: {
       type: String,
       enum: ['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'],
@@ -373,6 +442,10 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     editabilityRules: Schema.Types.Mixed,
     objectiveConfig: {
       type: objectiveConfigSchema,
+      default: undefined,
+    },
+    objectiveBuckets: {
+      type: [objectiveBucketSchema],
       default: undefined,
     },
     metadata: Schema.Types.Mixed,

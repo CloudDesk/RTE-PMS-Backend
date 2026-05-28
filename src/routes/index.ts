@@ -9,6 +9,7 @@ import { userRoutes } from "./user.routes";
 import { lovRoutes } from "./lov.routes";
 import { pmsTemplateRoutes } from "./pms-template.routes";
 import { pmsAccessRoutes } from "./pms-access.routes";
+import { pmsRolePermissionRoutes } from "./pms-role-permission.routes";
 import { cycleRoutes } from "./cycle.routes";
 import { assignmentRoutes } from "./assignment.routes";
 import { objectiveRoutes } from "./objective.routes";
@@ -82,6 +83,8 @@ export async function routes(fastify: FastifyInstance) {
   // fastify.register(overtimeRoutes, { prefix: "/overtime" });
   // fastify.register(payrollRoutes, { prefix: "/payroll" });
   fastify.register(lovRoutes, { prefix: "/lovs" });
+  // PMS Routes
+  fastify.register(pmsRolePermissionRoutes, { prefix: "/pms/permissions" });
   fastify.register(pmsTemplateRoutes, { prefix: "/pms/templates" });
   fastify.register(pmsAccessRoutes, { prefix: "/pms/access" });
   fastify.register(cycleRoutes, { prefix: "/pms/cycles" });

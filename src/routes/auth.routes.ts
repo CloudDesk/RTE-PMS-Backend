@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { RouteHandler } from '../types/routes';
 import '@fastify/cookie';
 import '@fastify/jwt';
+import { PmsRolePermission } from '../models/pms-role-permission.model';
 
 interface LoginBody {
   email: string;
@@ -56,7 +57,9 @@ export const authRoutes: RouteHandler = async (fastify: FastifyInstance): Promis
                       country: { type: 'string' },
                       currency: { type: 'string' },
                       licenseType: { type: 'string' },
-                      portalAccess: { type: 'boolean' }
+                      portalAccess: { type: 'boolean' },
+                      scope: { type: 'string', nullable: true },
+                      priority: { type: 'number', nullable: true }
                     }
                   }
                 }
@@ -72,6 +75,14 @@ export const authRoutes: RouteHandler = async (fastify: FastifyInstance): Promis
         console.log(email, password, 'email, password');
         const user = await request.container!.authService.login(email, password);
         console.log(user, 'loged in user');
+
+        // Dynamically fetch role permission scope
+        const rolePermission = await PmsRolePermission.findOne({
+          role: new RegExp(`^${user.role}$`, 'i')
+        });
+        const userScope = rolePermission?.scope;
+        const userPriority = rolePermission?.priority;
+
         const token = await reply.jwtSign({
           _id: user._id,
           email: user.email,
@@ -86,7 +97,9 @@ export const authRoutes: RouteHandler = async (fastify: FastifyInstance): Promis
           country: user.country,
           currency: user.currency,
           licenseType: user.licenseType,
-          portalAccess: user.portalAccess !== false
+          portalAccess: user.portalAccess !== false,
+          scope: userScope,
+          priority: userPriority
         } as {
           _id: string;
           email: string;
@@ -102,6 +115,8 @@ export const authRoutes: RouteHandler = async (fastify: FastifyInstance): Promis
           currency: string;
           licenseType: string;
           portalAccess: boolean;
+          scope: string;
+          priority: number;
         });
         // Set JWT token as cookie
         reply.setCookie('access_token', token, {
@@ -132,7 +147,9 @@ export const authRoutes: RouteHandler = async (fastify: FastifyInstance): Promis
               country: user.country,
               currency: user.currency,
               licenseType: user.licenseType,
-              portalAccess: user.portalAccess !== false
+              portalAccess: user.portalAccess !== false,
+              scope: userScope,
+              priority: userPriority
             }
           }
         });

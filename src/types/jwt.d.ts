@@ -11,6 +11,7 @@ declare module '@fastify/jwt' {
       active: boolean;
       iat?: number;
       exp?: number;
+      scope?: string;
     };
     user: {
       _id: Types.ObjectId;
@@ -19,6 +20,7 @@ declare module '@fastify/jwt' {
       role: string;
       departmentId: string;
       active: boolean;
+      scope?: string;
     };
   }
 } 

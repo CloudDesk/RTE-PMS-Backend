@@ -17,7 +17,7 @@ import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { workflowService } from './workflow.service';
-import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
+import type { IAnnualCycle, ICommunicationRuleConfig } from '../models/pms-annual-cycle.model';
 import type { IQuarterCycle } from '../models/pms-quarter-cycle.model';
 import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constants/pms.enums';
 
@@ -58,7 +58,7 @@ export interface CreateCycleInput {
   templateVersionId: string;
   quarters?: QuarterCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
-  communicationRuleConfig?: Record<string, unknown>;
+  communicationRuleConfig?: ICommunicationRuleConfig;
 }
 
 interface AppraisalWindowConfigInput {
@@ -93,7 +93,7 @@ export interface UpdateCycleInput {
   templateVersionId?: string;
   quarters?: QuarterCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
-  communicationRuleConfig?: Record<string, unknown>;
+  communicationRuleConfig?: ICommunicationRuleConfig;
 }
 
 export interface CycleListQuery {
@@ -105,12 +105,12 @@ export interface CycleListQuery {
 }
 
 export interface CycleDetailResult {
-  annualCycle: IAnnualCycle;
+  annualCycle: any;
   quarterCycles: IQuarterCycle[];
 }
 
 export interface CycleListResult {
-  items: IAnnualCycle[];
+  items: any[];
   total: number;
   page: number;
   limit: number;
@@ -174,7 +174,34 @@ export class CycleService extends BaseService {
       AnnualCycle.countDocuments(filter),
     ]);
 
-    return { items, total, page, limit };
+    const templateVersionIds = items
+      .map((item) => item.templateVersionId)
+      .filter((id): id is Types.ObjectId => Boolean(id));
+
+    const versions = await PmsTemplateVersion.find({ _id: { $in: templateVersionIds } }).lean();
+    const templateIds = versions.map((v) => v.templateId);
+    const templates = await PmsTemplate.find({ _id: { $in: templateIds } }).select('name code').lean();
+
+    const templateMap = new Map(templates.map((t) => [t._id.toString(), t]));
+    const versionMap = new Map(versions.map((v) => [v._id.toString(), v]));
+
+    const itemsWithTemplateName = items.map((item) => {
+      const obj = item.toObject() as any;
+      if (item.templateVersionId) {
+        const version = versionMap.get(item.templateVersionId.toString());
+        if (version) {
+          const template = templateMap.get(version.templateId.toString());
+          const templateName = template?.name ?? 'PMS Template';
+          obj.templateVersionName = `${templateName} v${version.versionNo}`;
+        }
+      }
+      if (!obj.templateVersionName) {
+        obj.templateVersionName = '—';
+      }
+      return obj;
+    });
+
+    return { items: itemsWithTemplateName, total, page, limit };
   }
 
   async getCycleDetail(cycleId: string): Promise<CycleDetailResult> {
@@ -185,7 +212,20 @@ export class CycleService extends BaseService {
       isDeleted: false,
     }).sort({ quarterCode: 1 });
 
-    return { annualCycle, quarterCycles };
+    const obj = annualCycle.toObject() as any;
+    if (annualCycle.templateVersionId) {
+      const version = await PmsTemplateVersion.findById(annualCycle.templateVersionId).lean();
+      if (version) {
+        const template = await PmsTemplate.findById(version.templateId).select('name code').lean();
+        const templateName = template?.name ?? 'PMS Template';
+        obj.templateVersionName = `${templateName} v${version.versionNo}`;
+      }
+    }
+    if (!obj.templateVersionName) {
+      obj.templateVersionName = '—';
+    }
+
+    return { annualCycle: obj, quarterCycles };
   }
 
   async getCycleAuditHistory(cycleId: string) {
@@ -195,7 +235,7 @@ export class CycleService extends BaseService {
   }
 
   async listCommunicationRules(): Promise<CycleCommunicationRuleOption[]> {
-    this.assertAdmin('cycle.communication.read');
+    await this.assertAdmin('cycle.communication.read');
 
     const versions = await PmsTemplateVersion.find({
       status: PmsTemplateStatus.ACTIVE,
@@ -239,10 +279,14 @@ export class CycleService extends BaseService {
   }
 
   async createCycle(input: CreateCycleInput): Promise<CreateCycleResult> {
-    this.assertAdmin('cycle.create');
+    await this.assertAdmin('cycle.create');
     this.validateCycleInput(input);
 
-    const templateVersionId = await this.validateTemplateVersion(input.templateVersionId);
+    const templateVersionId = await this.validateTemplateVersion(
+      input.templateVersionId,
+      input.startDate,
+      input.endDate,
+    );
     const code = input.code.trim().toUpperCase();
     const existingCycle = await AnnualCycle.exists({ code });
     if (existingCycle) {
@@ -279,6 +323,17 @@ export class CycleService extends BaseService {
       annualCycle.quarterCycleIds = quarterCycles.map((qc) => qc._id as Types.ObjectId);
       await annualCycle.save({ session });
 
+      const version = await PmsTemplateVersion.findById(templateVersionId).lean();
+      let templateVersionName = '—';
+      if (version) {
+        const template = await PmsTemplate.findById(version.templateId).select('name code').lean();
+        const templateName = template?.name ?? 'PMS Template';
+        templateVersionName = `${templateName} v${version.versionNo}`;
+      }
+
+      const annualCycleObj = annualCycle.toObject() as any;
+      annualCycleObj.templateVersionName = templateVersionName;
+
       await this.audit(
         'PMS_CYCLE_CREATED',
         'ANNUAL_CYCLE',
@@ -293,7 +348,7 @@ export class CycleService extends BaseService {
       );
 
       await session.commitTransaction();
-      return { annualCycle, quarterCycles };
+      return { annualCycle: annualCycleObj, quarterCycles };
     } catch (error) {
       await session.abortTransaction();
       throw error;
@@ -303,7 +358,7 @@ export class CycleService extends BaseService {
   }
 
   async updateCycle(cycleId: string, input: UpdateCycleInput): Promise<CycleDetailResult> {
-    this.assertAdmin('cycle.update');
+    await this.assertAdmin('cycle.update');
     const cycle = await this.getCycleForAction(cycleId);
     if (
       cycle.status !== AnnualWorkflowState.DRAFT &&
@@ -340,8 +395,18 @@ export class CycleService extends BaseService {
         cycle.code = code;
       }
 
-      if (input.templateVersionId) {
-        cycle.templateVersionId = await this.validateTemplateVersion(input.templateVersionId);
+      if (input.startDate !== undefined || input.endDate !== undefined || input.templateVersionId !== undefined) {
+        const targetTemplateVersionId = input.templateVersionId ?? cycle.templateVersionId?.toString();
+        if (targetTemplateVersionId) {
+          const validatedId = await this.validateTemplateVersion(
+            targetTemplateVersionId,
+            input.startDate ?? cycle.startDate,
+            input.endDate ?? cycle.endDate
+          );
+          if (input.templateVersionId) {
+            cycle.templateVersionId = validatedId;
+          }
+        }
       }
 
       if (input.name !== undefined) cycle.name = input.name;
@@ -376,6 +441,20 @@ export class CycleService extends BaseService {
 
       await cycle.save({ session });
 
+      const targetVersionId = input.templateVersionId ?? cycle.templateVersionId?.toString();
+      let templateVersionName = '—';
+      if (targetVersionId) {
+        const version = await PmsTemplateVersion.findById(targetVersionId).lean();
+        if (version) {
+          const template = await PmsTemplate.findById(version.templateId).select('name code').lean();
+          const templateName = template?.name ?? 'PMS Template';
+          templateVersionName = `${templateName} v${version.versionNo}`;
+        }
+      }
+
+      const cycleObj = cycle.toObject() as any;
+      cycleObj.templateVersionName = templateVersionName;
+
       await this.audit(
         'PMS_CYCLE_UPDATED',
         'ANNUAL_CYCLE',
@@ -390,7 +469,7 @@ export class CycleService extends BaseService {
       );
 
       await session.commitTransaction();
-      return { annualCycle: cycle, quarterCycles };
+      return { annualCycle: cycleObj, quarterCycles };
     } catch (error) {
       await session.abortTransaction();
       throw error;
@@ -404,8 +483,25 @@ export class CycleService extends BaseService {
   }
 
   async updateCommunication(cycleId: string, config: Record<string, unknown>): Promise<IAnnualCycle> {
-    const result = await this.updateCycle(cycleId, { communicationRuleConfig: config });
-    return result.annualCycle;
+    await this.assertAdmin('cycle.communication.update');
+    const cycle = await this.getCycleForAction(cycleId);
+    const previousValue = {
+      communicationRuleConfig: cycle.communicationRuleConfig ?? {},
+    };
+
+    cycle.communicationRuleConfig = config as ICommunicationRuleConfig;
+    cycle.updatedBy = this.actorIdObject();
+    await cycle.save();
+
+    await this.audit(
+      'PMS_CYCLE_COMMUNICATION_UPDATED',
+      'ANNUAL_CYCLE',
+      cycle._id.toString(),
+      previousValue,
+      { communicationRuleConfig: cycle.communicationRuleConfig ?? {} },
+    );
+
+    return cycle;
   }
 
   async updateAppraisalWindow(cycleId: string, config: Record<string, unknown>): Promise<IAnnualCycle> {
@@ -414,7 +510,7 @@ export class CycleService extends BaseService {
   }
 
   async launchCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.launch');
+    await this.assertAdmin('cycle.launch');
     let cycle = await this.getCycleForAction(cycleId);
     await this.assertLaunchReady(cycle);
 
@@ -423,6 +519,9 @@ export class CycleService extends BaseService {
         cycle,
         AnnualWorkflowState.SCHEDULED,
         'PMS_CYCLE_SCHEDULED',
+        {},
+        undefined,
+        { returnDocument: true },
       );
     }
 
@@ -432,27 +531,35 @@ export class CycleService extends BaseService {
   }
 
   async scheduleCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.schedule');
+    await this.assertAdmin('cycle.schedule');
     const cycle = await this.getCycleForAction(cycleId);
     return this.executeTransition(cycle, AnnualWorkflowState.SCHEDULED, 'PMS_CYCLE_SCHEDULED');
   }
 
-  async closeCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.close');
+  async closeCycle(cycleId: string, input: { reason: string }): Promise<IAnnualCycle> {
+    await this.assertAdmin('cycle.close');
     const cycle = await this.getCycleForAction(cycleId);
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Close reason is required');
+    }
     return this.executeTransition(cycle, AnnualWorkflowState.CLOSED, 'PMS_CYCLE_CLOSED', {
       closedAt: new Date(),
-    });
+    }, reason);
   }
 
-  async archiveCycle(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.archive');
+  async archiveCycle(cycleId: string, input: { reason: string }): Promise<IAnnualCycle> {
+    await this.assertAdmin('cycle.archive');
     const cycle = await this.getCycleForAction(cycleId);
-    return this.executeTransition(cycle, AnnualWorkflowState.ARCHIVED, 'PMS_CYCLE_ARCHIVED');
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Archive reason is required');
+    }
+    return this.executeTransition(cycle, AnnualWorkflowState.ARCHIVED, 'PMS_CYCLE_ARCHIVED', {}, reason);
   }
 
   async cancelCycle(cycleId: string, input: CancelCycleInput): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.cancel');
+    await this.assertAdmin('cycle.cancel');
     const cycle = await this.getCycleForAction(cycleId);
     const reason = input.reason?.trim();
     if (!reason) {
@@ -471,7 +578,7 @@ export class CycleService extends BaseService {
   }
 
   async syncCycleProgression(cycleId: string): Promise<IAnnualCycle> {
-    this.assertAdmin('cycle.progression.sync');
+    await this.assertAdmin('cycle.progression.sync');
     const cycle = await this.getCycleForAction(cycleId);
 
     if (
@@ -498,6 +605,9 @@ export class CycleService extends BaseService {
         updatedCycle,
         AnnualWorkflowState.IN_PROGRESS,
         'PMS_CYCLE_IN_PROGRESS',
+        {},
+        undefined,
+        { returnDocument: true },
       );
     }
 
@@ -507,12 +617,14 @@ export class CycleService extends BaseService {
         AnnualWorkflowState.ALL_QUARTERS_FINALIZED,
         'PMS_CYCLE_ALL_QUARTERS_FINALIZED',
         { allQuartersFinalizedAt: completion.completedAt },
+        undefined,
+        { returnDocument: true },
       );
     }
 
     if (
       updatedCycle.status === AnnualWorkflowState.ALL_QUARTERS_FINALIZED &&
-      this.isAppraisalWindowOpen(updatedCycle, completion.completedAt)
+      await this.isAppraisalWindowOpen(updatedCycle, completion.completedAt)
     ) {
       updatedCycle = await this.executeTransition(
         updatedCycle,
@@ -531,7 +643,8 @@ export class CycleService extends BaseService {
     auditEvent: string,
     additionalUpdates: Record<string, unknown> = {},
     reason?: string,
-  ): Promise<IAnnualCycle> {
+    options: { returnDocument?: boolean } = {},
+  ): Promise<any> {
     const previousState = cycle.status;
     const transition = this.transitionAnnualCycle(cycle, nextState, reason);
 
@@ -549,7 +662,24 @@ export class CycleService extends BaseService {
       reason,
     );
 
-    return cycle;
+    if (options.returnDocument) {
+      return cycle;
+    }
+
+    const obj = cycle.toObject() as any;
+    if (cycle.templateVersionId) {
+      const version = await PmsTemplateVersion.findById(cycle.templateVersionId).lean();
+      if (version) {
+        const template = await PmsTemplate.findById(version.templateId).select('name code').lean();
+        const templateName = template?.name ?? 'PMS Template';
+        obj.templateVersionName = `${templateName} v${version.versionNo}`;
+      }
+    }
+    if (!obj.templateVersionName) {
+      obj.templateVersionName = '—';
+    }
+
+    return obj;
   }
 
   private buildQuarterPayloads(
@@ -1044,7 +1174,11 @@ export class CycleService extends BaseService {
     return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
   }
 
-  private async validateTemplateVersion(templateVersionId: string): Promise<Types.ObjectId> {
+  private async validateTemplateVersion(
+    templateVersionId: string,
+    cycleStartDate?: Date | string,
+    cycleEndDate?: Date | string,
+  ): Promise<Types.ObjectId> {
     if (!Types.ObjectId.isValid(templateVersionId)) {
       throw new Error('Invalid templateVersionId');
     }
@@ -1056,6 +1190,29 @@ export class CycleService extends BaseService {
 
     if (templateVersion.status !== PmsTemplateStatus.ACTIVE) {
       throw new Error('Only active template versions can be selected for cycle setup');
+    }
+
+    const parentTemplate = await PmsTemplate.findById(templateVersion.templateId).lean();
+    const effectiveFromDate = templateVersion.effectiveFrom ?? parentTemplate?.effectiveDate;
+
+    if (cycleStartDate && effectiveFromDate) {
+      const cycleStart = new Date(cycleStartDate);
+      const effectiveFrom = new Date(effectiveFromDate);
+      if (cycleStart < effectiveFrom) {
+        throw new Error(
+          `Cycle start date (${cycleStart.toDateString()}) cannot be before the template's effective date (${effectiveFrom.toDateString()})`,
+        );
+      }
+    }
+
+    if (cycleEndDate && templateVersion.effectiveTo) {
+      const cycleEnd = new Date(cycleEndDate);
+      const effectiveTo = new Date(templateVersion.effectiveTo);
+      if (cycleEnd > effectiveTo) {
+        throw new Error(
+          `Cycle end date (${cycleEnd.toDateString()}) cannot be after the template's effective expiration date (${effectiveTo.toDateString()})`,
+        );
+      }
     }
 
     return templateVersion._id;
@@ -1253,13 +1410,13 @@ export class CycleService extends BaseService {
     return { hasAssignments: true, allComplete: true, completedAt };
   }
 
-  private isAppraisalWindowOpen(cycle: IAnnualCycle, allQuartersCompletedAt: Date): boolean {
+  private async isAppraisalWindowOpen(cycle: IAnnualCycle, allQuartersCompletedAt: Date): Promise<boolean> {
     const config = this.normalizeAppraisalWindowConfig(cycle.appraisalWindowConfig);
     if (!config || Object.keys(config).length === 0) {
       return false;
     }
 
-    const now = new Date();
+    const now = this.getCurrentDate();
     const appraisalConfig = config as AppraisalWindowConfigInput;
     if (appraisalConfig.type === 'FIXED_DATE' || appraisalConfig.type === 'FIXED_RANGE') {
       const startDateInput = appraisalConfig.startDate ?? appraisalConfig.date;
@@ -1270,14 +1427,68 @@ export class CycleService extends BaseService {
       return false;
     }
 
-    const baseDate =
-      appraisalConfig.base === 'ANNUAL_CYCLE_END'
-        ? cycle.endDate
-        : allQuartersCompletedAt;
+    const baseDate = await this.resolveRelativeAppraisalBaseDate(
+      cycle,
+      appraisalConfig,
+      allQuartersCompletedAt,
+    );
     const offsetDays = appraisalConfig.offsetDays ?? 0;
     const openDate = new Date(baseDate);
     openDate.setDate(openDate.getDate() + offsetDays);
     return now >= openDate;
+  }
+
+  private async resolveRelativeAppraisalBaseDate(
+    cycle: IAnnualCycle,
+    config: AppraisalWindowConfigInput,
+    allQuartersCompletedAt: Date,
+  ): Promise<Date | string> {
+    if (config.base === 'ANNUAL_CYCLE_END') {
+      return cycle.endDate;
+    }
+
+    if (config.base === 'Q4_FINALIZATION') {
+      return await this.getQ4FinalizationWindowEndDate(cycle._id) ?? allQuartersCompletedAt;
+    }
+
+    return allQuartersCompletedAt;
+  }
+
+  private async getQ4FinalizationWindowEndDate(
+    cycleId: Types.ObjectId,
+  ): Promise<Date | string | null> {
+    const quarterCycle = await QuarterCycle.findOne({
+      cycleId,
+      quarterCode: 'Q4',
+      isDeleted: false,
+    })
+      .select('quarterFinalizationWindow closureRules')
+      .lean();
+
+    if (!quarterCycle) {
+      return null;
+    }
+
+    const closureRules = quarterCycle.closureRules as Record<string, unknown> | undefined;
+
+    return (
+      this.getWindowEndDate(quarterCycle.quarterFinalizationWindow) ??
+      this.getWindowEndDate(closureRules?.quarterFinalizationWindow) ??
+      this.getWindowEndDate(closureRules?.finalizationWindow) ??
+      null
+    );
+  }
+
+  private getWindowEndDate(window: unknown): Date | string | undefined {
+    if (!window || typeof window !== 'object') {
+      return undefined;
+    }
+
+    return (window as { endDate?: Date | string }).endDate;
+  }
+
+  private getCurrentDate(): Date {
+    return this.context.pmsCurrentDate ?? new Date();
   }
 
   private actorIdObject(): Types.ObjectId | undefined {
@@ -1306,7 +1517,7 @@ export class CycleService extends BaseService {
     }
 
     const mappedRole = accessService.mapRole(user.role);
-    const allowedRoles = [
+    const allowedRoles: string[] = [
       PmsRole.ADMIN,
       PmsRole.DIRECTOR,
       PmsRole.MANAGEMENT,
@@ -1374,13 +1585,13 @@ export class CycleService extends BaseService {
     return assignments.map((assignment) => assignment.cycleId);
   }
 
-  private assertAdmin(action: string): void {
+  private async assertAdmin(action: string): Promise<void> {
     const user = this.context.user;
     if (!user) {
       throw new Error('Authentication required');
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor: {
         actorId: user._id.toString(),
         actorRole: user.role,

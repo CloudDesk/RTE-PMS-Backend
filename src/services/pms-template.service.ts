@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import handlebars from 'handlebars';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
@@ -11,6 +12,8 @@ import {
   PmsTemplateSectionType,
   PmsTemplateStatus,
   QuarterWorkflowState,
+  FieldCategory,
+  PmsRole,
 } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
@@ -49,6 +52,8 @@ export interface ResolveTemplateVersionInput {
   quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   visibilityFlags?: string[];
   values?: Record<string, unknown>;
+  annualAssignmentId?: string;
+  quarterAssignmentId?: string;
 }
 
 export interface SimulateTemplateAccessInput extends ResolveTemplateVersionInput {
@@ -67,13 +72,17 @@ export interface ResolvedTemplateField {
   editable: boolean;
   placeholder?: string;
   helpText?: string;
+  hideLabel?: boolean;
   colSpan?: number;
   options?: unknown[];
   matrixConfig?: unknown;
   gridConfig?: unknown;
   scoringIncluded?: boolean;
+  fieldCategory?: string;
+  semanticRole?: string;
   scoringConfig?: Record<string, unknown>;
   validationRules?: Record<string, unknown>;
+  conditionalRendering?: TemplateField['conditionalRendering'];
 }
 
 export interface ResolvedTemplateSection {
@@ -82,7 +91,8 @@ export interface ResolvedTemplateSection {
   title: string;
   module: string;
   level: 'quarter' | 'annual';
-  layout: 'vertical' | 'grid' | 'table';
+  layout: 'vertical' | 'grid' | 'table' | 'bordered_grid';
+  metadata?: Record<string, unknown>;
   fields: ResolvedTemplateField[];
 }
 
@@ -91,6 +101,12 @@ export interface ResolvedTemplateVersion {
   role: string;
   workflowState: string;
   sections: ResolvedTemplateSection[];
+  scoringParticipants: Array<{
+    sectionKey: string;
+    fieldKey: string;
+    scoreType?: string;
+    weight?: number;
+  }>;
   simulationContext?: {
     annualAssignmentId?: string;
     quarterAssignmentId?: string;
@@ -197,7 +213,7 @@ export class PmsTemplateService extends BaseService {
     page: number;
     limit: number;
   }> {
-    this.assertAdmin('template.list');
+    await this.assertAdmin('template.list');
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
@@ -226,7 +242,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async createTemplate(input: CreateTemplateInput): Promise<IPmsTemplate> {
-    this.assertAdmin('template.create');
+    await this.assertAdmin('template.create');
     const name = input.name.trim();
     const code = this.normalizeCode(input.code);
     const existingByName = await PmsTemplate.findOne({
@@ -242,12 +258,17 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Template code already exists');
     }
 
+    const status = this.normalizeTemplateStatus(input.status);
+    if (status === PmsTemplateStatus.ACTIVE) {
+      throw new Error('A new template cannot be created with an Active status. You must first create and activate a template version.');
+    }
+
     const template = await PmsTemplate.create({
       name,
       description: input.description?.trim() || undefined,
       code,
       effectiveDate: this.normalizeOptionalDate(input.effectiveDate),
-      status: this.normalizeTemplateStatus(input.status),
+      status,
       createdBy: this.actorIdObject(),
     });
 
@@ -256,7 +277,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async updateTemplate(id: string, input: UpdateTemplateInput): Promise<IPmsTemplate> {
-    this.assertAdmin('template.update');
+    await this.assertAdmin('template.update');
     const existingTemplate = await PmsTemplate.findById(id);
     if (!existingTemplate) {
       throw new Error('Template not found');
@@ -306,7 +327,11 @@ export class PmsTemplateService extends BaseService {
     }
 
     if (input.status !== undefined) {
-      updatePayload.status = this.normalizeTemplateStatus(input.status);
+      const targetStatus = this.normalizeTemplateStatus(input.status);
+      if (targetStatus === PmsTemplateStatus.ACTIVE && !existingTemplate.currentVersionId) {
+        throw new Error('Template cannot be marked as Active without an activated template version.');
+      }
+      updatePayload.status = targetStatus;
     }
 
     const template = await PmsTemplate.findByIdAndUpdate(
@@ -326,7 +351,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deleteTemplate(id: string): Promise<void> {
-    this.assertAdmin('template.delete');
+    await this.assertAdmin('template.delete');
     const template = await PmsTemplate.findOne({ _id: id, isDeleted: false });
     if (!template) {
       throw new Error('Template not found');
@@ -367,7 +392,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async cloneTemplate(id: string): Promise<IPmsTemplate> {
-    this.assertAdmin('template.clone');
+    await this.assertAdmin('template.clone');
 
     const template = await PmsTemplate.findById(id).lean();
     if (!template) {
@@ -410,14 +435,15 @@ export class PmsTemplateService extends BaseService {
     templateId: string,
     input: CreateTemplateVersionInput,
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.create');
+    await this.assertAdmin('templateVersion.create');
     await this.ensureTemplateExists(templateId);
+    const templateObjectId = new Types.ObjectId(templateId);
     const versionNo = input.versionNo ?? input.versionNumber;
     if (!versionNo) {
       throw new Error('Template version number is required');
     }
     const existingVersion = await PmsTemplateVersion.findOne({
-      templateId: new Types.ObjectId(templateId),
+      templateId: templateObjectId,
       versionNo,
       isDeleted: false,
     }).lean();
@@ -425,17 +451,28 @@ export class PmsTemplateService extends BaseService {
       throw new Error(`Version ${versionNo} already exists for this template`);
     }
 
-    const sections = this.normalizeSections(input.sections ?? []);
+    const latestVersion = await PmsTemplateVersion.findOne({
+      templateId: templateObjectId,
+      isDeleted: false,
+    })
+      .sort({ versionNo: -1, createdAt: -1 })
+      .lean();
+
+    const versionSections =
+      Array.isArray(input.sections) && input.sections.length > 0
+        ? input.sections
+        : latestVersion?.sections ?? [];
+    const sections = this.normalizeSections(versionSections);
     this.validateSections(sections);
 
     const version = await PmsTemplateVersion.create({
-      templateId: new Types.ObjectId(templateId),
+      templateId: templateObjectId,
       versionNo,
       sections,
-      themeConfig: input.themeConfig ?? {},
-      scoringConfig: input.scoringConfig ?? {},
-      annualScoringConfig: input.annualScoringConfig ?? {},
-      outcomeMappings: input.outcomeMappings ?? [],
+      themeConfig: input.themeConfig ?? latestVersion?.themeConfig ?? {},
+      scoringConfig: input.scoringConfig ?? latestVersion?.scoringConfig ?? {},
+      annualScoringConfig: input.annualScoringConfig ?? latestVersion?.annualScoringConfig ?? {},
+      outcomeMappings: input.outcomeMappings ?? latestVersion?.outcomeMappings ?? [],
       effectiveFrom: input.effectiveFrom,
       effectiveTo: input.effectiveTo,
       status: PmsTemplateStatus.DRAFT,
@@ -447,7 +484,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async activateTemplateVersion(versionId: string): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.activate');
+    await this.assertAdmin('templateVersion.activate');
     const version = await this.getEditableOrExistingVersion(versionId, false);
     this.validateSections(version.sections);
     await this.validateTemplateVersionForActivation(version);
@@ -487,13 +524,22 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deactivateTemplateVersion(versionId: string): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.deactivate');
+    await this.assertAdmin('templateVersion.deactivate');
     const version = await this.getEditableOrExistingVersion(versionId, false);
 
     version.status = PmsTemplateStatus.INACTIVE;
     version.deactivatedAt = new Date();
     version.updatedBy = this.actorIdObject();
     await version.save();
+
+    const parentTemplate = await PmsTemplate.findById(version.templateId);
+    if (parentTemplate && parentTemplate.currentVersionId?.toString() === version._id.toString()) {
+      parentTemplate.status = PmsTemplateStatus.INACTIVE;
+      parentTemplate.currentVersionId = undefined;
+      parentTemplate.updatedBy = this.actorIdObject();
+      parentTemplate.version += 1;
+      await parentTemplate.save();
+    }
 
     await this.audit('PMS_TEMPLATE_VERSION_DEACTIVATED', 'PMS_TEMPLATE_VERSION', version._id.toString(), undefined, { status: version.status });
     return version;
@@ -508,7 +554,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async getTemplateAuditHistory(id: string): Promise<AuditHistoryEntry[]> {
-    this.assertAdmin('template.audit');
+    await this.assertAdmin('template.audit');
     const template = await PmsTemplate.findOne({ _id: id, isDeleted: false }).lean();
     if (!template) {
       throw new Error('Template not found');
@@ -539,7 +585,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async listTemplateVersions(templateId: string): Promise<IPmsTemplateVersion[]> {
-    this.assertAdmin('templateVersion.list');
+    await this.assertAdmin('templateVersion.list');
     await this.ensureTemplateExists(templateId);
     return PmsTemplateVersion.find({
       templateId: new Types.ObjectId(templateId),
@@ -548,7 +594,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deleteTemplateVersion(versionId: string): Promise<void> {
-    this.assertAdmin('templateVersion.delete');
+    await this.assertAdmin('templateVersion.delete');
     const version = await PmsTemplateVersion.findOne({ _id: versionId, isDeleted: false });
     if (!version) {
       throw new Error('Template version not found');
@@ -600,7 +646,7 @@ export class PmsTemplateService extends BaseService {
       outcomeMappings?: IPmsTemplateVersion['outcomeMappings'];
     } = {},
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureSections');
+    await this.assertAdmin('templateVersion.configureSections');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const normalizedSections = this.normalizeSections(sections);
     this.validateSections(normalizedSections);
@@ -624,7 +670,7 @@ export class PmsTemplateService extends BaseService {
     sectionKey: string,
     fields: unknown[],
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureFields');
+    await this.assertAdmin('templateVersion.configureFields');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const section = version.sections.find((item) => item.sectionKey === sectionKey);
     if (!section) {
@@ -645,7 +691,7 @@ export class PmsTemplateService extends BaseService {
     sectionKey: string,
     permissions: TemplatePermission[],
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureSectionPermissions');
+    await this.assertAdmin('templateVersion.configureSectionPermissions');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const section = version.sections.find((item) => item.sectionKey === sectionKey);
     if (!section) {
@@ -668,7 +714,7 @@ export class PmsTemplateService extends BaseService {
     fieldKey: string,
     permissions: TemplatePermission[],
   ): Promise<IPmsTemplateVersion> {
-    this.assertAdmin('templateVersion.configureFieldPermissions');
+    await this.assertAdmin('templateVersion.configureFieldPermissions');
     const version = await this.getEditableOrExistingVersion(versionId, true);
     const section = version.sections.find((item) => item.sectionKey === sectionKey);
     const field = section?.fields.find((item) => item.fieldKey === fieldKey);
@@ -712,35 +758,37 @@ export class PmsTemplateService extends BaseService {
       throw new Error(`Invalid PMS workflow state: ${workflowState}`);
     }
 
-    const visibilityFlags = new Set(input.visibilityFlags ?? []);
+    const derivedContext = await this.resolveRuntimeContextForTemplate(version, input);
+    const visibilityFlags = new Set(derivedContext.visibilityFlags);
+    const hierarchyScope = derivedContext.hierarchyScope ?? input.hierarchyScope;
+    const quarter = derivedContext.quarter ?? input.quarter;
     const values = input.values ?? {};
 
     const sections = version.sections
-      .filter((section) => this.isSectionInScope(section, input.quarter))
+      .filter((section) => this.isSectionInScope(section, quarter))
       .filter((section) =>
         this.isVisibleByRules(section.visibilityRules, {
           role,
           workflowState,
-          hierarchyScope: input.hierarchyScope,
+          hierarchyScope,
           visibilityFlags,
         }),
       )
       .map((section) => {
+        const visibleFieldKeys = this.resolveVisibleFieldKeys(section.fields ?? [], {
+          role,
+          workflowState,
+          hierarchyScope,
+          visibilityFlags,
+          values,
+        });
         const fields = (section.fields ?? [])
-          .filter((field) =>
-            this.isFieldVisible(field, {
-              role,
-              workflowState,
-              hierarchyScope: input.hierarchyScope,
-              visibilityFlags,
-              values,
-            }),
-          )
+          .filter((field) => visibleFieldKeys.has(field.fieldKey))
           .map((field) =>
             this.toResolvedField(field, {
               role,
               workflowState,
-              hierarchyScope: input.hierarchyScope,
+              hierarchyScope,
               visibilityFlags,
             }),
           );
@@ -752,19 +800,38 @@ export class PmsTemplateService extends BaseService {
           module: this.mapSectionModule(section.sectionType),
           level: section.level === PmsTemplateSectionLevel.QUARTER ? 'quarter' : 'annual',
           layout: section.layout ?? 'vertical',
+          metadata: section.metadata ?? {},
           fields,
         } as ResolvedTemplateSection;
       })
       .filter((section) => section.fields.length > 0);
+
+    const scoringParticipants = sections.flatMap((section) =>
+      section.fields
+        .filter((field) => field.scoringIncluded)
+        .map((field) => ({
+          sectionKey: section.key,
+          fieldKey: field.key,
+          scoreType: String(field.scoringConfig?.scoreType ?? ''),
+          weight: Number(
+            field.scoringConfig?.weight ??
+            field.scoringConfig?.weightage ??
+            0,
+          ),
+        })),
+    );
 
     return {
       versionId,
       role: input.role,
       workflowState,
       sections,
+      scoringParticipants,
       simulationContext: {
-        hierarchyScope: input.hierarchyScope,
-        quarter: input.quarter,
+        annualAssignmentId: derivedContext.annualAssignmentId,
+        quarterAssignmentId: derivedContext.quarterAssignmentId,
+        hierarchyScope,
+        quarter,
         visibilityFlags: [...visibilityFlags],
       },
     };
@@ -773,7 +840,7 @@ export class PmsTemplateService extends BaseService {
   async simulateTemplateAccess(
     input: SimulateTemplateAccessInput,
   ): Promise<ResolvedTemplateVersion> {
-    this.assertAdmin('template.access.simulate');
+    await this.assertAdmin('template.access.simulate');
 
     const derivedContext = await this.resolveSimulationContext(input);
     const resolved = await this.resolveTemplateVersion(input.versionId, {
@@ -783,6 +850,8 @@ export class PmsTemplateService extends BaseService {
       quarter: derivedContext.quarter,
       visibilityFlags: derivedContext.visibilityFlags,
       values: input.values,
+      annualAssignmentId: derivedContext.annualAssignmentId,
+      quarterAssignmentId: derivedContext.quarterAssignmentId,
     });
 
     return {
@@ -801,7 +870,7 @@ export class PmsTemplateService extends BaseService {
     letterTemplate: IPmsLetterTemplate;
     letterTemplateVersion: IPmsLetterTemplateVersion;
   }> {
-    this.assertAdmin('letterTemplate.create');
+    await this.assertAdmin('letterTemplate.create');
     const templateId = input.templateId;
     const templateVersionId = input.templateVersionId ?? input.versionId;
     if (!templateId || !templateVersionId) {
@@ -873,7 +942,7 @@ export class PmsTemplateService extends BaseService {
     letterTemplateVersionId: string,
     input: UpdateLetterTemplateVersionInput,
   ): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplate.update');
+    await this.assertAdmin('letterTemplate.update');
     const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
     const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
     const subjectTemplate = input.subjectTemplate ?? input.subject ?? letterTemplateVersion.subjectTemplate ?? '';
@@ -919,7 +988,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async createLetterTemplateVersion(letterTemplateId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplateVersion.create');
+    await this.assertAdmin('letterTemplateVersion.create');
     const parentTemplate = await this.getLetterTemplate(letterTemplateId);
     const latestVersion =
       (parentTemplate.currentVersionId
@@ -982,7 +1051,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async activateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplate.activate');
+    await this.assertAdmin('letterTemplate.activate');
     const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
     const parentTemplate = await this.getLetterTemplate(letterTemplate.letterTemplateId.toString());
     await this.getScopedTemplateVersion(
@@ -1031,7 +1100,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deactivateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplate.deactivate');
+    await this.assertAdmin('letterTemplate.deactivate');
     const letterTemplateVersion = await this.getLetterTemplateVersion(letterTemplateVersionId);
     const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
 
@@ -1065,7 +1134,7 @@ export class PmsTemplateService extends BaseService {
     page: number;
     limit: number;
   }> {
-    this.assertAdmin('letterTemplate.list');
+    await this.assertAdmin('letterTemplate.list');
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
@@ -1098,7 +1167,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async getLetterTemplate(letterTemplateId: string): Promise<IPmsLetterTemplate> {
-    this.assertAdmin('letterTemplate.get');
+    await this.assertAdmin('letterTemplate.get');
     const template = await PmsLetterTemplate.findOne({
       _id: letterTemplateId,
       isDeleted: false,
@@ -1110,7 +1179,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async listLetterTemplateVersions(letterTemplateId: string): Promise<IPmsLetterTemplateVersion[]> {
-    this.assertAdmin('letterTemplateVersion.list');
+    await this.assertAdmin('letterTemplateVersion.list');
     const exists = await PmsLetterTemplate.exists({ _id: letterTemplateId, isDeleted: false });
     if (!exists) {
       throw new Error('Letter template not found');
@@ -1145,7 +1214,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async getLetterTemplateVersion(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    this.assertAdmin('letterTemplateVersion.get');
+    await this.assertAdmin('letterTemplateVersion.get');
     const letterTemplate = await PmsLetterTemplateVersion.findById(letterTemplateVersionId);
     if (!letterTemplate) {
       throw new Error('Letter template version not found');
@@ -1154,7 +1223,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   async deleteLetterTemplateVersion(letterTemplateVersionId: string): Promise<void> {
-    this.assertAdmin('letterTemplate.delete');
+    await this.assertAdmin('letterTemplate.delete');
     const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
     const siblingCount = await PmsLetterTemplateVersion.countDocuments({
       letterTemplateId: letterTemplateVersion.letterTemplateId,
@@ -1302,7 +1371,7 @@ export class PmsTemplateService extends BaseService {
         repeatFor,
         repeatable: section.repeatable ?? false,
         displayOrder: section.displayOrder ?? legacyOrder ?? index + 1,
-        layout: ['grid', 'table'].includes(section.layout as string) ? (section.layout as 'grid' | 'table') : 'vertical',
+        layout: ['grid', 'table', 'bordered_grid'].includes(section.layout as string) ? (section.layout as 'grid' | 'table' | 'bordered_grid') : 'vertical',
         renderingScope: this.normalizeRenderingScope(
           section.renderingScope as string | undefined,
           section.level ?? PmsTemplateSectionLevel.ANNUAL,
@@ -1320,6 +1389,19 @@ export class PmsTemplateService extends BaseService {
         editabilityRules: section.editabilityRules ?? rulePatch.editabilityRules ?? {},
         metadata: section.metadata ?? {},
         objectiveConfig: this.normalizeObjectiveConfig(objectiveConfig),
+        objectiveBuckets: Array.isArray(section.objectiveBuckets)
+          ? section.objectiveBuckets.map((bucket: any) => ({
+              bucketKey: String(bucket.bucketKey ?? '').trim(),
+              label: String(bucket.label ?? '').trim(),
+              source: bucket.source,
+              owner: bucket.owner,
+              bucketWeightage: Number(bucket.bucketWeightage ?? 0),
+              rowWeightMode: bucket.rowWeightMode,
+              editableBy: Array.isArray(bucket.editableBy) ? bucket.editableBy.map(String) : [],
+              requiresManagerApproval: !!bucket.requiresManagerApproval,
+              autoApprove: !!bucket.autoApprove,
+            }))
+          : undefined,
         fields: (section.fields ?? []).map((field, fieldIndex) =>
           this.normalizeField(field, fieldIndex),
         ),
@@ -1350,16 +1432,57 @@ export class PmsTemplateService extends BaseService {
         : {}),
       ...(legacyWeightage !== undefined ? { weightage: legacyWeightage } : {}),
       ...(legacyFormula ? { formula: legacyFormula } : {}),
-    };
+    } as Record<string, any>;
+
+    const isScoring = !!scoringConfig.participatesInScoring;
+    const fieldCategory = field.fieldCategory ?? (isScoring ? FieldCategory.SCORING : FieldCategory.NORMAL);
+    const semanticRole = field.semanticRole;
+
+    const legacyOptionScores = Array.isArray(scoringConfig.optionScores)
+      ? scoringConfig.optionScores
+      : [];
+
+    const normalizedOptions = (field.options ?? []).map((option: any) => {
+      let score = option.score !== undefined ? Number(option.score) : undefined;
+      if (score === undefined && option.weight !== undefined) {
+        score = Number(option.weight);
+      }
+      if (score === undefined) {
+        const legacyMatch = legacyOptionScores.find((item: any) => item.optionValue === option.value);
+        if (legacyMatch && legacyMatch.score !== undefined) {
+          score = Number(legacyMatch.score);
+        }
+      }
+      return {
+        label: option.label,
+        value: option.value,
+        ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
+        ...(score !== undefined ? { score } : {}),
+      };
+    });
+
+    // Bidirectional sync: update scoringConfig.optionScores
+    const syncedOptionScores = normalizedOptions
+      .filter((opt) => opt.score !== undefined)
+      .map((opt) => ({
+        optionValue: opt.value,
+        score: opt.score!,
+      }));
+    if (syncedOptionScores.length > 0) {
+      scoringConfig.optionScores = syncedOptionScores;
+    }
 
     return {
       fieldKey: field.fieldKey ?? legacyKey ?? '',
       fieldLabel: field.fieldLabel ?? legacyLabel ?? '',
       fieldType: field.fieldType ?? legacyType ?? 'SHORT_TEXT',
+      fieldCategory,
+      semanticRole,
       isRequired: field.isRequired ?? legacyRequired ?? false,
       displayOrder: field.displayOrder ?? legacyOrder ?? index + 1,
       placeholder: field.placeholder as string | undefined,
       helpText: field.helpText as string | undefined,
+      hideLabel: !!field.hideLabel,
       validationRules: {
         ...(field.validationRules ?? {}),
         ...(rulePatch.validationRules ?? {}),
@@ -1372,11 +1495,7 @@ export class PmsTemplateService extends BaseService {
       colSpan: [1, 2, 3, 4].includes(Number(field.colSpan))
         ? (Number(field.colSpan) as 1 | 2 | 3 | 4)
         : 4,
-      options: (field.options ?? []).map((option: any) => ({
-        label: option.label,
-        value: option.value,
-        ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
-      })),
+      options: normalizedOptions,
       behaviors: Array.isArray(field.behaviors)
         ? field.behaviors.map((behavior: any) => ({
             workflowState: behavior.workflowState,
@@ -1396,21 +1515,45 @@ export class PmsTemplateService extends BaseService {
         : undefined,
       matrixConfig: field.matrixConfig
         ? {
-          rows: (field.matrixConfig.rows ?? []).map((row: any) => ({
-            key: row.key ?? row.id,
-            label: row.label,
-            options: (row.options ?? []).map((option: any) => ({
-              label: option.label,
-              value: option.value,
-              ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
-            })),
-          })),
+          rows: (field.matrixConfig.rows ?? []).map((row: any) => {
+            return {
+              key: row.key ?? row.id,
+              label: row.label,
+              weightage: row.weightage,
+              options: (row.options ?? []).map((option: any) => {
+                let score = option.score !== undefined ? Number(option.score) : undefined;
+                if (score === undefined && option.weight !== undefined) {
+                  score = Number(option.weight);
+                }
+                if (score === undefined) {
+                  const rowKey = row.key ?? row.id;
+                  const legacyMatch = legacyOptionScores.find(
+                    (item: any) => item.optionValue === option.value || item.optionValue === `${rowKey}:${option.value}`,
+                  );
+                  if (legacyMatch && legacyMatch.score !== undefined) {
+                    score = Number(legacyMatch.score);
+                  }
+                }
+                return {
+                  label: option.label,
+                  value: option.value,
+                  ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
+                  ...(score !== undefined ? { score } : {}),
+                };
+              }),
+            };
+          }),
           columns: (field.matrixConfig.columns ?? []).map((col: any) => ({
             key: col.key ?? col.id,
             label: col.label,
             weightage: col.weightage,
           })),
           allowComments: !!field.matrixConfig.allowComments,
+          selectionControl: field.matrixConfig.selectionControl === 'checkbox' ? 'checkbox' : 'radio',
+          multiSelectScoring: ['AVERAGE', 'SUM_CAPPED'].includes(String(field.matrixConfig.multiSelectScoring))
+            ? field.matrixConfig.multiSelectScoring
+            : 'MAX',
+          borderStyle: field.matrixConfig.borderStyle === 'paper' ? 'paper' : 'standard',
         }
         : undefined,
       gridConfig: field.gridConfig
@@ -1583,14 +1726,58 @@ export class PmsTemplateService extends BaseService {
       editable: this.isFieldEditable(field, context.role, context.workflowState, behavior),
       placeholder: field.placeholder,
       helpText: field.helpText,
+      hideLabel: field.hideLabel,
       colSpan: field.colSpan,
       options: field.options ?? [],
       matrixConfig: field.matrixConfig,
       gridConfig: field.gridConfig,
-      scoringIncluded: field.scoringConfig?.participatesInScoring === true,
+      scoringIncluded: field.scoringConfig?.participatesInScoring === true || field.fieldCategory === FieldCategory.SCORING,
+      fieldCategory: field.fieldCategory,
+      semanticRole: field.semanticRole,
       scoringConfig: field.scoringConfig,
       validationRules: field.validationRules,
+      conditionalRendering: field.conditionalRendering,
     };
+  }
+
+  private resolveVisibleFieldKeys(
+    fields: ITemplateField[],
+    context: {
+      role: string;
+      workflowState: string;
+      hierarchyScope?: string;
+      visibilityFlags: Set<string>;
+      values: Record<string, unknown>;
+    },
+  ): Set<string> {
+    const fieldByKey = new Map(fields.map((field) => [field.fieldKey, field]));
+    const visibilityMemo = new Map<string, boolean>();
+
+    const isVisible = (field: ITemplateField, trail: Set<string> = new Set()): boolean => {
+      const cached = visibilityMemo.get(field.fieldKey);
+      if (cached !== undefined) return cached;
+
+      if (trail.has(field.fieldKey)) {
+        visibilityMemo.set(field.fieldKey, false);
+        return false;
+      }
+
+      trail.add(field.fieldKey);
+      let visible = this.isFieldVisible(field, context);
+
+      if (visible && field.conditionalRendering?.dependsOn) {
+        const parent = fieldByKey.get(field.conditionalRendering.dependsOn);
+        if (!parent || !isVisible(parent, trail)) {
+          visible = false;
+        }
+      }
+
+      trail.delete(field.fieldKey);
+      visibilityMemo.set(field.fieldKey, visible);
+      return visible;
+    };
+
+    return new Set(fields.filter((field) => isVisible(field)).map((field) => field.fieldKey));
   }
 
   private isVisibleByRules(
@@ -1771,6 +1958,9 @@ export class PmsTemplateService extends BaseService {
     ) {
       return 'Annual Appraisal Decision Management';
     }
+    if (sectionType === PmsTemplateSectionType.VISIBILITY_GOVERNANCE) {
+      return 'Visibility Governance';
+    }
     return 'Objective Management';
   }
 
@@ -1837,7 +2027,7 @@ export class PmsTemplateService extends BaseService {
         }
       }
 
-      if (section.layout && !['vertical', 'grid', 'table'].includes(section.layout)) {
+      if (section.layout && !['vertical', 'grid', 'table', 'bordered_grid'].includes(section.layout)) {
         throw new Error(`Invalid section layout in section ${section.sectionKey}`);
       }
 
@@ -1850,6 +2040,13 @@ export class PmsTemplateService extends BaseService {
 
       if (section.sectionType === PmsTemplateSectionType.OBJECTIVES) {
         this.validateObjectiveConfig(section);
+      }
+
+      if (section.sectionScoringConfig?.participatesInScoring === true) {
+        const maxSectionScore = Number(section.sectionScoringConfig.maxSectionScore ?? 100);
+        if (!Number.isFinite(maxSectionScore) || maxSectionScore <= 0 || maxSectionScore > 100) {
+          throw new Error(`Scoring section ${section.sectionKey} maxSectionScore must be between 1 and 100`);
+        }
       }
 
       const fieldKeys = new Set<string>();
@@ -2051,47 +2248,300 @@ export class PmsTemplateService extends BaseService {
   }
 
   private async validateTemplateVersionForActivation(version: IPmsTemplateVersion): Promise<void> {
-    if (version.sections.length === 0) {
-      throw new Error('Template version must contain at least one section before activation');
+    const errors: string[] = [];
+
+    // Check 1: Section existence
+    if (!version.sections || version.sections.length === 0) {
+      errors.push('Template version must contain at least one section before activation');
     }
 
-    for (const section of version.sections) {
-      if ((section.fields ?? []).length === 0) {
-        throw new Error(`Section ${section.sectionKey} must contain at least one field before activation`);
-      }
-    }
-
-    const scoringSections = version.sections.filter(
+    const allFieldKeys = new Set<string>();
+    const scoringSections = (version.sections ?? []).filter(
       (section) => section.sectionScoringConfig?.participatesInScoring === true,
     );
 
+    // Check 2: Field existence (every section has at least one field)
+    for (const section of version.sections ?? []) {
+      if ((section.fields ?? []).length === 0) {
+        errors.push(`Section "${section.sectionLabel || section.sectionKey}" must contain at least one field before activation`);
+      }
+      for (const field of section.fields ?? []) {
+        allFieldKeys.add(field.fieldKey);
+      }
+    }
+
+    // Check 3: Section weights sum to 100%
     if (scoringSections.length > 0) {
       const totalSectionWeight = scoringSections.reduce(
         (total, section) => total + Number(section.sectionScoringConfig?.weightage ?? 0),
         0,
       );
       if (totalSectionWeight !== 100) {
-        throw new Error('Scoring section weightage total must be exactly 100 before activation');
+        errors.push(`Scoring section weightage total must be exactly 100% before activation (currently ${totalSectionWeight}%)`);
       }
+    }
 
-      for (const section of scoringSections) {
-        const scoringFields = (section.fields ?? []).filter(
-          (field) => field.scoringConfig?.participatesInScoring === true,
-        );
-        if (scoringFields.length === 0) {
-          throw new Error(`Scoring section ${section.sectionKey} must contain at least one scoring field`);
-        }
-
+    // Check 4: Field weights sum to 100% inside scoring sections
+    for (const section of scoringSections) {
+      const scoringFields = (section.fields ?? []).filter(
+        (field) => field.scoringConfig?.participatesInScoring === true || field.fieldCategory === 'SCORING',
+      );
+      if (scoringFields.length === 0) {
+        errors.push(`Scoring section "${section.sectionLabel || section.sectionKey}" must contain at least one scoring field`);
+      } else {
         const fieldWeightTotal = scoringFields.reduce(
           (total, field) => total + Number(field.scoringConfig?.weight ?? field.scoringConfig?.weightage ?? 0),
           0,
         );
         if (fieldWeightTotal !== 100) {
-          throw new Error(`Scoring field weightage total in section ${section.sectionKey} must be exactly 100`);
+          errors.push(`Scoring field weightage total in section "${section.sectionLabel || section.sectionKey}" must be exactly 100% (currently ${fieldWeightTotal}%)`);
         }
       }
     }
 
+    // Check 5: Scoring config validity
+    // Check 6: Option score validation
+    // Check 7: Formula parsing validation
+    // Check 8: Behavior rules validation
+    // Check 9: Workflow role validation
+    // Check 12: Quarter scope validity
+    // Check 13: Objective bucket validations
+    // Check 14: Competency matrix validations
+    const allowedQuarters = new Set(['Q1', 'Q2', 'Q3', 'Q4']);
+
+    for (const section of version.sections ?? []) {
+      // Check 12: Quarter scope validity for sections
+      if (section.level === PmsTemplateSectionLevel.QUARTER) {
+        const repeatFor = section.repeatFor ?? [];
+        if (repeatFor.length === 0) {
+          errors.push(`Quarter-level section "${section.sectionLabel || section.sectionKey}" must define repeatFor quarters`);
+        }
+        for (const q of repeatFor) {
+          if (!allowedQuarters.has(q)) {
+            errors.push(`Invalid quarter "${q}" in repeatFor of section "${section.sectionLabel || section.sectionKey}"`);
+          }
+        }
+      }
+      if (section.quarterScope && section.quarterScope.length > 0) {
+        for (const q of section.quarterScope) {
+          if (!allowedQuarters.has(q)) {
+            errors.push(`Invalid quarter "${q}" in quarterScope of section "${section.sectionLabel || section.sectionKey}"`);
+          }
+        }
+      }
+
+      // Check 13: Objective bucket validations
+      if (section.sectionType === PmsTemplateSectionType.OBJECTIVES) {
+        const mode = section.objectiveConfig?.mode ?? 'DYNAMIC';
+        if (mode === 'DYNAMIC' || mode === 'HYBRID') {
+          const buckets = section.objectiveBuckets ?? [];
+          if (buckets.length === 0) {
+            errors.push(`Objectives section "${section.sectionLabel || section.sectionKey}" requires objectiveBuckets configuration when dynamic/hybrid mode is enabled`);
+          } else {
+            const bucketWeightSum = buckets.reduce((sum, b) => sum + Number(b.bucketWeightage ?? 0), 0);
+            if (bucketWeightSum !== 100) {
+              errors.push(`Objective buckets weightage total in section "${section.sectionLabel || section.sectionKey}" must sum to exactly 100% (currently ${bucketWeightSum}%)`);
+            }
+            for (const bucket of buckets) {
+              if (!bucket.bucketKey?.trim()) {
+                errors.push(`Objective bucket in section "${section.sectionLabel || section.sectionKey}" is missing bucketKey`);
+              }
+              if (!bucket.label?.trim()) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" is missing label`);
+              }
+              if (!['TEMPLATE_PREDEFINED', 'EMPLOYEE_DYNAMIC', 'MANAGER_DYNAMIC'].includes(bucket.source)) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid source: ${bucket.source}`);
+              }
+              if (!['SYSTEM', 'EMPLOYEE', 'MANAGER'].includes(bucket.owner)) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid owner: ${bucket.owner}`);
+              }
+              if (!['FIXED_BY_TEMPLATE', 'OWNER_ENTERED', 'EQUAL_DISTRIBUTION'].includes(bucket.rowWeightMode)) {
+                errors.push(`Objective bucket "${bucket.bucketKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid rowWeightMode: ${bucket.rowWeightMode}`);
+              }
+            }
+          }
+        }
+      }
+
+      for (const field of section.fields ?? []) {
+        const isScoring = field.fieldCategory === 'SCORING' || field.scoringConfig?.participatesInScoring === true;
+
+        const nonScorableTypes = new Set<string>([
+          PmsTemplateFieldType.SHORT_TEXT,
+          PmsTemplateFieldType.LONG_TEXT,
+          PmsTemplateFieldType.DATE,
+          PmsTemplateFieldType.ATTACHMENT,
+          PmsTemplateFieldType.STATIC_TEXT,
+          PmsTemplateFieldType.SECTION_DIVIDER,
+          PmsTemplateFieldType.COMMENT_BOX,
+          PmsTemplateFieldType.SIGNATURE,
+        ]);
+
+        if (isScoring && nonScorableTypes.has(field.fieldType)) {
+          errors.push(
+            `Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" has a non-scorable type (${field.fieldType}) but participates in scoring`,
+          );
+        }
+
+        // Check 5: Scoring config validity
+        if (isScoring) {
+          const scoreType = field.scoringConfig?.scoreType;
+          const maxScore = Number(field.scoringConfig?.maxScore ?? 0);
+          if (!scoreType) {
+            errors.push(`Scoring field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" is missing scoreType`);
+          }
+          if (!Number.isFinite(maxScore) || maxScore <= 0) {
+            errors.push(`Scoring field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires maxScore > 0 (currently ${maxScore})`);
+          }
+        }
+
+        // Check: Confidential decision fields must have visibility rules
+        if (field.fieldCategory === 'CONFIDENTIAL') {
+          const rules = field.visibilityRules;
+          const hasRules = rules && (
+            (Array.isArray(rules.visibleTo) && rules.visibleTo.length > 0) ||
+            (Array.isArray(rules.hiddenFrom) && rules.hiddenFrom.length > 0) ||
+            (Array.isArray(rules.visibleStates) && rules.visibleStates.length > 0) ||
+            (Array.isArray(rules.publishFlags) && rules.publishFlags.length > 0) ||
+            (rules.publishFlagRequired !== undefined) ||
+            (Object.keys(rules).length > 0)
+          );
+          if (!hasRules) {
+            errors.push(`Confidential field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" must have visibility rules configured`);
+          }
+        }
+
+        // Check 6: Option score validation
+        const isOptionBased = ['DROPDOWN', 'RADIO', 'CHECKBOX_GROUP', 'MULTISELECT'].includes(field.fieldType);
+        const isOptionScoreType = field.scoringConfig?.scoreType === 'OPTION_BASED';
+        if (isScoring && (isOptionBased || isOptionScoreType)) {
+          const maxScore = Number(field.scoringConfig?.maxScore ?? 0);
+          const matrixOptions = field.fieldType === 'MATRIX'
+            ? (field.matrixConfig?.rows ?? []).flatMap((row) => row.options ?? [])
+            : [];
+          const options = matrixOptions.length > 0 ? matrixOptions : field.options ?? [];
+          if (options.length === 0) {
+            errors.push(`Option-based scoring field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires options`);
+          } else {
+            for (const opt of options) {
+              const score = opt.score ?? opt.weight;
+              if (score === undefined || score === null || !Number.isFinite(Number(score))) {
+                errors.push(`Option "${opt.label || opt.value}" in field "${field.fieldLabel || field.fieldKey}" (section "${section.sectionLabel || section.sectionKey}") is missing a numeric score`);
+              } else if (Number(score) < 0 || Number(score) > maxScore) {
+                errors.push(`Option "${opt.label || opt.value}" score (${score}) in field "${field.fieldLabel || field.fieldKey}" (section "${section.sectionLabel || section.sectionKey}") must be between 0 and ${maxScore}`);
+              }
+            }
+          }
+        }
+
+        // Check 7: Formula parsing validation
+        if (field.fieldType === 'FORMULA') {
+          const formula = field.scoringConfig?.formula;
+          if (typeof formula !== 'string' || !formula.trim()) {
+            errors.push(`Formula field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires a non-empty formula expression`);
+          }
+        }
+
+        // Check 8: Behavior rules validation
+        if (!field.behaviors || field.behaviors.length === 0) {
+          errors.push(`Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" must have at least one workflow behavior rule defined`);
+        }
+
+        // Check 9: Workflow role validation
+        for (const behavior of field.behaviors ?? []) {
+          if (!behavior.role?.trim() || !normalizePmsRole(behavior.role)) {
+            errors.push(`Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid behavior role: "${behavior.role}"`);
+          }
+          if (!this.isApprovedWorkflowState(behavior.workflowState)) {
+            errors.push(`Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" has invalid workflowState: "${behavior.workflowState}"`);
+          }
+        }
+
+        // Check 14: Competency matrix validations
+        if (field.fieldType === 'MATRIX') {
+          const matrixConfig = field.matrixConfig;
+          if (!matrixConfig) {
+            errors.push(`Matrix field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" requires matrixConfig`);
+          } else {
+            const rowsWithWeight = (matrixConfig.rows ?? []).filter(r => r.weightage !== undefined && r.weightage !== null);
+            if (rowsWithWeight.length > 0) {
+              const totalRowWeight = rowsWithWeight.reduce((sum, r) => sum + Number(r.weightage ?? 0), 0);
+              if (totalRowWeight !== 100) {
+                errors.push(`Matrix field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" row weightage total must sum to 100% (currently ${totalRowWeight}%)`);
+              }
+            }
+            const colsWithWeight = (matrixConfig.columns ?? []).filter(c => c.weightage !== undefined && c.weightage !== null);
+            if (colsWithWeight.length > 0) {
+              const totalColWeight = colsWithWeight.reduce((sum, c) => sum + Number(c.weightage ?? 0), 0);
+              if (totalColWeight !== 100) {
+                errors.push(`Matrix field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" column weightage total must sum to 100% (currently ${totalColWeight}%)`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Check 10: Conditional dependsOn validation
+    // Check 11: Circular dependency detection
+    const conditionalDependencies = new Map<string, string>();
+    for (const section of version.sections ?? []) {
+      for (const field of section.fields ?? []) {
+        if (field.conditionalRendering?.dependsOn) {
+          const dependsOnKey = field.conditionalRendering.dependsOn;
+          if (!allFieldKeys.has(dependsOnKey)) {
+            errors.push(`Field "${field.fieldLabel || field.fieldKey}" conditional dependency dependsOn field "${dependsOnKey}" which does not exist in the template`);
+          } else {
+            conditionalDependencies.set(field.fieldKey, dependsOnKey);
+          }
+        }
+      }
+    }
+
+    const visited = new Set<string>();
+    const recStack = new Set<string>();
+    const hasCycle = (key: string): boolean => {
+      if (recStack.has(key)) return true;
+      if (visited.has(key)) return false;
+      visited.add(key);
+      recStack.add(key);
+      const parent = conditionalDependencies.get(key);
+      if (parent) {
+        if (hasCycle(parent)) return true;
+      }
+      recStack.delete(key);
+      return false;
+    };
+
+    for (const key of conditionalDependencies.keys()) {
+      if (!visited.has(key)) {
+        if (hasCycle(key)) {
+          errors.push(`Circular conditional rendering dependency detected involving field "${key}"`);
+          break;
+        }
+      }
+    }
+
+    // Check 15: Workflow rendering validation: MANAGER must have at least one visible section in MANAGER_REVIEW_OPEN
+    let managerHasVisibleSection = false;
+    for (const section of version.sections ?? []) {
+      const isVisible = this.isVisibleByRules(section.visibilityRules, {
+        role: 'MANAGER',
+        workflowState: 'MANAGER_REVIEW_OPEN',
+        visibilityFlags: new Set(),
+        hierarchyScope: 'self',
+      });
+      if (isVisible) {
+        managerHasVisibleSection = true;
+        break;
+      }
+    }
+    if (!managerHasVisibleSection) {
+      errors.push('MANAGER role must have at least one visible section in MANAGER_REVIEW_OPEN state');
+    }
+
+    // Other validation checks already present in code:
+    // Annual scoring weights check
     const annualScoringConfig = version.annualScoringConfig as
       | {
           quarterWeights?: Record<string, number>;
@@ -2103,7 +2553,7 @@ export class PmsTemplateService extends BaseService {
       for (const quarter of ['Q1', 'Q2', 'Q3', 'Q4']) {
         const weight = Number(quarterWeights[quarter] ?? 0);
         if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
-          throw new Error(`Annual scoring quarter ${quarter} weightage must be between 0 and 100`);
+          errors.push(`Annual scoring quarter ${quarter} weightage must be between 0 and 100`);
         }
       }
 
@@ -2113,17 +2563,20 @@ export class PmsTemplateService extends BaseService {
         .reduce((total, quarter) => total + Number(quarterWeights[quarter] ?? 0), 0);
 
       if (totalQuarterWeight !== 100) {
-        throw new Error('Annual scoring quarter weightage total must be exactly 100 before activation');
+        errors.push(`Annual scoring quarter weightage total must be exactly 100% before activation (currently ${totalQuarterWeight}%)`);
       }
     }
 
+    // Outcome mappings check
     const outcomeTypes = new Set(Object.values(AppraisalOutcomeType));
     for (const mapping of version.outcomeMappings ?? []) {
       if (!outcomeTypes.has(mapping.outcomeType)) {
-        throw new Error(`Invalid outcome mapping type: ${mapping.outcomeType}`);
+        errors.push(`Invalid outcome mapping type: ${mapping.outcomeType}`);
+        continue;
       }
       if (!mapping.letterTemplateVersionId?.trim()) {
-        throw new Error(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
+        errors.push(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
+        continue;
       }
 
       const mappedLetterVersion = await PmsLetterTemplateVersion.findOne({
@@ -2132,9 +2585,10 @@ export class PmsTemplateService extends BaseService {
         isDeleted: false,
       }).lean();
       if (!mappedLetterVersion) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} references a missing or out-of-scope letter template version`,
         );
+        continue;
       }
 
       const mappedLetterTemplate = await PmsLetterTemplate.findOne({
@@ -2144,15 +2598,16 @@ export class PmsTemplateService extends BaseService {
         isDeleted: false,
       }).lean();
       if (!mappedLetterTemplate) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} references a letter template outside this PMS template version`,
         );
+        continue;
       }
 
       const letterStatusReady =
         mappedLetterVersion.status === PmsTemplateStatus.ACTIVE || mappedLetterVersion.isLocked;
       if (!letterStatusReady) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} must use an active or locked letter template version`,
         );
       }
@@ -2160,12 +2615,19 @@ export class PmsTemplateService extends BaseService {
       const allowedOutcomeTypes = new Set([
         mapping.outcomeType,
         'GENERIC_APPRAISAL',
+        ...(mapping.outcomeType === 'MERIT_ONLY' ? ['MERIT'] : []),
+        ...(mapping.outcomeType === 'GRADE_ONLY' ? ['GRADE'] : []),
       ]);
       if (!allowedOutcomeTypes.has(mappedLetterTemplate.outcomeType)) {
-        throw new Error(
+        errors.push(
           `Outcome mapping ${mapping.outcomeType} points to incompatible letter template outcome ${mappedLetterTemplate.outcomeType}`,
         );
       }
+    }
+
+    // Check errors count
+    if (errors.length > 0) {
+      throw new Error(`Activation failed with validation errors:\n${errors.map((e, idx) => `${idx + 1}. ${e}`).join('\n')}`);
     }
   }
 
@@ -2222,12 +2684,21 @@ export class PmsTemplateService extends BaseService {
     const optionScores = Array.isArray(field.scoringConfig?.optionScores)
       ? field.scoringConfig?.optionScores
       : [];
+    const matrixRows = Array.isArray(field.matrixConfig?.rows) ? field.matrixConfig.rows : [];
+    const matrixOptions = matrixRows.flatMap((row) =>
+      (row.options ?? []).map((option) => ({
+        label: option.label,
+        value: `${row.key}:${option.value}`,
+        score: option.score ?? option.weight,
+      })),
+    );
+    const scoreItems = optionScores.length > 0 ? optionScores : matrixOptions;
 
-    if (optionScores.length === 0) {
+    if (scoreItems.length === 0) {
       throw new Error(`Option-based scoring field ${field.fieldKey} in section ${sectionKey} requires optionScores`);
     }
 
-    for (const item of optionScores) {
+    for (const item of scoreItems) {
       const score = Number(item.score);
       if (!Number.isFinite(score) || score < 0 || score > maxScore) {
         throw new Error(`Option score for field ${field.fieldKey} in section ${sectionKey} must be between 0 and ${maxScore}`);
@@ -2397,20 +2868,144 @@ export class PmsTemplateService extends BaseService {
     };
   }
 
-  private renderTemplate(template: string, data: Record<string, unknown>): string {
-    return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_match, key: string) => {
-      const value = data[key];
-      return value === undefined || value === null ? '' : String(value);
-    });
+  private async resolveRuntimeContextForTemplate(
+    version: IPmsTemplateVersion,
+    input: ResolveTemplateVersionInput,
+  ): Promise<{
+    hierarchyScope?: string;
+    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    visibilityFlags: string[];
+    annualAssignmentId?: string;
+    quarterAssignmentId?: string;
+  }> {
+    const visibilityFlags = new Set(input.visibilityFlags ?? []);
+    let hierarchyScope = input.hierarchyScope;
+    let quarter = input.quarter;
+    let annualAssignmentId = input.annualAssignmentId?.trim() || undefined;
+    let quarterAssignmentId = input.quarterAssignmentId?.trim() || undefined;
+    let quarterAssignment: any = null;
+
+    if (!annualAssignmentId && !quarterAssignmentId) {
+      return {
+        hierarchyScope,
+        quarter,
+        visibilityFlags: [...visibilityFlags],
+      };
+    }
+
+    if (quarterAssignmentId) {
+      quarterAssignment = await QuarterAssignment.findOne({
+        _id: quarterAssignmentId,
+        isDeleted: false,
+      }).lean();
+      if (!quarterAssignment) {
+        throw new Error('Quarter assignment not found');
+      }
+      annualAssignmentId = annualAssignmentId ?? quarterAssignment.annualAssignmentId.toString();
+      quarter = quarter ?? quarterAssignment.quarterCode;
+    }
+
+    const annualAssignment = annualAssignmentId
+      ? await AnnualAssignment.findOne({
+          _id: annualAssignmentId,
+          isDeleted: false,
+        }).lean()
+      : null;
+
+    if (!annualAssignment) {
+      throw new Error('Annual assignment not found');
+    }
+
+    if (annualAssignment.templateVersionId?.toString() !== version._id.toString()) {
+      throw new Error('Template version does not belong to the requested assignment');
+    }
+
+    await this.assertRuntimeTemplateAccess(annualAssignment, quarterAssignment);
+
+    const assignmentVisibility = annualAssignment.visibility ?? {};
+    if (assignmentVisibility.employeeReviewVisible) visibilityFlags.add('employee_review');
+    if (assignmentVisibility.employeeGradeVisible) visibilityFlags.add('employee_grade');
+    if (assignmentVisibility.employeeMeritVisible) visibilityFlags.add('employee_merit');
+    if (assignmentVisibility.managerGradeVisible) visibilityFlags.add('manager_grade');
+    if (assignmentVisibility.managerMeritVisible) visibilityFlags.add('manager_merit');
+
+    if (!hierarchyScope) {
+      const actorId = this.context.user?._id.toString();
+      if (actorId && actorId === annualAssignment.employeeId?.toString()) {
+        hierarchyScope = 'self';
+      } else if (actorId && actorId === annualAssignment.assignedManagerId?.toString()) {
+        hierarchyScope = 'direct-report';
+      } else {
+        hierarchyScope = 'global';
+      }
+    }
+
+    return {
+      hierarchyScope,
+      quarter,
+      visibilityFlags: [...visibilityFlags],
+      annualAssignmentId,
+      quarterAssignmentId,
+    };
   }
 
-  private assertAdmin(action: string): void {
+  private async assertRuntimeTemplateAccess(
+    annualAssignment: Record<string, any>,
+    quarterAssignment?: Record<string, any> | null,
+  ): Promise<void> {
+    const actor = this.context.user;
+    if (!actor) {
+      throw new Error('Authentication required');
+    }
+
+    const mappedRole = accessService.mapRole(actor.role);
+    if (
+      mappedRole === PmsRole.ADMIN ||
+      mappedRole === PmsRole.MANAGEMENT ||
+      mappedRole === PmsRole.DIRECTOR
+    ) {
+      return;
+    }
+
+    const access = await accessService.canPerform({
+      actor: {
+        actorId: actor._id.toString(),
+        actorRole: actor.role,
+      },
+      action: 'template.resolve',
+      resource: {
+        employeeId: annualAssignment.employeeId?.toString(),
+        assignedManagerId:
+          quarterAssignment?.assignedManagerId?.toString() ??
+          annualAssignment.assignedManagerId?.toString(),
+        managerId:
+          quarterAssignment?.assignedManagerId?.toString() ??
+          annualAssignment.assignedManagerId?.toString(),
+      },
+    });
+
+    if (!access.allowed) {
+      throw new Error(access.message ?? 'Access denied');
+    }
+  }
+
+  private renderTemplate(template: string, data: Record<string, unknown>): string {
+    try {
+      const compiledTemplate = handlebars.compile(template);
+      return compiledTemplate(data);
+    } catch (err) {
+      console.error('Error rendering template with handlebars:', err);
+      return template;
+    }
+  }
+
+  private async assertAdmin(action: string): Promise<void> {
     const user = this.context.user;
     if (!user) {
       throw new Error('Authentication required');
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor: {
         actorId: user._id.toString(),
         actorRole: user.role,

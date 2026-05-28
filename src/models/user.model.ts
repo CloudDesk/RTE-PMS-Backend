@@ -225,7 +225,6 @@ const userSchema = new Schema<IUser>(
     role: {
       type: String,
       required: true,
-      enum: ['admin', 'manager', 'staff', 'director', 'external'], // Added 'director' and 'external'
     },
     specificRole: {
       type: String,

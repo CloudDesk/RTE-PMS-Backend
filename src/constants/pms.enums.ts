@@ -6,9 +6,10 @@ export const PmsRole = {
   DIRECTOR: 'DIRECTOR',
 } as const;
 
-export type PmsRole = (typeof PmsRole)[keyof typeof PmsRole];
+// We change PmsRole to just be a standard string so dynamic roles can be used throughout the app
+export type PmsRole = string;
 
-export const PmsRoleLabel: Record<PmsRole, string> = {
+export const PmsRoleLabel: Record<string, string> = {
   [PmsRole.EMPLOYEE]: 'Employee',
   [PmsRole.MANAGER]: 'Manager',
   [PmsRole.ADMIN]: 'Admin',
@@ -132,6 +133,7 @@ export const PmsTemplateSectionType = {
   MERIT: 'MERIT',
   APPRAISAL_COMMUNICATION: 'APPRAISAL_COMMUNICATION',
   OVERALL_FEEDBACK: 'OVERALL_FEEDBACK',
+  VISIBILITY_GOVERNANCE: 'VISIBILITY_GOVERNANCE',
 } as const;
 
 export type PmsTemplateSectionType =
@@ -166,6 +168,35 @@ export const PmsTemplateFieldType = {
 
 export type PmsTemplateFieldType =
   (typeof PmsTemplateFieldType)[keyof typeof PmsTemplateFieldType];
+
+export const FieldCategory = {
+  NORMAL: 'NORMAL',
+  SCORING: 'SCORING',
+  CALCULATED: 'CALCULATED',
+  SYSTEM: 'SYSTEM',
+  CONFIDENTIAL: 'CONFIDENTIAL',
+  HIDDEN: 'HIDDEN',
+} as const;
+
+export type FieldCategory = (typeof FieldCategory)[keyof typeof FieldCategory];
+
+export const SemanticRole = {
+  OBJECTIVE_TITLE: 'OBJECTIVE_TITLE',
+  OBJECTIVE_KPI: 'OBJECTIVE_KPI',
+  OBJECTIVE_TARGET: 'OBJECTIVE_TARGET',
+  OBJECTIVE_WEIGHTAGE: 'OBJECTIVE_WEIGHTAGE',
+  OBJECTIVE_ACHIEVEMENT: 'OBJECTIVE_ACHIEVEMENT',
+  MANAGER_RATING: 'MANAGER_RATING',
+  MANAGER_SCORE: 'MANAGER_SCORE',
+  MANAGER_COMMENT: 'MANAGER_COMMENT',
+  COMPETENCY_RATING: 'COMPETENCY_RATING',
+  COMPETENCY_COMMENT: 'COMPETENCY_COMMENT',
+  FINAL_GRADE: 'FINAL_GRADE',
+  MERIT_PERCENTAGE: 'MERIT_PERCENTAGE',
+  APPRAISAL_OUTCOME: 'APPRAISAL_OUTCOME',
+} as const;
+
+export type SemanticRole = (typeof SemanticRole)[keyof typeof SemanticRole];
 
 export const LetterTemplateType = {
   MERIT: 'MERIT',
@@ -271,18 +302,17 @@ const annualWorkflowStates = Object.values(AnnualWorkflowState) as string[];
 const annualDecisionStatuses = Object.values(AnnualDecisionStatus) as string[];
 const quarterReviewStatuses = Object.values(QuarterReviewStatus) as string[];
 const objectiveStatuses = Object.values(ObjectiveStatus) as string[];
-const pmsRoles = Object.values(PmsRole) as string[];
 
-export function normalizePmsRole(value: string): PmsRole | null {
+export function normalizePmsRole(value: string): string {
   const normalized = value.replace(/[ /-]/g, '_').toUpperCase();
   if (normalized === 'STAFF') return PmsRole.EMPLOYEE;
   if (normalized === 'HR_ADMIN' || normalized === 'HRADMIN') return PmsRole.ADMIN;
-  if (normalized === 'SUPERADMIN' || normalized === 'SUPER_ADMIN' || normalized === 'DIRECTOR') return PmsRole.DIRECTOR;
-  return pmsRoles.includes(normalized) ? (normalized as PmsRole) : null;
+  if (normalized === 'SUPERADMIN' || normalized === 'SUPER_ADMIN') return PmsRole.DIRECTOR;
+  return normalized;
 }
 
-export function isPmsRole(value: string): value is PmsRole {
-  return pmsRoles.includes(value);
+export function isPmsRole(value: string): boolean {
+  return typeof value === 'string'; // Dynamic roles mean any string could be a role
 }
 
 export function isQuarterWorkflowState(

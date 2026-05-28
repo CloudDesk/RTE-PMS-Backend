@@ -25,6 +25,7 @@ import type { IObjective } from '../models/pms-objective.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type {
+  IObjectiveBucket,
   ITemplatePredefinedObjective,
   ITemplateSection,
 } from '../models/pms-template-version.model';
@@ -118,6 +119,7 @@ type ObjectiveConfig = {
     weightage?: number;
     successCriteria?: string;
   }>;
+  objectiveBuckets: IObjectiveBucket[];
 };
 
 type ObjectiveCommentRecord = {
@@ -195,6 +197,12 @@ type AssignmentRecord = {
   quarterState: string;
   employeeId: string;
   employeeName: string;
+  employeeCode?: string;
+  employeeNo?: string;
+  designation?: string;
+  employeeDesignation?: string;
+  department?: string;
+  departmentId?: string;
   managerId: string;
   managerName: string;
   objectiveWeightageCap: number;
@@ -301,6 +309,21 @@ export class ObjectiveService extends BaseService {
           ),
         );
 
+      const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
+      const employeeCode = String(employeeSnapshot.employeeCode ?? '');
+      const employeeDesignation = String(
+        employeeSnapshot.specificRole ??
+        employeeSnapshot.designation ??
+        employeeSnapshot.role ??
+        '',
+      );
+      const employeeDepartment = String(
+        employeeSnapshot.department ??
+        employeeSnapshot.departmentName ??
+        employeeSnapshot.departmentId ??
+        '',
+      );
+
       return {
         id: quarterAssignment._id.toString(),
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
@@ -312,6 +335,12 @@ export class ObjectiveService extends BaseService {
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
         employeeName: this.getEmployeeName(annualAssignment, quarterAssignment.employeeId.toString()),
+        employeeCode,
+        employeeNo: employeeCode,
+        designation: employeeDesignation,
+        employeeDesignation,
+        department: employeeDepartment,
+        departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: quarterAssignment.assignedManagerId.toString(),
         managerName: this.getManagerName(annualAssignment, quarterAssignment.assignedManagerId.toString()),
         objectiveWeightageCap: 100,
@@ -355,14 +384,41 @@ export class ObjectiveService extends BaseService {
     const actor = this.requireActor();
     const quarterAssignment = await this.getQuarterAssignment(input.quarterAssignmentId);
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
-    const source = this.resolveObjectiveSource(actor.actorRole);
+    const source = this.resolveObjectiveSource(actor.actorRole, quarterAssignment);
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
+
+    const bucket = this.resolveObjectiveBucket(source, objectiveConfig);
+    if (!bucket) {
+      throw new Error(`No matching objective bucket configuration found for source: ${source}`);
+    }
+
+    if (bucket.owner === 'EMPLOYEE' && actor.actorId !== quarterAssignment.employeeId.toString()) {
+      throw new Error('Only the employee can add objectives to the employee-owned bucket');
+    }
+    if (bucket.owner === 'MANAGER') {
+      const isManager = actor.actorId === quarterAssignment.assignedManagerId.toString();
+      const isDelegate = await this.getObjectiveDelegation(
+        actor.actorId,
+        quarterAssignment.assignedManagerId.toString(),
+        quarterAssignment.cycleId?.toString(),
+      );
+      if (!isManager && !isDelegate && accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
+        throw new Error('Only the manager or their delegate can add objectives to the manager-owned bucket');
+      }
+    }
 
     await this.assertAssignmentAccess('objective.create', quarterAssignment);
     await this.assertObjectiveWindow(quarterAssignment, 'setting');
     this.validateObjectiveInput(input);
     this.validateCreateAgainstConfig(source, objectiveConfig);
-    await this.validateQuarterObjectiveRules(quarterAssignment, input.weightage);
+    await this.validateQuarterObjectiveRules(
+      quarterAssignment,
+      input.weightage,
+      undefined,
+      source,
+      objectiveConfig,
+      false,
+    );
 
     if (quarterAssignment.quarterState === QuarterWorkflowState.NOT_STARTED) {
       await this.ensureQuarterState(
@@ -459,6 +515,13 @@ export class ObjectiveService extends BaseService {
     await this.assertObjectiveAccess('objective.edit', objective, false);
     this.assertRegularObjectiveEditAccess(objective);
     await this.assertObjectiveWindow(quarterAssignment, 'setting');
+
+    // Predefined gating check
+    if (objective.source === ObjectiveSource.PREDEFINED || objectiveConfig.mode === 'PREDEFINED') {
+      if (accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
+        throw new Error('Predefined objectives are read-only and cannot be modified');
+      }
+    }
     this.validateObjectiveInput({
       quarterAssignmentId: objective.quarterAssignmentId.toString(),
       title: input.title ?? objective.title,
@@ -565,6 +628,16 @@ export class ObjectiveService extends BaseService {
     }
 
     this.validateObjectiveForSubmit(objective);
+    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
+    await this.validateQuarterObjectiveRules(
+      quarterAssignment,
+      objective.weightage,
+      objective._id.toString(),
+      objective.source as ObjectiveSourceType,
+      objectiveConfig,
+      true,
+    );
 
     await this.transitionQuarterIfNeeded(
       objective.quarterAssignmentId.toString(),
@@ -736,7 +809,7 @@ export class ObjectiveService extends BaseService {
   }
 
   async correctObjective(objectiveId: string, input: CorrectObjectiveInput): Promise<IObjective> {
-    this.assertAdmin('objective.correction');
+    await this.assertAdmin('objective.correction');
 
     const reason = input.reason?.trim();
     if (!reason) {
@@ -1014,7 +1087,46 @@ export class ObjectiveService extends BaseService {
       allowEmployeeCreated: true,
       allowManagerCreated: true,
       predefinedObjectives: [],
+      objectiveBuckets: this.defaultObjectiveBuckets(),
     };
+  }
+
+  private defaultObjectiveBuckets(): IObjectiveBucket[] {
+    return [
+      {
+        bucketKey: 'template_predefined',
+        label: 'Template Predefined Objectives',
+        source: 'TEMPLATE_PREDEFINED',
+        owner: 'SYSTEM',
+        bucketWeightage: 20,
+        rowWeightMode: 'FIXED_BY_TEMPLATE',
+        editableBy: ['ADMIN'],
+        requiresManagerApproval: false,
+        autoApprove: true,
+      },
+      {
+        bucketKey: 'employee_dynamic',
+        label: 'Employee Objectives',
+        source: 'EMPLOYEE_DYNAMIC',
+        owner: 'EMPLOYEE',
+        bucketWeightage: 50,
+        rowWeightMode: 'OWNER_ENTERED',
+        editableBy: ['EMPLOYEE'],
+        requiresManagerApproval: true,
+        autoApprove: false,
+      },
+      {
+        bucketKey: 'manager_dynamic',
+        label: 'Manager Objectives',
+        source: 'MANAGER_DYNAMIC',
+        owner: 'MANAGER',
+        bucketWeightage: 30,
+        rowWeightMode: 'OWNER_ENTERED',
+        editableBy: ['MANAGER'],
+        requiresManagerApproval: false,
+        autoApprove: true,
+      },
+    ];
   }
 
   private resolveTemplateObjectiveConfig(
@@ -1041,6 +1153,9 @@ export class ObjectiveService extends BaseService {
       mode: objectiveSection.objectiveConfig.mode ?? 'DYNAMIC',
       allowEmployeeCreated: objectiveSection.objectiveConfig.allowEmployeeCreated !== false,
       allowManagerCreated: objectiveSection.objectiveConfig.allowManagerCreated !== false,
+      objectiveBuckets: objectiveSection.objectiveBuckets?.length
+        ? objectiveSection.objectiveBuckets
+        : this.defaultObjectiveBuckets(),
       predefinedObjectives: (objectiveSection.objectiveConfig.predefinedObjectives ?? []).map(
         (objective: ITemplatePredefinedObjective) => ({
           key: objective.objectiveKey,
@@ -1371,6 +1486,9 @@ export class ObjectiveService extends BaseService {
     quarterAssignment: IQuarterAssignment,
     newWeightage?: number,
     editingObjectiveId?: string,
+    source?: ObjectiveSourceType,
+    objectiveConfig?: ObjectiveConfig,
+    requireExactBucketTotal = false,
   ): Promise<void> {
     if (
       quarterAssignment.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
@@ -1381,6 +1499,18 @@ export class ObjectiveService extends BaseService {
     }
 
     if (newWeightage === undefined) return;
+
+    if (source && objectiveConfig?.objectiveBuckets?.length) {
+      await this.validateBucketObjectiveWeightage(
+        quarterAssignment,
+        source,
+        objectiveConfig,
+        newWeightage,
+        editingObjectiveId,
+        requireExactBucketTotal,
+      );
+      return;
+    }
 
     const existingObjectives = await Objective.find({
       quarterAssignmentId: quarterAssignment._id,
@@ -1395,6 +1525,62 @@ export class ObjectiveService extends BaseService {
     if (currentWeightage + newWeightage > 100) {
       throw new Error('Total objective weightage for the quarter cannot exceed 100');
     }
+  }
+
+  private async validateBucketObjectiveWeightage(
+    quarterAssignment: IQuarterAssignment,
+    source: ObjectiveSourceType,
+    objectiveConfig: ObjectiveConfig,
+    newWeightage: number,
+    editingObjectiveId?: string,
+    requireExactBucketTotal = false,
+  ): Promise<void> {
+    const bucket = this.resolveObjectiveBucket(source, objectiveConfig);
+    if (!bucket) {
+      return;
+    }
+
+    const existingObjectives = await Objective.find({
+      quarterAssignmentId: quarterAssignment._id,
+      source,
+      isDeleted: false,
+      ...(editingObjectiveId ? { _id: { $ne: new Types.ObjectId(editingObjectiveId) } } : {}),
+    }).select('weightage').lean();
+
+    const currentWeightage = existingObjectives.reduce(
+      (total, objective) => total + Number(objective.weightage ?? 0),
+      0,
+    );
+    const nextTotal = currentWeightage + Number(newWeightage ?? 0);
+
+    if (requireExactBucketTotal) {
+      if (Math.abs(nextTotal - 100) > 0.001) {
+        throw new Error(
+          `Objective row weightage inside "${bucket.label}" must total 100% before submission (currently ${nextTotal}%)`,
+        );
+      }
+      return;
+    }
+
+    if (nextTotal > 100) {
+      throw new Error(
+        `Objective row weightage inside "${bucket.label}" cannot exceed 100% (currently ${nextTotal}%)`,
+      );
+    }
+  }
+
+  private resolveObjectiveBucket(
+    source: ObjectiveSourceType,
+    objectiveConfig: ObjectiveConfig,
+  ): IObjectiveBucket | undefined {
+    const bucketSource =
+      source === ObjectiveSource.PREDEFINED
+        ? 'TEMPLATE_PREDEFINED'
+        : source === ObjectiveSource.MANAGER_CREATED
+          ? 'MANAGER_DYNAMIC'
+          : 'EMPLOYEE_DYNAMIC';
+
+    return objectiveConfig.objectiveBuckets.find((bucket) => bucket.source === bucketSource);
   }
 
   private validateCreateAgainstConfig(
@@ -1438,6 +1624,9 @@ export class ObjectiveService extends BaseService {
       quarterAssignment,
       nextWeightage,
       objective._id.toString(),
+      objective.source as ObjectiveSourceType,
+      objectiveConfig,
+      false,
     );
   }
 
@@ -1696,7 +1885,7 @@ export class ObjectiveService extends BaseService {
 
   private async assertAssignmentAccess(action: string, quarterAssignment: IQuarterAssignment): Promise<void> {
     const actor = this.requireActor();
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor,
       action,
       resource: {
@@ -1734,7 +1923,7 @@ export class ObjectiveService extends BaseService {
       throw new Error('Employee can submit only own objective');
     }
 
-    const access = accessService.canPerform({
+    const access = await accessService.canPerform({
       actor,
       action,
       resource: {
@@ -1853,17 +2042,34 @@ export class ObjectiveService extends BaseService {
     return this.context.pmsCurrentDate ?? new Date();
   }
 
-  private resolveObjectiveSource(actorRole: string): ObjectiveSourceType {
-    const mappedRole = accessService.mapRole(actorRole);
+  private resolveObjectiveSource(
+    actorRole: string,
+    quarterAssignment: IQuarterAssignment,
+  ): ObjectiveSourceType {
+    const actor = this.requireActor();
+    const actorId = actor.actorId;
 
+    if (actorId === quarterAssignment.employeeId.toString()) {
+      return ObjectiveSource.EMPLOYEE_CREATED;
+    }
+
+    if (
+      actorId === quarterAssignment.assignedManagerId.toString() ||
+      this.context.reqRole === 'manager' ||
+      accessService.mapRole(actorRole) === PmsRole.MANAGER
+    ) {
+      return ObjectiveSource.MANAGER_CREATED;
+    }
+
+    const mappedRole = accessService.mapRole(actorRole);
     if (mappedRole === PmsRole.EMPLOYEE) return ObjectiveSource.EMPLOYEE_CREATED;
     if (mappedRole === PmsRole.MANAGER) return ObjectiveSource.MANAGER_CREATED;
 
     throw new Error('Only employee or manager can create objectives');
   }
 
-  private assertAdmin(action: string): void {
-    const access = accessService.canPerform({
+  private async assertAdmin(action: string): Promise<void> {
+    const access = await accessService.canPerform({
       actor: this.requireActor(),
       action,
       requiresAdmin: true,
@@ -1908,6 +2114,20 @@ export class ObjectiveService extends BaseService {
   ): Promise<void> {
     const actor = this.requireActor();
     const assignmentId = await this.resolveAuditAssignmentId(entityType, entityId);
+    let metadata: Record<string, unknown> | undefined = undefined;
+
+    if (entityType === 'OBJECTIVE') {
+      const objective = await Objective.findById(entityId).select('assignedManagerId').lean();
+      if (objective && actor.actorId !== objective.assignedManagerId?.toString()) {
+        const delegation = await this.getObjectiveDelegation(
+          actor.actorId,
+          objective.assignedManagerId.toString()
+        );
+        if (delegation) {
+          metadata = { actedAsDelegateFor: objective.assignedManagerId.toString() };
+        }
+      }
+    }
 
     await auditService.createAuditLog({
       actorId: actor.actorId,
@@ -1919,6 +2139,7 @@ export class ObjectiveService extends BaseService {
       previousValue,
       newValue,
       reason,
+      metadata,
     });
   }
 

@@ -62,6 +62,8 @@ export interface AccessResourceContext {
   assignedManagerId?: string;
   ownerId?: string;
   allowedManagerIds?: string[];
+  cycleId?: string;        // For delegation scope check (cycle-scoped delegation)
+  delegatorId?: string;   // For delegation scope check (original owner of the resource)
 }
 
 export interface AccessCheckInput {
@@ -98,4 +100,7 @@ export interface VisibilityMaskContext {
   employeeMeritVisible?: boolean;
   managerGradeVisible?: boolean;
   managerMeritVisible?: boolean;
+  visibleFrom?: Date | string;
+  confidentialFields?: Set<string>;
+  hasVisibilityOverride?: boolean;
 }

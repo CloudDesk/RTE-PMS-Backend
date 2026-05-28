@@ -69,6 +69,35 @@ async function migrateEmailIndexIfNeeded(): Promise<void> {
   }
 }
 
+/**
+ * One-time data correction: fixes templates that are marked 'ACTIVE' but have no active version.
+ * Updates their status to 'DRAFT' to maintain integrity.
+ */
+async function migrateTemplateStatusesIfNeeded(): Promise<void> {
+  try {
+    const coll = mongoose.connection.collection('pms_templates');
+    const query = {
+      status: 'ACTIVE',
+      $or: [
+        { currentVersionId: { $exists: false } },
+        { currentVersionId: null }
+      ]
+    };
+    const mismatchedTemplates = await coll.find(query).toArray();
+
+    if (mismatchedTemplates.length > 0) {
+      console.log(`[DB] Found ${mismatchedTemplates.length} mismatched templates with Active status but no active version. Correcting to DRAFT...`);
+      await coll.updateMany(
+        query,
+        { $set: { status: 'DRAFT' } }
+      );
+      console.log('[DB] Corrected mismatched template statuses successfully.');
+    }
+  } catch (err: any) {
+    console.warn('[DB] migrateTemplateStatusesIfNeeded failed:', err.message);
+  }
+}
+
 export const connectDB = async (): Promise<void> => {
   if (mongoose.connection.readyState === 1) {
     return;
@@ -97,6 +126,15 @@ export const connectDB = async (): Promise<void> => {
         );
 
         await migrateEmailIndexIfNeeded();
+        await migrateTemplateStatusesIfNeeded();
+        
+        try {
+          const { accessService } = await import('../services/access.service');
+          await accessService.initialize();
+        } catch (initErr) {
+          console.error('[DB] Failed to initialize AccessService', initErr);
+        }
+
         registerConnectionListeners();
 
         return;

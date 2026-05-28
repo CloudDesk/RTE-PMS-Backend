@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import {
   AnnualAssignment,
+  AnnualDecision,
   QuarterAssignment,
   Objective,
   QuarterReview,
@@ -13,6 +14,8 @@ import {
   Reassignment,
 } from '../models';
 import { visibilityMaskService } from './visibilityMask.service';
+import { AssignmentService } from './assignment.service';
+import { accessService } from './access.service';
 
 export class PmsDashboardService extends BaseService {
   /**
@@ -46,6 +49,11 @@ export class PmsDashboardService extends BaseService {
       .populate('cycleQuarterId', 'name quarterCode')
       .sort({ quarterCode: 1 })
       .lean();
+
+    const annualDecision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    }).lean();
 
     // Query Objectives count for this annual assignment
     const objectives = await Objective.find({
@@ -83,6 +91,12 @@ export class PmsDashboardService extends BaseService {
 
     // Handle Annual Decision / Outcomes with Dynamic Visibility Masking
     const actorRole = this.context.user?.role ?? 'employee';
+    const hasVisibilityOverride = this.context.user ? (await accessService.canPerform({
+      actor: { actorId: this.context.user._id.toString(), actorRole: this.context.user.role },
+      action: 'assignment.visibility.override',
+      requiresAdmin: true
+    })).allowed : false;
+    
     const maskContext = {
       actorRole,
       employeeReviewVisible: annualAssignment.visibility?.employeeReviewVisible ?? false,
@@ -90,9 +104,19 @@ export class PmsDashboardService extends BaseService {
       employeeMeritVisible: annualAssignment.visibility?.employeeMeritVisible ?? false,
       managerGradeVisible: annualAssignment.visibility?.managerGradeVisible ?? false,
       managerMeritVisible: annualAssignment.visibility?.managerMeritVisible ?? false,
+      hasVisibilityOverride,
     };
 
-    const maskedAnnualAssignment = visibilityMaskService.mask(annualAssignment, maskContext);
+    const annualOutcomeSource = {
+      ...annualAssignment,
+      gradeDetails: annualDecision?.gradeDetails ?? (annualAssignment as Record<string, unknown>).gradeDetails,
+      meritDetails: annualDecision?.meritDetails ?? (annualAssignment as Record<string, unknown>).meritDetails,
+      nilReason: annualDecision?.nilReason ?? (annualAssignment as Record<string, unknown>).nilReason,
+      finalScore: annualDecision?.finalScore ?? (annualAssignment as Record<string, unknown>).finalScore,
+      finalRating: annualDecision?.finalRating ?? (annualAssignment as Record<string, unknown>).finalRating,
+      appraisalOutcomeType: annualDecision?.appraisalOutcomeType ?? annualAssignment.appraisalOutcomeType,
+    };
+    const maskedAnnualAssignment = visibilityMaskService.mask(annualOutcomeSource, maskContext);
     const reassignmentHistory = await Reassignment.find({
       annualAssignmentId: annualAssignment._id,
       employeeId: new Types.ObjectId(employeeId),
@@ -386,6 +410,9 @@ export class PmsDashboardService extends BaseService {
       query.cycleId = new Types.ObjectId(cycleId);
     }
 
+    const assignmentService = new AssignmentService(this.context);
+    await assignmentService.applyScopedAssignmentFilter(query);
+
     const annualAssignments = await AnnualAssignment.find(query).select('_id').lean();
     const annualAssignmentIds = annualAssignments.map((item) => item._id);
 
@@ -467,15 +494,28 @@ export class PmsDashboardService extends BaseService {
       }),
     ]);
 
+    const totalAssignments = annualAssignments.length;
+    const cycleCompletionPercentage = totalAssignments > 0 
+      ? Math.round((frozenDecisionCount / totalAssignments) * 100) 
+      : 0;
+
     return {
       appraisalStates,
       gradeDistribution,
       meritSummary: meritStats[0] || { totalMeritAmount: 0, avgMeritAmount: 0, count: 0 },
-      nilOutcomesCount,
-      communicationReadinessCount,
-      decisionDraftCount,
-      frozenDecisionCount,
-      reopenCount,
+      outcomes: {
+        nilOutcomes: nilOutcomesCount,
+      },
+      readiness: {
+        communicationReady: communicationReadinessCount,
+        decisionDrafts: decisionDraftCount,
+        decisionsFinalized: frozenDecisionCount,
+        decisionReadiness: decisionDraftCount + frozenDecisionCount,
+        cycleCompletionPercentage,
+      },
+      reassignmentMetrics: {
+        reopens: reopenCount,
+      },
     };
   }
 }

@@ -202,7 +202,10 @@ export const cycleRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const cycle = await request.container!.cycleService.closeCycle(id);
+        const cycle = await request.container!.cycleService.closeCycle(
+          id,
+          request.body as { reason: string }
+        );
         return reply.send(successResponse('PMS cycle closed successfully', cycle));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
@@ -216,7 +219,10 @@ export const cycleRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const cycle = await request.container!.cycleService.archiveCycle(id);
+        const cycle = await request.container!.cycleService.archiveCycle(
+          id,
+          request.body as { reason: string }
+        );
         return reply.send(successResponse('PMS cycle archived successfully', cycle));
       } catch (error: unknown) {
         return sendRouteError(reply, error);

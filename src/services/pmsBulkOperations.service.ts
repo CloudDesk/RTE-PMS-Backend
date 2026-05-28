@@ -25,6 +25,7 @@ export interface BulkAssignInputItem {
   employeeId: string;
   managerId?: string;
   assignmentReason?: string;
+  applicableQuarters?: ('Q1' | 'Q2' | 'Q3' | 'Q4')[];
 }
 
 export interface BulkVisibilityUpdateInput {
@@ -216,13 +217,15 @@ export class PmsBulkOperationsService extends BaseService {
     };
     await tracker.save();
 
-    const assignmentService = new AssignmentService(this.context);
-    const results: any[] = [];
+    setImmediate(async () => {
+      try {
+        const assignmentService = new AssignmentService(this.context);
+        const results: any[] = [];
 
-    const seenEmployeeIds = new Set<string>();
+        const seenEmployeeIds = new Set<string>();
 
     for (const item of assignments) {
-      const { employeeId, managerId, assignmentReason } = item;
+      const { employeeId, managerId, assignmentReason, applicableQuarters } = item as any;
 
       if (!employeeId) {
         results.push({
@@ -256,7 +259,7 @@ export class PmsBulkOperationsService extends BaseService {
         if (!resolvedManagerId) {
           // Send to exception queue as required by Module 15 business rules
           const exception = await assignmentService.bulkAssign(cycleId, {
-            assignments: [{ employeeId, managerId: undefined, assignmentReason }]
+            assignments: [{ employeeId, managerId: undefined, applicableQuarters, assignmentReason }]
           });
           results.push({
             employeeId,
@@ -271,6 +274,7 @@ export class PmsBulkOperationsService extends BaseService {
         const assignRes = await assignmentService.assignEmployee(cycleId, {
           employeeId,
           managerId: resolvedManagerId.toString(),
+          applicableQuarters,
           assignmentReason: assignmentReason || 'BULK_LAUNCH',
         });
 
@@ -319,29 +323,31 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.version += 1;
     await tracker.save();
 
-    await auditService.createAuditLog({
-      actorId: actor.actorId,
-      actorRole: actor.actorRole,
-      action: 'PMS_BULK_ASSIGNMENT_EXECUTED',
-      entityType: 'PMS_CYCLE',
-      entityId: cycleId,
-      newValue: {
-        jobId: tracker._id.toString(),
-        totalCount: tracker.totalCount,
-        successCount: tracker.successCount,
-        failureCount: tracker.failureCount,
-      },
+      await auditService.createAuditLog({
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+        action: 'PMS_BULK_ASSIGNMENT_EXECUTED',
+        entityType: 'PMS_CYCLE',
+        entityId: cycleId,
+        newValue: {
+          jobId: tracker._id.toString(),
+          totalCount: tracker.totalCount,
+          successCount: tracker.successCount,
+          failureCount: tracker.failureCount,
+        },
+      });
+      } catch (err: any) {
+        tracker.status = 'FAILED';
+        tracker.failureSummary.push({ reason: err?.message || 'Unexpected background job failure' });
+        tracker.completedAt = new Date();
+        await tracker.save();
+      }
     });
 
     return {
       jobId: tracker._id.toString(),
       status: tracker.status,
-      totalCount: tracker.totalCount,
-      successCount: tracker.successCount,
-      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
-      exceptionCount: results.filter(r => r.status === 'EXCEPTION').length,
-      failureCount: tracker.failureCount,
-      records: results,
+      message: 'Bulk assignment job has been queued and is processing in the background',
     };
   }
 
@@ -439,10 +445,12 @@ export class PmsBulkOperationsService extends BaseService {
     };
     await tracker.save();
 
-    const preview = await this.previewBulkReminder(cycleId, targetType);
-    const results: any[] = [];
+    setImmediate(async () => {
+      try {
+        const preview = await this.previewBulkReminder(cycleId, targetType);
+        const results: any[] = [];
 
-    for (const record of preview.records) {
+        for (const record of preview.records) {
       try {
         const recipientUserId = targetType === 'OBJECTIVES' ? record.employeeId : record.managerId;
         if (!recipientUserId) {
@@ -500,28 +508,31 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.version += 1;
     await tracker.save();
 
-    await auditService.createAuditLog({
-      actorId: actor.actorId,
-      actorRole: actor.actorRole,
-      action: 'PMS_BULK_REMINDER_EXECUTED',
-      entityType: 'PMS_CYCLE',
-      entityId: cycleId,
-      newValue: {
-        jobId: tracker._id.toString(),
-        targetType,
-        totalCount: tracker.totalCount,
-        successCount: tracker.successCount,
-      },
+      await auditService.createAuditLog({
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+        action: 'PMS_BULK_REMINDER_EXECUTED',
+        entityType: 'PMS_CYCLE',
+        entityId: cycleId,
+        newValue: {
+          jobId: tracker._id.toString(),
+          targetType,
+          totalCount: tracker.totalCount,
+          successCount: tracker.successCount,
+        },
+      });
+      } catch (err: any) {
+        tracker.status = 'FAILED';
+        tracker.failureSummary.push({ reason: err?.message || 'Unexpected background job failure' });
+        tracker.completedAt = new Date();
+        await tracker.save();
+      }
     });
 
     return {
       jobId: tracker._id.toString(),
       status: tracker.status,
-      totalCount: tracker.totalCount,
-      successCount: tracker.successCount,
-      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
-      failureCount: tracker.failureCount,
-      records: results,
+      message: 'Bulk reminder job has been queued and is processing in the background',
     };
   }
 
@@ -634,11 +645,13 @@ export class PmsBulkOperationsService extends BaseService {
     };
     await tracker.save();
 
-    const preview = await this.previewBulkVisibility(cycleId, employeeIds, visibilityUpdate);
-    const results: any[] = [];
-    const annualDecisionService = new AnnualDecisionService(this.context);
+    setImmediate(async () => {
+      try {
+        const preview = await this.previewBulkVisibility(cycleId, employeeIds, visibilityUpdate);
+        const results: any[] = [];
+        const annualDecisionService = new AnnualDecisionService(this.context);
 
-    for (const record of preview.records) {
+        for (const record of preview.records) {
       if (record.status !== 'ELIGIBLE') {
         results.push({
           employeeId: record.employeeId,
@@ -708,29 +721,32 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.version += 1;
     await tracker.save();
 
-    await auditService.createAuditLog({
-      actorId: actor.actorId,
-      actorRole: actor.actorRole,
-      action: 'PMS_BULK_VISIBILITY_EXECUTED',
-      entityType: 'PMS_CYCLE',
-      entityId: cycleId,
-      newValue: {
-        jobId: tracker._id.toString(),
-        totalCount: tracker.totalCount,
-        successCount: tracker.successCount,
-        failureCount: tracker.failureCount,
-        visibilityUpdate,
-      },
+      await auditService.createAuditLog({
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+        action: 'PMS_BULK_VISIBILITY_EXECUTED',
+        entityType: 'PMS_CYCLE',
+        entityId: cycleId,
+        newValue: {
+          jobId: tracker._id.toString(),
+          totalCount: tracker.totalCount,
+          successCount: tracker.successCount,
+          failureCount: tracker.failureCount,
+          visibilityUpdate,
+        },
+      });
+      } catch (err: any) {
+        tracker.status = 'FAILED';
+        tracker.failureSummary.push({ reason: err?.message || 'Unexpected background job failure' });
+        tracker.completedAt = new Date();
+        await tracker.save();
+      }
     });
 
     return {
       jobId: tracker._id.toString(),
       status: tracker.status,
-      totalCount: tracker.totalCount,
-      successCount: tracker.successCount,
-      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
-      failureCount: tracker.failureCount,
-      records: results,
+      message: 'Bulk visibility job has been queued and is processing in the background',
     };
   }
 
@@ -856,10 +872,12 @@ export class PmsBulkOperationsService extends BaseService {
     };
     await tracker.save();
 
-    const preview = await this.previewBulkCommunication(cycleId, employeeIds);
-    const results: any[] = [];
+    setImmediate(async () => {
+      try {
+        const preview = await this.previewBulkCommunication(cycleId, employeeIds);
+        const results: any[] = [];
 
-    for (const record of preview.records) {
+        for (const record of preview.records) {
       if (record.status !== 'ELIGIBLE') {
         results.push({
           employeeId: record.employeeId,
@@ -924,28 +942,31 @@ export class PmsBulkOperationsService extends BaseService {
     tracker.version += 1;
     await tracker.save();
 
-    await auditService.createAuditLog({
-      actorId: actor.actorId,
-      actorRole: actor.actorRole,
-      action: 'PMS_BULK_COMMUNICATION_EXECUTED',
-      entityType: 'PMS_CYCLE',
-      entityId: cycleId,
-      newValue: {
-        jobId: tracker._id.toString(),
-        totalCount: tracker.totalCount,
-        successCount: tracker.successCount,
-        failureCount: tracker.failureCount,
-      },
+      await auditService.createAuditLog({
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+        action: 'PMS_BULK_COMMUNICATION_EXECUTED',
+        entityType: 'PMS_CYCLE',
+        entityId: cycleId,
+        newValue: {
+          jobId: tracker._id.toString(),
+          totalCount: tracker.totalCount,
+          successCount: tracker.successCount,
+          failureCount: tracker.failureCount,
+        },
+      });
+      } catch (err: any) {
+        tracker.status = 'FAILED';
+        tracker.failureSummary.push({ reason: err?.message || 'Unexpected background job failure' });
+        tracker.completedAt = new Date();
+        await tracker.save();
+      }
     });
 
     return {
       jobId: tracker._id.toString(),
       status: tracker.status,
-      totalCount: tracker.totalCount,
-      successCount: tracker.successCount,
-      skippedCount: results.filter(r => r.status === 'SKIPPED').length,
-      failureCount: tracker.failureCount,
-      records: results,
+      message: 'Bulk communication job has been queued and is processing in the background',
     };
   }
 
@@ -1164,5 +1185,49 @@ export class PmsBulkOperationsService extends BaseService {
       throw new Error('Bulk operation job record not found.');
     }
     return job;
+  }
+
+  /**
+   * Retry failed records of a specific bulk job
+   */
+  async retryFailedBulkRecords(jobId: string): Promise<any> {
+    const job = await this.getBulkJobDetail(jobId);
+
+    if (!job.failureSummary || job.failureSummary.length === 0) {
+      throw new Error('No failed records found to retry.');
+    }
+
+    const failedEmployeeIds = job.failureSummary.map((f: any) => f.employeeId?.toString()).filter(Boolean);
+    if (failedEmployeeIds.length === 0) {
+      throw new Error('Could not extract employee IDs from the failure summary.');
+    }
+
+    switch (job.operationType) {
+      case 'ASSIGNMENT':
+        // For assignment, we need to extract from metadata if available, but assignment uses BulkAssignInputItem[]
+        if (!job.metadata?.request?.assignments) {
+           throw new Error('Original assignments missing in job metadata. Cannot retry.');
+        }
+        const assignmentsToRetry = job.metadata.request.assignments.filter((a: any) => failedEmployeeIds.includes(a.employeeId));
+        return this.executeBulkAssignment(job.cycleId.toString(), assignmentsToRetry);
+
+      case 'REMINDER':
+        const targetType = job.metadata?.request?.targetType;
+        if (!targetType) throw new Error('Reminder metadata missing. Cannot retry.');
+        // Note: For reminder, preview usually filters by target, so we would ideally pass failed employee IDs.
+        // Since executeBulkReminder doesn't accept a subset of IDs, we throw not supported for now.
+        throw new Error('Retry for Reminder operation is currently not supported natively.');
+
+      case 'VISIBILITY':
+        const visibilityUpdate = job.metadata?.request?.visibilityUpdate;
+        if (!visibilityUpdate) throw new Error('Visibility metadata missing. Cannot retry.');
+        return this.executeBulkVisibility(job.cycleId.toString(), failedEmployeeIds, visibilityUpdate);
+
+      case 'COMMUNICATION':
+        return this.executeBulkCommunication(job.cycleId.toString(), failedEmployeeIds);
+
+      default:
+        throw new Error(`Retry not implemented for operation type: ${job.operationType}`);
+    }
   }
 }

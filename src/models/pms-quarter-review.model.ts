@@ -33,6 +33,7 @@ export interface IQuarterReview extends Document {
   achievements?: string;
   developmentObservations?: string;
   attachments: IPmsAttachment[];
+  scoreSnapshot?: any;
   submittedAt?: Date;
   finalizedAt?: Date;
   isDeleted: boolean;
@@ -117,6 +118,7 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
       type: [attachmentSchema],
       default: [],
     },
+    scoreSnapshot: { type: Schema.Types.Mixed },
     submittedAt: Date,
     finalizedAt: Date,
     isDeleted: { type: Boolean, default: false, index: true },
