@@ -908,8 +908,14 @@ export class PmsTemplateService extends BaseService {
       conditionalBlocks.map((block) => block.blockKey),
     );
 
+    const code = this.normalizeCode(input.code);
+    const existingTemplate = await PmsLetterTemplate.findOne({ code, isDeleted: false });
+    if (existingTemplate) {
+      throw new Error(`Letter template with code '${code}' already exists.`);
+    }
+
     const letterTemplate = await PmsLetterTemplate.create({
-      code: this.normalizeCode(input.code),
+      code,
       name: input.name,
       outcomeType,
       channel: input.channel,
@@ -1064,6 +1070,21 @@ export class PmsTemplateService extends BaseService {
       letterTemplate.placeholderRules.required ?? [],
       letterTemplate.conditionalBlocks.map((block) => block.blockKey),
     );
+
+    // Prevent multiple active letter templates for the same outcome type under the same template version
+    const existingActiveParent = await PmsLetterTemplate.findOne({
+      templateVersionId: parentTemplate.templateVersionId,
+      outcomeType: parentTemplate.outcomeType,
+      status: PmsTemplateStatus.ACTIVE,
+      _id: { $ne: parentTemplate._id },
+      isDeleted: false,
+    });
+
+    if (existingActiveParent) {
+      throw new Error(
+        `An active letter template already exists for outcome type '${parentTemplate.outcomeType}'. Please deactivate it before activating this one.`
+      );
+    }
 
     await PmsLetterTemplateVersion.updateMany(
       {

@@ -287,10 +287,20 @@ export class CycleService extends BaseService {
       input.startDate,
       input.endDate,
     );
-    const code = input.code.trim().toUpperCase();
-    const existingCycle = await AnnualCycle.exists({ code });
+    let code = input.code.trim().toUpperCase();
+    let existingCycle = await AnnualCycle.exists({ code });
     if (existingCycle) {
-      throw new Error('Cycle code already exists');
+      if (/^PMS-\d{4}-\d{3,}$/.test(code)) {
+        // Auto-regenerate for auto-generated codes
+        const prefix = code.split('-').slice(0, 2).join('-');
+        let newCode = `${prefix}-${Math.floor(Math.random() * 100000).toString().padStart(5, '0')}`;
+        while (await AnnualCycle.exists({ code: newCode })) {
+          newCode = `${prefix}-${Math.floor(Math.random() * 100000).toString().padStart(5, '0')}`;
+        }
+        code = newCode;
+      } else {
+        throw new Error('Cycle code already exists');
+      }
     }
 
     const session = await mongoose.startSession();
@@ -349,8 +359,20 @@ export class CycleService extends BaseService {
 
       await session.commitTransaction();
       return { annualCycle: annualCycleObj, quarterCycles };
-    } catch (error) {
-      await session.abortTransaction();
+    } catch (error: any) {
+      if (session.inTransaction()) {
+        try {
+          await session.abortTransaction();
+        } catch (abortError) {
+          // Ignore abort errors if transaction was already aborted by MongoDB
+        }
+      }
+      if (error.code === 11000) {
+        throw new Error('A cycle with this cycle code already exists. Please try again with a different code.');
+      }
+      if (error.message && error.message.includes('does not match any in-progress transactions')) {
+        throw new Error('A system error occurred while saving. Please try again.');
+      }
       throw error;
     } finally {
       await session.endSession();
@@ -384,13 +406,23 @@ export class CycleService extends BaseService {
 
     try {
       if (input.code?.trim()) {
-        const code = input.code.trim().toUpperCase();
-        const existingCycle = await AnnualCycle.exists({
+        let code = input.code.trim().toUpperCase();
+        let existingCycle = await AnnualCycle.exists({
           code,
           _id: { $ne: cycle._id },
         });
         if (existingCycle) {
-          throw new Error('Cycle code already exists');
+          if (/^PMS-\d{4}-\d{3,}$/.test(code)) {
+            // Auto-regenerate for auto-generated codes
+            const prefix = code.split('-').slice(0, 2).join('-');
+            let newCode = `${prefix}-${Math.floor(Math.random() * 100000).toString().padStart(5, '0')}`;
+            while (await AnnualCycle.exists({ code: newCode, _id: { $ne: cycle._id } })) {
+              newCode = `${prefix}-${Math.floor(Math.random() * 100000).toString().padStart(5, '0')}`;
+            }
+            code = newCode;
+          } else {
+            throw new Error('Cycle code already exists');
+          }
         }
         cycle.code = code;
       }
@@ -470,8 +502,20 @@ export class CycleService extends BaseService {
 
       await session.commitTransaction();
       return { annualCycle: cycleObj, quarterCycles };
-    } catch (error) {
-      await session.abortTransaction();
+    } catch (error: any) {
+      if (session.inTransaction()) {
+        try {
+          await session.abortTransaction();
+        } catch (abortError) {
+          // Ignore abort errors if transaction was already aborted by MongoDB
+        }
+      }
+      if (error.code === 11000) {
+        throw new Error('A cycle with this cycle code already exists. Please try again with a different code.');
+      }
+      if (error.message && error.message.includes('does not match any in-progress transactions')) {
+        throw new Error('A system error occurred while updating. Please try again.');
+      }
       throw error;
     } finally {
       await session.endSession();
