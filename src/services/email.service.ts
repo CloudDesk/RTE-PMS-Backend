@@ -33,7 +33,7 @@ interface EmailRequest {
 }
 
 /**
- * Email Service for Zuno HR application
+ * Email Service for RTE-PMS application
  * Handles email sending functionality with optional attachments
  */
 export class EmailService {
@@ -85,7 +85,7 @@ export class EmailService {
 
             // Configure mail options
             const mailOptions: nodemailer.SendMailOptions = {
-                from: `"Zuno HR" <${config.GMAIL_AUTH_USER}>`,
+                from: `"RTE-PMS" <${config.GMAIL_AUTH_USER}>`,
                 to,
                 cc,
                 subject,
@@ -179,12 +179,12 @@ export class EmailService {
                 const pdfBuffer = await this.fetchPdfBuffer(payslip.payslipUrl);
                 console.log(pdfBuffer, "pdfBuffer service");
                 const mailOptions: nodemailer.SendMailOptions = {
-                    from: `"Zuno HR" <${config.GMAIL_AUTH_USER}>`,
+                    from: `"RTE-PMS" <${config.GMAIL_AUTH_USER}>`,
                     to: payslip.email,
                     subject: `Your Payslip for ${month} ${year}`,
                     html: `
               <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee;">
-                <h2 style="color: #333;">Zuno HR Payslip</h2>
+                <h2 style="color: #333;">RTE-PMS Payslip</h2>
                 <p>Dear ${payslip.employeeName},</p>
                 <p>Your payslip for ${month} ${year} is now available. Please find it attached.</p>
                 <p>If you have any questions, please contact the HR department.</p>
