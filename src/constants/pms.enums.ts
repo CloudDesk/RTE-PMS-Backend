@@ -202,9 +202,7 @@ export const LetterTemplateType = {
   MERIT: 'MERIT',
   GRADE: 'GRADE',
   BOTH: 'BOTH',
-  GENERIC_APPRAISAL: 'GENERIC_APPRAISAL',
   NIL: 'NIL',
-  PROMOTION_APPRAISAL: 'PROMOTION_APPRAISAL',
 } as const;
 
 export type LetterTemplateType =

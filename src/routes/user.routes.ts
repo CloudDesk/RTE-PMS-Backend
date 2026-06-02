@@ -1812,18 +1812,11 @@ export const userRoutes: RouteHandler = async (
           'Role',
           'Department ID',
           'Manager Name',
-          'Biometric ID',
           'Active',
           'Joining Date',
           'Country',
           'Location',
-          'Phone',
-          'License Type',
-          'Portal Access',
-          'Visa Type',
-          'Visa Expiry Date',
-          'Visa Is Active',
-          'Client'
+          'Phone'
         ];
 
         // Add headers to worksheet
@@ -1847,18 +1840,11 @@ export const userRoutes: RouteHandler = async (
             user.role || '',
             user.departmentId || '',
             user.managerName || '',
-            user.biometricId || '',
             user.active ? 'Yes' : 'No',
             user.joiningDate ? new Date(user.joiningDate).toLocaleDateString() : '',
             user.country || '',
             user.location || '',
-            user.phone || '',
-            user.licenseType || '',
-            user.portalAccess ? 'Yes' : 'No',
-            user.visaDetails?.visaType || '',
-            user.visaDetails?.visaExpiryDate ? new Date(user.visaDetails.visaExpiryDate).toLocaleDateString() : '',
-            user.visaDetails?.isActive ? 'Yes' : 'No',
-            user.client || ''
+            user.phone || ''
           ];
           worksheet.addRow(row);
         });
@@ -1877,17 +1863,11 @@ export const userRoutes: RouteHandler = async (
         worksheet.getColumn('C').width = 15; // Role
         worksheet.getColumn('D').width = 20; // Department ID
         worksheet.getColumn('E').width = 25; // Manager Name
-        worksheet.getColumn('F').width = 15; // Biometric ID
-        worksheet.getColumn('G').width = 10; // Active
-        worksheet.getColumn('H').width = 15; // Joining Date
-        worksheet.getColumn('I').width = 10; // Country
-        worksheet.getColumn('J').width = 20; // Location
-        worksheet.getColumn('K').width = 15; // Phone
-        worksheet.getColumn('L').width = 15; // License Type
-        worksheet.getColumn('M').width = 15; // Portal Access
-        worksheet.getColumn('N').width = 25; // Visa Type
-        worksheet.getColumn('O').width = 15; // Visa Expiry Date
-        worksheet.getColumn('P').width = 15; // Visa Is Active
+        worksheet.getColumn('F').width = 10; // Active
+        worksheet.getColumn('G').width = 15; // Joining Date
+        worksheet.getColumn('H').width = 10; // Country
+        worksheet.getColumn('I').width = 20; // Location
+        worksheet.getColumn('J').width = 15; // Phone
 
         // Generate Excel buffer
         const buffer = await workbook.xlsx.writeBuffer();
