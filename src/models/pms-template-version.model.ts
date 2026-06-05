@@ -218,10 +218,6 @@ export interface IPmsTemplateVersion extends Document {
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
-  outcomeMappings?: Array<{
-    outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
-    letterTemplateVersionId: string;
-  }>;
   effectiveFrom?: Date;
   effectiveTo?: Date;
   isLocked: boolean;
@@ -474,20 +470,6 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
     themeConfig: { type: Schema.Types.Mixed, default: {} },
     scoringConfig: { type: Schema.Types.Mixed, default: {} },
     annualScoringConfig: { type: Schema.Types.Mixed, default: {} },
-    outcomeMappings: {
-      type: [
-        {
-          outcomeType: {
-            type: String,
-            enum: ['BOTH', 'MERIT_ONLY', 'GRADE_ONLY', 'NIL'],
-            required: true,
-          },
-          letterTemplateVersionId: { type: String, required: true },
-          _id: false,
-        },
-      ],
-      default: [],
-    },
     effectiveFrom: Date,
     effectiveTo: Date,
     isLocked: { type: Boolean, default: false, index: true },

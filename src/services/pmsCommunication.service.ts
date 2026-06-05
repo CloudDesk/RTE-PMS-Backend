@@ -7,16 +7,11 @@ import {
   AnnualDecisionStatus,
   AnnualWorkflowState,
   AppraisalOutcomeType,
-  PmsTemplateStatus,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { CommunicationDispatch } from '../models/pms-communication-dispatch.model';
-import {
-  PmsLetterTemplate,
-  PmsLetterTemplateVersion,
-} from '../models/pms-letter-template.model';
 import { User } from '../models/user.model';
 import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { accessService } from './access.service';
@@ -25,14 +20,10 @@ import { emailService } from './email.service';
 import type { ICommunicationDispatch } from '../models/pms-communication-dispatch.model';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualDecision } from '../models/pms-annual-decision.model';
-import type {
-  IPmsLetterTemplate,
-  IPmsLetterTemplateVersion,
-} from '../models/pms-letter-template.model';
 
 export interface PreviewPmsCommunicationInput {
   annualAssignmentId: string;
-  templateId?: string;
+  contentKey?: string;
 }
 
 export interface SendPmsCommunicationInput extends PreviewPmsCommunicationInput {
@@ -44,12 +35,21 @@ export interface SendPmsCommunicationInput extends PreviewPmsCommunicationInput 
 interface RenderedCommunication {
   annualAssignment: IAnnualAssignment;
   annualDecision: IAnnualDecision;
-  template: IPmsLetterTemplate;
-  templateVersion: IPmsLetterTemplateVersion;
+  contentKey: string;
+  contentVersion: string;
+  channel: string;
   renderedSubject: string;
   renderedBodySnapshot: string;
   contentHash: string;
   renderedAt: Date;
+}
+
+interface StaticCommunicationTemplate {
+  contentKey: string;
+  contentVersion: string;
+  channel: string;
+  subjectTemplate: string;
+  bodyTemplate: string;
 }
 
 export class PmsCommunicationService extends BaseService {
@@ -71,7 +71,7 @@ export class PmsCommunicationService extends BaseService {
     const actorId = this.actorIdObject();
 
     const existingSent = await CommunicationDispatch.findOne({
-      annualAssignmentId: input.annualAssignmentId, // We use input directly to avoid unneeded renders
+      annualAssignmentId: input.annualAssignmentId,
       dispatchStatus: { $in: ['SENT', 'SKIPPED'] },
       resendOf: input.resendOf ? new Types.ObjectId(input.resendOf) : null,
     });
@@ -81,7 +81,7 @@ export class PmsCommunicationService extends BaseService {
 
     const annualAssignment = await AnnualAssignment.findById(input.annualAssignmentId);
     if (!annualAssignment) throw new Error('Annual assignment not found');
-    
+
     const annualDecision = await AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id });
     if (!annualDecision) throw new Error('Annual decision not found');
 
@@ -93,6 +93,9 @@ export class PmsCommunicationService extends BaseService {
           cycleId: annualAssignment.cycleId,
           employeeId: annualAssignment.employeeId,
           appraisalOutcomeType: 'NIL',
+          contentKey: 'NIL',
+          contentVersion: 'STATIC_PMS_V1',
+          channel: 'EMAIL',
           dispatchStatus: 'SKIPPED',
           deliveryStatus: { reason: 'Skipped due to NIL outcome configuration' },
           resendOf: input.resendOf ? new Types.ObjectId(input.resendOf) : undefined,
@@ -126,9 +129,9 @@ export class PmsCommunicationService extends BaseService {
       cycleId: rendered.annualAssignment.cycleId,
       employeeId: rendered.annualAssignment.employeeId,
       appraisalOutcomeType: rendered.annualDecision.appraisalOutcomeType,
-      templateId: rendered.template._id,
-      templateVersionId: rendered.templateVersion._id,
-      channel: rendered.template.channel,
+      contentKey: rendered.contentKey,
+      contentVersion: rendered.contentVersion,
+      channel: rendered.channel,
       dispatchStatus: 'RENDERED',
       renderedSubject: rendered.renderedSubject,
       renderedBodySnapshot: rendered.renderedBodySnapshot,
@@ -207,7 +210,7 @@ export class PmsCommunicationService extends BaseService {
     if (!Types.ObjectId.isValid(dispatchId)) {
       throw new Error('Invalid dispatchId');
     }
-    
+
     if (!correctionReason?.trim()) {
       throw new Error('Correction reason is required for resend');
     }
@@ -219,7 +222,7 @@ export class PmsCommunicationService extends BaseService {
 
     return this.sendCommunication({
       annualAssignmentId: existingDispatch.annualAssignmentId.toString(),
-      templateId: existingDispatch.templateVersionId.toString(),
+      contentKey: existingDispatch.contentKey,
       resendOf: existingDispatch._id.toString(),
       correctionReason,
     });
@@ -260,27 +263,16 @@ export class PmsCommunicationService extends BaseService {
       throw new Error('Visibility must be enabled before communication dispatch');
     }
 
-    const resolved = input.templateId
-      ? await this.getTemplateAndVersionById(input.templateId)
-      : await this.resolveTemplate(annualAssignment, annualDecision);
-    if (!resolved) {
-      throw new Error('Letter template not found');
-    }
-
-    const { template, templateVersion } = resolved;
-    if (template.status !== PmsTemplateStatus.ACTIVE || templateVersion.status !== PmsTemplateStatus.ACTIVE) {
-      throw new Error('Only active letter templates can be used for dispatch');
-    }
-
     const data = await this.buildTemplateData(annualAssignment, annualDecision);
     const renderedAt = new Date();
-    const renderedSubject = this.renderTemplate(
-      templateVersion.subjectTemplate ?? 'Your Appraisal Outcome',
-      data,
+    const contentTemplate = this.resolveStaticContentTemplate(
+      annualDecision.appraisalOutcomeType,
+      input.contentKey,
     );
-    const renderedBodySnapshot = this.renderTemplate(templateVersion.bodyTemplate, data);
+    const renderedSubject = this.renderTemplate(contentTemplate.subjectTemplate, data);
+    const renderedBodySnapshot = this.renderTemplate(contentTemplate.bodyTemplate, data);
     const contentHash = this.hashRenderedContent({
-      templateVersionId: templateVersion._id.toString(),
+      contentVersion: contentTemplate.contentVersion,
       renderedSubject,
       renderedBodySnapshot,
       renderedAt,
@@ -289,8 +281,9 @@ export class PmsCommunicationService extends BaseService {
     return {
       annualAssignment,
       annualDecision,
-      template,
-      templateVersion,
+      contentKey: contentTemplate.contentKey,
+      contentVersion: contentTemplate.contentVersion,
+      channel: contentTemplate.channel,
       renderedSubject,
       renderedBodySnapshot,
       contentHash,
@@ -298,70 +291,64 @@ export class PmsCommunicationService extends BaseService {
     };
   }
 
-  private async resolveTemplate(
-    annualAssignment: IAnnualAssignment,
-    annualDecision: IAnnualDecision,
-  ): Promise<{ template: IPmsLetterTemplate; templateVersion: IPmsLetterTemplateVersion } | null> {
-    const cycle = await AnnualCycle.findById(annualAssignment.cycleId).lean();
-    const communicationRuleConfig = cycle?.communicationRuleConfig;
-    if (!communicationRuleConfig) {
-      throw new Error(
-        'This cycle does not have a communicationRuleConfig configured. ' +
-        'Please configure outcome-to-template mappings (combinedTemplateId, meritOnlyTemplateId, ' +
-        'gradeOnlyTemplateId, genericTemplateId) on the cycle before dispatching communications.',
-      );
-    }
-
-    const configuredTemplateId = this.resolveConfiguredTemplateId(
-      annualDecision.appraisalOutcomeType,
-      communicationRuleConfig,
-    );
-
-    if (!configuredTemplateId || !Types.ObjectId.isValid(configuredTemplateId)) {
-      throw new Error(
-        `No letter template configured for outcome type "${annualDecision.appraisalOutcomeType}" ` +
-        'on this cycle. Please set the appropriate template ID in the cycle communicationRuleConfig.',
-      );
-    }
-
-    return this.getTemplateAndVersionById(configuredTemplateId);
-  }
-
-  private async getTemplateAndVersionById(
-    id: string,
-  ): Promise<{ template: IPmsLetterTemplate; templateVersion: IPmsLetterTemplateVersion } | null> {
-    const version = await PmsLetterTemplateVersion.findById(id);
-    if (version) {
-      const template = await PmsLetterTemplate.findById(version.letterTemplateId);
-      return template ? { template, templateVersion: version } : null;
-    }
-
-    const template = await PmsLetterTemplate.findById(id);
-    if (!template?.currentVersionId) return null;
-
-    const templateVersion = await PmsLetterTemplateVersion.findById(template.currentVersionId);
-    return templateVersion ? { template, templateVersion } : null;
-  }
-
-  private resolveConfiguredTemplateId(
+  private resolveStaticContentTemplate(
     outcomeType: string | undefined,
-    config: import('../models/pms-annual-cycle.model').ICommunicationRuleConfig,
-  ): string | undefined {
+    overrideContentKey?: string,
+  ): StaticCommunicationTemplate {
+    const contentKey = overrideContentKey?.trim() || this.defaultContentKeyForOutcome(outcomeType);
+    const base: Pick<StaticCommunicationTemplate, 'contentVersion' | 'channel'> = {
+      contentVersion: 'STATIC_PMS_V1',
+      channel: 'EMAIL',
+    };
+
+    switch (contentKey) {
+      case 'BOTH':
+        return {
+          ...base,
+          contentKey,
+          subjectTemplate: 'Your Annual Appraisal Outcome',
+          bodyTemplate:
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nFinal grade: {{finalGrade}}\nMerit amount: {{meritAmount}}\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+        };
+      case 'MERIT_ONLY':
+        return {
+          ...base,
+          contentKey,
+          subjectTemplate: 'Your Annual Appraisal Outcome',
+          bodyTemplate:
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nMerit amount: {{meritAmount}}\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+        };
+      case 'GRADE_ONLY':
+        return {
+          ...base,
+          contentKey,
+          subjectTemplate: 'Your Annual Appraisal Outcome',
+          bodyTemplate:
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nFinal grade: {{finalGrade}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+        };
+      case 'NIL':
+      default:
+        return {
+          ...base,
+          contentKey: contentKey || 'NIL',
+          subjectTemplate: 'Your Annual Appraisal Outcome',
+          bodyTemplate:
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nOutcome: {{appraisalOutcomeType}}\n{{#if nilReason}}Reason: {{nilReason}}\n{{/if}}{{#if managementRemarks}}Management remarks: {{managementRemarks}}\n{{/if}}\nRegards,\nHR Team',
+        };
+    }
+  }
+
+  private defaultContentKeyForOutcome(outcomeType: string | undefined): string {
     switch (outcomeType) {
       case AppraisalOutcomeType.BOTH:
-        return config.combinedTemplateId;
       case AppraisalOutcomeType.MERIT_ONLY:
-        return config.meritOnlyTemplateId;
       case AppraisalOutcomeType.GRADE_ONLY:
-        return config.gradeOnlyTemplateId;
       case AppraisalOutcomeType.NIL:
-        return config.genericTemplateId;
+        return outcomeType;
       default:
-        return undefined;
+        return 'NIL';
     }
   }
-
-
 
   private async buildTemplateData(
     annualAssignment: IAnnualAssignment,
@@ -399,7 +386,7 @@ export class PmsCommunicationService extends BaseService {
   }
 
   private hashRenderedContent(input: {
-    templateVersionId: string;
+    contentVersion: string;
     renderedSubject: string;
     renderedBodySnapshot: string;
     renderedAt: Date;
@@ -407,7 +394,7 @@ export class PmsCommunicationService extends BaseService {
     return crypto
       .createHash('sha256')
       .update(JSON.stringify({
-        templateVersionId: input.templateVersionId,
+        contentVersion: input.contentVersion,
         renderedSubject: input.renderedSubject,
         renderedBodySnapshot: input.renderedBodySnapshot,
         renderedAt: input.renderedAt.toISOString(),

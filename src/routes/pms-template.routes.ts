@@ -3,7 +3,6 @@ import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
-  CreateLetterTemplateInput,
   CreateTemplateInput,
   CreateTemplateVersionInput,
   ResolveTemplateVersionInput,
@@ -199,17 +198,12 @@ export const pmsTemplateRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { versionId } = request.params as { versionId: string };
-        const { sections, annualScoringConfig, outcomeMappings } = request.body as {
+        const { sections, annualScoringConfig } = request.body as {
           sections: TemplateSection[];
           annualScoringConfig?: Record<string, unknown>;
-          outcomeMappings?: Array<{
-            outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
-            letterTemplateVersionId: string;
-          }>;
         };
         const version = await request.container!.pmsTemplateService.configureSections(versionId, sections, {
           annualScoringConfig,
-          outcomeMappings,
         });
         return reply.send(successResponse('PMS template sections configured successfully', version));
       } catch (error: unknown) {
@@ -298,173 +292,6 @@ export const pmsTemplateRoutes: RouteHandler = async (
         const { versionId } = request.params as { versionId: string };
         const version = await request.container!.pmsTemplateService.previewTemplate(versionId);
         return reply.send(successResponse('PMS template preview generated successfully', version));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.post(
-    '/letter-templates',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const letterTemplate = await request.container!.pmsTemplateService.createLetterTemplate(
-          request.body as CreateLetterTemplateInput,
-        );
-        return reply.status(201).send(successResponse('PMS letter template created successfully', letterTemplate));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.get(
-    '/letter-templates',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const templates = await request.container!.pmsTemplateService.listLetterTemplates(
-          request.query as Record<string, unknown>,
-        );
-        return reply.send(successResponse('PMS letter templates fetched successfully', templates));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.get(
-    '/letter-templates/:id',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params as { id: string };
-        const template = await request.container!.pmsTemplateService.getLetterTemplate(id);
-        return reply.send(successResponse('PMS letter template fetched successfully', template));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.get(
-    '/letter-templates/versions/:versionId',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { versionId } = request.params as { versionId: string };
-        const version = await request.container!.pmsTemplateService.getLetterTemplateVersion(versionId);
-        return reply.send(successResponse('PMS letter template version fetched successfully', version));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.post(
-    '/letter-templates/:id/preview',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params as { id: string };
-        const { data, annualAssignmentId } = request.body as {
-          data?: Record<string, unknown>;
-          annualAssignmentId?: string;
-        };
-        const preview = await request.container!.pmsTemplateService.previewLetterTemplate(
-          id,
-          data ?? {},
-          annualAssignmentId,
-        );
-        return reply.send(successResponse('PMS letter template preview generated successfully', preview));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.post(
-    '/letter-templates/:versionId/activate',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { versionId } = request.params as { versionId: string };
-        const letterTemplate = await request.container!.pmsTemplateService.activateLetterTemplate(versionId);
-        return reply.send(successResponse('PMS letter template activated successfully', letterTemplate));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.get(
-    '/letter-templates/:id/versions',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params as { id: string };
-        const versions = await request.container!.pmsTemplateService.listLetterTemplateVersions(id);
-        return reply.send(successResponse('PMS letter template versions fetched successfully', versions));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.post(
-    '/letter-templates/:id/versions',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params as { id: string };
-        const version = await request.container!.pmsTemplateService.createLetterTemplateVersion(id);
-        return reply.status(201).send(successResponse('PMS letter template version created successfully', version));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.put(
-    '/letter-templates/versions/:versionId',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { versionId } = request.params as { versionId: string };
-        const version = await request.container!.pmsTemplateService.updateLetterTemplateVersion(
-          versionId,
-          request.body as Record<string, unknown>,
-        );
-        return reply.send(successResponse('PMS letter template version updated successfully', version));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.post(
-    '/letter-templates/:versionId/deactivate',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { versionId } = request.params as { versionId: string };
-        const version = await request.container!.pmsTemplateService.deactivateLetterTemplate(versionId);
-        return reply.send(successResponse('PMS letter template deactivated successfully', version));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.delete(
-    '/letter-templates/versions/:versionId',
-    { onRequest: [authenticate], schema: { tags: ['PMS Template Management'] } },
-    async (request, reply) => {
-      try {
-        const { versionId } = request.params as { versionId: string };
-        await request.container!.pmsTemplateService.deleteLetterTemplateVersion(versionId);
-        return reply.send(successResponse('PMS letter template version deleted successfully', null));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

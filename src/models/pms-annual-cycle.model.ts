@@ -3,10 +3,6 @@ import { AnnualWorkflowState } from '../constants/pms.enums';
 import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constants/pms.enums';
 
 export interface ICommunicationRuleConfig {
-  combinedTemplateId?: string;
-  meritOnlyTemplateId?: string;
-  gradeOnlyTemplateId?: string;
-  genericTemplateId?: string;
   skipNilOutcome?: boolean;
   [key: string]: unknown;
 }

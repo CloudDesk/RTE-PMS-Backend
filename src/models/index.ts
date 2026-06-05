@@ -52,6 +52,5 @@ export * from './pms-notification-event.model';
 export * from './pms-sla-event.model';
 export * from './pms-template.model';
 export * from './pms-template-version.model';
-export * from './pms-letter-template.model';
 export * from './pms-sla-rule.model';
 export * from './pms-reminder-rule.model';

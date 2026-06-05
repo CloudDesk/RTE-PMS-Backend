@@ -1,11 +1,8 @@
 import { Types } from 'mongoose';
-import handlebars from 'handlebars';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
-  AnnualDecisionStatus,
-  AppraisalOutcomeType,
   PmsTemplateFieldType,
   normalizePmsRole,
   PmsTemplateSectionLevel,
@@ -17,26 +14,15 @@ import {
 } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
-import {
-  PmsLetterTemplate,
-  PmsLetterTemplateVersion,
-} from '../models/pms-letter-template.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
-import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
-import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
-import { User } from '../models/user.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
   IPmsTemplateVersion,
   ITemplateField,
   ITemplateSection,
 } from '../models/pms-template-version.model';
-import type {
-  IPmsLetterTemplate,
-  IPmsLetterTemplateVersion,
-} from '../models/pms-letter-template.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import type { AuditHistoryEntry } from './audit.service';
@@ -131,15 +117,6 @@ export interface TemplateListQuery {
   limit?: string | number;
 }
 
-export interface LetterTemplateListQuery {
-  status?: string;
-  search?: string;
-  templateId?: string;
-  templateVersionId?: string;
-  page?: string | number;
-  limit?: string | number;
-}
-
 export interface UpdateTemplateInput {
   code?: string;
   name?: string;
@@ -155,51 +132,10 @@ export interface CreateTemplateVersionInput {
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
-  outcomeMappings?: Array<{
-    outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
-    letterTemplateVersionId: string;
-  }>;
   effectiveFrom?: Date;
   effectiveTo?: Date;
   placeholders?: string[];
   conditionalBlocks?: string[];
-}
-
-export interface CreateLetterTemplateInput {
-  templateId: string;
-  versionId?: string;
-  templateVersionId?: string;
-  name: string;
-  code: string;
-  type?: string;
-  outcomeType?: string;
-  channel: string;
-  versionNo?: number;
-  versionNumber?: number;
-  subject?: string;
-  subjectTemplate?: string;
-  body?: string;
-  bodyTemplate?: string;
-  placeholders?: string[];
-  placeholderRules?: {
-    required?: string[];
-    conditional?: string[];
-  };
-  conditionalBlocks?: Array<string | { blockKey: string; condition: string }>;
-}
-
-export interface UpdateLetterTemplateVersionInput {
-  name?: string;
-  subject?: string;
-  subjectTemplate?: string;
-  body?: string;
-  bodyTemplate?: string;
-  placeholders?: string[];
-  placeholderRules?: {
-    required?: string[];
-    conditional?: string[];
-  };
-  conditionalBlocks?: Array<string | { blockKey: string; condition: string }>;
 }
 
 export class PmsTemplateService extends BaseService {
@@ -419,7 +355,6 @@ export class PmsTemplateService extends BaseService {
         themeConfig: version.themeConfig ?? {},
         scoringConfig: version.scoringConfig ?? {},
         annualScoringConfig: version.annualScoringConfig ?? {},
-        outcomeMappings: version.outcomeMappings ?? [],
         effectiveFrom: version.effectiveFrom,
         effectiveTo: version.effectiveTo,
         isLocked: false,
@@ -472,7 +407,6 @@ export class PmsTemplateService extends BaseService {
       themeConfig: input.themeConfig ?? latestVersion?.themeConfig ?? {},
       scoringConfig: input.scoringConfig ?? latestVersion?.scoringConfig ?? {},
       annualScoringConfig: input.annualScoringConfig ?? latestVersion?.annualScoringConfig ?? {},
-      outcomeMappings: input.outcomeMappings ?? latestVersion?.outcomeMappings ?? [],
       effectiveFrom: input.effectiveFrom,
       effectiveTo: input.effectiveTo,
       status: PmsTemplateStatus.DRAFT,
@@ -643,7 +577,6 @@ export class PmsTemplateService extends BaseService {
     sections: unknown[],
     metadata: {
       annualScoringConfig?: Record<string, unknown>;
-      outcomeMappings?: IPmsTemplateVersion['outcomeMappings'];
     } = {},
   ): Promise<IPmsTemplateVersion> {
     await this.assertAdmin('templateVersion.configureSections');
@@ -654,9 +587,6 @@ export class PmsTemplateService extends BaseService {
     version.sections = normalizedSections;
     if (metadata.annualScoringConfig !== undefined) {
       version.annualScoringConfig = metadata.annualScoringConfig;
-    }
-    if (metadata.outcomeMappings !== undefined) {
-      version.outcomeMappings = metadata.outcomeMappings;
     }
     version.updatedBy = this.actorIdObject();
     await version.save();
@@ -866,351 +796,6 @@ export class PmsTemplateService extends BaseService {
     };
   }
 
-  async createLetterTemplate(input: CreateLetterTemplateInput): Promise<{
-    letterTemplate: IPmsLetterTemplate;
-    letterTemplateVersion: IPmsLetterTemplateVersion;
-  }> {
-    await this.assertAdmin('letterTemplate.create');
-    const templateId = input.templateId;
-    const templateVersionId = input.templateVersionId ?? input.versionId;
-    if (!templateId || !templateVersionId) {
-      throw new Error('templateId and templateVersionId are required for letter templates');
-    }
-    const templateVersion = await this.getScopedTemplateVersion(templateId, templateVersionId);
-    const subjectTemplate = input.subjectTemplate ?? input.subject ?? '';
-    const bodyTemplate = input.bodyTemplate ?? input.body;
-    const versionNo =
-      input.versionNo ??
-      input.versionNumber ??
-      ((await PmsLetterTemplateVersion.countDocuments({
-        templateVersionId: new Types.ObjectId(templateVersionId),
-        isDeleted: false,
-      })) + 1);
-    const outcomeType = input.outcomeType ?? input.type;
-    const placeholderRules = input.placeholderRules ?? {
-      required: input.placeholders ?? [],
-      conditional: [],
-    };
-    const conditionalBlocks = this.normalizeConditionalBlocks(input.conditionalBlocks ?? []);
-
-    if (!bodyTemplate) {
-      throw new Error('Letter template body is required');
-    }
-
-    if (!outcomeType) {
-      throw new Error('Letter template outcomeType is required');
-    }
-
-    this.validateLetterTemplate(
-      subjectTemplate,
-      bodyTemplate,
-      placeholderRules.required ?? [],
-      conditionalBlocks.map((block) => block.blockKey),
-    );
-
-    const code = this.normalizeCode(input.code);
-    const existingTemplate = await PmsLetterTemplate.findOne({ code, isDeleted: false });
-    if (existingTemplate) {
-      throw new Error(`Letter template with code '${code}' already exists.`);
-    }
-
-    const letterTemplate = await PmsLetterTemplate.create({
-      code,
-      name: input.name,
-      outcomeType,
-      channel: input.channel,
-      templateId: templateVersion.templateId,
-      templateVersionId: templateVersion._id,
-      status: PmsTemplateStatus.DRAFT,
-      createdBy: this.actorIdObject(),
-    });
-
-    const letterTemplateVersion = await PmsLetterTemplateVersion.create({
-      letterTemplateId: letterTemplate._id,
-      templateVersionId: templateVersion._id,
-      versionNo,
-      status: PmsTemplateStatus.DRAFT,
-      subjectTemplate,
-      bodyTemplate,
-      placeholderRules,
-      conditionalBlocks,
-      createdBy: this.actorIdObject(),
-    });
-
-    await this.audit('PMS_LETTER_TEMPLATE_CREATED', 'PMS_LETTER_TEMPLATE', letterTemplate._id.toString(), undefined, {
-      letterTemplate: letterTemplate.toObject(),
-      letterTemplateVersion: letterTemplateVersion.toObject(),
-    });
-    return { letterTemplate, letterTemplateVersion };
-  }
-
-  async updateLetterTemplateVersion(
-    letterTemplateVersionId: string,
-    input: UpdateLetterTemplateVersionInput,
-  ): Promise<IPmsLetterTemplateVersion> {
-    await this.assertAdmin('letterTemplate.update');
-    const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
-    const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
-    const subjectTemplate = input.subjectTemplate ?? input.subject ?? letterTemplateVersion.subjectTemplate ?? '';
-    const bodyTemplate = input.bodyTemplate ?? input.body ?? letterTemplateVersion.bodyTemplate;
-    const placeholderRules = input.placeholderRules ?? {
-      required: input.placeholders ?? letterTemplateVersion.placeholderRules.required ?? [],
-      conditional: letterTemplateVersion.placeholderRules.conditional ?? [],
-    };
-    const conditionalBlocks = this.normalizeConditionalBlocks(
-      input.conditionalBlocks ?? letterTemplateVersion.conditionalBlocks,
-    );
-
-    this.validateLetterTemplate(
-      subjectTemplate,
-      bodyTemplate,
-      placeholderRules.required ?? [],
-      conditionalBlocks.map((block) => block.blockKey),
-    );
-
-    if (input.name?.trim()) {
-      parentTemplate.name = input.name.trim();
-      parentTemplate.updatedBy = this.actorIdObject();
-      parentTemplate.version += 1;
-      await parentTemplate.save();
-    }
-
-    letterTemplateVersion.subjectTemplate = subjectTemplate;
-    letterTemplateVersion.bodyTemplate = bodyTemplate;
-    letterTemplateVersion.placeholderRules = placeholderRules;
-    letterTemplateVersion.conditionalBlocks = conditionalBlocks;
-    letterTemplateVersion.updatedBy = this.actorIdObject();
-    letterTemplateVersion.version += 1;
-    await letterTemplateVersion.save();
-
-    await this.audit(
-      'PMS_LETTER_TEMPLATE_UPDATED',
-      'PMS_LETTER_TEMPLATE_VERSION',
-      letterTemplateVersion._id.toString(),
-      undefined,
-      letterTemplateVersion.toObject(),
-    );
-    return letterTemplateVersion;
-  }
-
-  async createLetterTemplateVersion(letterTemplateId: string): Promise<IPmsLetterTemplateVersion> {
-    await this.assertAdmin('letterTemplateVersion.create');
-    const parentTemplate = await this.getLetterTemplate(letterTemplateId);
-    const latestVersion =
-      (parentTemplate.currentVersionId
-        ? await PmsLetterTemplateVersion.findById(parentTemplate.currentVersionId)
-        : null) ??
-      (await PmsLetterTemplateVersion.findOne({
-        letterTemplateId: parentTemplate._id,
-        isDeleted: false,
-      }).sort({ versionNo: -1, createdAt: -1 }));
-    if (!latestVersion) {
-      throw new Error('Source letter template version not found');
-    }
-    const sourceVersion = latestVersion;
-    const nextVersionNo = (sourceVersion.versionNo ?? 0) + 1;
-
-    const newVersion = await PmsLetterTemplateVersion.create({
-      letterTemplateId: parentTemplate._id,
-      templateVersionId: sourceVersion.templateVersionId,
-      versionNo: nextVersionNo,
-      status: PmsTemplateStatus.DRAFT,
-      subjectTemplate: sourceVersion.subjectTemplate,
-      bodyTemplate: sourceVersion.bodyTemplate,
-      placeholderRules: sourceVersion.placeholderRules ?? {},
-      conditionalBlocks: sourceVersion.conditionalBlocks ?? [],
-      createdBy: this.actorIdObject(),
-    });
-
-    await this.audit(
-      'PMS_LETTER_TEMPLATE_VERSION_CREATED',
-      'PMS_LETTER_TEMPLATE_VERSION',
-      newVersion._id.toString(),
-      { sourceVersionId: sourceVersion._id.toString() },
-      newVersion.toObject(),
-    );
-    return newVersion;
-  }
-
-  async previewLetterTemplate(
-    letterTemplateVersionId: string,
-    data: Record<string, unknown>,
-    annualAssignmentId?: string,
-  ): Promise<{ subject?: string; body: string }> {
-    const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
-    const resolvedData = annualAssignmentId
-      ? await this.buildLetterTemplatePreviewData(annualAssignmentId)
-      : {
-          employeeName: 'Preview Employee',
-          finalGrade: 'A',
-          meritAmount: '10%',
-          cycleName: 'Preview Cycle',
-          managerName: 'Preview Manager',
-          ...data,
-        };
-    return {
-      subject: letterTemplate.subjectTemplate
-        ? this.renderTemplate(letterTemplate.subjectTemplate, resolvedData)
-        : undefined,
-      body: this.renderTemplate(letterTemplate.bodyTemplate, resolvedData),
-    };
-  }
-
-  async activateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    await this.assertAdmin('letterTemplate.activate');
-    const letterTemplate = await this.getLetterTemplateVersion(letterTemplateVersionId);
-    const parentTemplate = await this.getLetterTemplate(letterTemplate.letterTemplateId.toString());
-    await this.getScopedTemplateVersion(
-      parentTemplate.templateId.toString(),
-      parentTemplate.templateVersionId.toString(),
-    );
-    this.validateLetterTemplate(
-      letterTemplate.subjectTemplate ?? '',
-      letterTemplate.bodyTemplate,
-      letterTemplate.placeholderRules.required ?? [],
-      letterTemplate.conditionalBlocks.map((block) => block.blockKey),
-    );
-
-    // Prevent multiple active letter templates for the same outcome type under the same template version
-    const existingActiveParent = await PmsLetterTemplate.findOne({
-      templateVersionId: parentTemplate.templateVersionId,
-      outcomeType: parentTemplate.outcomeType,
-      status: PmsTemplateStatus.ACTIVE,
-      _id: { $ne: parentTemplate._id },
-      isDeleted: false,
-    });
-
-    if (existingActiveParent) {
-      throw new Error(
-        `An active letter template already exists for outcome type '${parentTemplate.outcomeType}'. Please deactivate it before activating this one.`
-      );
-    }
-
-    await PmsLetterTemplateVersion.updateMany(
-      {
-        letterTemplateId: letterTemplate.letterTemplateId,
-        _id: { $ne: letterTemplate._id },
-        status: PmsTemplateStatus.ACTIVE,
-      },
-      {
-        $set: {
-          status: PmsTemplateStatus.INACTIVE,
-          deactivatedAt: new Date(),
-          updatedBy: this.actorIdObject(),
-        },
-      },
-    );
-
-    letterTemplate.status = PmsTemplateStatus.ACTIVE;
-    letterTemplate.isLocked = true;
-    letterTemplate.lockedAt = letterTemplate.lockedAt ?? new Date();
-    letterTemplate.activatedAt = new Date();
-    letterTemplate.updatedBy = this.actorIdObject();
-    await letterTemplate.save();
-
-    await PmsLetterTemplate.findByIdAndUpdate(letterTemplate.letterTemplateId, {
-      $set: {
-        status: PmsTemplateStatus.ACTIVE,
-        currentVersionId: letterTemplate._id,
-        updatedBy: this.actorIdObject(),
-      },
-    });
-
-    await this.audit('PMS_LETTER_TEMPLATE_ACTIVATED', 'PMS_LETTER_TEMPLATE_VERSION', letterTemplateVersionId, undefined, { status: letterTemplate.status });
-    return letterTemplate;
-  }
-
-  async deactivateLetterTemplate(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    await this.assertAdmin('letterTemplate.deactivate');
-    const letterTemplateVersion = await this.getLetterTemplateVersion(letterTemplateVersionId);
-    const parentTemplate = await this.getLetterTemplate(letterTemplateVersion.letterTemplateId.toString());
-
-    letterTemplateVersion.status = PmsTemplateStatus.INACTIVE;
-    letterTemplateVersion.deactivatedAt = new Date();
-    letterTemplateVersion.updatedBy = this.actorIdObject();
-    letterTemplateVersion.version += 1;
-    await letterTemplateVersion.save();
-
-    if (parentTemplate.currentVersionId?.toString() === letterTemplateVersion._id.toString()) {
-      parentTemplate.status = PmsTemplateStatus.INACTIVE;
-      parentTemplate.currentVersionId = undefined;
-      parentTemplate.updatedBy = this.actorIdObject();
-      parentTemplate.version += 1;
-      await parentTemplate.save();
-    }
-
-    await this.audit(
-      'PMS_LETTER_TEMPLATE_DEACTIVATED',
-      'PMS_LETTER_TEMPLATE_VERSION',
-      letterTemplateVersion._id.toString(),
-      undefined,
-      { status: letterTemplateVersion.status },
-    );
-    return letterTemplateVersion;
-  }
-
-  async listLetterTemplates(query: LetterTemplateListQuery = {}): Promise<{
-    items: IPmsLetterTemplate[];
-    total: number;
-    page: number;
-    limit: number;
-  }> {
-    await this.assertAdmin('letterTemplate.list');
-    const page = this.normalizePositiveInteger(query.page, 1);
-    const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
-    const filter: Record<string, unknown> = { isDeleted: false };
-
-    if (query.status?.trim()) {
-      filter.status = query.status.trim();
-    }
-    if (query.templateId?.trim()) {
-      filter.templateId = new Types.ObjectId(query.templateId.trim());
-    }
-    if (query.templateVersionId?.trim()) {
-      filter.templateVersionId = new Types.ObjectId(query.templateVersionId.trim());
-    }
-    if (query.search?.trim()) {
-      const search = query.search.trim();
-      filter.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { code: { $regex: search, $options: 'i' } },
-      ];
-    }
-
-    const [items, total] = await Promise.all([
-      PmsLetterTemplate.find(filter)
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit),
-      PmsLetterTemplate.countDocuments(filter),
-    ]);
-    return { items, total, page, limit };
-  }
-
-  async getLetterTemplate(letterTemplateId: string): Promise<IPmsLetterTemplate> {
-    await this.assertAdmin('letterTemplate.get');
-    const template = await PmsLetterTemplate.findOne({
-      _id: letterTemplateId,
-      isDeleted: false,
-    });
-    if (!template) {
-      throw new Error('Letter template not found');
-    }
-    return template;
-  }
-
-  async listLetterTemplateVersions(letterTemplateId: string): Promise<IPmsLetterTemplateVersion[]> {
-    await this.assertAdmin('letterTemplateVersion.list');
-    const exists = await PmsLetterTemplate.exists({ _id: letterTemplateId, isDeleted: false });
-    if (!exists) {
-      throw new Error('Letter template not found');
-    }
-    return PmsLetterTemplateVersion.find({
-      letterTemplateId: new Types.ObjectId(letterTemplateId),
-      isDeleted: false,
-    }).sort({ versionNo: -1, createdAt: -1 });
-  }
-
   private async ensureTemplateExists(templateId: string): Promise<void> {
     const exists = await PmsTemplate.exists({ _id: templateId });
     if (!exists) {
@@ -1232,139 +817,6 @@ export class PmsTemplateService extends BaseService {
     }
 
     return version;
-  }
-
-  async getLetterTemplateVersion(letterTemplateVersionId: string): Promise<IPmsLetterTemplateVersion> {
-    await this.assertAdmin('letterTemplateVersion.get');
-    const letterTemplate = await PmsLetterTemplateVersion.findById(letterTemplateVersionId);
-    if (!letterTemplate) {
-      throw new Error('Letter template version not found');
-    }
-    return letterTemplate;
-  }
-
-  async deleteLetterTemplateVersion(letterTemplateVersionId: string): Promise<void> {
-    await this.assertAdmin('letterTemplate.delete');
-    const letterTemplateVersion = await this.getEditableLetterTemplateVersion(letterTemplateVersionId);
-    const siblingCount = await PmsLetterTemplateVersion.countDocuments({
-      letterTemplateId: letterTemplateVersion.letterTemplateId,
-      isDeleted: false,
-      _id: { $ne: letterTemplateVersion._id },
-    });
-
-    letterTemplateVersion.isDeleted = true;
-    letterTemplateVersion.updatedBy = this.actorIdObject();
-    letterTemplateVersion.version += 1;
-    await letterTemplateVersion.save();
-
-    if (siblingCount === 0) {
-      await PmsLetterTemplate.findByIdAndUpdate(letterTemplateVersion.letterTemplateId, {
-        $set: {
-          isDeleted: true,
-          updatedBy: this.actorIdObject(),
-        },
-        $inc: { version: 1 },
-      });
-    }
-
-    await this.audit(
-      'PMS_LETTER_TEMPLATE_DELETED',
-      'PMS_LETTER_TEMPLATE_VERSION',
-      letterTemplateVersion._id.toString(),
-      letterTemplateVersion.toObject(),
-      undefined,
-    );
-  }
-
-  private normalizeConditionalBlocks(
-    blocks: Array<string | { blockKey: string; condition: string }>,
-  ): Array<{ blockKey: string; condition: string }> {
-    return blocks.map((block) => {
-      if (typeof block === 'string') {
-        return { blockKey: block, condition: block };
-      }
-
-      return block;
-    });
-  }
-
-  private async getScopedTemplateVersion(
-    templateId: string,
-    templateVersionId: string,
-  ): Promise<IPmsTemplateVersion> {
-    const version = await PmsTemplateVersion.findOne({
-      _id: templateVersionId,
-      templateId: new Types.ObjectId(templateId),
-      isDeleted: false,
-    });
-    if (!version) {
-      throw new Error('Linked PMS template version not found');
-    }
-    return version;
-  }
-
-  private async getEditableLetterTemplateVersion(
-    letterTemplateVersionId: string,
-  ): Promise<IPmsLetterTemplateVersion> {
-    const version = await this.getLetterTemplateVersion(letterTemplateVersionId);
-    if (version.isLocked || version.status === PmsTemplateStatus.ACTIVE) {
-      throw new Error('Active or locked letter template version cannot be modified');
-    }
-    return version;
-  }
-
-  private async buildLetterTemplatePreviewData(
-    annualAssignmentId: string,
-  ): Promise<Record<string, unknown>> {
-    const annualAssignment = await AnnualAssignment.findById(annualAssignmentId);
-    if (!annualAssignment) {
-      throw new Error('Annual assignment not found');
-    }
-
-    const annualDecision = await AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id });
-    if (!annualDecision) {
-      throw new Error('Annual decision not found');
-    }
-    if (annualDecision.decisionStatus !== AnnualDecisionStatus.VISIBILITY_ENABLED) {
-      throw new Error('Preview requires visibility-enabled annual decision data');
-    }
-
-    const visibility = await VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id });
-    const hasAnyVisibility =
-      visibility &&
-      [
-        visibility.employeeReviewVisible,
-        visibility.employeeGradeVisible,
-        visibility.employeeMeritVisible,
-        visibility.managerGradeVisible,
-        visibility.managerMeritVisible,
-      ].some(Boolean);
-    if (!hasAnyVisibility) {
-      throw new Error('Preview requires visible appraisal communication data');
-    }
-
-    const [employee, manager, cycle] = await Promise.all([
-      User.findById(annualAssignment.employeeId).lean(),
-      annualAssignment.assignedManagerId ? User.findById(annualAssignment.assignedManagerId).lean() : null,
-      AnnualCycle.findById(annualAssignment.cycleId).lean(),
-    ]);
-    const gradeDetails = annualDecision.gradeDetails ?? {};
-    const meritDetails = annualDecision.meritDetails ?? {};
-
-    return {
-      employeeName: annualAssignment.employeeSnapshot?.name ?? employee?.name ?? '',
-      employeeCode: annualAssignment.employeeSnapshot?.employeeCode ?? employee?.employeeCode ?? '',
-      cycleName: cycle?.name ?? '',
-      managerName: annualAssignment.managerSnapshot?.name ?? manager?.name ?? '',
-      appraisalOutcomeType: annualDecision.appraisalOutcomeType,
-      finalGrade: gradeDetails.gradeValue ?? gradeDetails.finalGrade ?? '',
-      meritAmount: meritDetails.meritAmount ?? '',
-      meritPercentage: meritDetails.meritPercentage ?? '',
-      finalScore: annualDecision.finalScore ?? '',
-      finalRating: annualDecision.finalRating ?? '',
-      nilReason: annualDecision.nilReason ?? '',
-      managementRemarks: annualDecision.managementRemarks ?? '',
-    };
   }
 
   private normalizeSections(
@@ -2588,64 +2040,6 @@ export class PmsTemplateService extends BaseService {
       }
     }
 
-    // Outcome mappings check
-    const outcomeTypes = new Set(Object.values(AppraisalOutcomeType));
-    for (const mapping of version.outcomeMappings ?? []) {
-      if (!outcomeTypes.has(mapping.outcomeType)) {
-        errors.push(`Invalid outcome mapping type: ${mapping.outcomeType}`);
-        continue;
-      }
-      if (!mapping.letterTemplateVersionId?.trim()) {
-        errors.push(`Outcome mapping ${mapping.outcomeType} requires a letterTemplateVersionId`);
-        continue;
-      }
-
-      const mappedLetterVersion = await PmsLetterTemplateVersion.findOne({
-        _id: mapping.letterTemplateVersionId.trim(),
-        templateVersionId: version._id,
-        isDeleted: false,
-      }).lean();
-      if (!mappedLetterVersion) {
-        errors.push(
-          `Outcome mapping ${mapping.outcomeType} references a missing or out-of-scope letter template version`,
-        );
-        continue;
-      }
-
-      const mappedLetterTemplate = await PmsLetterTemplate.findOne({
-        _id: mappedLetterVersion.letterTemplateId,
-        templateId: version.templateId,
-        templateVersionId: version._id,
-        isDeleted: false,
-      }).lean();
-      if (!mappedLetterTemplate) {
-        errors.push(
-          `Outcome mapping ${mapping.outcomeType} references a letter template outside this PMS template version`,
-        );
-        continue;
-      }
-
-      const letterStatusReady =
-        mappedLetterVersion.status === PmsTemplateStatus.ACTIVE || mappedLetterVersion.isLocked;
-      if (!letterStatusReady) {
-        errors.push(
-          `Outcome mapping ${mapping.outcomeType} must use an active or locked letter template version`,
-        );
-      }
-
-      const allowedOutcomeTypes = new Set([
-        mapping.outcomeType,
-        'GENERIC_APPRAISAL',
-        ...(mapping.outcomeType === 'MERIT_ONLY' ? ['MERIT'] : []),
-        ...(mapping.outcomeType === 'GRADE_ONLY' ? ['GRADE'] : []),
-      ]);
-      if (!allowedOutcomeTypes.has(mappedLetterTemplate.outcomeType)) {
-        errors.push(
-          `Outcome mapping ${mapping.outcomeType} points to incompatible letter template outcome ${mappedLetterTemplate.outcomeType}`,
-        );
-      }
-    }
-
     // Check errors count
     if (errors.length > 0) {
       throw new Error(`Activation failed with validation errors:\n${errors.map((e, idx) => `${idx + 1}. ${e}`).join('\n')}`);
@@ -2781,55 +2175,6 @@ export class PmsTemplateService extends BaseService {
         throw new Error(errorMessage);
       }
       seen.add(key);
-    }
-  }
-
-  private validateLetterTemplate(
-    subject: string,
-    body: string,
-    placeholders: string[],
-    conditionalBlocks: string[],
-  ): void {
-    const content = `${subject ?? ''}\n${body ?? ''}`;
-    const declaredPlaceholders = new Set(placeholders);
-    const usedPlaceholders = [...content.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g)].map(
-      (match) => match[1],
-    );
-    const usedConditionalBlocks = [...content.matchAll(/\{\{#if\s+([a-zA-Z][a-zA-Z0-9_]*)\s*\}\}/g)].map(
-      (match) => match[1],
-    );
-
-    for (const placeholder of usedPlaceholders) {
-      if (!declaredPlaceholders.has(placeholder)) {
-        throw new Error(`Missing required placeholder declaration: ${placeholder}`);
-      }
-    }
-
-    for (const placeholder of declaredPlaceholders) {
-      if (!usedPlaceholders.includes(placeholder)) {
-        throw new Error(`Declared placeholder is not used in subject or body: ${placeholder}`);
-      }
-    }
-
-    for (const block of conditionalBlocks) {
-      if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(block)) {
-        throw new Error(`Invalid conditional block name: ${block}`);
-      }
-      if (!usedConditionalBlocks.includes(block)) {
-        throw new Error(`Declared conditional block is not used in subject or body: ${block}`);
-      }
-    }
-
-    for (const block of usedConditionalBlocks) {
-      if (!conditionalBlocks.includes(block)) {
-        throw new Error(`Missing conditional block declaration: ${block}`);
-      }
-    }
-
-    const openConditionalCount = (content.match(/\{\{#if\s+[a-zA-Z][a-zA-Z0-9_]*\s*\}\}/g) || []).length;
-    const closeConditionalCount = (content.match(/\{\{\/if\}\}/g) || []).length;
-    if (openConditionalCount !== closeConditionalCount) {
-      throw new Error('Conditional blocks are not balanced. Check your {{#if}} and {{/if}} tags.');
     }
   }
 
@@ -3007,16 +2352,6 @@ export class PmsTemplateService extends BaseService {
 
     if (!access.allowed) {
       throw new Error(access.message ?? 'Access denied');
-    }
-  }
-
-  private renderTemplate(template: string, data: Record<string, unknown>): string {
-    try {
-      const compiledTemplate = handlebars.compile(template);
-      return compiledTemplate(data);
-    } catch (err) {
-      console.error('Error rendering template with handlebars:', err);
-      return template;
     }
   }
 
