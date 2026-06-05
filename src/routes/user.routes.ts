@@ -270,6 +270,12 @@ export const userRoutes: RouteHandler = async (
             role: { type: 'string', description: 'The role to find managers for (e.g. HR_PARTNER)' }
           }
         },
+        querystring: {
+          type: 'object',
+          properties: {
+            departmentId: { type: 'string', description: 'Optional department filter for manager lookup' }
+          }
+        },
         response: {
           200: {
             type: 'object',
@@ -296,7 +302,8 @@ export const userRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { role } = request.params as { role: string };
-        const potentialManagers = await request.container!.userService.getPotentialManagers(role);
+        const { departmentId } = request.query as { departmentId?: string };
+        const potentialManagers = await request.container!.userService.getPotentialManagers(role, departmentId);
 
         return reply.send({
           success: true,
@@ -1794,10 +1801,53 @@ export const userRoutes: RouteHandler = async (
           });
         }
 
-        // Get all active users with visa details
+        const {
+          search,
+          role,
+          departmentId,
+          active,
+          status,
+          country,
+          licenseType,
+          portalAccess,
+          sort,
+          sortOrder,
+          limit,
+        } = request.query as {
+          search?: string;
+          role?: string;
+          departmentId?: string;
+          active?: string | boolean;
+          status?: string;
+          country?: string;
+          licenseType?: string;
+          portalAccess?: string | boolean;
+          sort?: string;
+          sortOrder?: 'asc' | 'desc';
+          limit?: string | number;
+        };
+        const parseBoolean = (value: string | boolean | undefined): boolean | undefined => {
+          if (typeof value === 'boolean') return value;
+          if (typeof value !== 'string') return undefined;
+          if (value.toLowerCase() === 'true') return true;
+          if (value.toLowerCase() === 'false') return false;
+          return undefined;
+        };
+
+        // Get users matching the same filters used by the employee list.
         const users = await request.container!.userService.getUsers({
-          status: 'active',
-          limit: 10000 // Get all users
+          search,
+          role,
+          departmentId,
+          active: parseBoolean(active),
+          status: status && status !== 'all' ? status : undefined,
+          country,
+          licenseType,
+          portalAccess: parseBoolean(portalAccess),
+          sort: sort || 'name',
+          sortOrder: sortOrder === 'desc' ? 'desc' : 'asc',
+          page: 1,
+          limit: Number(limit) || 10000 // Get all matching users
         }, authenticatedUser);
 
         // Create Excel workbook

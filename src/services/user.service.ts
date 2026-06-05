@@ -232,59 +232,96 @@ export class UserService extends BaseService {
     this.context = context;
   }
 
-  async getPotentialManagers(role: string): Promise<any[]> {
+  private exactCaseInsensitiveRegex(value: string): RegExp {
+    return new RegExp(`^${value.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+  }
+
+  async getPotentialManagers(role: string, departmentId?: string): Promise<any[]> {
     try {
-      // 1. Find the priority of the given role (case-insensitive)
-      const rolePermission = await PmsRolePermission.findOne({ 
-        role: { $regex: new RegExp(`^${role}$`, 'i') } 
+      const normalizedRole = role.trim().toLowerCase();
+      const normalizedDepartmentId = departmentId?.trim();
+      const roleAliases =
+        normalizedRole === 'staff' || normalizedRole === 'employee'
+          ? ['staff', 'employee']
+          : [normalizedRole];
+      const roleRegexesForLookup = roleAliases.map((roleAlias) => {
+        return this.exactCaseInsensitiveRegex(roleAlias);
       });
+      const departmentFilter = normalizedDepartmentId
+        ? {
+          departmentId: {
+            $regex: this.exactCaseInsensitiveRegex(normalizedDepartmentId),
+          },
+        }
+        : {};
+
+      // 1. Find the priority of the given role (case-insensitive).
+      // PmsRolePermission can have multiple rows per role/resource/action, so
+      // avoid findOne() here. Use the lowest numeric priority consistently.
+      const rolePermissions = await PmsRolePermission.find({
+        role: { $in: roleRegexesForLookup },
+      })
+        .select('role priority')
+        .lean();
+
+      const targetPriorities = rolePermissions
+        .map((permission) => Number(permission.priority))
+        .filter(Number.isFinite);
       
-      // If role not found or has no priority, the user requested to immediately fallback to Admin
-      if (!rolePermission || rolePermission.priority == null) {
-        return await User.find({
-          role: { $regex: new RegExp(`^admin$`, 'i') },
-          active: true
-        }).select('_id name email role profilePicture');
+      const fetchActiveAdmins = () => User.find({
+        role: { $regex: this.exactCaseInsensitiveRegex('admin') },
+        active: true,
+      }).select('_id name email role profilePicture');
+
+      // If role not found or has no priority, immediately fallback to active Admins.
+      if (targetPriorities.length === 0) {
+        return await fetchActiveAdmins();
       }
 
-      const targetPriority = rolePermission.priority;
+      const targetPriority = Math.min(...targetPriorities);
 
       // 2. Find all roles with a priority STRICTLY LESS THAN the target role's priority
       // (lower number = higher authority)
       const higherAuthorityRoles = await PmsRolePermission.find({
         priority: { $lt: targetPriority }
-      }).select('role');
+      })
+        .select('role priority')
+        .lean();
 
       // The roles in PmsRolePermission are often uppercase (e.g. "ADMIN"), 
       // but User.role is usually lowercase (e.g. "admin"). 
-      let allowedRoleNames = higherAuthorityRoles.map(r => r.role.toLowerCase());
+      let allowedRoleNames = [
+        ...new Set(
+          higherAuthorityRoles
+            .map(r => r.role?.trim().toLowerCase())
+            .filter((managerRole): managerRole is string => Boolean(managerRole) && managerRole !== normalizedRole)
+        )
+      ];
 
       // Edge case: If the role is Priority 1 (e.g. Admin), no one is < 1. 
       // We should allow Admins to manage Admins.
       if (allowedRoleNames.length === 0 && targetPriority === 1) {
-        allowedRoleNames = [role.toLowerCase()];
+        allowedRoleNames = [normalizedRole];
       }
 
       // 3. Query the User collection for active users with those roles
       if (allowedRoleNames.length === 0) {
-        return [];
+        return await fetchActiveAdmins();
       }
 
       // Make the query case-insensitive just to be completely safe
-      const roleRegexes = allowedRoleNames.map(r => new RegExp(`^${r}$`, 'i'));
+      const roleRegexes = allowedRoleNames.map(r => this.exactCaseInsensitiveRegex(r));
 
       let potentialManagers = await User.find({
         role: { $in: roleRegexes },
-        active: true
+        active: true,
+        ...departmentFilter,
       }).select('_id name email role profilePicture');
 
-      // Fallback: If no managers were found based on priority (e.g. no users have those roles yet),
-      // default to fetching users with the 'admin' role so the dropdown isn't empty.
+      // Fallback: If no same-department manager was found, show active admins.
+      // Do not apply departmentFilter here; a new department may not have managers/admins yet.
       if (potentialManagers.length === 0) {
-        potentialManagers = await User.find({
-          role: { $regex: new RegExp(`^admin$`, 'i') },
-          active: true
-        }).select('_id name email role profilePicture');
+        potentialManagers = await fetchActiveAdmins();
       }
 
       return potentialManagers;
@@ -436,7 +473,7 @@ export class UserService extends BaseService {
     }
 
     if (role) {
-      filter.role = role;
+      filter.role = { $regex: this.exactCaseInsensitiveRegex(role) };
     }
 
     // Handle active filter - direct boolean (takes precedence over status)
@@ -448,7 +485,7 @@ export class UserService extends BaseService {
     }
 
     if (departmentId) {
-      filter.departmentId = departmentId;
+      filter.departmentId = { $regex: this.exactCaseInsensitiveRegex(departmentId) };
     }
 
     if (country) {
@@ -541,11 +578,11 @@ export class UserService extends BaseService {
     }
 
     if (role) {
-      filter.role = role;
+      filter.role = { $regex: this.exactCaseInsensitiveRegex(role) };
     }
 
     if (departmentId) {
-      filter.departmentId = departmentId;
+      filter.departmentId = { $regex: this.exactCaseInsensitiveRegex(departmentId) };
     }
 
     if (reportingToId) {
@@ -642,12 +679,12 @@ export class UserService extends BaseService {
 
     // 3. Department filter
     if (departmentId) {
-      andConditions.push({ departmentId });
+      andConditions.push({ departmentId: { $regex: this.exactCaseInsensitiveRegex(departmentId) } });
     }
 
     // 4. Role filter
     if (role) {
-      andConditions.push({ role });
+      andConditions.push({ role: { $regex: this.exactCaseInsensitiveRegex(role) } });
     }
 
     // 5. Country filter
@@ -835,7 +872,7 @@ export class UserService extends BaseService {
   }
 
   async findByRole(role: string) {
-    return User.find({ role: role });
+    return User.find({ role: { $regex: this.exactCaseInsensitiveRegex(role) } });
   }
 
 
@@ -852,8 +889,8 @@ export class UserService extends BaseService {
     console.log('findByRoleAndDepartment', query);
     // Build filter
     const filter: any = { active };
-    if (role) filter.role = role;
-    if (departmentId) filter.departmentId = departmentId;
+    if (role) filter.role = { $regex: this.exactCaseInsensitiveRegex(role) };
+    if (departmentId) filter.departmentId = { $regex: this.exactCaseInsensitiveRegex(departmentId) };
 
     // Execute queries in parallel
     const users = await User.find(filter)
@@ -983,7 +1020,7 @@ export class UserService extends BaseService {
     }
 
     if (role) {
-      filter.role = role;
+      filter.role = { $regex: this.exactCaseInsensitiveRegex(role) };
     }
 
     if (status) {
@@ -991,7 +1028,7 @@ export class UserService extends BaseService {
     }
 
     if (departmentId) {
-      filter.departmentId = departmentId;
+      filter.departmentId = { $regex: this.exactCaseInsensitiveRegex(departmentId) };
     }
 
     // Build sort object
