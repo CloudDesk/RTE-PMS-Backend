@@ -1,52 +1,71 @@
-1. Template Builder
-HR/Admin creates PMS templates and Letter templates.
+Note:
+Letter Template Builder is removed from scope. Appraisal communication content is managed in the backend using static/hardcoded content rules based on the final appraisal outcome.
 
-2. Annual Cycle Setup
+System / Master Setup Flow
+
+1. Auth / Access Control
+System authenticates users and enforces role-based access across PMS screens and actions.
+
+2. Employee Management
+HR/Admin creates employees, assigns roles, and maps managers before PMS cycle operations begin.
+
+3. Template Builder
+HR/Admin creates PMS templates.
+
+4. Annual Cycle Setup
 HR/Admin creates Annual Parent Cycle with Q1–Q4 child quarters.
 
-3. Employee Assignment
-HR/Admin assigns employees and managers.
+5. Employee Assignment
+HR/Admin assigns employees and managers to the PMS cycle.
 System creates:
 - Annual Assignment
 - Quarter Assignments
 
-4. Objective Creation
+PMS Workflow Flow
+
+6. Assignment Workspace
+HR/Admin/Manager accesses a consolidated assignment workspace to view assignment details, history, delegation, progress, and related actions in one place.
+
+7. Objective Creation
 Employee creates quarterly objectives.
 Manager-created objectives auto-approve.
 
-5. Objective Approval
+8. Objective Approval
 Manager approves or returns objectives for revision.
 
-6. Quarterly Manager Review
+9. Quarterly Manager Review
 Manager submits quarterly evaluation.
 
-7. Quarter Finalization
+10. Quarter Finalization
 HR/Admin or System finalizes quarter.
 
-8. Annual Appraisal Decision
+11. Annual Appraisal Decision
 After all applicable quarters finalized/closed:
 Management/HR/Admin creates annual decision.
 
-9. Outcome Derivation
+12. Outcome Derivation
 System derives:
 - BOTH
 - MERIT_ONLY
 - GRADE_ONLY
 - NIL
 
-10. Decision Freeze & Annual Finalization
+13. Decision Freeze & Annual Finalization
 Decision frozen before publish.
 
-11. Visibility Enablement
+14. Visibility Enablement
 HR/Admin/Management enables visibility.
 
-12. Communication Ready
+15. Communication Ready
 System prepares communication dispatch.
-(After annual appraisal finalization and visibility enablement, the system automatically prepares employee appraisal communication by selecting the correct approved letter template based on the final appraisal outcome (BOTH, MERIT_ONLY, GRADE_ONLY, or NIL) and generates a preview for HR/Admin review before sending.)
+(After annual appraisal finalization and visibility enablement, the system automatically prepares employee appraisal communication by selecting the correct backend-managed static content based on the final appraisal outcome (BOTH, MERIT_ONLY, GRADE_ONLY, or NIL) and generates a preview for HR/Admin review before sending.)
 
-13. Communication Dispatch
+16. Communication Dispatch
 HR/Admin previews and sends appraisal communication.
-(HR/Admin reviews and sends the finalized appraisal communication to employees, and the system permanently stores the sent content, template version, delivery status, timestamp, and audit history without allowing future modification of dispatched records.)
+(HR/Admin reviews and sends the finalized appraisal communication to employees, and the system permanently stores the sent content, content version/reference, delivery status, timestamp, and audit history without allowing future modification of dispatched records.)
 
-14. History & Audit Preservation
-All actions, snapshots, corrections, and template versions remain immutable and auditable.
+17. Director History View
+Director can view employee PMS history, audit trail, and finalized records according to role-based access permissions.
+
+18. History & Audit Preservation
+All actions, snapshots, corrections, and communication content references remain immutable and auditable.
