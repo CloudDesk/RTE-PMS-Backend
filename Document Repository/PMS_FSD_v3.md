@@ -902,7 +902,7 @@ The system shall support independent:
 
 ### FR-AFR-03: Outcome Derivation
 
-The system shall derive appraisalOutcomeType as:
+The system shall internally derive appraisalOutcomeType as:
 
 * BOTH
 * MERIT_ONLY
@@ -1366,7 +1366,7 @@ Only valid workflow transitions shall be permitted.
 | Quarterly Review | Approved Objectives |
 | Annual Appraisal Decision | Finalized or Closed quarter content |
 | Visibility Governance | Annual Finalization |
-| Communication Dispatch | Visibility Enablement + Outcome Content Mapping |
+| Communication Dispatch | Visibility Enablement + Backend-Managed Static Communication Rules |
 | Dynamic Access Engine | Role Configuration |
 | Audit Governance | All transactional modules |
 | SLA Engine | Workflow milestones |
