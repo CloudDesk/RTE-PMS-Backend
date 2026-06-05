@@ -10,13 +10,14 @@ System authenticates users and enforces role-based access across PMS screens and
 HR/Admin creates employees, assigns roles, and maps managers before PMS cycle operations begin.
 
 3. Template Builder
-HR/Admin creates PMS templates.
+HR/Admin creates PMS templates containing objective sections, manager review sections, rating/scoring fields, visibility rules, permissions, and version governance.
 
 4. Annual Cycle Setup
 HR/Admin creates Annual Parent Cycle with Q1–Q4 child quarters.
+System validates quarter dates, non-overlap rules, milestone windows, appraisal windows, and quarter-level window boundaries.
 
 5. Employee Assignment
-HR/Admin assigns employees and managers to the PMS cycle.
+HR/Admin assigns employees, managers, annual cycle, and locked template version to the PMS cycle.
 System creates:
 - Annual Assignment
 - Quarter Assignments
@@ -27,11 +28,15 @@ PMS Workflow Flow
 HR/Admin/Manager accesses a consolidated assignment workspace to view assignment details, history, delegation, progress, and related actions in one place.
 
 7. Objective Creation
-Employee creates quarterly objectives.
+Employee or Manager creates quarterly objectives from the assigned template.
 Manager-created objectives auto-approve.
+Optional evidence/attachments may be uploaded against objectives.
 
 8. Objective Approval
-Manager approves or returns objectives for revision.
+Employee submits objective for manager review.
+Manager approves or returns objectives for revision with mandatory comments.
+If returned, employee revises and resubmits.
+Approved objectives become read-only unless reopened by HR/Admin.
 
 9. Quarterly Manager Review
 Manager submits quarterly evaluation.
@@ -41,7 +46,7 @@ HR/Admin or System finalizes quarter.
 
 11. Annual Appraisal Decision
 After all applicable quarters finalized/closed:
-Management/HR/Admin creates annual decision.
+Management creates annual decision.
 
 12. Outcome Derivation
 System derives:
@@ -65,7 +70,7 @@ HR/Admin previews and sends appraisal communication.
 (HR/Admin reviews and sends the finalized appraisal communication to employees, and the system permanently stores the sent content, content version/reference, delivery status, timestamp, and audit history without allowing future modification of dispatched records.)
 
 17. Director History View
-Director can view employee PMS history, audit trail, and finalized records according to role-based access permissions.
+Director can view hierarchy-scoped employee PMS history, evidence, audit trail, and finalized records according to read-only role-based visibility permissions.
 
 18. History & Audit Preservation
 All actions, snapshots, corrections, and communication content references remain immutable and auditable.
