@@ -151,7 +151,7 @@ export class PmsTemplateService extends BaseService {
   }> {
     await this.assertAdmin('template.list');
     const page = this.normalizePositiveInteger(query.page, 1);
-    const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
+    const limit = Math.min(this.normalizePositiveInteger(query.limit, 10), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
 
     if (query.status?.trim()) {
