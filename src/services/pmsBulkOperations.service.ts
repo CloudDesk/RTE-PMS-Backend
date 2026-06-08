@@ -4,8 +4,11 @@ import { RequestContext } from '../types/context';
 import {
   AnnualAssignment,
   AnnualDecision,
+  AnnualCycle,
   CommunicationDispatch,
   QuarterAssignment,
+  PmsTemplate,
+  PmsTemplateVersion,
   User,
   BulkOperationJob,
   QuarterCycle,
@@ -24,6 +27,7 @@ import { PmsCommunicationService } from './pmsCommunication.service';
 export interface BulkAssignInputItem {
   employeeId: string;
   managerId?: string;
+  templateVersionId?: string;
   assignmentReason?: string;
   applicableQuarters?: ('Q1' | 'Q2' | 'Q3' | 'Q4')[];
 }
@@ -98,6 +102,11 @@ export class PmsBulkOperationsService extends BaseService {
       throw new Error('assignments are required');
     }
 
+    const cycle = await AnnualCycle.findById(cycleId).lean();
+    if (!cycle) {
+      throw new Error('Annual cycle not found');
+    }
+
     const results: any[] = [];
     const seenEmployeeIds = new Set<string>();
 
@@ -133,9 +142,17 @@ export class PmsBulkOperationsService extends BaseService {
             employeeId,
             status: 'FAILED',
             message: 'Employee not found in systems',
+            suggestedTemplateVersionId: '',
+            suggestedTemplateName: '',
+            selectedTemplateVersionId: '',
+            selectedTemplateName: '',
+            suggestionReason: 'No suggestion available because employee was not found.',
+            warnings: ['EMPLOYEE_NOT_FOUND'],
           });
           continue;
         }
+
+        const suggestion = await this.resolveAssignmentTemplateSuggestion(cycle, employee as any);
 
         // Check if already assigned
         const existing = await AnnualAssignment.findOne({
@@ -149,6 +166,7 @@ export class PmsBulkOperationsService extends BaseService {
             employeeId,
             status: 'SKIPPED',
             message: 'Employee is already assigned to this cycle',
+            ...suggestion,
           });
           continue;
         }
@@ -160,6 +178,7 @@ export class PmsBulkOperationsService extends BaseService {
             employeeId,
             status: 'EXCEPTION',
             message: 'Missing manager - will queue to Administrative Exception Queue',
+            ...suggestion,
           });
           continue;
         }
@@ -171,6 +190,7 @@ export class PmsBulkOperationsService extends BaseService {
             employeeId,
             status: 'FAILED',
             message: 'Resolved manager not found in systems',
+            ...suggestion,
           });
           continue;
         }
@@ -180,12 +200,19 @@ export class PmsBulkOperationsService extends BaseService {
           status: 'ELIGIBLE',
           message: 'Ready for assignment launch',
           resolvedManagerId: resolvedManagerId.toString(),
+          ...suggestion,
         });
       } catch (err: any) {
         results.push({
           employeeId,
           status: 'FAILED',
           message: err?.message || 'Unexpected validation failure',
+          suggestedTemplateVersionId: '',
+          suggestedTemplateName: '',
+          selectedTemplateVersionId: '',
+          selectedTemplateName: '',
+          suggestionReason: 'No suggestion available because preview validation failed.',
+          warnings: ['PREVIEW_VALIDATION_FAILED'],
         });
       }
     }
@@ -198,6 +225,199 @@ export class PmsBulkOperationsService extends BaseService {
       failedCount: results.filter(r => r.status === 'FAILED').length,
       records: results,
     };
+  }
+
+  private async resolveAssignmentTemplateSuggestion(cycle: any, employee: any): Promise<{
+    suggestedTemplateVersionId: string;
+    suggestedTemplateName: string;
+    selectedTemplateVersionId: string;
+    selectedTemplateName: string;
+    suggestionReason: string;
+    warnings: string[];
+  }> {
+    const config = (cycle.assignmentTemplateSuggestionConfig ?? {}) as {
+      rules?: Array<Record<string, unknown>>;
+    };
+    const rules = Array.isArray(config.rules) ? config.rules : [];
+    const cycleDefaultTemplateVersionId = cycle.templateVersionId?.toString() ?? '';
+
+    const resolverContext = {
+      departmentId: this.normalizeMatchValue(employee.departmentId),
+      departmentName: this.normalizeMatchValue(employee.department ?? employee.departmentName),
+      designation: this.normalizeMatchValue(employee.designation),
+      specificRole: this.normalizeMatchValue(employee.specificRole),
+      role: this.normalizeMatchValue(employee.role),
+      grade: this.normalizeMatchValue(employee.grade),
+      location: this.normalizeMatchValue(employee.location),
+      managerId: this.normalizeMatchValue(employee.managerId),
+      managerName: this.normalizeMatchValue(employee.managerName),
+    };
+
+    const exactRule = rules.find((rule) => this.isExactTemplateSuggestionMatch(rule, resolverContext));
+    if (exactRule) {
+      return this.buildTemplateSuggestionFromRule(exactRule, 'Exact mapping matched employee profile.');
+    }
+
+    const scopedRule = rules.find((rule) => this.isDepartmentRoleTemplateSuggestionMatch(rule, resolverContext));
+    if (scopedRule) {
+      return this.buildTemplateSuggestionFromRule(
+        scopedRule,
+        'Department with designation/specific role mapping matched employee profile.',
+      );
+    }
+
+    const departmentRule = rules.find((rule) => this.isDepartmentOnlyTemplateSuggestionMatch(rule, resolverContext));
+    if (departmentRule) {
+      return this.buildTemplateSuggestionFromRule(departmentRule, 'Department mapping matched employee profile.');
+    }
+
+    if (cycleDefaultTemplateVersionId) {
+      const cycleDefaultTemplateName = await this.resolveTemplateVersionDisplayName(cycleDefaultTemplateVersionId);
+      return {
+        suggestedTemplateVersionId: cycleDefaultTemplateVersionId,
+        suggestedTemplateName: cycleDefaultTemplateName,
+        selectedTemplateVersionId: cycleDefaultTemplateVersionId,
+        selectedTemplateName: cycleDefaultTemplateName,
+        suggestionReason: 'No template mapping matched. Falling back to cycle default template.',
+        warnings: ['NO_MAPPING_MATCHED'],
+      };
+    }
+
+    return {
+      suggestedTemplateVersionId: '',
+      suggestedTemplateName: '',
+      selectedTemplateVersionId: '',
+      selectedTemplateName: '',
+      suggestionReason: 'No template mapping matched and cycle default template is unavailable.',
+      warnings: ['NO_MAPPING_FOUND', 'MANUAL_TEMPLATE_SELECTION_REQUIRED'],
+    };
+  }
+
+  private normalizeMatchValue(value: unknown): string {
+    return String(value ?? '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+  }
+
+  private ruleValueMatches(ruleValue: unknown, candidateValue: string): boolean {
+    const normalizedRuleValue = this.normalizeMatchValue(ruleValue);
+    if (!normalizedRuleValue) {
+      return true;
+    }
+    return normalizedRuleValue === candidateValue;
+  }
+
+  private hasRuleValue(rule: Record<string, unknown>, key: string): boolean {
+    return this.normalizeMatchValue(rule[key]) !== '';
+  }
+
+  private isExactTemplateSuggestionMatch(
+    rule: Record<string, unknown>,
+    context: Record<string, string>,
+  ): boolean {
+    const exactKeys = ['departmentId', 'departmentName', 'designation', 'specificRole', 'role', 'grade', 'location', 'managerId', 'managerName'];
+    const hasAnyExactKey = exactKeys.some((key) => this.hasRuleValue(rule, key));
+    if (!hasAnyExactKey) {
+      return false;
+    }
+    return exactKeys.every((key) => this.ruleValueMatches(rule[key], context[key] ?? ''));
+  }
+
+  private isDepartmentRoleTemplateSuggestionMatch(
+    rule: Record<string, unknown>,
+    context: Record<string, string>,
+  ): boolean {
+    const departmentMatched =
+      this.hasRuleValue(rule, 'departmentId') || this.hasRuleValue(rule, 'departmentName');
+    const roleMatched =
+      this.hasRuleValue(rule, 'designation') || this.hasRuleValue(rule, 'specificRole');
+    if (!departmentMatched || !roleMatched) {
+      return false;
+    }
+
+    return (
+      this.ruleValueMatches(rule.departmentId, context.departmentId) &&
+      this.ruleValueMatches(rule.departmentName, context.departmentName) &&
+      this.ruleValueMatches(rule.designation, context.designation) &&
+      this.ruleValueMatches(rule.specificRole, context.specificRole)
+    );
+  }
+
+  private isDepartmentOnlyTemplateSuggestionMatch(
+    rule: Record<string, unknown>,
+    context: Record<string, string>,
+  ): boolean {
+    const hasDepartmentOnly =
+      this.hasRuleValue(rule, 'departmentId') || this.hasRuleValue(rule, 'departmentName');
+    const hasRoleScope =
+      this.hasRuleValue(rule, 'designation') ||
+      this.hasRuleValue(rule, 'specificRole') ||
+      this.hasRuleValue(rule, 'role') ||
+      this.hasRuleValue(rule, 'grade') ||
+      this.hasRuleValue(rule, 'location') ||
+      this.hasRuleValue(rule, 'managerId') ||
+      this.hasRuleValue(rule, 'managerName');
+    if (!hasDepartmentOnly || hasRoleScope) {
+      return false;
+    }
+
+    return (
+      this.ruleValueMatches(rule.departmentId, context.departmentId) &&
+      this.ruleValueMatches(rule.departmentName, context.departmentName)
+    );
+  }
+
+  private async buildTemplateSuggestionFromRule(
+    rule: Record<string, unknown>,
+    suggestionReason: string,
+  ): Promise<{
+    suggestedTemplateVersionId: string;
+    suggestedTemplateName: string;
+    selectedTemplateVersionId: string;
+    selectedTemplateName: string;
+    suggestionReason: string;
+    warnings: string[];
+  }> {
+    const templateVersionId = String(rule.templateVersionId ?? '').trim();
+    const templateName =
+      String(rule.templateName ?? '').trim() ||
+      await this.resolveTemplateVersionDisplayName(templateVersionId);
+
+    if (!templateVersionId) {
+      return {
+        suggestedTemplateVersionId: '',
+        suggestedTemplateName: '',
+        selectedTemplateVersionId: '',
+        selectedTemplateName: '',
+        suggestionReason: `${suggestionReason} Mapping is incomplete because templateVersionId is missing.`,
+        warnings: ['INVALID_TEMPLATE_MAPPING', 'MANUAL_TEMPLATE_SELECTION_REQUIRED'],
+      };
+    }
+
+    return {
+      suggestedTemplateVersionId: templateVersionId,
+      suggestedTemplateName: templateName,
+      selectedTemplateVersionId: templateVersionId,
+      selectedTemplateName: templateName,
+      suggestionReason,
+      warnings: [],
+    };
+  }
+
+  private async resolveTemplateVersionDisplayName(templateVersionId: string): Promise<string> {
+    if (!Types.ObjectId.isValid(templateVersionId)) {
+      return '';
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId).lean();
+    if (!templateVersion) {
+      return '';
+    }
+
+    const template = await PmsTemplate.findById(templateVersion.templateId).select('name').lean();
+    const templateName = template?.name ?? 'PMS Template';
+    return `${templateName} v${templateVersion.versionNo}`;
   }
 
   /**
@@ -225,7 +445,7 @@ export class PmsBulkOperationsService extends BaseService {
         const seenEmployeeIds = new Set<string>();
 
     for (const item of assignments) {
-      const { employeeId, managerId, assignmentReason, applicableQuarters } = item as any;
+      const { employeeId, managerId, templateVersionId, assignmentReason, applicableQuarters } = item as any;
 
       if (!employeeId) {
         results.push({
@@ -274,6 +494,7 @@ export class PmsBulkOperationsService extends BaseService {
         const assignRes = await assignmentService.assignEmployee(cycleId, {
           employeeId,
           managerId: resolvedManagerId.toString(),
+          templateVersionId,
           applicableQuarters,
           assignmentReason: assignmentReason || 'BULK_LAUNCH',
         });

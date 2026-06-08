@@ -1000,7 +1000,20 @@ export class ObjectiveService extends BaseService {
       let nextObjectiveNo = maxObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 0;
 
       for (const predefinedObjective of objectiveConfig.predefinedObjectives) {
-        if (!predefinedObjective.key || existingKeys.has(predefinedObjective.key)) {
+        if (
+          !this.matchesPredefinedObjectiveQuarter(
+            quarterAssignment.quarterCode,
+            predefinedObjective.applicableQuarters,
+          )
+        ) {
+          continue;
+        }
+
+        if (!predefinedObjective.key || !predefinedObjective.title?.trim()) {
+          continue;
+        }
+
+        if (existingKeys.has(predefinedObjective.key)) {
           continue;
         }
 
@@ -1011,13 +1024,15 @@ export class ObjectiveService extends BaseService {
           quarterAssignmentId: quarterAssignment._id,
           annualAssignmentId: quarterAssignment.annualAssignmentId,
           cycleId: quarterAssignment.cycleId,
+          templateVersionId: annualAssignment?.templateVersionId,
           quarterCode: quarterAssignment.quarterCode,
           employeeId: quarterAssignment.employeeId,
           assignedManagerId: quarterAssignment.assignedManagerId,
           objectiveNo: nextObjectiveNo,
           source: ObjectiveSource.PREDEFINED,
           templateObjectiveKey: predefinedObjective.key,
-          title: predefinedObjective.title,
+          isPredefined: true,
+          title: predefinedObjective.title.trim(),
           description: predefinedObjective.description,
           targetMetric: predefinedObjective.kpi,
           targetValue: predefinedObjective.targetValue,
@@ -1157,17 +1172,77 @@ export class ObjectiveService extends BaseService {
         ? objectiveSection.objectiveBuckets
         : this.defaultObjectiveBuckets(),
       predefinedObjectives: (objectiveSection.objectiveConfig.predefinedObjectives ?? []).map(
-        (objective: ITemplatePredefinedObjective) => ({
-          key: objective.objectiveKey,
-          title: objective.title,
+        (objective: ITemplatePredefinedObjective, index: number) => ({
+          key: this.buildDeterministicTemplateObjectiveKey(
+            objectiveSection.sectionKey,
+            objective,
+            index,
+          ),
+          title: objective.title?.trim(),
           description: objective.description,
           kpi: objective.kpi,
           targetValue: objective.targetValue,
           weightage: objective.weightage,
           successCriteria: objective.successCriteria,
+          applicableQuarters: this.normalizeScopedQuarters(
+            objective.quarterScope ?? objective.applicableQuarters ?? objective.repeatFor,
+          ),
         }),
       ),
     };
+  }
+
+  private buildDeterministicTemplateObjectiveKey(
+    sectionKey: string,
+    objective: ITemplatePredefinedObjective,
+    index: number,
+  ): string {
+    const explicitKey = objective.objectiveKey?.trim();
+    if (explicitKey) {
+      return explicitKey;
+    }
+
+    const titleSlug = String(objective.title ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    if (!titleSlug) {
+      return '';
+    }
+
+    return `${sectionKey}__${titleSlug}__${index + 1}`;
+  }
+
+  private normalizeScopedQuarters(
+    quarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>,
+  ): Array<'Q1' | 'Q2' | 'Q3' | 'Q4'> | undefined {
+    if (!quarters?.length) {
+      return undefined;
+    }
+
+    const validQuarters: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'> = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const normalized = quarters.filter((quarter): quarter is 'Q1' | 'Q2' | 'Q3' | 'Q4' =>
+      validQuarters.includes(quarter as 'Q1' | 'Q2' | 'Q3' | 'Q4'),
+    );
+
+    return Array.from(new Set(normalized));
+  }
+
+  private matchesPredefinedObjectiveQuarter(
+    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>,
+  ): boolean {
+    if (typeof applicableQuarters === 'undefined') {
+      return true;
+    }
+
+    if (applicableQuarters.length === 0) {
+      return false;
+    }
+
+    return applicableQuarters.includes(quarterCode);
   }
 
   private mapObjectiveRecord(

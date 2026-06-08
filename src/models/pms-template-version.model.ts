@@ -31,6 +31,9 @@ export interface ITemplatePredefinedObjective {
   targetValue?: string;
   weightage?: number;
   successCriteria?: string;
+  quarterScope?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
 }
 
 export interface ITemplateObjectiveConfig {
@@ -167,6 +170,18 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
     targetValue: { type: String, trim: true },
     weightage: { type: Number, min: 0, max: 100 },
     successCriteria: { type: String, trim: true },
+    quarterScope: {
+      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      default: [],
+    },
+    applicableQuarters: {
+      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      default: [],
+    },
+    repeatFor: {
+      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      default: [],
+    },
   },
   { _id: false },
 );

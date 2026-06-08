@@ -7,6 +7,25 @@ export interface ICommunicationRuleConfig {
   [key: string]: unknown;
 }
 
+export interface IAssignmentTemplateSuggestionRule {
+  templateVersionId: Types.ObjectId | string;
+  templateName?: string;
+  departmentId?: string;
+  departmentName?: string;
+  designation?: string;
+  specificRole?: string;
+  role?: string;
+  grade?: string;
+  location?: string;
+  managerId?: string;
+  managerName?: string;
+}
+
+export interface IAssignmentTemplateSuggestionConfig {
+  rules?: IAssignmentTemplateSuggestionRule[];
+  [key: string]: unknown;
+}
+
 export interface IAnnualCycle extends Document {
   name: string;
   code: string;
@@ -18,6 +37,7 @@ export interface IAnnualCycle extends Document {
   quarterCycleIds: Types.ObjectId[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
+  assignmentTemplateSuggestionConfig?: IAssignmentTemplateSuggestionConfig;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -67,6 +87,7 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
     },
     appraisalWindowConfig: { type: Schema.Types.Mixed, default: {} },
     communicationRuleConfig: { type: Schema.Types.Mixed, default: {} },
+    assignmentTemplateSuggestionConfig: { type: Schema.Types.Mixed, default: {} },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },

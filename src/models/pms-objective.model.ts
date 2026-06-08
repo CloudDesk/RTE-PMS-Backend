@@ -17,12 +17,14 @@ export interface IObjective extends Document {
   quarterAssignmentId: Types.ObjectId;
   annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
+  templateVersionId?: Types.ObjectId;
   quarterCode?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
   objectiveNo?: number;
   source: ObjectiveSourceType;
   templateObjectiveKey?: string;
+  isPredefined?: boolean;
   title: string;
   description?: string;
   targetMetric?: string;
@@ -77,6 +79,11 @@ const objectiveSchema = new Schema<IObjective>(
       ref: 'AnnualCycle',
       index: true,
     },
+    templateVersionId: {
+      type: Schema.Types.ObjectId,
+      ref: 'PmsTemplateVersion',
+      index: true,
+    },
     quarterCode: {
       type: String,
       enum: ['Q1', 'Q2', 'Q3', 'Q4'],
@@ -103,6 +110,11 @@ const objectiveSchema = new Schema<IObjective>(
     templateObjectiveKey: {
       type: String,
       trim: true,
+      index: true,
+    },
+    isPredefined: {
+      type: Boolean,
+      default: false,
       index: true,
     },
     title: {
@@ -170,5 +182,6 @@ objectiveSchema.index({ employeeId: 1, cycleId: 1 });
 objectiveSchema.index({ assignedManagerId: 1, status: 1 });
 objectiveSchema.index({ status: 1 });
 objectiveSchema.index({ quarterAssignmentId: 1, templateObjectiveKey: 1 });
+objectiveSchema.index({ quarterAssignmentId: 1, templateObjectiveKey: 1, isDeleted: 1 });
 
 export const Objective = mongoose.model<IObjective>('Objective', objectiveSchema);
