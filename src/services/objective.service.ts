@@ -118,6 +118,7 @@ type ObjectiveConfig = {
     targetValue?: string;
     weightage?: number;
     successCriteria?: string;
+    applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
   }>;
   objectiveBuckets: IObjectiveBucket[];
 };
