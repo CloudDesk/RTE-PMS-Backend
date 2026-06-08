@@ -31,6 +31,9 @@ export interface ITemplatePredefinedObjective {
   targetValue?: string;
   weightage?: number;
   successCriteria?: string;
+  quarterScope?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
 }
 
 export interface ITemplateObjectiveConfig {
@@ -167,6 +170,18 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
     targetValue: { type: String, trim: true },
     weightage: { type: Number, min: 0, max: 100 },
     successCriteria: { type: String, trim: true },
+    quarterScope: {
+      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      default: [],
+    },
+    applicableQuarters: {
+      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      default: [],
+    },
+    repeatFor: {
+      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      default: [],
+    },
   },
   { _id: false },
 );
@@ -218,10 +233,6 @@ export interface IPmsTemplateVersion extends Document {
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
-  outcomeMappings?: Array<{
-    outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
-    letterTemplateVersionId: string;
-  }>;
   effectiveFrom?: Date;
   effectiveTo?: Date;
   isLocked: boolean;
@@ -474,20 +485,6 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
     themeConfig: { type: Schema.Types.Mixed, default: {} },
     scoringConfig: { type: Schema.Types.Mixed, default: {} },
     annualScoringConfig: { type: Schema.Types.Mixed, default: {} },
-    outcomeMappings: {
-      type: [
-        {
-          outcomeType: {
-            type: String,
-            enum: ['BOTH', 'MERIT_ONLY', 'GRADE_ONLY', 'NIL'],
-            required: true,
-          },
-          letterTemplateVersionId: { type: String, required: true },
-          _id: false,
-        },
-      ],
-      default: [],
-    },
     effectiveFrom: Date,
     effectiveTo: Date,
     isLocked: { type: Boolean, default: false, index: true },

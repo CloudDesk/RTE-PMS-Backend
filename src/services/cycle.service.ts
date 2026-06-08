@@ -116,17 +116,6 @@ export interface CycleListResult {
   limit: number;
 }
 
-export interface CycleCommunicationRuleOption {
-  id: string;
-  name: string;
-  templateVersionId: string;
-  mappings: Array<{
-    outcomeType: 'BOTH' | 'MERIT_ONLY' | 'GRADE_ONLY' | 'NIL';
-    letterTemplateId: string;
-    letterTemplateName: string;
-  }>;
-}
-
 export interface CancelCycleInput {
   reason: string;
 }
@@ -232,50 +221,6 @@ export class CycleService extends BaseService {
     const annualCycle = await this.getCycleForAction(cycleId);
     await this.assertCycleReadAccess(annualCycle);
     return auditService.getEntityHistory('ANNUAL_CYCLE', annualCycle._id.toString());
-  }
-
-  async listCommunicationRules(): Promise<CycleCommunicationRuleOption[]> {
-    await this.assertAdmin('cycle.communication.read');
-
-    const versions = await PmsTemplateVersion.find({
-      status: PmsTemplateStatus.ACTIVE,
-      isDeleted: false,
-      outcomeMappings: { $exists: true, $ne: [] },
-    }).sort({ activatedAt: -1, createdAt: -1 });
-
-    const templateIds = Array.from(
-      new Set(versions.map((version) => version.templateId.toString())),
-    );
-    const templates = await PmsTemplate.find({
-      _id: { $in: templateIds },
-      isDeleted: false,
-    }).select('name code');
-    const templateById = new Map(
-      templates.map((template) => [
-        template._id.toString(),
-        { name: template.name, code: template.code },
-      ]),
-    );
-
-    return versions.map((version) => {
-      const template = templateById.get(version.templateId.toString());
-      const templateName = template?.name ?? 'PMS Template';
-      const templateCode = template?.code ? ` · ${template.code}` : '';
-
-      return {
-        id: version._id.toString(),
-        name: `${templateName} v${version.versionNo}${templateCode}`,
-        templateVersionId: version._id.toString(),
-        mappings: (version.outcomeMappings ?? []).map((mapping) => ({
-          outcomeType: mapping.outcomeType,
-          letterTemplateId: mapping.letterTemplateVersionId,
-          letterTemplateName: this.resolveLetterTemplateName(
-            version,
-            mapping.letterTemplateVersionId,
-          ),
-        })),
-      };
-    });
   }
 
   async createCycle(input: CreateCycleInput): Promise<CreateCycleResult> {
@@ -1351,24 +1296,6 @@ export class CycleService extends BaseService {
         }
       }
     }
-  }
-
-  private resolveLetterTemplateName(
-    version: { get?: (path: string) => unknown },
-    letterTemplateVersionId: string,
-  ): string {
-    const letterTemplates = version.get?.('letterTemplates') as
-      | Array<{
-          id?: string;
-          _id?: Types.ObjectId;
-          name?: string;
-          outcomeType?: string;
-        }>
-      | undefined;
-    const match = letterTemplates?.find((template) =>
-      [template.id, template._id?.toString()].includes(letterTemplateVersionId),
-    );
-    return match?.name ?? `Letter template ${letterTemplateVersionId}`;
   }
 
   private async assertCycleCanBeCancelled(cycle: IAnnualCycle): Promise<void> {

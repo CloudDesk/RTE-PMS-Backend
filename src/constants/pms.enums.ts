@@ -198,25 +198,6 @@ export const SemanticRole = {
 
 export type SemanticRole = (typeof SemanticRole)[keyof typeof SemanticRole];
 
-export const LetterTemplateType = {
-  MERIT: 'MERIT',
-  GRADE: 'GRADE',
-  BOTH: 'BOTH',
-  NIL: 'NIL',
-} as const;
-
-export type LetterTemplateType =
-  (typeof LetterTemplateType)[keyof typeof LetterTemplateType];
-
-export const LetterTemplateChannel = {
-  EMAIL: 'EMAIL',
-  PDF: 'PDF',
-  DOCUMENT: 'DOCUMENT',
-} as const;
-
-export type LetterTemplateChannel =
-  (typeof LetterTemplateChannel)[keyof typeof LetterTemplateChannel];
-
 export const WorkflowEntityType = {
   QUARTER_ASSIGNMENT: 'QUARTER_ASSIGNMENT',
   ANNUAL_CYCLE: 'ANNUAL_CYCLE',

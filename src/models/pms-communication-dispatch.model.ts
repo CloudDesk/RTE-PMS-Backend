@@ -7,8 +7,8 @@ export interface ICommunicationDispatch extends Document {
   cycleId: Types.ObjectId;
   employeeId: Types.ObjectId;
   appraisalOutcomeType: AppraisalOutcomeTypeType;
-  templateId: Types.ObjectId;
-  templateVersionId: Types.ObjectId;
+  contentKey?: string;
+  contentVersion?: string;
   channel: string;
   dispatchStatus: string;
   renderedSubject: string;
@@ -54,16 +54,8 @@ const communicationDispatchSchema = new Schema<ICommunicationDispatch>(
       enum: Object.values(AppraisalOutcomeType),
       index: true,
     },
-    templateId: {
-      type: Schema.Types.ObjectId,
-      required: true,
-      ref: 'PmsLetterTemplate',
-    },
-    templateVersionId: {
-      type: Schema.Types.ObjectId,
-      required: true,
-      ref: 'PmsLetterTemplateVersion',
-    },
+    contentKey: { type: String, trim: true },
+    contentVersion: { type: String, trim: true },
     channel: { type: String, required: true, default: 'EMAIL' },
     dispatchStatus: { type: String, required: true, default: 'RENDERED', index: true },
     renderedSubject: { type: String, required: true },

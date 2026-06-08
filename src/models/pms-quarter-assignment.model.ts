@@ -8,6 +8,7 @@ export interface IQuarterAssignment extends Document {
   cycleQuarterId?: Types.ObjectId;
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
+  templateVersionId?: Types.ObjectId;
   quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
   quarterState: QuarterWorkflowStateType;
   previousQuarterState?: QuarterWorkflowStateType;
@@ -55,6 +56,12 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
       required: true,
       index: true,
       ref: 'User',
+    },
+    templateVersionId: {
+      type: Schema.Types.ObjectId,
+      required: false,
+      index: true,
+      ref: 'PmsTemplateVersion',
     },
     quarterCode: {
       type: String,

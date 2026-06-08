@@ -24,6 +24,7 @@ import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { Reassignment } from '../models/pms-reassignment.model';
 import { Objective } from '../models/pms-objective.model';
+import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { User } from '../models/user.model';
@@ -34,6 +35,7 @@ import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
+import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type {
   ITemplatePredefinedObjective,
@@ -45,6 +47,7 @@ type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
 export interface AssignEmployeeInput {
   employeeId: string;
   managerId?: string;
+  templateVersionId?: string;
   applicableQuarters?: QuarterCode[];
   assignmentReason?: string;
 }
@@ -251,6 +254,10 @@ export class AssignmentService extends BaseService {
 
     const employeeObjectId = this.toObjectId(input.employeeId, 'employeeId');
     const managerObjectId = this.toObjectId(input.managerId ?? '', 'managerId');
+    const selectedTemplateVersionId = await this.resolveSelectedTemplateVersionId(
+      input.templateVersionId,
+      annualCycle,
+    );
     const applicableQuarters = this.normalizeApplicableQuarters(input.applicableQuarters);
     const { employeeSnapshot, managerSnapshot, orgSnapshot } = await this.buildAssignmentSnapshots(
       employeeObjectId,
@@ -271,7 +278,7 @@ export class AssignmentService extends BaseService {
       employeeId: employeeObjectId,
       assignedManagerId: managerObjectId,
       cycleId: annualCycle._id,
-      templateVersionId: annualCycle.templateVersionId,
+      templateVersionId: selectedTemplateVersionId,
       annualState: AnnualWorkflowState.DRAFT,
       finalDecisionStatus: AnnualDecisionStatus.DRAFT,
       applicableQuarters,
@@ -296,6 +303,7 @@ export class AssignmentService extends BaseService {
         annualCycle._id,
         employeeObjectId,
         managerObjectId,
+        selectedTemplateVersionId,
         applicableQuarters,
         quarterCycleByCode,
       ),
@@ -307,9 +315,7 @@ export class AssignmentService extends BaseService {
     await annualAssignment.save();
     await this.seedPredefinedObjectives(annualAssignment, quarterAssignments);
 
-    if (annualCycle.templateVersionId) {
-      await this.lockTemplateVersion(annualCycle.templateVersionId);
-    }
+    await this.lockTemplateVersion(selectedTemplateVersionId);
 
     await this.audit(
       'PMS_EMPLOYEE_ASSIGNED',
@@ -906,6 +912,7 @@ export class AssignmentService extends BaseService {
     cycleId: Types.ObjectId,
     employeeId: Types.ObjectId,
     managerId: Types.ObjectId,
+    templateVersionId: Types.ObjectId,
     applicableQuarters: QuarterCode[],
     quarterCycleByCode: Map<QuarterCode, Types.ObjectId>,
   ): Array<{
@@ -913,6 +920,7 @@ export class AssignmentService extends BaseService {
     cycleId: Types.ObjectId;
     employeeId: Types.ObjectId;
     assignedManagerId: Types.ObjectId;
+    templateVersionId: Types.ObjectId;
     cycleQuarterId: Types.ObjectId;
     quarterCode: QuarterCode;
     quarterState: QuarterWorkflowState;
@@ -930,6 +938,7 @@ export class AssignmentService extends BaseService {
         cycleQuarterId,
         employeeId,
         assignedManagerId: managerId,
+        templateVersionId,
         quarterCode,
         quarterState: QuarterWorkflowState.NOT_STARTED,
         createdBy: this.actorIdObject(),
@@ -953,6 +962,27 @@ export class AssignmentService extends BaseService {
 
     const actorId = this.actorIdObject();
     const objectivePayloads: Array<Record<string, unknown>> = [];
+    const existingObjectives = await Objective.find({
+      quarterAssignmentId: { $in: quarterAssignments.map((quarterAssignment) => quarterAssignment._id) },
+      isDeleted: false,
+    })
+      .select('quarterAssignmentId templateObjectiveKey objectiveNo')
+      .lean();
+    const existingKeysByQuarterAssignment = new Map<string, Set<string>>();
+    const nextObjectiveNoByQuarterAssignment = new Map<string, number>();
+
+    for (const objective of existingObjectives) {
+      const quarterAssignmentId = objective.quarterAssignmentId.toString();
+      const existingKeys = existingKeysByQuarterAssignment.get(quarterAssignmentId) ?? new Set<string>();
+      if (typeof objective.templateObjectiveKey === 'string' && objective.templateObjectiveKey.trim()) {
+        existingKeys.add(objective.templateObjectiveKey.trim());
+      }
+      existingKeysByQuarterAssignment.set(quarterAssignmentId, existingKeys);
+
+      const currentMax = nextObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 1;
+      const nextObjectiveNo = Math.max(currentMax, (objective.objectiveNo ?? 0) + 1);
+      nextObjectiveNoByQuarterAssignment.set(quarterAssignmentId, nextObjectiveNo);
+    }
 
     for (const quarterAssignment of quarterAssignments) {
       const config = this.resolveTemplateObjectiveConfig(
@@ -964,8 +994,20 @@ export class AssignmentService extends BaseService {
         continue;
       }
 
-      for (const [index, predefinedObjective] of config.predefinedObjectives.entries()) {
-        if (!predefinedObjective.key) {
+      const quarterAssignmentId = quarterAssignment._id.toString();
+      const existingKeys = existingKeysByQuarterAssignment.get(quarterAssignmentId) ?? new Set<string>();
+      let nextObjectiveNo = nextObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 1;
+
+      for (const predefinedObjective of config.predefinedObjectives) {
+        if (!this.matchesPredefinedObjectiveQuarter(quarterAssignment.quarterCode, predefinedObjective.applicableQuarters)) {
+          continue;
+        }
+
+        const templateObjectiveKey = predefinedObjective.key.trim();
+        if (!templateObjectiveKey || !predefinedObjective.title?.trim()) {
+          continue;
+        }
+        if (existingKeys.has(templateObjectiveKey)) {
           continue;
         }
 
@@ -973,13 +1015,15 @@ export class AssignmentService extends BaseService {
           quarterAssignmentId: quarterAssignment._id,
           annualAssignmentId: quarterAssignment.annualAssignmentId,
           cycleId: quarterAssignment.cycleId,
+          templateVersionId: annualAssignment.templateVersionId,
           quarterCode: quarterAssignment.quarterCode,
           employeeId: quarterAssignment.employeeId,
           assignedManagerId: quarterAssignment.assignedManagerId,
-          objectiveNo: index + 1,
+          objectiveNo: nextObjectiveNo,
           source: ObjectiveSource.PREDEFINED,
-          templateObjectiveKey: predefinedObjective.key,
-          title: predefinedObjective.title,
+          templateObjectiveKey,
+          isPredefined: true,
+          title: predefinedObjective.title.trim(),
           description: predefinedObjective.description,
           targetMetric: predefinedObjective.kpi,
           targetValue: predefinedObjective.targetValue,
@@ -991,7 +1035,13 @@ export class AssignmentService extends BaseService {
           createdByUserId: actorId,
           createdBy: actorId,
         });
+
+        existingKeys.add(templateObjectiveKey);
+        nextObjectiveNo += 1;
       }
+
+      existingKeysByQuarterAssignment.set(quarterAssignmentId, existingKeys);
+      nextObjectiveNoByQuarterAssignment.set(quarterAssignmentId, nextObjectiveNo);
     }
 
     if (objectivePayloads.length > 0) {
@@ -1021,17 +1071,73 @@ export class AssignmentService extends BaseService {
 
     return {
       predefinedObjectives: (objectiveSection.objectiveConfig.predefinedObjectives ?? []).map(
-        (objective: ITemplatePredefinedObjective) => ({
-          key: objective.objectiveKey,
-          title: objective.title,
+        (objective: ITemplatePredefinedObjective, index: number) => ({
+          key: this.buildDeterministicTemplateObjectiveKey(objectiveSection.sectionKey, objective, index),
+          title: objective.title?.trim(),
           description: objective.description,
           kpi: objective.kpi,
           targetValue: objective.targetValue,
           weightage: objective.weightage,
           successCriteria: objective.successCriteria,
+          applicableQuarters: this.normalizeScopedQuarters(
+            objective.quarterScope ?? objective.applicableQuarters ?? objective.repeatFor,
+          ),
         }),
       ),
     };
+  }
+
+  private buildDeterministicTemplateObjectiveKey(
+    sectionKey: string,
+    objective: ITemplatePredefinedObjective,
+    index: number,
+  ): string {
+    const explicitKey = objective.objectiveKey?.trim();
+    if (explicitKey) {
+      return explicitKey;
+    }
+
+    const titleSlug = String(objective.title ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    if (!titleSlug) {
+      return '';
+    }
+
+    return `${sectionKey}__${titleSlug}__${index + 1}`;
+  }
+
+  private normalizeScopedQuarters(
+    quarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>,
+  ): QuarterCode[] | undefined {
+    if (!quarters?.length) {
+      return undefined;
+    }
+
+    const validQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const normalized = quarters.filter((quarter): quarter is QuarterCode =>
+      validQuarters.includes(quarter as QuarterCode),
+    );
+
+    return Array.from(new Set(normalized));
+  }
+
+  private matchesPredefinedObjectiveQuarter(
+    quarterCode: QuarterCode,
+    applicableQuarters?: QuarterCode[],
+  ): boolean {
+    if (typeof applicableQuarters === 'undefined') {
+      return true;
+    }
+
+    if (applicableQuarters.length === 0) {
+      return false;
+    }
+
+    return applicableQuarters.includes(quarterCode);
   }
 
   private async lockTemplateVersion(templateVersionId: Types.ObjectId): Promise<void> {
@@ -1064,6 +1170,54 @@ export class AssignmentService extends BaseService {
     if (input.employeeId === input.managerId) {
       throw new Error('employeeId and managerId cannot be the same');
     }
+  }
+
+  private async resolveSelectedTemplateVersionId(
+    requestedTemplateVersionId: string | undefined,
+    annualCycle: IAnnualCycle,
+  ): Promise<Types.ObjectId> {
+    const templateVersionId = requestedTemplateVersionId ?? annualCycle.templateVersionId?.toString();
+    if (!templateVersionId) {
+      throw new Error('Template version is required for assignment creation');
+    }
+
+    if (!Types.ObjectId.isValid(templateVersionId)) {
+      throw new Error('Invalid templateVersionId');
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId);
+    if (!templateVersion) {
+      throw new Error('Template version not found');
+    }
+
+    if (templateVersion.status !== PmsTemplateStatus.ACTIVE) {
+      throw new Error('Only active template versions can be assigned');
+    }
+
+    const parentTemplate = await PmsTemplate.findById(templateVersion.templateId).lean();
+    const effectiveFromDate = templateVersion.effectiveFrom ?? parentTemplate?.effectiveDate;
+
+    if (effectiveFromDate) {
+      const cycleStart = new Date(annualCycle.startDate);
+      const effectiveFrom = new Date(effectiveFromDate);
+      if (cycleStart < effectiveFrom) {
+        throw new Error(
+          `Cycle start date (${cycleStart.toDateString()}) cannot be before the template's effective date (${effectiveFrom.toDateString()})`,
+        );
+      }
+    }
+
+    if (templateVersion.effectiveTo) {
+      const cycleEnd = new Date(annualCycle.endDate);
+      const effectiveTo = new Date(templateVersion.effectiveTo);
+      if (cycleEnd > effectiveTo) {
+        throw new Error(
+          `Cycle end date (${cycleEnd.toDateString()}) cannot be after the template's effective expiration date (${effectiveTo.toDateString()})`,
+        );
+      }
+    }
+
+    return templateVersion._id as Types.ObjectId;
   }
 
   private normalizeApplicableQuarters(quarters?: QuarterCode[]): QuarterCode[] {

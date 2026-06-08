@@ -44,19 +44,6 @@ export const cycleRoutes: RouteHandler = async (
   );
 
   fastify.get(
-    '/communication-rules',
-    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
-    async (request, reply) => {
-      try {
-        const result = await request.container!.cycleService.listCommunicationRules();
-        return reply.send(successResponse('PMS cycle communication rules fetched successfully', result));
-      } catch (error: unknown) {
-        return sendRouteError(reply, error);
-      }
-    },
-  );
-
-  fastify.get(
     '/:id',
     { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
     async (request, reply) => {
