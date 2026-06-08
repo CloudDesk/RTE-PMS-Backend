@@ -341,6 +341,7 @@ export class UserService extends BaseService {
     status?: string;
     active?: boolean;
     departmentId?: string;
+    managerId?: string;
     country?: string;
     licenseType?: string;
     portalAccess?: boolean;
@@ -362,6 +363,7 @@ export class UserService extends BaseService {
       status,
       active,
       departmentId,
+      managerId,
       country,
       licenseType,
       portalAccess,
@@ -486,6 +488,10 @@ export class UserService extends BaseService {
 
     if (departmentId) {
       filter.departmentId = { $regex: this.exactCaseInsensitiveRegex(departmentId) };
+    }
+
+    if (managerId) {
+      filter.managerId = managerId;
     }
 
     if (country) {
