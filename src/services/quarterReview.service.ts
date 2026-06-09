@@ -250,7 +250,24 @@ export class QuarterReviewService extends BaseService {
       // Admin review workspace must be able to reach quarter reviews across managers
       // so submitted reviews can be finalized and finalized reviews can be reopened.
     } else {
-      filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
+      const managerId = this.toObjectId(actor.actorId, 'actorId');
+      const delegations = await new DelegationService(this.context).getActiveDelegationsForDelegate(
+        actor.actorId,
+        'PMS_REVIEWS',
+      );
+      const managerClauses: Record<string, unknown>[] = [{ assignedManagerId: managerId }];
+
+      for (const delegation of delegations) {
+        const clause: Record<string, unknown> = {
+          assignedManagerId: delegation.delegatorUserId,
+        };
+        if (delegation.cycleId) {
+          clause.cycleId = delegation.cycleId;
+        }
+        managerClauses.push(clause);
+      }
+
+      filter.$or = managerClauses;
     }
 
     const quarterAssignments = await QuarterAssignment.find(filter)

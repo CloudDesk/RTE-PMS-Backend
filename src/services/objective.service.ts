@@ -226,7 +226,24 @@ export class ObjectiveService extends BaseService {
     }
 
     if (mode === 'manager') {
-      filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
+      const managerId = this.toObjectId(actor.actorId, 'actorId');
+      const delegations = await new DelegationService(this.context).getActiveDelegationsForDelegate(
+        actor.actorId,
+        'PMS_OBJECTIVES',
+      );
+      const managerClauses: Record<string, unknown>[] = [{ assignedManagerId: managerId }];
+
+      for (const delegation of delegations) {
+        const clause: Record<string, unknown> = {
+          assignedManagerId: delegation.delegatorUserId,
+        };
+        if (delegation.cycleId) {
+          clause.cycleId = delegation.cycleId;
+        }
+        managerClauses.push(clause);
+      }
+
+      filter.$or = managerClauses;
     }
 
     const quarterAssignments = await QuarterAssignment.find(filter)

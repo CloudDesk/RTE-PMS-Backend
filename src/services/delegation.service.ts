@@ -56,8 +56,8 @@ export class DelegationService extends BaseService {
     this.assertEligibleManagerRole(delegator.role, 'Delegator');
     this.assertEligibleManagerRole(delegate.role, 'Delegate');
 
-    const fromDate = new Date(input.validFrom);
-    const toDate = new Date(input.validTo);
+    const fromDate = this.startOfDay(input.validFrom);
+    const toDate = this.endOfDay(input.validTo);
 
     if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
       throw new Error('Invalid validity dates.');
@@ -185,7 +185,9 @@ export class DelegationService extends BaseService {
     const previousValue = delegation.toObject();
 
     delegation.status = 'REVOKED';
-    delegation.reason = reason ?? delegation.reason;
+    delegation.revokeReason = reason;
+    delegation.revokedAt = new Date();
+    delegation.revokedBy = new Types.ObjectId(actorId);
     delegation.updatedBy = new Types.ObjectId(actorId);
     delegation.version += 1;
     await delegation.save();
@@ -289,6 +291,37 @@ export class DelegationService extends BaseService {
     }
 
     return delegation;
+  }
+
+  async getActiveDelegationsForDelegate(
+    delegateUserId: string,
+    scope: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS',
+    activeOn: Date = new Date(),
+  ): Promise<any[]> {
+    const scopeCandidates = scope === 'ALL' ? ['ALL'] : ['ALL', scope];
+
+    return Delegation.find({
+      delegateUserId: new Types.ObjectId(delegateUserId),
+      status: 'ACTIVE',
+      validFrom: { $lte: activeOn },
+      validTo: { $gte: activeOn },
+      scopeType: { $in: scopeCandidates },
+      isDeleted: false,
+    }).lean();
+  }
+
+  private startOfDay(value: Date | string): Date {
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return date;
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }
+
+  private endOfDay(value: Date | string): Date {
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return date;
+    date.setHours(23, 59, 59, 999);
+    return date;
   }
 
   private requireActor() {
