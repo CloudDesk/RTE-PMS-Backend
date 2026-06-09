@@ -375,6 +375,10 @@ export const userRoutes: RouteHandler = async (
               type: 'string',
               description: 'Filter by department ID'
             },
+            managerId: {
+              type: 'string',
+              description: 'Filter by manager ID'
+            },
             country: {
               type: 'string',
               enum: ['IN', 'AE'],
@@ -476,6 +480,7 @@ export const userRoutes: RouteHandler = async (
           status?: string;
           active?: boolean;
           departmentId?: string;
+          managerId?: string;
           country?: string;
           licenseType?: string;
           portalAccess?: boolean;
