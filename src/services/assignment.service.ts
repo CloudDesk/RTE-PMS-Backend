@@ -296,6 +296,9 @@ export class AssignmentService extends BaseService {
     const quarterCycleByCode = new Map(
       quarterCycles.map((quarterCycle) => [quarterCycle.quarterCode, quarterCycle._id as Types.ObjectId]),
     );
+    const quarterCycleById = new Map(
+      quarterCycles.map((quarterCycle) => [quarterCycle._id.toString(), quarterCycle]),
+    );
 
     const quarterAssignments = await QuarterAssignment.insertMany(
       this.buildQuarterAssignments(
@@ -313,7 +316,15 @@ export class AssignmentService extends BaseService {
       (quarterAssignment) => quarterAssignment._id,
     );
     await annualAssignment.save();
-    await this.seedPredefinedObjectives(annualAssignment, quarterAssignments);
+    const seededQuarterAssignmentIds = await this.seedPredefinedObjectives(
+      annualAssignment,
+      quarterAssignments,
+      quarterCycleById,
+    );
+    await this.openSeededQuarterAssignmentsForManagerReview(
+      quarterAssignments,
+      seededQuarterAssignmentIds,
+    );
 
     await this.lockTemplateVersion(selectedTemplateVersionId);
 
@@ -949,19 +960,21 @@ export class AssignmentService extends BaseService {
   private async seedPredefinedObjectives(
     annualAssignment: IAnnualAssignment,
     quarterAssignments: IQuarterAssignment[],
-  ): Promise<void> {
+    quarterCycleById: Map<string, { objectiveApprovalWindow?: { endDate?: Date }; objectiveSettingWindow?: { endDate?: Date }; quarterFinalizationWindow?: { endDate?: Date } }>,
+  ): Promise<Set<string>> {
     const templateVersionId = annualAssignment.templateVersionId?.toString();
     if (!templateVersionId) {
-      return;
+      return new Set<string>();
     }
 
     const templateVersion = await PmsTemplateVersion.findById(templateVersionId).lean();
     if (!templateVersion) {
-      return;
+      return new Set<string>();
     }
 
     const actorId = this.actorIdObject();
     const objectivePayloads: Array<Record<string, unknown>> = [];
+    const seededQuarterAssignmentIds = new Set<string>();
     const existingObjectives = await Objective.find({
       quarterAssignmentId: { $in: quarterAssignments.map((quarterAssignment) => quarterAssignment._id) },
       isDeleted: false,
@@ -985,6 +998,14 @@ export class AssignmentService extends BaseService {
     }
 
     for (const quarterAssignment of quarterAssignments) {
+      const quarterCycle = quarterAssignment.cycleQuarterId
+        ? quarterCycleById.get(quarterAssignment.cycleQuarterId.toString())
+        : undefined;
+      const defaultDueDate =
+        quarterCycle?.objectiveApprovalWindow?.endDate ||
+        quarterCycle?.objectiveSettingWindow?.endDate ||
+        quarterCycle?.quarterFinalizationWindow?.endDate ||
+        undefined;
       const config = this.resolveTemplateObjectiveConfig(
         templateVersion.sections ?? [],
         quarterAssignment.quarterCode,
@@ -1027,17 +1048,21 @@ export class AssignmentService extends BaseService {
           description: predefinedObjective.description,
           targetMetric: predefinedObjective.kpi,
           targetValue: predefinedObjective.targetValue,
+          targetDate: defaultDueDate,
           weightage: predefinedObjective.weightage,
           successCriteria: predefinedObjective.successCriteria,
-          status: ObjectiveStatus.OBJECTIVE_DRAFT,
+          status: ObjectiveStatus.OBJECTIVE_APPROVED,
           attachments: [],
           createdByRole: 'SYSTEM',
           createdByUserId: actorId,
           createdBy: actorId,
+          approvedAt: defaultDueDate ?? new Date(),
+          approvedBy: actorId,
         });
 
         existingKeys.add(templateObjectiveKey);
         nextObjectiveNo += 1;
+        seededQuarterAssignmentIds.add(quarterAssignmentId);
       }
 
       existingKeysByQuarterAssignment.set(quarterAssignmentId, existingKeys);
@@ -1046,6 +1071,54 @@ export class AssignmentService extends BaseService {
 
     if (objectivePayloads.length > 0) {
       await Objective.insertMany(objectivePayloads);
+    }
+
+    return seededQuarterAssignmentIds;
+  }
+
+  private async openSeededQuarterAssignmentsForManagerReview(
+    quarterAssignments: IQuarterAssignment[],
+    seededQuarterAssignmentIds: Set<string>,
+  ): Promise<void> {
+    if (seededQuarterAssignmentIds.size === 0) {
+      return;
+    }
+
+    const actorId = this.actorIdObject();
+    const now = new Date();
+
+    for (const quarterAssignment of quarterAssignments) {
+      const quarterAssignmentId = quarterAssignment._id.toString();
+      if (!seededQuarterAssignmentIds.has(quarterAssignmentId)) {
+        continue;
+      }
+
+      if (quarterAssignment.quarterState === QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
+        continue;
+      }
+
+      quarterAssignment.previousQuarterState = quarterAssignment.quarterState;
+      quarterAssignment.quarterState = QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+      quarterAssignment.lastTransitionAt = now;
+      quarterAssignment.lastTransitionBy = actorId;
+      quarterAssignment.lastTransitionRole = this.context.user?.role;
+      quarterAssignment.lastTransitionReason = 'Seeded predefined objectives are approved during assignment launch';
+      quarterAssignment.updatedBy = actorId;
+      quarterAssignment.version += 1;
+      await quarterAssignment.save();
+
+      await this.audit(
+        'PMS_QUARTER_ASSIGNMENT_SEEDED_REVIEW_OPEN',
+        'QUARTER_ASSIGNMENT',
+        quarterAssignment._id.toString(),
+        {
+          quarterState: quarterAssignment.previousQuarterState,
+        },
+        {
+          quarterState: quarterAssignment.quarterState,
+        },
+        'Seeded predefined objectives opened manager review at assignment launch',
+      );
     }
   }
 

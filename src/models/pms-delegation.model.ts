@@ -9,6 +9,9 @@ export interface IDelegation extends Document {
   validTo: Date;
   status: string;
   reason?: string;
+  revokeReason?: string;
+  revokedAt?: Date;
+  revokedBy?: Types.ObjectId;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -60,6 +63,9 @@ const delegationSchema = new Schema<IDelegation>(
       index: true,
     },
     reason: String,
+    revokeReason: String,
+    revokedAt: Date,
+    revokedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
