@@ -296,6 +296,9 @@ export class AssignmentService extends BaseService {
     const quarterCycleByCode = new Map(
       quarterCycles.map((quarterCycle) => [quarterCycle.quarterCode, quarterCycle._id as Types.ObjectId]),
     );
+    const quarterCycleById = new Map(
+      quarterCycles.map((quarterCycle) => [quarterCycle._id.toString(), quarterCycle]),
+    );
 
     const quarterAssignments = await QuarterAssignment.insertMany(
       this.buildQuarterAssignments(
@@ -313,7 +316,7 @@ export class AssignmentService extends BaseService {
       (quarterAssignment) => quarterAssignment._id,
     );
     await annualAssignment.save();
-    await this.seedPredefinedObjectives(annualAssignment, quarterAssignments);
+    await this.seedPredefinedObjectives(annualAssignment, quarterAssignments, quarterCycleById);
 
     await this.lockTemplateVersion(selectedTemplateVersionId);
 
@@ -949,6 +952,7 @@ export class AssignmentService extends BaseService {
   private async seedPredefinedObjectives(
     annualAssignment: IAnnualAssignment,
     quarterAssignments: IQuarterAssignment[],
+    quarterCycleById: Map<string, { objectiveApprovalWindow?: { endDate?: Date }; objectiveSettingWindow?: { endDate?: Date }; quarterFinalizationWindow?: { endDate?: Date } }>,
   ): Promise<void> {
     const templateVersionId = annualAssignment.templateVersionId?.toString();
     if (!templateVersionId) {
@@ -985,6 +989,14 @@ export class AssignmentService extends BaseService {
     }
 
     for (const quarterAssignment of quarterAssignments) {
+      const quarterCycle = quarterAssignment.cycleQuarterId
+        ? quarterCycleById.get(quarterAssignment.cycleQuarterId.toString())
+        : undefined;
+      const defaultDueDate =
+        quarterCycle?.objectiveApprovalWindow?.endDate ||
+        quarterCycle?.objectiveSettingWindow?.endDate ||
+        quarterCycle?.quarterFinalizationWindow?.endDate ||
+        undefined;
       const config = this.resolveTemplateObjectiveConfig(
         templateVersion.sections ?? [],
         quarterAssignment.quarterCode,
@@ -1027,13 +1039,16 @@ export class AssignmentService extends BaseService {
           description: predefinedObjective.description,
           targetMetric: predefinedObjective.kpi,
           targetValue: predefinedObjective.targetValue,
+          targetDate: defaultDueDate,
           weightage: predefinedObjective.weightage,
           successCriteria: predefinedObjective.successCriteria,
-          status: ObjectiveStatus.OBJECTIVE_DRAFT,
+          status: ObjectiveStatus.OBJECTIVE_APPROVED,
           attachments: [],
           createdByRole: 'SYSTEM',
           createdByUserId: actorId,
           createdBy: actorId,
+          approvedAt: defaultDueDate ?? new Date(),
+          approvedBy: actorId,
         });
 
         existingKeys.add(templateObjectiveKey);
