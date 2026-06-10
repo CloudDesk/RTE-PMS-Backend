@@ -64,6 +64,7 @@ export interface AssignmentListQuery {
   annualState?: string;
   managerId?: string;
   employeeId?: string;
+  department?: string;
 }
 
 export interface BulkAssignInput {
@@ -142,14 +143,29 @@ export class AssignmentService extends BaseService {
       filter.employeeId = this.toObjectId(query.employeeId, 'employeeId');
     }
 
+    if (query.department?.trim() && query.department !== 'ALL') {
+      const department = query.department.trim();
+      filter.$or = [
+        { 'employeeSnapshot.department': department },
+        { 'employeeSnapshot.departmentName': department },
+        { 'employeeSnapshot.departmentId': department },
+      ];
+    }
+
     if (query.search?.trim()) {
       const search = query.search.trim();
-      filter.$or = [
+      const searchFilter = [
         { 'employeeSnapshot.name': { $regex: search, $options: 'i' } },
         { 'employeeSnapshot.email': { $regex: search, $options: 'i' } },
         { 'employeeSnapshot.employeeCode': { $regex: search, $options: 'i' } },
         { 'managerSnapshot.name': { $regex: search, $options: 'i' } },
       ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: searchFilter }];
+        delete filter.$or;
+      } else {
+        filter.$or = searchFilter;
+      }
     }
 
     const [items, total] = await Promise.all([

@@ -17,6 +17,11 @@ export interface AuditHistoryEntry {
   action: string;
   actorId?: unknown;
   actorRole?: string;
+  actorName?: string;
+  actorEmail?: string;
+  actorEmployeeCode?: string;
+  actorDepartment?: string;
+  actorDepartmentId?: string;
   previousValue?: unknown;
   oldValue?: unknown;
   newValue?: unknown;
@@ -245,7 +250,9 @@ export class AuditService {
       createdAt: layer.createdAt,
     }));
 
-    return [...auditLogs, ...correctionLogs].sort(
+    const enrichedLogs = await this.enrichActorDetails([...auditLogs, ...correctionLogs]);
+
+    return enrichedLogs.sort(
       (left, right) =>
         new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
     );
@@ -253,16 +260,59 @@ export class AuditService {
 
   async getEntityHistory(entityType: string, entityId: string): Promise<AuditHistoryEntry[]> {
     const normalizedEntityId = this.toObjectIdIfValid(entityId);
-    return AuditLog.find({
+    const logs = await AuditLog.find({
       entityType,
       entityId: normalizedEntityId,
     })
       .sort({ timestamp: -1 })
       .lean();
+
+    return this.enrichActorDetails(logs);
   }
 
   private toObjectIdIfValid(value: string): Types.ObjectId | string {
     return Types.ObjectId.isValid(value) ? new Types.ObjectId(value) : value;
+  }
+
+  private async enrichActorDetails(logs: AuditHistoryEntry[]): Promise<AuditHistoryEntry[]> {
+    const actorIds = Array.from(
+      new Set(
+        logs
+          .map((log) => log.actorId?.toString?.() ?? '')
+          .filter((value) => value && Types.ObjectId.isValid(value)),
+      ),
+    );
+
+    if (actorIds.length === 0) {
+      return logs;
+    }
+
+    const users = await User.find({ _id: { $in: actorIds } })
+      .select('name email employeeCode departmentId role specificRole')
+      .lean();
+
+    const userMap = new Map(users.map((user: any) => [user._id.toString(), user]));
+
+    return logs.map((log) => {
+      const actorId = log.actorId?.toString?.() ?? '';
+      const actor = userMap.get(actorId);
+
+      if (!actor) {
+        return log;
+      }
+
+      const actorDepartment = actor.departmentId || actor.specificRole || '';
+
+      return {
+        ...log,
+        actorRole: log.actorRole || actor.role,
+        actorName: actor.name,
+        actorEmail: actor.email,
+        actorEmployeeCode: actor.employeeCode,
+        actorDepartment,
+        actorDepartmentId: actor.departmentId,
+      };
+    });
   }
 }
 
