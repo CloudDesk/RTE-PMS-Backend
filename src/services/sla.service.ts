@@ -20,6 +20,8 @@ const SUPPORTED_SLA_RULES = {
   quarter_review_pending: {
     quarterStates: ['OBJECTIVE_APPROVED', 'MANAGER_REVIEW_OPEN'],
   },
+  // TODO(PMS v3.1 Phase D/E): Add employee_achievement_submission_pending
+  // SLA/reminder generation after achievement window enforcement is introduced.
 } as const;
 
 export class SlaService {

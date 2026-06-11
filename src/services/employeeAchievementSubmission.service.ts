@@ -704,7 +704,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee can edit only own achievement submission');
     }
 
-    // TODO: Enforce achievement submission windows after PMS v3.1 runtime schedule support is introduced.
+    // TODO(PMS v3.1 Phase B): Enforce QuarterCycle.achievementSubmissionWindow
+    // during Employee Achievement Submission submit without changing lock behavior.
   }
 
   private async getQuarterAssignment(quarterAssignmentId: string) {

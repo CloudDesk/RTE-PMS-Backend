@@ -7,6 +7,14 @@ interface IDateWindow {
   endDate?: Date;
 }
 
+interface IAchievementSubmissionWindow extends IDateWindow {
+  enabled?: boolean;
+  dueDate?: Date;
+  graceDays?: number;
+  reminderDaysBefore?: number[];
+  escalationDaysAfterDue?: number;
+}
+
 export interface IQuarterCycle extends Document {
   cycleId: Types.ObjectId;
   quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
@@ -14,6 +22,7 @@ export interface IQuarterCycle extends Document {
   endDate: Date;
   objectiveSettingWindow?: IDateWindow;
   objectiveApprovalWindow?: IDateWindow;
+  achievementSubmissionWindow?: IAchievementSubmissionWindow;
   managerReviewWindow?: IDateWindow;
   quarterFinalizationWindow?: IDateWindow;
   status: QuarterWorkflowStateType;
@@ -35,6 +44,19 @@ const dateWindowSchema = new Schema<IDateWindow>(
   { _id: false },
 );
 
+const achievementSubmissionWindowSchema = new Schema<IAchievementSubmissionWindow>(
+  {
+    enabled: Boolean,
+    startDate: Date,
+    endDate: Date,
+    dueDate: Date,
+    graceDays: { type: Number, min: 0 },
+    reminderDaysBefore: { type: [Number], default: undefined },
+    escalationDaysAfterDue: { type: Number, min: 0 },
+  },
+  { _id: false },
+);
+
 const quarterCycleSchema = new Schema<IQuarterCycle>(
   {
     cycleId: {
@@ -52,6 +74,7 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
     endDate: { type: Date, required: true },
     objectiveSettingWindow: dateWindowSchema,
     objectiveApprovalWindow: dateWindowSchema,
+    achievementSubmissionWindow: achievementSubmissionWindowSchema,
     managerReviewWindow: dateWindowSchema,
     quarterFinalizationWindow: dateWindowSchema,
     slaConfig: { type: Schema.Types.Mixed, default: {} },
