@@ -39,6 +39,7 @@ import { PmsTemplateService } from '../services/pms-template.service';
 import { CycleService } from '../services/cycle.service';
 import { AssignmentService } from '../services/assignment.service';
 import { ObjectiveService } from '../services/objective.service';
+import { EmployeeAchievementSubmissionService } from '../services/employeeAchievementSubmission.service';
 import { QuarterReviewService } from '../services/quarterReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
 import { PmsCommunicationService } from '../services/pmsCommunication.service';
@@ -88,6 +89,7 @@ export interface ServiceContainer {
   cycleService: CycleService;
   assignmentService: AssignmentService;
   objectiveService: ObjectiveService;
+  employeeAchievementSubmissionService: EmployeeAchievementSubmissionService;
   quarterReviewService: QuarterReviewService;
   annualDecisionService: AnnualDecisionService;
   pmsCommunicationService: PmsCommunicationService;

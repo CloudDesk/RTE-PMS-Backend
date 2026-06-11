@@ -129,6 +129,7 @@ export interface CreateTemplateVersionInput {
   versionNo?: number;
   versionNumber?: number;
   sections?: unknown[];
+  metadata?: Record<string, unknown>;
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
@@ -352,6 +353,7 @@ export class PmsTemplateService extends BaseService {
         versionNo: version.versionNo,
         status: PmsTemplateStatus.DRAFT,
         sections: version.sections,
+        metadata: version.metadata ?? {},
         themeConfig: version.themeConfig ?? {},
         scoringConfig: version.scoringConfig ?? {},
         annualScoringConfig: version.annualScoringConfig ?? {},
@@ -404,6 +406,7 @@ export class PmsTemplateService extends BaseService {
       templateId: templateObjectId,
       versionNo,
       sections,
+      metadata: input.metadata ?? latestVersion?.metadata ?? {},
       themeConfig: input.themeConfig ?? latestVersion?.themeConfig ?? {},
       scoringConfig: input.scoringConfig ?? latestVersion?.scoringConfig ?? {},
       annualScoringConfig: input.annualScoringConfig ?? latestVersion?.annualScoringConfig ?? {},
@@ -576,6 +579,7 @@ export class PmsTemplateService extends BaseService {
     versionId: string,
     sections: unknown[],
     metadata: {
+      metadata?: Record<string, unknown>;
       annualScoringConfig?: Record<string, unknown>;
     } = {},
   ): Promise<IPmsTemplateVersion> {
@@ -585,6 +589,9 @@ export class PmsTemplateService extends BaseService {
     this.validateSections(normalizedSections);
 
     version.sections = normalizedSections;
+    if (metadata.metadata !== undefined) {
+      version.metadata = metadata.metadata;
+    }
     if (metadata.annualScoringConfig !== undefined) {
       version.annualScoringConfig = metadata.annualScoringConfig;
     }

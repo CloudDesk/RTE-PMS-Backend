@@ -17,6 +17,8 @@ export interface CreateDelegationInput {
 }
 
 export class DelegationService extends BaseService {
+  private readonly delegationTimezoneOffsetMinutes = 330;
+
   constructor(context: RequestContext) {
     super(context);
   }
@@ -311,6 +313,12 @@ export class DelegationService extends BaseService {
   }
 
   private startOfDay(value: Date | string): Date {
+    const dateOnly = this.parseDateOnly(value);
+    if (dateOnly) {
+      const { year, month, day } = dateOnly;
+      return this.localDateTimeToUtc(year, month, day, 0, 0, 0, 0);
+    }
+
     const date = new Date(value);
     if (isNaN(date.getTime())) return date;
     date.setHours(0, 0, 0, 0);
@@ -318,10 +326,43 @@ export class DelegationService extends BaseService {
   }
 
   private endOfDay(value: Date | string): Date {
+    const dateOnly = this.parseDateOnly(value);
+    if (dateOnly) {
+      const { year, month, day } = dateOnly;
+      return this.localDateTimeToUtc(year, month, day, 23, 59, 59, 999);
+    }
+
     const date = new Date(value);
     if (isNaN(date.getTime())) return date;
     date.setHours(23, 59, 59, 999);
     return date;
+  }
+
+  private parseDateOnly(value: Date | string): { year: number; month: number; day: number } | null {
+    if (typeof value !== 'string') return null;
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+    if (!match) return null;
+
+    return {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+    };
+  }
+
+  private localDateTimeToUtc(
+    year: number,
+    month: number,
+    day: number,
+    hour: number,
+    minute: number,
+    second: number,
+    millisecond: number,
+  ): Date {
+    return new Date(
+      Date.UTC(year, month - 1, day, hour, minute, second, millisecond) -
+      this.delegationTimezoneOffsetMinutes * 60 * 1000,
+    );
   }
 
   private requireActor() {

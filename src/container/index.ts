@@ -40,6 +40,7 @@ import { PmsTemplateService } from '../services/pms-template.service';
 import { CycleService } from '../services/cycle.service';
 import { AssignmentService } from '../services/assignment.service';
 import { ObjectiveService } from '../services/objective.service';
+import { EmployeeAchievementSubmissionService } from '../services/employeeAchievementSubmission.service';
 import { QuarterReviewService } from '../services/quarterReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
 import { PmsCommunicationService } from '../services/pmsCommunication.service';
@@ -108,6 +109,7 @@ export class Container {
       cycleService: new CycleService(context),
       assignmentService: new AssignmentService(context),
       objectiveService: new ObjectiveService(context),
+      employeeAchievementSubmissionService: new EmployeeAchievementSubmissionService(context),
       quarterReviewService: new QuarterReviewService(context),
       annualDecisionService: new AnnualDecisionService(context),
       pmsCommunicationService: new PmsCommunicationService(context),
