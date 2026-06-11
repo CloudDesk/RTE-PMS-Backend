@@ -1,10 +1,10 @@
-# PMS v2.1 Change Addendum
+# PMS v3.1 Change Addendum
 
 ## 1. Purpose
 
-This document defines the PMS v2.1 client correction changes based on the latest demo feedback.
+This document defines the PMS v3.1 client correction changes based on the latest demo feedback.
 
-This addendum must be treated as a change layer on top of the current PMS implementation baseline.
+This addendum is a planned change layer on top of the current PMS implementation baseline.
 
 Current implementation baseline documents:
 
@@ -12,7 +12,9 @@ Current implementation baseline documents:
 * `CURRENT_PMS_IMPLEMENTATION_SUMMARY.md`
 * `CURRENT_PMS_GAP_AND_RISK_ACTION_LIST.md`
 
-This document must not assume that missing features already exist. Current code remains the source of truth for existing behavior.
+These three baseline documents describe current implementation only. They must not be modified with PMS v3.1 planned behavior.
+
+Current code remains the source of truth for existing behavior. This document defines what needs to change next.
 
 ## 2. Change Type
 
@@ -20,18 +22,48 @@ This is not a small bug fix.
 
 This is a product scope correction because it changes:
 
-* review flow
+* assessment term structure
 * template configuration
-* assignment term structure
-* employee participation
-* manager scoring behavior
+* employee achievement submission flow
+* manager review flow
+* assignment window configuration
 * objective creation control
-* SLA/email expectation
-* UI usability expectation
+* manager bulk objective assignment
+* SLA/email expectations
+* UI usability expectations
 
-The implementation should be handled as PMS v2.1.
+The implementation should be handled as **PMS v3.1**.
 
-## 3. Current Baseline Summary
+## 3. Important Terminology Correction
+
+Do not use the term **Self Review** for PMS v3.1.
+
+Correct term:
+
+```text
+Employee Achievement Submission
+```
+
+Meaning:
+
+Employee is not doing a full self-review, self-rating workflow, employee appraisal, employee sign-off, or acceptance workflow.
+
+Employee only fills the configured achievement/input sections from the template during a configured window before manager review.
+
+Employee achievement submission may include:
+
+* topic
+* description
+* achievement notes
+* proof/details
+* attachments
+* configured template fields
+
+Employee rating fields may exist only if configured in the template, but they are not final appraisal ratings and not employee self-review scoring.
+
+Manager review remains the official review.
+
+## 4. Current Baseline Summary
 
 Current PMS implementation supports:
 
@@ -48,45 +80,46 @@ Current PMS implementation supports:
 
 Current PMS implementation does not currently support:
 
-* employee self-review workflow
+* Employee Achievement Submission workflow
 * assessment term types other than quarter-based Q1-Q4 structure
-* manager review based on employee self-review data
-* separate employee review JSON and manager review JSON
+* employee achievement window before manager review
+* separate employee achievement JSON and manager review JSON
 * real PMS file upload lifecycle
 * proven scheduled SLA mail automation
 * active letter-template-based communication dispatch
 
-## 4. PMS v2.1 Core Changes
+## 5. PMS v3.1 Core Changes
 
-PMS v2.1 introduces these confirmed changes:
+PMS v3.1 introduces these confirmed changes:
 
 1. Assessment term must be configurable.
-2. Review mode must be configurable from template/cycle setup.
-3. Employee self-review must be supported as an optional configured flow.
-4. Employee review data and manager review data must be stored separately.
-5. Manager cannot edit employee self-review input.
-6. Manager rating mode must be configurable as overall-only or section-wise.
-7. Final appraisal decision remains yearly only.
-8. Employee objective creation must be configurable.
-9. Manager must be able to assign same objective to selected team employees.
-10. SLA email notifications must be supported.
-11. UI must be improved for usability and clarity.
+2. Employee Achievement Submission must be configurable.
+3. Employee achievement window must be configurable before manager review.
+4. Manager Review Only flow must still be supported.
+5. Employee achievement data and manager review data must be stored separately.
+6. Manager cannot edit employee achievement submission data.
+7. Manager rating mode must be configurable as overall-only or section-wise.
+8. Final appraisal decision remains yearly only.
+9. Employee objective creation must be configurable.
+10. Manager must be able to assign the same objective to selected team employees.
+11. SLA email notifications must be supported.
+12. UI must be improved for usability and clarity.
 
-## 5. Assessment Term Configuration
+## 6. Assessment Term Configuration
 
-### 5.1 Current Behavior
+### 6.1 Current Behavior
 
 Current implementation is based on annual cycle with Q1, Q2, Q3, and Q4 quarter assignments.
 
-### 5.2 Required Behavior
+### 6.2 Required Behavior
 
-PMS v2.1 must support different assessment term types:
+PMS v3.1 must support different assessment term types:
 
 * Quarterly
 * Half-Yearly
 * Yearly
 
-### 5.3 Assessment Term Types
+### 6.3 Assessment Term Types
 
 Supported term types:
 
@@ -104,7 +137,7 @@ H1, H2
 Y1
 ```
 
-### 5.4 Example Setup
+### 6.4 Example Setup
 
 Quarterly setup:
 
@@ -130,202 +163,176 @@ Assessment Terms: Y1
 Final Appraisal Decision: Yearly
 ```
 
-### 5.5 Final Appraisal Rule
+### 6.5 Final Appraisal Rule
 
 Even if assessment is quarterly, half-yearly, or yearly, final grade/merit/appraisal decision must happen yearly only.
 
-Assessment terms collect performance review data.
+Assessment terms collect performance and review data.
 
-Annual decision uses completed term reviews for final appraisal decision.
+Annual decision uses completed assessment term reviews for final appraisal decision.
 
-## 6. Review Mode Configuration
+## 7. Review Flow Configuration
 
-PMS v2.1 supports two main review modes.
+PMS v3.1 supports two main review flows.
 
-## 6.1 Mode 1: Manager Review Only
+## 7.1 Flow 1: Manager Review Only
 
-This mode is used when employee self-review is not required.
+This flow is used when employee achievement submission is not required.
 
 Example use cases:
 
 * trainees
 * manager-only assessments
-* cases where employee should not fill review form
+* cases where employee should not fill an achievement form
 
 Flow:
 
 ```text
-Manager opens assigned employee review
+Assessment term opens
+Manager review window opens
 Manager fills review form
 Manager submits review
 Assessment term review is completed
 HR/Management uses review data during yearly appraisal decision
 ```
 
-Employee does not fill self-review.
+Employee does not fill achievement form.
 
-Manager can fill:
+Manager can fill configured manager review fields such as:
 
 * rating
+* score
 * comments
+* observations
+* recommendation
 * attachments
 
-## 6.2 Mode 2: Employee Self Review + Manager Review
+## 7.2 Flow 2: Employee Achievement Submission + Manager Review
 
-This mode is used when employee must fill self-review before manager review.
+This flow is used when employee must submit achievement details before manager review.
 
 Flow:
 
 ```text
-Employee opens self-review form
-Employee fills rating/comments/attachments
-Employee submits self-review
-Manager opens employee review
-Manager views employee self-review data
+Assessment term opens
+Employee achievement window opens
+Employee fills configured achievement form sections
+Employee submits achievement form
+Employee achievement data is locked
+Manager review window opens
+Manager views employee achievement submission
 Manager fills separate manager review data
 Manager submits review
 Assessment term review is completed
 HR/Management uses review data during yearly appraisal decision
 ```
 
-Important rule:
+Important rules:
 
-Manager must not edit employee self-review data.
+* Employee achievement submission is not self-review.
+* Employee achievement submission is not employee sign-off.
+* Employee achievement submission is not final appraisal rating.
+* Manager cannot edit employee achievement data.
+* Manager review data must be stored separately.
+* Manager review remains the official review.
 
-Employee data and manager data must be stored separately.
+## 8. Employee Achievement Submission
 
-## 7. Manager Scoring Mode
+Employee Achievement Submission is a configured form submission by the employee.
 
-For Mode 2, manager scoring behavior must be configurable.
+It is used to collect employee-provided achievements, proof, and supporting details before manager review.
 
-Supported manager scoring modes:
+Supported employee achievement fields depend on template configuration.
 
-```text
-OVERALL_ONLY
-SECTION_WISE
-```
+Examples:
 
-## 7.1 Overall-Only Manager Rating
-
-Manager reviews employee self-review data and gives only final/overall rating or score.
-
-Manager may enter:
-
-* overall rating
-* overall score
-* overall comments
-* attachments, if enabled
-
-System stores manager overall review separately from employee self-review.
-
-## 7.2 Section-Wise Manager Rating
-
-Manager reviews employee self-review data and gives rating/comments per section.
-
-Manager may enter:
-
-* section-wise rating
-* section-wise comments
-* section-wise score
-* attachments, if enabled
-
-System calculates final manager score based on configured section scoring logic.
-
-## 8. Data Separation Rule
-
-Employee self-review data and manager review data must never overwrite each other.
-
-Required storage concept:
-
-```text
-employeeSelfReviewData
-managerReviewData
-finalReviewScore
-```
-
-Employee data includes:
-
-* ratings
-* comments
+* achievement topic
+* description
+* achievement details
+* project/work proof
+* supporting notes
 * attachments
-* section responses
-* submittedBy
-* submittedAt
-* status
+* configured input fields
+* rating field only if configured by template
 
-Manager data includes:
+Employee achievement submission may have draft save if allowed, but final submit locks the employee input.
 
-* ratings
-* comments
-* attachments
-* section responses
-* overall rating/score
-* submittedBy
-* submittedAt
-* status
+## 9. Employee Achievement Window
 
-Manager can view employee data but cannot edit employee data.
+Employee achievement submission must have a separate window before manager review.
 
-If manager gives different rating/comments, it must be stored as manager review data.
-
-## 9. Template-Level Configuration
-
-Template builder must control review behavior.
-
-Required template-level configuration:
+Example flow:
 
 ```text
-reviewMode = MANAGER_ONLY | SELF_REVIEW_THEN_MANAGER
-managerScoringMode = OVERALL_ONLY | SECTION_WISE
+Objective approved / assessment term active
+Employee achievement window open
+Employee submits achievement form
+Manager review window open
+Manager submits review
+Assessment term completed
 ```
 
-Required section/field-level configuration:
+Window support applies to all assessment term types:
 
 ```text
-employeeCanView
-employeeCanFill
-employeeCanRate
-employeeCanComment
-employeeCanAttach
-
-managerCanViewEmployeeInput
-managerCanFill
-managerCanRate
-managerCanComment
-managerCanAttach
-
-managerCanEditEmployeeInput = false
+Q1, Q2, Q3, Q4
+H1, H2
+Y1
 ```
 
-Important fixed rule:
+## 10. Employee Achievement Window Missed Case
+
+If employee does not submit achievement form before the window closes, behavior must be configurable.
+
+Supported configuration:
 
 ```text
-managerCanEditEmployeeInput must always be false
+achievementSubmissionRequired = true | false
+allowManagerReviewWithoutAchievement = true | false
 ```
 
-Manager data must be captured separately.
+Default recommended behavior:
 
-## 10. Employee Self-Review Form
+```text
+If employee achievement is not submitted before window close,
+manager review may still proceed if configured,
+but system must clearly show:
+Employee Achievement Not Submitted
+```
 
-Employee self-review form must support:
+SLA can be configured for:
 
-* rating
-* comments
-* attachments
+* employee achievement pending
+* employee achievement overdue
+* escalation after missed achievement window
 
-Depending on template configuration, employee may fill:
+## 11. Employee Achievement Reopen Rule
 
-* overall self-review
-* section-wise self-review
-* configured fields only
+Once employee submits achievement form, it is locked.
 
-Employee self-review submit should lock employee input from further edit unless reopened/returned by allowed role.
+Confirmed rule:
 
-## 11. Manager Review Form
+```text
+No one can reopen employee achievement submission after final submit.
+```
+
+This means:
+
+* Manager cannot return it.
+* Manager cannot edit it.
+* Admin cannot reopen it.
+* HR cannot reopen it.
+
+Manager must review based on submitted values and proofs.
+
+If wrong data is submitted, correction must not overwrite original submitted data unless a separately approved correction-layer requirement is added later.
+
+## 12. Manager Review Form
 
 Manager review form must support:
 
-* viewing employee self-review data
+* viewing employee achievement submission
+* viewing achievement attachments/proofs
 * entering manager rating
 * entering manager comments
 * adding manager attachments
@@ -337,7 +344,159 @@ Manager review submission completes the assessment term review.
 
 There is no separate “send to top level” action after manager review submit.
 
-## 12. HR / Management Annual Decision
+After manager review submission, HR/Management can use the data for annual decision.
+
+## 13. Manager Scoring Mode
+
+Manager scoring behavior must be configurable.
+
+Supported manager scoring modes:
+
+```text
+OVERALL_ONLY
+SECTION_WISE
+```
+
+## 13.1 Overall-Only Manager Rating
+
+Manager reviews employee achievement submission and gives only final/overall rating or score.
+
+Manager may enter:
+
+* overall rating
+* overall score
+* overall comments
+* attachments, if enabled
+
+System stores manager overall review separately from employee achievement submission.
+
+## 13.2 Section-Wise Manager Rating
+
+Manager reviews employee achievement submission and gives rating/comments per configured section.
+
+Manager may enter:
+
+* section-wise rating
+* section-wise comments
+* section-wise score
+* attachments, if enabled
+
+System calculates final manager score based on configured scoring logic.
+
+## 14. Data Separation Rule
+
+Employee achievement data and manager review data must never overwrite each other.
+
+Required storage concept:
+
+```text
+employeeAchievementSubmissionData
+managerReviewData
+finalReviewScore
+```
+
+Employee achievement submission data includes:
+
+* configured achievement section responses
+* topic
+* description
+* proof/details
+* attachments
+* configured rating value only if template allows it
+* submittedBy
+* submittedAt
+* status
+* locked snapshot/version
+
+Manager review data includes:
+
+* manager ratings
+* manager comments
+* manager attachments
+* section-wise review responses
+* overall rating/score
+* final calculated score
+* submittedBy
+* submittedAt
+* status
+
+Manager can view employee achievement data but cannot edit employee achievement data.
+
+If manager gives a different rating/comment, it must be stored only inside manager review data.
+
+## 15. Template-Level Configuration
+
+Template builder must control the review/achievement behavior.
+
+Required template-level configuration:
+
+```text
+reviewFlowMode = MANAGER_ONLY | ACHIEVEMENT_THEN_MANAGER
+managerScoringMode = OVERALL_ONLY | SECTION_WISE
+```
+
+Required achievement configuration:
+
+```text
+employeeAchievementEnabled = true | false
+achievementSubmissionRequired = true | false
+allowManagerReviewWithoutAchievement = true | false
+```
+
+Required section/field-level configuration:
+
+```text
+employeeCanView
+employeeCanFillAchievement
+employeeCanAddAchievementTopic
+employeeCanAddAchievementDescription
+employeeCanAttachAchievementProof
+employeeCanUseConfiguredRatingField
+
+managerCanViewEmployeeAchievement
+managerCanFillReview
+managerCanRate
+managerCanComment
+managerCanAttach
+managerCanEditEmployeeAchievement = false
+```
+
+Fixed rule:
+
+```text
+managerCanEditEmployeeAchievement must always be false
+```
+
+## 16. Employee Achievement Form
+
+Employee achievement form must support configured template fields.
+
+Common fields:
+
+* topic
+* description
+* achievement details
+* attachments/proof
+* configured rating field only if template allows it
+
+The form should not be called:
+
+* Self Review
+* Self Rating
+* Self Appraisal
+* Employee Acceptance
+* Employee Sign-off
+
+Correct UI labels:
+
+* Employee Achievement Submission
+* Submit Achievement
+* Achievement Form
+* Achievement Window
+* Achievement Submitted
+* Achievement Not Submitted
+
+## 17. HR / Management Annual Decision
 
 After manager submits the review, HR/Management can view completed assessment data.
 
@@ -358,7 +517,7 @@ Visibility controlled
 Communication dispatched
 ```
 
-## 13. Objective Creation Configuration
+## 18. Objective Creation Configuration
 
 Employee objective creation must be configurable.
 
@@ -376,9 +535,9 @@ Behavior:
 * Manager-created objectives are auto-approved.
 * Employee-created objectives require manager approval if configured.
 
-This configuration should be available during template/cycle/assignment configuration as per current product design decision.
+This configuration can be applied during template/cycle/assignment configuration based on final implementation decision.
 
-## 14. Manager Bulk Objective Assignment
+## 19. Manager Bulk Objective Assignment
 
 Manager must be able to assign the same objective to selected employees from their team.
 
@@ -397,29 +556,30 @@ Important rule:
 
 Manager cannot give different weightage per employee in this bulk flow.
 
-The same objective configuration is copied to selected employees.
+Same objective configuration is copied to selected employees.
 
-## 15. SLA Email Notifications
+## 20. SLA Email Notifications
 
-PMS v2.1 requires SLA email notifications.
+PMS v3.1 requires SLA email notifications.
 
 Notification areas:
 
 * employee objective submission pending
 * manager objective approval pending
-* employee self-review pending
+* employee achievement submission pending
+* employee achievement submission overdue
 * manager review pending
 * overdue assessment actions
 * escalation reminders if configured
 
-Current implementation has SLA rules and manual trigger, but scheduled background automation must be verified/fixed before promising automatic SLA mail behavior.
+Current implementation has SLA rules and manual trigger, but scheduled background automation must be verified or fixed before promising automatic SLA mail behavior.
 
-Required decision:
+Required decision for implementation:
 
-* Either make SLA scheduler working as part of v2.1
-* Or clearly mark SLA mail as manual-trigger/current limited behavior until scheduler is completed
+* Make SLA scheduler working as part of PMS v3.1, or
+* Clearly mark SLA mail as manual-trigger/current limited behavior until scheduler is completed.
 
-## 16. UI Improvement Scope
+## 21. UI Improvement Scope
 
 UI must be improved for active PMS screens only.
 
@@ -432,7 +592,7 @@ Priority screens:
 * Manager objective workspace
 * Manager review workspace
 * Employee objective workspace
-* Employee self-review workspace
+* Employee achievement submission workspace
 * Annual decision workspace
 
 UI improvement goals:
@@ -442,13 +602,14 @@ UI improvement goals:
 * better action buttons
 * better empty states
 * better pending-action cards
-* clearer employee/manager review comparison
+* clearer achievement vs manager review comparison
+* better proof/attachment display
 * less plain layout
 * fewer confusing hidden/duplicate paths
 
 Do not improve stale or inactive pages unless they are part of the active flow.
 
-## 17. Current Implementation Risks to Protect
+## 22. Current Implementation Risks to Protect
 
 Before implementation, protect these current baseline risks:
 
@@ -461,20 +622,23 @@ Before implementation, protect these current baseline risks:
 7. SLA scheduler is not proven.
 8. Hidden/duplicate admin pages must not confuse implementation.
 
-## 18. Suggested New/Updated Concepts
+## 23. Suggested New/Updated Concepts
 
-Suggested concepts for PMS v2.1:
+Suggested concepts for PMS v3.1:
 
 ```text
 AssessmentTerm
 AssessmentTermType
 AssessmentTermCode
 AssessmentAssignment
-ReviewMode
-SelfReview
+ReviewFlowMode
+EmployeeAchievementSubmission
+EmployeeAchievementSubmissionData
 ManagerReview
 ManagerScoringMode
 ObjectiveCreationMode
+AchievementWindow
+ManagerReviewWindow
 ```
 
 Suggested enum values:
@@ -494,9 +658,9 @@ H1
 H2
 Y1
 
-ReviewMode:
+ReviewFlowMode:
 MANAGER_ONLY
-SELF_REVIEW_THEN_MANAGER
+ACHIEVEMENT_THEN_MANAGER
 
 ManagerScoringMode:
 OVERALL_ONLY
@@ -506,13 +670,30 @@ ObjectiveCreationMode:
 EMPLOYEE
 MANAGER
 BOTH
+
+AchievementSubmissionStatus:
+NOT_OPEN
+OPEN
+DRAFT
+SUBMITTED
+NOT_SUBMITTED
+LOCKED
 ```
 
-## 19. Migration / Refactor Guidance
+Do not use:
+
+```text
+SelfReview
+SELF_REVIEW
+SELF_REVIEW_THEN_MANAGER
+employeeSelfReviewData
+```
+
+## 24. Migration / Refactor Guidance
 
 Current implementation uses quarter-based naming such as quarter cycle, quarter assignment, and quarter review.
 
-For PMS v2.1, the system must support quarterly, half-yearly, and yearly assessment terms.
+For PMS v3.1, the system must support quarterly, half-yearly, and yearly assessment terms.
 
 Recommended approach:
 
@@ -522,45 +703,65 @@ Recommended approach:
 
 The final model should not confuse half-yearly/yearly reviews as “quarters”.
 
-## 20. Out of Scope for This Addendum
+## 25. Out of Scope for This Addendum
 
 This addendum does not include:
 
+* employee self-review workflow
+* employee self-appraisal workflow
 * employee sign-off/acceptance workflow
 * employee disagreement workflow
 * multi-manager parallel approval
-* manager editing employee self-review values
+* manager editing employee achievement submission values
+* manager returning employee achievement submission
+* admin reopening employee achievement submission
 * top-level approval after manager review submit
 * final appraisal decision for every quarter/half-year
 * reactivation of old letter-template builder unless separately approved
 * full PMS file upload lifecycle unless attachments are confirmed in scope
 
-## 21. Open Decisions Before Implementation
+## 26. Confirmed Decisions
 
-These must be confirmed before coding:
+Confirmed for PMS v3.1:
 
-1. Should self-review submission be returnable to employee for correction, or locked after submit?
-2. Should employee self-score be used in final score calculation, or only stored for reference?
-3. Should yearly assessment with `Y1` skip separate annual rollup and directly support annual decision?
-4. Should SLA email scheduler be completed in v2.1 or kept manual-trigger for now?
-5. Should PMS attachments become real uploads in v2.1, or remain metadata only?
-6. Should old hidden admin pages be exposed, redirected, or left hidden?
-7. Should old letter-template builder remain removed, or will communication templates come back later?
+1. Naming must be **Employee Achievement Submission**, not self-review.
+2. Employee can submit achievement topic, description, proof/details, attachments, and configured fields.
+3. Employee rating field may exist only if template config allows, but it is not final appraisal rating.
+4. Employee achievement window happens before manager review window.
+5. If employee misses achievement submission window, behavior is configurable and SLA can be set.
+6. Once employee submits achievement form, it is locked.
+7. No one can reopen employee achievement submission after final submit.
+8. Manager cannot edit employee achievement data.
+9. Manager review data is stored separately.
+10. Manager scoring can be overall-only or section-wise.
+11. Assessment term logic applies to Q1/Q2/Q3/Q4, H1/H2, and Y1.
+12. Final appraisal decision remains yearly only.
+13. Current implementation truth/risk/summary docs remain current-code baseline and are not updated with v3.1 planned changes.
 
-## 22. Final Direction
+## 27. Remaining Open Decisions Before Implementation
 
-PMS v2.1 should be implemented as a controlled change over the current PMS baseline.
+Only these items still need business confirmation:
+
+1. Should SLA email scheduler be completed in PMS v3.1 or kept as manual-trigger until later?
+2. Should PMS attachments become real uploads in PMS v3.1, or remain metadata only?
+3. Should old hidden admin pages be exposed, redirected, or left hidden?
+4. Should old letter-template builder remain removed, or will communication templates come back later?
+5. Should yearly assessment `Y1` directly feed annual decision without separate rollup, or should it still pass through a common annual rollup service?
+
+## 28. Final Direction
+
+PMS v3.1 should be implemented as a controlled change over the current PMS baseline.
 
 The main product direction is:
 
 ```text
 Assessment-term configurable PMS
 +
-Template-controlled review mode
+Template-controlled Employee Achievement Submission
 +
-Optional employee self-review
+Manager Review as official review
 +
-Separate employee and manager review data
+Separate employee achievement data and manager review data
 +
 Yearly final appraisal decision
 ```
@@ -569,5 +770,5 @@ Do not start implementation until:
 
 * current baseline is frozen
 * blocking access/visibility/mock risks are handled or explicitly accepted
-* open decisions are answered
+* remaining open decisions are answered or marked out of scope
 * implementation prompts are split module-wise
