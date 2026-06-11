@@ -221,6 +221,13 @@ function getFolderName(category: string, type: string): string {
       }
     case 'Payroll':
       return 'Payroll';
+    case 'PMS':
+      switch (type) {
+        case 'EmployeeAchievement':
+          return 'EmployeeAchievement';
+        default:
+          return 'PMS';
+      }
     default:
       return category;
   }

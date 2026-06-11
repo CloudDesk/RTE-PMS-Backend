@@ -230,6 +230,7 @@ export interface IPmsTemplateVersion extends Document {
   versionNo: number;
   status: PmsTemplateStatusType;
   sections: ITemplateSection[];
+  metadata?: Record<string, unknown>;
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
@@ -482,6 +483,7 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
       index: true,
     },
     sections: { type: [templateSectionSchema], default: [] },
+    metadata: { type: Schema.Types.Mixed, default: {} },
     themeConfig: { type: Schema.Types.Mixed, default: {} },
     scoringConfig: { type: Schema.Types.Mixed, default: {} },
     annualScoringConfig: { type: Schema.Types.Mixed, default: {} },

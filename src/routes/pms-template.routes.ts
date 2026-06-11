@@ -198,11 +198,13 @@ export const pmsTemplateRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { versionId } = request.params as { versionId: string };
-        const { sections, annualScoringConfig } = request.body as {
+        const { sections, metadata, annualScoringConfig } = request.body as {
           sections: TemplateSection[];
+          metadata?: Record<string, unknown>;
           annualScoringConfig?: Record<string, unknown>;
         };
         const version = await request.container!.pmsTemplateService.configureSections(versionId, sections, {
+          metadata,
           annualScoringConfig,
         });
         return reply.send(successResponse('PMS template sections configured successfully', version));

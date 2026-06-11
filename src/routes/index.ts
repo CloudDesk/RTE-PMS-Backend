@@ -13,6 +13,7 @@ import { pmsRolePermissionRoutes } from "./pms-role-permission.routes";
 import { cycleRoutes } from "./cycle.routes";
 import { assignmentRoutes } from "./assignment.routes";
 import { objectiveRoutes } from "./objective.routes";
+import { employeeAchievementSubmissionRoutes } from "./employeeAchievementSubmission.routes";
 import { quarterReviewRoutes } from "./quarterReview.routes";
 import { quarterAssignmentRoutes } from "./quarterAssignment.routes";
 import { annualDecisionRoutes } from "./annualDecision.routes";
@@ -90,6 +91,7 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(cycleRoutes, { prefix: "/pms/cycles" });
   fastify.register(assignmentRoutes, { prefix: "/pms/cycles" });
   fastify.register(objectiveRoutes, { prefix: "/pms/objectives" });
+  fastify.register(employeeAchievementSubmissionRoutes, { prefix: "/pms/achievement-submissions" });
   fastify.register(quarterReviewRoutes, { prefix: "/pms/quarter-reviews" });
   fastify.register(quarterAssignmentRoutes, { prefix: "/pms/quarter-assignments" });
   fastify.register(annualDecisionRoutes, { prefix: "/pms/annual-assignments" });
