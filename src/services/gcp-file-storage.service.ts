@@ -37,7 +37,7 @@ export class GcpFileStorageService {
 
     try {
       await saveMultipartFile(file as any, tempPath);
-      const fileBuffer = await file.toBuffer();
+      const fileStats = await fs.stat(tempPath);
       const uploadResult = await uploadFileToGCP({
         filePath: tempPath,
         fileName: storedFileName,
@@ -55,7 +55,7 @@ export class GcpFileStorageService {
         fileName: safeName,
         fileUrl: uploadResult.fileUrl,
         fileType: file.mimetype || undefined,
-        fileSize: fileBuffer.length,
+        fileSize: fileStats.size,
         documentId: randomUUID(),
         uploadedAt: new Date().toISOString(),
       };
