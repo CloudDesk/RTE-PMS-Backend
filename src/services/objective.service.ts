@@ -1382,9 +1382,28 @@ export class ObjectiveService extends BaseService {
       };
     };
 
+    const achievementSubmissionWindow = quarterCycle.achievementSubmissionWindow
+      ? {
+          enabled: quarterCycle.achievementSubmissionWindow.enabled === true,
+          startDate: quarterCycle.achievementSubmissionWindow.startDate
+            ? new Date(quarterCycle.achievementSubmissionWindow.startDate).toISOString()
+            : undefined,
+          endDate: quarterCycle.achievementSubmissionWindow.endDate
+            ? new Date(quarterCycle.achievementSubmissionWindow.endDate).toISOString()
+            : undefined,
+          dueDate: quarterCycle.achievementSubmissionWindow.dueDate
+            ? new Date(quarterCycle.achievementSubmissionWindow.dueDate).toISOString()
+            : undefined,
+          graceDays: quarterCycle.achievementSubmissionWindow.graceDays,
+          reminderDaysBefore: quarterCycle.achievementSubmissionWindow.reminderDaysBefore,
+          escalationDaysAfterDue: quarterCycle.achievementSubmissionWindow.escalationDaysAfterDue,
+        }
+      : undefined;
+
     return {
       objectiveSetting: mapWindow(quarterCycle.objectiveSettingWindow),
       objectiveApproval: mapWindow(quarterCycle.objectiveApprovalWindow),
+      achievementSubmission: achievementSubmissionWindow,
       managerReview: mapWindow(quarterCycle.managerReviewWindow),
       quarterFinalization: mapWindow(quarterCycle.quarterFinalizationWindow),
     };

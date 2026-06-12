@@ -8,7 +8,13 @@ import { User } from '../models/user.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { Types } from 'mongoose';
 import { NotificationEvent } from '../models/pms-notification-event.model';
-import { PmsRole } from '../constants/pms.enums';
+import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
+import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  EmployeeAchievementSubmission,
+  EmployeeAchievementSubmissionStatus,
+} from '../models/pms-employee-achievement-submission.model';
+import { PmsTemplateVersion, type ITemplateSection } from '../models/pms-template-version.model';
 
 const SUPPORTED_SLA_RULES = {
   objective_submission_pending: {
@@ -20,7 +26,27 @@ const SUPPORTED_SLA_RULES = {
   quarter_review_pending: {
     quarterStates: ['OBJECTIVE_APPROVED', 'MANAGER_REVIEW_OPEN'],
   },
+  employee_achievement_submission_pending: {
+    quarterStates: [
+      'NOT_STARTED',
+      'OBJECTIVE_DRAFT',
+      'OBJECTIVE_SUBMITTED',
+      'OBJECTIVE_REVISION_REQUIRED',
+      'OBJECTIVE_APPROVED',
+      'MANAGER_REVIEW_OPEN',
+      'MANAGER_REVIEW_SUBMITTED',
+      'REOPENED_BY_ADMIN',
+    ],
+  },
 } as const;
+
+type PendingSlaTarget = {
+  assignment: any;
+  dueAt?: Date;
+  ownerUserId?: Types.ObjectId;
+  escalationTargetUserId?: Types.ObjectId;
+  metadata?: Record<string, unknown>;
+};
 
 export class SlaService {
   /**
@@ -104,16 +130,18 @@ export class SlaService {
       const scopedRuleCycles = this.buildScopedRuleCycleMap(activeRules);
 
       for (const rule of activeRules) {
-        const pendingAssignments = (await this.getPendingAssignmentsForRule(rule)).filter(
-          (assignment) =>
+        const pendingTargets = (await this.getPendingTargetsForRule(rule)).filter(
+          (target) =>
             !this.shouldSkipGlobalRuleForCycle(
               scopedRuleCycles,
               rule.eventType,
               rule.cycleId?.toString(),
-              assignment.cycleId?.toString(),
+              target.assignment.cycleId?.toString(),
             ),
         );
-        const activeAssignmentIds = new Set(pendingAssignments.map((assignment) => assignment._id.toString()));
+        const activeAssignmentIds = new Set(
+          pendingTargets.map((target) => target.assignment._id.toString()),
+        );
 
         const existingEvents = await SlaEvent.find({
           slaType: rule.eventType,
@@ -130,17 +158,18 @@ export class SlaService {
           }
         }
 
-        for (const qa of pendingAssignments) {
+        for (const target of pendingTargets) {
+          const qa = target.assignment;
           const exists = existingEvents.find(
             (event) => event.entityId.toString() === qa._id.toString(),
           );
 
-          const ownerUserId = this.resolveOwnerUserIdForRule(rule.targetRole, qa);
+          const ownerUserId = target.ownerUserId ?? this.resolveOwnerUserIdForRule(rule.targetRole, qa);
           if (!ownerUserId) {
             continue;
           }
 
-          const dueAt = await this.calculateDueDate(
+          const dueAt = target.dueAt ?? await this.calculateDueDate(
             rule.baseDatePointer,
             rule.offsetDays,
             {
@@ -151,7 +180,8 @@ export class SlaService {
             },
           );
 
-          const escalationTargetUserId = await this.resolveEscalationTargetForRule(rule.targetRole, qa);
+          const escalationTargetUserId = target.escalationTargetUserId ??
+            await this.resolveEscalationTargetForRule(rule.targetRole, qa);
 
           if (!exists) {
             await SlaEvent.create({
@@ -164,6 +194,7 @@ export class SlaService {
               dueAt,
               status: 'OPEN',
               escalationTargetUserId,
+              metadata: target.metadata,
             });
             createdCount++;
             continue;
@@ -186,6 +217,10 @@ export class SlaService {
             exists.dueAt = dueAt;
             changed = true;
           }
+          if (this.hasMetadataChanged(exists.metadata, target.metadata)) {
+            exists.metadata = target.metadata;
+            changed = true;
+          }
           if (changed) {
             exists.updatedAt = new Date();
             await exists.save();
@@ -202,7 +237,7 @@ export class SlaService {
    * Process all outstanding SLA and Reminder rules.
    * Runs checks for pre-due, due-date, overdue, and escalation triggers.
    */
-  async processSlas(): Promise<{ processed: number; notificationsSent: number }> {
+  async processSlas(currentDate?: Date): Promise<{ processed: number; notificationsSent: number }> {
     // Automatically synchronize/seed SLA Event records for open workflow steps
     await this.syncSlaEvents();
 
@@ -210,7 +245,7 @@ export class SlaService {
     let processedCount = 0;
     let sentCount = 0;
 
-    const now = new Date();
+    const now = currentDate ?? new Date();
 
     for (const sla of openSlas) {
       processedCount++;
@@ -231,63 +266,43 @@ export class SlaService {
           isDeleted: false,
         });
 
-        const timeDiffMs = now.getTime() - sla.dueAt.getTime();
-        const daysDiff = Math.floor(timeDiffMs / (1000 * 60 * 60 * 24));
-
         for (const rem of reminderRules) {
-          let triggerReminder = false;
-
-          if (rem.reminderType === 'PRE_DUE' && daysDiff < 0) {
-            // Negative offsetDays specifies how many days before due date to remind
-            if (daysDiff === rem.offsetDays) {
-              triggerReminder = true;
-            }
-          } else if (rem.reminderType === 'DUE_DATE' && daysDiff === 0) {
-            triggerReminder = true;
-          } else if (rem.reminderType === 'OVERDUE' && daysDiff > 0 && daysDiff === rem.offsetDays) {
-            triggerReminder = true;
-          } else if (rem.reminderType === 'ESCALATION' && daysDiff > 0 && daysDiff === rem.offsetDays) {
-            // Escalation rule
-            triggerReminder = true;
-          }
+          const triggerReminder = this.shouldTriggerReminder(sla, rem, now);
 
           if (triggerReminder) {
-            const recipientId = rem.reminderType === 'ESCALATION' && sla.escalationTargetUserId
-              ? sla.escalationTargetUserId.toString()
-              : sla.ownerUserId.toString();
+            const recipientIds = this.resolveRecipientIdsForReminder(sla, rem);
 
-            const alreadySent = await NotificationEvent.findOne({
-              eventType: `${sla.slaType}_${rem.reminderType}`,
-              recipientUserId: new Types.ObjectId(recipientId),
-              entityType: sla.entityType,
-              entityId: sla.entityId,
-              channel: rem.channel === 'BOTH' ? { $in: ['EMAIL', 'IN_APP'] } : rem.channel,
-              deliveryStatus: { $in: ['PENDING', 'SENT'] },
-              isDeleted: false,
-            }).lean();
+            for (const recipientId of recipientIds) {
+              const alreadySent = await NotificationEvent.findOne({
+                eventType: `${sla.slaType}_${rem.reminderType}`,
+                recipientUserId: new Types.ObjectId(recipientId),
+                entityType: sla.entityType,
+                entityId: sla.entityId,
+                channel: rem.channel === 'BOTH' ? { $in: ['EMAIL', 'IN_APP'] } : rem.channel,
+                deliveryStatus: { $in: ['PENDING', 'SENT'] },
+                isDeleted: false,
+              }).lean();
 
-            if (alreadySent) {
-              continue;
-            }
+              if (alreadySent) {
+                continue;
+              }
 
-            const user = await User.findById(recipientId).lean();
-            if (user) {
-              // Custom text formatting
-              let subject = rem.subjectTemplate.replace('{userName}', user.name || 'User');
-              let body = rem.bodyTemplate
-                .replace('{userName}', user.name || 'User')
-                .replace('{dueDate}', sla.dueAt.toDateString());
+              const user = await User.findById(recipientId).lean();
+              if (!user) {
+                continue;
+              }
 
-              // Send the notification
+              const content = this.buildReminderContent(sla, rem, user.name || 'User');
+
               await pmsNotificationService.triggerNotification(
                 recipientId,
                 `${sla.slaType}_${rem.reminderType}`,
                 rem.channel,
-                subject,
-                body,
+                content.subject,
+                content.body,
                 sla.entityType,
                 sla.entityId.toString(),
-                sla.cycleId?.toString()
+                sla.cycleId?.toString(),
               );
 
               sentCount++;
@@ -319,6 +334,19 @@ export class SlaService {
     return { processed: processedCount, notificationsSent: sentCount };
   }
 
+  private async getPendingTargetsForRule(rule: {
+    eventType: string;
+    entityType: string;
+    cycleId?: Types.ObjectId;
+  }): Promise<PendingSlaTarget[]> {
+    if (rule.eventType === 'employee_achievement_submission_pending') {
+      return this.getPendingAchievementTargets(rule);
+    }
+
+    const assignments = await this.getPendingAssignmentsForRule(rule);
+    return assignments.map((assignment) => ({ assignment }));
+  }
+
   private async getPendingAssignmentsForRule(rule: {
     eventType: string;
     entityType: string;
@@ -334,6 +362,187 @@ export class SlaService {
       isDeleted: false,
       ...(rule.cycleId ? { cycleId: rule.cycleId } : {}),
     }).lean();
+  }
+
+  private async getPendingAchievementTargets(rule: {
+    eventType: string;
+    entityType: string;
+    cycleId?: Types.ObjectId;
+  }): Promise<PendingSlaTarget[]> {
+    if (rule.entityType !== 'QUARTER_ASSIGNMENT') {
+      return [];
+    }
+
+    const supportedRule = SUPPORTED_SLA_RULES.employee_achievement_submission_pending;
+    const assignments = await QuarterAssignment.find({
+      quarterState: { $in: supportedRule.quarterStates },
+      isDeleted: false,
+      ...(rule.cycleId ? { cycleId: rule.cycleId } : {}),
+    }).lean();
+
+    if (assignments.length === 0) {
+      return [];
+    }
+
+    const quarterAssignmentIds = assignments.map((assignment) => assignment._id);
+    const cycleQuarterIds = Array.from(
+      new Set(
+        assignments
+          .map((assignment) => assignment.cycleQuarterId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const annualAssignmentIds = Array.from(
+      new Set(assignments.map((assignment) => assignment.annualAssignmentId.toString())),
+    );
+
+    const [quarterCycles, annualAssignments, submissions, annualCycles, adminUsers] = await Promise.all([
+      QuarterCycle.find({
+        _id: { $in: cycleQuarterIds.map((id) => new Types.ObjectId(id)) },
+        isDeleted: false,
+      })
+        .select('achievementSubmissionWindow')
+        .lean(),
+      AnnualAssignment.find({
+        _id: { $in: annualAssignmentIds.map((id) => new Types.ObjectId(id)) },
+        isDeleted: false,
+      })
+        .select('templateVersionId orgSnapshot cycleId employeeSnapshot managerSnapshot')
+        .lean(),
+      EmployeeAchievementSubmission.find({
+        quarterAssignmentId: { $in: quarterAssignmentIds },
+        isDeleted: false,
+      })
+        .select('quarterAssignmentId status')
+        .lean(),
+      AnnualCycle.find({
+        _id: {
+          $in: Array.from(
+            new Set(
+              assignments
+                .map((assignment) => assignment.cycleId?.toString())
+                .filter((value): value is string => Boolean(value)),
+            ),
+          ).map((id) => new Types.ObjectId(id)),
+        },
+      })
+        .select('name')
+        .lean(),
+      User.find({ active: true })
+        .select('_id role')
+        .lean(),
+    ]);
+
+    const templateVersionIds = Array.from(
+      new Set(
+        annualAssignments
+          .map((assignment) => assignment.templateVersionId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const templateVersions = templateVersionIds.length > 0
+      ? await PmsTemplateVersion.find({
+        _id: { $in: templateVersionIds.map((id) => new Types.ObjectId(id)) },
+      })
+        .select('sections metadata')
+        .lean()
+      : [];
+
+    const quarterCycleById = new Map(quarterCycles.map((cycle) => [cycle._id.toString(), cycle]));
+    const annualAssignmentById = new Map(annualAssignments.map((assignment) => [assignment._id.toString(), assignment]));
+    const submissionByQuarterAssignmentId = new Map(
+      submissions.map((submission) => [submission.quarterAssignmentId.toString(), submission]),
+    );
+    const annualCycleById = new Map(annualCycles.map((cycle) => [cycle._id.toString(), cycle]));
+    const templateVersionById = new Map(templateVersions.map((template) => [template._id.toString(), template]));
+    const adminRecipientIds = adminUsers
+      .filter((user) => normalizePmsRole(String(user.role ?? '')) === PmsRole.ADMIN)
+      .map((user) => user._id.toString());
+
+    const targets: PendingSlaTarget[] = [];
+
+    for (const assignment of assignments) {
+      if (!assignment.cycleQuarterId) {
+        continue;
+      }
+
+      const quarterCycle = quarterCycleById.get(assignment.cycleQuarterId.toString());
+      const window = quarterCycle?.achievementSubmissionWindow;
+      if (!window || window.enabled !== true) {
+        continue;
+      }
+
+      const dueDateSource = window.dueDate ?? window.endDate;
+      if (!dueDateSource) {
+        continue;
+      }
+
+      const annualAssignment = annualAssignmentById.get(assignment.annualAssignmentId.toString());
+      const templateVersion = annualAssignment?.templateVersionId
+        ? templateVersionById.get(annualAssignment.templateVersionId.toString())
+        : undefined;
+
+      if (!this.isEmployeeAchievementEnabledForTemplate(templateVersion, assignment.quarterCode)) {
+        continue;
+      }
+
+      const submission = submissionByQuarterAssignmentId.get(assignment._id.toString());
+      if (
+        submission?.status === EmployeeAchievementSubmissionStatus.LOCKED ||
+        submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED
+      ) {
+        continue;
+      }
+
+      const dueAt = new Date(dueDateSource);
+      if (Number.isNaN(dueAt.getTime())) {
+        continue;
+      }
+
+      const graceDays = Number.isFinite(window.graceDays) ? Number(window.graceDays) : 0;
+      const allowedUntilAt = new Date(dueAt);
+      allowedUntilAt.setDate(allowedUntilAt.getDate() + graceDays);
+
+      const cycleName =
+        String(annualAssignment?.orgSnapshot?.cycleName ?? '') ||
+        String(annualCycleById.get(assignment.cycleId?.toString?.() ?? '')?.name ?? '') ||
+        'Performance Cycle';
+      const employeeName = String(annualAssignment?.employeeSnapshot?.name ?? 'Employee');
+      const managerName = String(annualAssignment?.managerSnapshot?.name ?? 'Manager');
+
+      const overdueRecipientUserIds = assignment.assignedManagerId
+        ? [assignment.assignedManagerId.toString()]
+        : [];
+      const escalationRecipientUserIds = [
+        ...overdueRecipientUserIds,
+        ...adminRecipientIds,
+      ].filter((value, index, values) => values.indexOf(value) === index);
+
+      targets.push({
+        assignment,
+        dueAt,
+        ownerUserId: new Types.ObjectId(assignment.employeeId),
+        escalationTargetUserId: assignment.assignedManagerId
+          ? new Types.ObjectId(assignment.assignedManagerId)
+          : undefined,
+        metadata: {
+          employeeName,
+          managerName,
+          cycleName,
+          quarterCode: assignment.quarterCode,
+          dueDate: dueAt.toISOString(),
+          allowedUntilAt: allowedUntilAt.toISOString(),
+          graceDays,
+          routePath: '/my/achievements',
+          currentStatus: submission?.status ?? EmployeeAchievementSubmissionStatus.DRAFT,
+          overdueRecipientUserIds,
+          escalationRecipientUserIds,
+        },
+      });
+    }
+
+    return targets;
   }
 
   private resolveOwnerUserIdForRule(targetRole: string, assignment: any) {
@@ -357,6 +566,181 @@ export class SlaService {
     }
 
     return undefined;
+  }
+
+  private shouldTriggerReminder(
+    sla: any,
+    reminderRule: any,
+    currentDate: Date,
+  ): boolean {
+    const dueDate = new Date(sla.dueAt);
+    const daysDiff = this.getDaysDiff(currentDate, dueDate);
+
+    if (reminderRule.reminderType === 'PRE_DUE' && daysDiff < 0) {
+      return daysDiff === reminderRule.offsetDays;
+    }
+
+    if (reminderRule.reminderType === 'DUE_DATE') {
+      return daysDiff === 0;
+    }
+
+    if (reminderRule.reminderType === 'OVERDUE' && daysDiff > 0) {
+      return daysDiff === reminderRule.offsetDays;
+    }
+
+    if (reminderRule.reminderType !== 'ESCALATION') {
+      return false;
+    }
+
+    if (sla.slaType === 'employee_achievement_submission_pending') {
+      const allowedUntilAt = (sla.metadata as Record<string, any> | undefined)?.allowedUntilAt;
+      if (!allowedUntilAt) {
+        return false;
+      }
+
+      const escalationDate = new Date(allowedUntilAt);
+      if (Number.isNaN(escalationDate.getTime()) || currentDate <= escalationDate) {
+        return false;
+      }
+
+      return this.getDaysDiff(currentDate, escalationDate) === 0;
+    }
+
+    return daysDiff > 0 && daysDiff === reminderRule.offsetDays;
+  }
+
+  private resolveRecipientIdsForReminder(sla: any, reminderRule: any): string[] {
+    const recipients = new Set<string>();
+    const metadata = (sla.metadata ?? {}) as Record<string, any>;
+
+    const primaryRecipient = reminderRule.reminderType === 'ESCALATION' && sla.escalationTargetUserId
+      ? sla.escalationTargetUserId.toString()
+      : sla.ownerUserId.toString();
+    recipients.add(primaryRecipient);
+
+    if (sla.slaType === 'employee_achievement_submission_pending') {
+      const extraRecipientIds = reminderRule.reminderType === 'ESCALATION'
+        ? metadata.escalationRecipientUserIds
+        : reminderRule.reminderType === 'OVERDUE'
+          ? metadata.overdueRecipientUserIds
+          : [];
+
+      if (Array.isArray(extraRecipientIds)) {
+        for (const recipientId of extraRecipientIds) {
+          if (typeof recipientId === 'string' && recipientId.trim()) {
+            recipients.add(recipientId);
+          }
+        }
+      }
+    }
+
+    return Array.from(recipients);
+  }
+
+  private buildReminderContent(
+    sla: any,
+    reminderRule: any,
+    recipientName: string,
+  ): { subject: string; body: string } {
+    if (sla.slaType !== 'employee_achievement_submission_pending') {
+      return {
+        subject: reminderRule.subjectTemplate.replace('{userName}', recipientName || 'User'),
+        body: reminderRule.bodyTemplate
+          .replace('{userName}', recipientName || 'User')
+          .replace('{dueDate}', new Date(sla.dueAt).toDateString()),
+      };
+    }
+
+    const metadata = (sla.metadata ?? {}) as Record<string, any>;
+    const dueDate = metadata.dueDate
+      ? new Date(metadata.dueDate).toDateString()
+      : new Date(sla.dueAt).toDateString();
+    const actionLink = this.getAchievementActionLink(metadata.routePath);
+    const subject = reminderRule.reminderType === 'PRE_DUE'
+      ? 'Employee Achievement Submission Due Soon'
+      : reminderRule.reminderType === 'ESCALATION'
+        ? 'Employee Achievement Submission Escalation'
+        : 'Employee Achievement Submission Overdue';
+
+    const bodyLines = [
+      `Hello ${recipientName || 'User'},`,
+      '',
+      reminderRule.reminderType === 'PRE_DUE'
+        ? 'This is a reminder that an Employee Achievement Submission is due soon.'
+        : reminderRule.reminderType === 'ESCALATION'
+          ? 'An Employee Achievement Submission is still pending and now requires escalation attention.'
+          : 'An Employee Achievement Submission is overdue.',
+      `Employee: ${metadata.employeeName || 'Employee'}`,
+      `Cycle / Quarter: ${metadata.cycleName || 'Performance Cycle'} / ${metadata.quarterCode || sla.quarterCode || ''}`,
+      `Due Date: ${dueDate}`,
+      `Current Status: ${metadata.currentStatus || 'DRAFT'}`,
+      actionLink
+        ? `Action Link: ${actionLink}`
+        : 'Action: Open /my/achievements in the PMS portal.',
+    ];
+
+    return {
+      subject,
+      body: bodyLines.join('\n'),
+    };
+  }
+
+  private getAchievementActionLink(routePath?: string): string | undefined {
+    const appUrl = process.env.APP_URL || process.env.FRONTEND_URL;
+    if (!appUrl) {
+      return undefined;
+    }
+
+    const normalizedBase = appUrl.endsWith('/') ? appUrl.slice(0, -1) : appUrl;
+    const normalizedPath = routePath || '/my/achievements';
+    return `${normalizedBase}${normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`}`;
+  }
+
+  private isEmployeeAchievementEnabledForTemplate(
+    templateVersion: { metadata?: Record<string, unknown>; sections?: ITemplateSection[] } | null | undefined,
+    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+  ): boolean {
+    if (!templateVersion) {
+      return false;
+    }
+
+    const section = (templateVersion.sections ?? []).find((item) => {
+      const quarterScope = [
+        ...(item.quarterScope ?? []),
+        ...(item.repeatFor ?? []),
+      ];
+
+      return (
+        item.sectionKey === 'employee_achievement_submission' &&
+        item.level === 'QUARTER' &&
+        (quarterScope.length === 0 || quarterScope.includes(quarterCode))
+      );
+    });
+
+    const sectionExists = Boolean(section);
+    const metadata = (templateVersion.metadata ?? {}) as Record<string, any>;
+    const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
+      ? 'ACHIEVEMENT_THEN_MANAGER'
+      : 'MANAGER_ONLY';
+    const employeeAchievementEnabled =
+      employeeAchievementConfig.employeeAchievementEnabled !== undefined
+        ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
+        : sectionExists;
+
+    return employeeAchievementEnabled && reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER';
+  }
+
+  private getDaysDiff(currentDate: Date, baseDate: Date): number {
+    const timeDiffMs = currentDate.getTime() - baseDate.getTime();
+    return Math.floor(timeDiffMs / (1000 * 60 * 60 * 24));
+  }
+
+  private hasMetadataChanged(
+    existingMetadata: unknown,
+    nextMetadata: unknown,
+  ): boolean {
+    return JSON.stringify(existingMetadata ?? null) !== JSON.stringify(nextMetadata ?? null);
   }
 
   private selectApplicableRulesForEvent<T extends { cycleId?: Types.ObjectId | null }>(

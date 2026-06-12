@@ -33,6 +33,14 @@ export interface DateWindowInput {
   endDate?: Date | string;
 }
 
+export interface AchievementSubmissionWindowInput extends DateWindowInput {
+  enabled?: boolean;
+  dueDate?: Date | string;
+  graceDays?: number;
+  reminderDaysBefore?: number[];
+  escalationDaysAfterDue?: number;
+}
+
 export interface QuarterCycleInput {
   quarter?: QuarterCode;
   quarterCode?: QuarterCode;
@@ -41,6 +49,7 @@ export interface QuarterCycleInput {
   objectiveWindow?: DateWindowInput;
   objectiveSettingWindow?: DateWindowInput;
   objectiveApprovalWindow?: DateWindowInput;
+  achievementSubmissionWindow?: AchievementSubmissionWindowInput;
   reviewWindow?: DateWindowInput;
   managerReviewWindow?: DateWindowInput;
   quarterFinalizationWindow?: DateWindowInput;
@@ -681,6 +690,15 @@ export class CycleService extends BaseService {
     endDate: Date;
     objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
     objectiveApprovalWindow?: { startDate?: Date; endDate?: Date };
+    achievementSubmissionWindow?: {
+      enabled?: boolean;
+      startDate?: Date;
+      endDate?: Date;
+      dueDate?: Date;
+      graceDays?: number;
+      reminderDaysBefore?: number[];
+      escalationDaysAfterDue?: number;
+    };
     managerReviewWindow?: { startDate?: Date; endDate?: Date };
     quarterFinalizationWindow?: { startDate?: Date; endDate?: Date };
     slaConfig?: Record<string, unknown>;
@@ -713,6 +731,9 @@ export class CycleService extends BaseService {
           quarterInput.objectiveSettingWindow ?? quarterInput.objectiveWindow,
         ),
         objectiveApprovalWindow: this.normalizeWindow(quarterInput.objectiveApprovalWindow),
+        achievementSubmissionWindow: this.normalizeAchievementSubmissionWindow(
+          quarterInput.achievementSubmissionWindow,
+        ),
         managerReviewWindow: this.normalizeWindow(
           quarterInput.managerReviewWindow ?? quarterInput.reviewWindow,
         ),
@@ -782,6 +803,7 @@ export class CycleService extends BaseService {
       endDate: quarterCycle.endDate,
       objectiveSettingWindow: quarterCycle.objectiveSettingWindow,
       objectiveApprovalWindow: quarterCycle.objectiveApprovalWindow,
+      achievementSubmissionWindow: quarterCycle.achievementSubmissionWindow,
       managerReviewWindow: quarterCycle.managerReviewWindow,
       quarterFinalizationWindow: quarterCycle.quarterFinalizationWindow,
       slaConfig: quarterCycle.slaConfig,
@@ -797,6 +819,37 @@ export class CycleService extends BaseService {
     return {
       startDate: window.startDate ? new Date(window.startDate) : undefined,
       endDate: window.endDate ? new Date(window.endDate) : undefined,
+    };
+  }
+
+  private normalizeAchievementSubmissionWindow(
+    window?: AchievementSubmissionWindowInput,
+  ):
+    | {
+        enabled?: boolean;
+        startDate?: Date;
+        endDate?: Date;
+        dueDate?: Date;
+        graceDays?: number;
+        reminderDaysBefore?: number[];
+        escalationDaysAfterDue?: number;
+      }
+    | undefined {
+    if (!window) return undefined;
+
+    return {
+      enabled: window.enabled === undefined ? undefined : Boolean(window.enabled),
+      startDate: window.startDate ? new Date(window.startDate) : undefined,
+      endDate: window.endDate ? new Date(window.endDate) : undefined,
+      dueDate: window.dueDate ? new Date(window.dueDate) : undefined,
+      graceDays: window.graceDays === undefined ? undefined : Number(window.graceDays),
+      reminderDaysBefore: Array.isArray(window.reminderDaysBefore)
+        ? window.reminderDaysBefore.map((days) => Number(days))
+        : undefined,
+      escalationDaysAfterDue:
+        window.escalationDaysAfterDue === undefined
+          ? undefined
+          : Number(window.escalationDaysAfterDue),
     };
   }
 
@@ -1041,6 +1094,12 @@ export class CycleService extends BaseService {
         endDate,
         `${quarterCode} objective approval window`,
       );
+      this.validateAchievementSubmissionWindow(
+        quarter.achievementSubmissionWindow,
+        startDate,
+        endDate,
+        `${quarterCode} employee achievement submission window`,
+      );
       this.validateWindowWithinQuarter(
         quarter.managerReviewWindow ?? quarter.reviewWindow,
         startDate,
@@ -1098,6 +1157,66 @@ export class CycleService extends BaseService {
     }
   }
 
+  private validateAchievementSubmissionWindow(
+    window: AchievementSubmissionWindowInput | undefined,
+    quarterStart: Date,
+    quarterEnd: Date,
+    label: string,
+  ): void {
+    if (!window) return;
+
+    const hasStart = Boolean(window.startDate);
+    const hasEnd = Boolean(window.endDate);
+    if (hasStart || hasEnd) {
+      if (!hasStart || !hasEnd) {
+        throw new Error(`${label} must include both startDate and endDate when dates are provided`);
+      }
+
+      const startDate = new Date(window.startDate as Date | string);
+      const endDate = new Date(window.endDate as Date | string);
+      this.assertValidDateRange(startDate, endDate, label);
+      if (startDate < quarterStart || endDate > quarterEnd) {
+        throw new Error(`${label} must be within quarter dates`);
+      }
+    }
+
+    if (window.dueDate) {
+      const dueDate = new Date(window.dueDate);
+      this.assertValidDate(dueDate, `${label} dueDate`);
+      if (dueDate < quarterStart || dueDate > quarterEnd) {
+        throw new Error(`${label} dueDate must be within quarter dates`);
+      }
+    }
+
+    this.assertNonNegativeIntegerIfPresent(window.graceDays, `${label} graceDays`);
+    this.assertNonNegativeIntegerIfPresent(
+      window.escalationDaysAfterDue,
+      `${label} escalationDaysAfterDue`,
+    );
+
+    if (window.reminderDaysBefore !== undefined) {
+      if (!Array.isArray(window.reminderDaysBefore)) {
+        throw new Error(`${label} reminderDaysBefore must be an array`);
+      }
+
+      for (const reminderDays of window.reminderDaysBefore) {
+        this.assertNonNegativeIntegerIfPresent(
+          reminderDays,
+          `${label} reminderDaysBefore`,
+        );
+      }
+    }
+  }
+
+  private assertNonNegativeIntegerIfPresent(value: unknown, label: string): void {
+    if (value === undefined || value === null || value === '') return;
+
+    const normalized = Number(value);
+    if (!Number.isInteger(normalized) || normalized < 0) {
+      throw new Error(`${label} must be a non-negative integer`);
+    }
+  }
+
   private validateQuarterWindowSequence(
     quarter: QuarterCycleInput,
     quarterCode: QuarterCode,
@@ -1110,6 +1229,14 @@ export class CycleService extends BaseService {
       {
         label: 'objective approval window',
         window: quarter.objectiveApprovalWindow,
+      },
+      {
+        label: 'employee achievement submission window',
+        window:
+          quarter.achievementSubmissionWindow?.startDate &&
+          quarter.achievementSubmissionWindow?.endDate
+            ? quarter.achievementSubmissionWindow
+            : undefined,
       },
       {
         label: 'manager review window',
