@@ -1290,6 +1290,7 @@ export class PmsTemplateService extends BaseService {
           'OBJECTIVE_REVISION_REQUIRED',
           'OBJECTIVE_SUBMITTED',
           'OBJECTIVE_APPROVED',
+          'EMPLOYEE_ACHIEVEMENT_OPEN',
           'MANAGER_REVIEW_OPEN',
           'MANAGER_REVIEW_SUBMITTED',
           'QUARTER_FINALIZED',

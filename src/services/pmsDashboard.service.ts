@@ -229,10 +229,15 @@ export class PmsDashboardService extends BaseService {
       .sort({ updatedAt: -1, objectiveNo: 1 })
       .lean();
 
-    // 2. Quarter Review Queue (actual manager review action state)
-    const quarterReviewQueue = managerQuarterAssignments.filter(
-      (assignment) => assignment.quarterState === 'MANAGER_REVIEW_OPEN',
-    );
+    // 2. Quarter Review Queue
+    const quarterReviewQueue = await QuarterAssignment.find({
+      assignedManagerId: managerObjectId,
+      quarterState: { $in: ['MANAGER_REVIEW_OPEN'] },
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
+      isDeleted: false,
+    })
+      .populate('employeeId', 'name email employeeCode')
+      .lean();
 
     // 3. Overdue SLA triggers owned by this manager
     const overdueSlas = await SlaEvent.find({

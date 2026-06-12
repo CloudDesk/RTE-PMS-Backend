@@ -24,18 +24,11 @@ const SUPPORTED_SLA_RULES = {
     quarterStates: ['OBJECTIVE_SUBMITTED'],
   },
   quarter_review_pending: {
-    quarterStates: ['OBJECTIVE_APPROVED', 'MANAGER_REVIEW_OPEN'],
+    quarterStates: ['MANAGER_REVIEW_OPEN'],
   },
   employee_achievement_submission_pending: {
     quarterStates: [
-      'NOT_STARTED',
-      'OBJECTIVE_DRAFT',
-      'OBJECTIVE_SUBMITTED',
-      'OBJECTIVE_REVISION_REQUIRED',
-      'OBJECTIVE_APPROVED',
-      'MANAGER_REVIEW_OPEN',
-      'MANAGER_REVIEW_SUBMITTED',
-      'REOPENED_BY_ADMIN',
+      'EMPLOYEE_ACHIEVEMENT_OPEN',
     ],
   },
 } as const;

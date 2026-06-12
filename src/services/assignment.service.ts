@@ -338,6 +338,7 @@ export class AssignmentService extends BaseService {
       quarterCycleById,
     );
     await this.openSeededQuarterAssignmentsForManagerReview(
+      annualAssignment,
       quarterAssignments,
       seededQuarterAssignmentIds,
     );
@@ -1093,6 +1094,7 @@ export class AssignmentService extends BaseService {
   }
 
   private async openSeededQuarterAssignmentsForManagerReview(
+    annualAssignment: IAnnualAssignment,
     quarterAssignments: IQuarterAssignment[],
     seededQuarterAssignmentIds: Set<string>,
   ): Promise<void> {
@@ -1109,12 +1111,17 @@ export class AssignmentService extends BaseService {
         continue;
       }
 
-      if (quarterAssignment.quarterState === QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
+      const targetState = await this.resolvePostObjectiveApprovalState(
+        annualAssignment,
+        quarterAssignment,
+      );
+
+      if (quarterAssignment.quarterState === targetState) {
         continue;
       }
 
       quarterAssignment.previousQuarterState = quarterAssignment.quarterState;
-      quarterAssignment.quarterState = QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+      quarterAssignment.quarterState = targetState;
       quarterAssignment.lastTransitionAt = now;
       quarterAssignment.lastTransitionBy = actorId;
       quarterAssignment.lastTransitionRole = this.context.user?.role;
@@ -1133,9 +1140,56 @@ export class AssignmentService extends BaseService {
         {
           quarterState: quarterAssignment.quarterState,
         },
-        'Seeded predefined objectives opened manager review at assignment launch',
+        'Seeded predefined objectives advanced the quarter workflow at assignment launch',
       );
     }
+  }
+
+  private async resolvePostObjectiveApprovalState(
+    annualAssignment: IAnnualAssignment,
+    quarterAssignment: IQuarterAssignment,
+  ): Promise<QuarterWorkflowState> {
+    const templateVersionId = annualAssignment.templateVersionId?.toString();
+    if (!templateVersionId) {
+      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
+      .select('sections metadata')
+      .lean();
+
+    if (!templateVersion) {
+      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+    }
+
+    const sectionExists = Boolean((templateVersion.sections ?? []).find((section) => {
+      const quarterScope = [
+        ...(section.quarterScope ?? []),
+        ...(section.repeatFor ?? []),
+      ];
+
+      return (
+        section.sectionKey === 'employee_achievement_submission' &&
+        section.level === 'QUARTER' &&
+        (quarterScope.length === 0 || quarterScope.includes(quarterAssignment.quarterCode))
+      );
+    }));
+
+    const metadata = (templateVersion.metadata ?? {}) as Record<string, any>;
+    const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
+      ? 'ACHIEVEMENT_THEN_MANAGER'
+      : 'MANAGER_ONLY';
+    const employeeAchievementEnabled =
+      employeeAchievementConfig.employeeAchievementEnabled !== undefined
+        ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
+        : sectionExists;
+
+    if (!employeeAchievementEnabled || reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
+      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+    }
+
+    return QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN;
   }
 
   private resolveTemplateObjectiveConfig(

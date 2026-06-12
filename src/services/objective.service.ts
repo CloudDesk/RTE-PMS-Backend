@@ -520,6 +520,12 @@ export class ObjectiveService extends BaseService {
       objective.toObject(),
     );
 
+    if (source === ObjectiveSource.MANAGER_CREATED) {
+      await this.updateQuarterStateAfterApproval(
+        quarterAssignment._id.toString(),
+      );
+    }
+
     return objective;
   }
 
@@ -1829,7 +1835,13 @@ export class ObjectiveService extends BaseService {
         QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
       ],
       [QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED]: [QuarterWorkflowState.OBJECTIVE_SUBMITTED],
-      [QuarterWorkflowState.OBJECTIVE_APPROVED]: [QuarterWorkflowState.MANAGER_REVIEW_OPEN],
+      [QuarterWorkflowState.OBJECTIVE_APPROVED]: [
+        QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+      ],
+      [QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: [
+        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+      ],
     };
 
     const nextStates = allowedTransitions[quarterAssignment.quarterState] ?? [];
@@ -1846,6 +1858,10 @@ export class ObjectiveService extends BaseService {
   }
 
   private async updateQuarterStateAfterApproval(quarterAssignmentId: string): Promise<void> {
+    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    const annualAssignment = await this.getAnnualAssignment(
+      quarterAssignment.annualAssignmentId.toString(),
+    );
     const objectives = await Objective.find({
       quarterAssignmentId,
       isDeleted: false,
@@ -1870,9 +1886,14 @@ export class ObjectiveService extends BaseService {
       QuarterWorkflowState.OBJECTIVE_APPROVED,
     );
 
+    const nextState = await this.resolvePostObjectiveApprovalState(
+      annualAssignment,
+      quarterAssignment,
+    );
+
     await this.transitionQuarterIfNeeded(
       quarterAssignmentId,
-      QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+      nextState,
     );
   }
 
@@ -1894,6 +1915,53 @@ export class ObjectiveService extends BaseService {
       templateVersion.sections ?? [],
       quarterAssignment.quarterCode,
     ) ?? this.defaultObjectiveConfig();
+  }
+
+  private async resolvePostObjectiveApprovalState(
+    annualAssignment: IAnnualAssignment,
+    quarterAssignment: IQuarterAssignment,
+  ): Promise<QuarterWorkflowState> {
+    const templateVersionId = annualAssignment.templateVersionId?.toString();
+    if (!templateVersionId) {
+      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
+      .select('sections metadata')
+      .lean();
+
+    if (!templateVersion) {
+      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+    }
+
+    const sectionExists = Boolean((templateVersion.sections ?? []).find((section) => {
+      const quarterScope = [
+        ...(section.quarterScope ?? []),
+        ...(section.repeatFor ?? []),
+      ];
+
+      return (
+        section.sectionKey === 'employee_achievement_submission' &&
+        section.level === 'QUARTER' &&
+        (quarterScope.length === 0 || quarterScope.includes(quarterAssignment.quarterCode))
+      );
+    }));
+
+    const metadata = (templateVersion.metadata ?? {}) as Record<string, any>;
+    const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
+      ? 'ACHIEVEMENT_THEN_MANAGER'
+      : 'MANAGER_ONLY';
+    const employeeAchievementEnabled =
+      employeeAchievementConfig.employeeAchievementEnabled !== undefined
+        ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
+        : sectionExists;
+
+    if (!employeeAchievementEnabled || reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
+      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
+    }
+
+    return QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN;
   }
 
   private async createCommentRecord(
