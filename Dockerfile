@@ -67,7 +67,7 @@ COPY .puppeteerrc.cjs ./
 COPY scripts/install-puppeteer-browser.js ./scripts/install-puppeteer-browser.js
  
 # Install only production dependencies
-RUN npm ci --only=production && \
+RUN npm ci --omit=dev && \
     npm cache clean --force
  
 # Copy built application from builder stage

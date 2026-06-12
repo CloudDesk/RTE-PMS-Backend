@@ -1,33 +1,31 @@
-const { join } = require('path');
-const { existsSync } = require('fs');
+const { spawnSync } = require('child_process');
 
-const puppeteerConfig = require('../.puppeteerrc.cjs');
-const cacheDirectory = puppeteerConfig?.cacheDirectory || join(__dirname, '..', 'node_modules', '.puppeteer_cache');
+const skipBrowserDownload =
+  process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true' ||
+  process.env.PUPPETEER_SKIP_DOWNLOAD === 'true';
 
-async function installPuppeteerBrowser() {
-  if (process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD === 'true') {
-    console.log('PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true; skipping Puppeteer browser install.');
-    return;
-  }
-
-  console.log('Installing Puppeteer browser to:', cacheDirectory);
-
-  if (!existsSync(cacheDirectory)) {
-    require('fs').mkdirSync(cacheDirectory, { recursive: true });
-  }
-
-  try {
-    const { install } = require('@puppeteer/browsers');
-    await install({
-      browser: 'chromium',
-      cacheDir: cacheDirectory,
-      log: true,
-    });
-    console.log('Puppeteer browser install completed successfully.');
-  } catch (error) {
-    console.error('Failed to install Puppeteer browser:', error);
-    process.exit(1);
-  }
+if (skipBrowserDownload) {
+  console.log('Skipping Puppeteer browser install because download is disabled.');
+  process.exit(0);
 }
 
-installPuppeteerBrowser();
+const result = spawnSync(
+  process.execPath,
+  [
+    require.resolve('puppeteer/lib/cjs/puppeteer/node/cli.js'),
+    'browsers',
+    'install',
+    'chrome',
+  ],
+  {
+    stdio: 'inherit',
+    env: process.env,
+  },
+);
+
+if (result.error) {
+  console.error(result.error);
+  process.exit(1);
+}
+
+process.exit(result.status ?? 1);
