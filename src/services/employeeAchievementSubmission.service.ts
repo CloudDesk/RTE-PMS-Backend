@@ -2,7 +2,12 @@ import { MultipartFile } from '@fastify/multipart';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { normalizePmsRole, PmsRole, QuarterWorkflowState } from '../constants/pms.enums';
+import {
+  normalizePmsRole,
+  PmsRole,
+  QuarterWorkflowState,
+} from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
@@ -70,7 +75,7 @@ type AchievementSubmissionRecord = {
   employeeId: string;
   managerId: string;
   templateVersionId?: string;
-  quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode: AssessmentTermCodeType;
   status: string;
   achievementItems: Array<{
     subject: string;
@@ -110,7 +115,7 @@ type AchievementSubmissionDetail = {
   quarterAssignmentId: string;
   annualAssignmentId: string;
   cycleId?: string;
-  quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode: AssessmentTermCodeType;
   employeeId: string;
   managerId: string;
   templateVersionId?: string;
@@ -645,7 +650,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
   private getAchievementSection(
     templateVersion: { sections?: ITemplateSection[] } | null,
-    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarterCode: AssessmentTermCodeType,
   ): ITemplateSection {
     const section = (templateVersion?.sections ?? []).find(
       (item) => {

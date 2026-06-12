@@ -11,6 +11,9 @@ import {
   PmsRole,
   PmsTemplateSectionType,
   PmsTemplateStatus,
+  getAssessmentTerms,
+  getAssessmentTermLabel,
+  getDefaultAssessmentTermType,
   QuarterWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
@@ -34,6 +37,7 @@ import { DelegationService } from './delegation.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
+import { AssessmentTermCode } from '../constants/pms.enums';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
@@ -41,8 +45,12 @@ import type {
   ITemplatePredefinedObjective,
   ITemplateSection,
 } from '../models/pms-template-version.model';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  AssessmentTermType as AssessmentTermTypeType,
+} from '../constants/pms.enums';
 
-type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
+type QuarterCode = AssessmentTermCodeType;
 
 export interface AssignEmployeeInput {
   employeeId: string;
@@ -274,7 +282,9 @@ export class AssignmentService extends BaseService {
       input.templateVersionId,
       annualCycle,
     );
-    const applicableQuarters = this.normalizeApplicableQuarters(input.applicableQuarters);
+    const assessmentTermType = annualCycle.assessmentTermType ?? getDefaultAssessmentTermType();
+    const allowedQuarters = getAssessmentTerms(assessmentTermType);
+    const applicableQuarters = this.normalizeApplicableQuarters(input.applicableQuarters, allowedQuarters);
     const { employeeSnapshot, managerSnapshot, orgSnapshot } = await this.buildAssignmentSnapshots(
       employeeObjectId,
       managerObjectId,
@@ -323,6 +333,7 @@ export class AssignmentService extends BaseService {
         employeeObjectId,
         managerObjectId,
         selectedTemplateVersionId,
+        assessmentTermType,
         applicableQuarters,
         quarterCycleByCode,
       ),
@@ -545,7 +556,7 @@ export class AssignmentService extends BaseService {
 
     const previousAssignment = annualAssignment.toObject();
     const applicableQuarters = input.applicableQuarters?.length
-      ? this.normalizeApplicableQuarters(input.applicableQuarters)
+      ? this.normalizeApplicableQuarters(input.applicableQuarters, annualAssignment.applicableQuarters)
       : annualAssignment.applicableQuarters;
     const quarters = await QuarterAssignment.find({
       annualAssignmentId: annualAssignment._id,
@@ -941,6 +952,7 @@ export class AssignmentService extends BaseService {
     employeeId: Types.ObjectId,
     managerId: Types.ObjectId,
     templateVersionId: Types.ObjectId,
+    assessmentTermType: AssessmentTermTypeType,
     applicableQuarters: QuarterCode[],
     quarterCycleByCode: Map<QuarterCode, Types.ObjectId>,
   ): Array<{
@@ -951,6 +963,9 @@ export class AssignmentService extends BaseService {
     templateVersionId: Types.ObjectId;
     cycleQuarterId: Types.ObjectId;
     quarterCode: QuarterCode;
+    assessmentTermType: AssessmentTermTypeType;
+    termCode: QuarterCode;
+    termLabel: string;
     quarterState: QuarterWorkflowState;
     createdBy?: Types.ObjectId;
   }> {
@@ -967,7 +982,10 @@ export class AssignmentService extends BaseService {
         employeeId,
         assignedManagerId: managerId,
         templateVersionId,
+        assessmentTermType,
         quarterCode,
+        termCode: quarterCode,
+        termLabel: getAssessmentTermLabel(quarterCode),
         quarterState: QuarterWorkflowState.NOT_STARTED,
         createdBy: this.actorIdObject(),
       };
@@ -1254,13 +1272,13 @@ export class AssignmentService extends BaseService {
   }
 
   private normalizeScopedQuarters(
-    quarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>,
+    quarters?: QuarterCode[],
   ): QuarterCode[] | undefined {
     if (!quarters?.length) {
       return undefined;
     }
 
-    const validQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const validQuarters = Object.values(AssessmentTermCode) as QuarterCode[];
     const normalized = quarters.filter((quarter): quarter is QuarterCode =>
       validQuarters.includes(quarter as QuarterCode),
     );
@@ -1363,8 +1381,10 @@ export class AssignmentService extends BaseService {
     return templateVersion._id as Types.ObjectId;
   }
 
-  private normalizeApplicableQuarters(quarters?: QuarterCode[]): QuarterCode[] {
-    const allowedQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+  private normalizeApplicableQuarters(
+    quarters?: QuarterCode[],
+    allowedQuarters: QuarterCode[] = Object.values(AssessmentTermCode) as QuarterCode[],
+  ): QuarterCode[] {
     const normalized = quarters?.length ? quarters : allowedQuarters;
     const seen = new Set<QuarterCode>();
 

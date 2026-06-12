@@ -1,11 +1,12 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { AnnualDecisionStatus, AnnualWorkflowState } from '../constants/pms.enums';
+import { AnnualDecisionStatus, AnnualWorkflowState, AssessmentTermCode } from '../constants/pms.enums';
 import type {
   AnnualDecisionStatus as AnnualDecisionStatusType,
   AnnualWorkflowState as AnnualWorkflowStateType,
+  AssessmentTermCode as AssessmentTermCodeType,
 } from '../constants/pms.enums';
 
-type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
+type QuarterCode = AssessmentTermCodeType;
 
 interface IVisibilityCache {
   cacheSource?: string;
@@ -100,7 +101,7 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
     isMeritApplied: Boolean,
     appraisalOutcomeType: String,
     applicableQuarters: {
-      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: ['Q1', 'Q2', 'Q3', 'Q4'],
     },
     assignmentReason: { type: String, default: 'FULL_YEAR' },

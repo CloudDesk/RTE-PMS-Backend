@@ -9,6 +9,7 @@ import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { Types } from 'mongoose';
 import { NotificationEvent } from '../models/pms-notification-event.model';
 import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import {
   EmployeeAchievementSubmission,
@@ -82,7 +83,7 @@ export class SlaService {
     entityType: string;
     entityId: string;
     cycleId?: string;
-    quarterCode?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    quarterCode?: AssessmentTermCodeType;
     ownerUserId: string;
     dueAt: Date;
     escalationTargetUserId?: string;
@@ -596,7 +597,8 @@ export class SlaService {
         return false;
       }
 
-      return this.getDaysDiff(currentDate, escalationDate) === 0;
+      const offsetDays = Math.max(0, Number(reminderRule.offsetDays) || 0);
+      return this.getDaysDiff(currentDate, escalationDate) === offsetDays + 1;
     }
 
     return daysDiff > 0 && daysDiff === reminderRule.offsetDays;
@@ -691,7 +693,7 @@ export class SlaService {
 
   private isEmployeeAchievementEnabledForTemplate(
     templateVersion: { metadata?: Record<string, unknown>; sections?: ITemplateSection[] } | null | undefined,
-    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarterCode: AssessmentTermCodeType,
   ): boolean {
     if (!templateVersion) {
       return false;
