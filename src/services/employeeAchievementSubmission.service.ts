@@ -5,6 +5,7 @@ import { RequestContext } from '../types/context';
 import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
 import {
   EmployeeAchievementSubmission,
@@ -299,9 +300,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     });
 
     if (existingSubmission?.status === EmployeeAchievementSubmissionStatus.LOCKED) {
-      await this.auditBlockedAttempt(existingSubmission, 'PMS_EMPLOYEE_ACHIEVEMENT_UPDATE_BLOCKED');
-      throw new Error('Submitted employee achievement is locked and cannot be edited');
+      await this.auditBlockedAttempt(existingSubmission, 'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_LOCKED');
+      throw new Error('Achievement submission is already locked.');
     }
+
+    await this.assertSubmitWindowOpen(quarterAssignment, existingSubmission);
 
     const normalizedItems = this.normalizeAchievementItems(
       input.achievementItems ?? existingSubmission?.achievementItems ?? [],
@@ -704,8 +707,61 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee can edit only own achievement submission');
     }
 
-    // TODO(PMS v3.1 Phase B): Enforce QuarterCycle.achievementSubmissionWindow
-    // during Employee Achievement Submission submit without changing lock behavior.
+    // TODO(PMS v3.1 Phase C): Surface achievement window status in frontend
+    // labels/disable states without changing the current backend enforcement rules.
+  }
+
+  private async assertSubmitWindowOpen(
+    quarterAssignment: any,
+    submission?: IEmployeeAchievementSubmission | null,
+  ): Promise<void> {
+    if (!quarterAssignment.cycleQuarterId) {
+      return;
+    }
+
+    const quarterCycle = await QuarterCycle.findById(quarterAssignment.cycleQuarterId)
+      .select('achievementSubmissionWindow')
+      .lean();
+
+    const window = quarterCycle?.achievementSubmissionWindow;
+    if (!window || window.enabled !== true) {
+      return;
+    }
+
+    const now = this.getCurrentDate();
+    const startDate = window.startDate ? new Date(window.startDate) : undefined;
+    const baseEndDate = window.endDate
+      ? new Date(window.endDate)
+      : window.dueDate
+        ? new Date(window.dueDate)
+        : undefined;
+    const allowedEndDate = baseEndDate
+      ? this.applyGraceDays(baseEndDate, window.graceDays)
+      : undefined;
+
+    if (startDate && now < startDate) {
+      await this.auditQuarterAssignmentBlockedAttempt(
+        quarterAssignment,
+        submission,
+        'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_BEFORE_WINDOW',
+        { startDate: startDate.toISOString(), currentDate: now.toISOString() },
+      );
+      throw new Error('Achievement submission window has not opened yet.');
+    }
+
+    if (allowedEndDate && now > allowedEndDate) {
+      await this.auditQuarterAssignmentBlockedAttempt(
+        quarterAssignment,
+        submission,
+        'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_AFTER_WINDOW',
+        {
+          endDate: allowedEndDate.toISOString(),
+          currentDate: now.toISOString(),
+          graceDays: window.graceDays,
+        },
+      );
+      throw new Error('Achievement submission window is closed.');
+    }
   }
 
   private async getQuarterAssignment(quarterAssignmentId: string) {
@@ -776,6 +832,20 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return this.toObjectId(this.requireActor().actorId, 'actorId');
   }
 
+  private getCurrentDate(): Date {
+    return this.context.pmsCurrentDate ?? new Date();
+  }
+
+  private applyGraceDays(baseEndDate: Date, graceDays?: number): Date {
+    if (graceDays === undefined || graceDays === null) {
+      return baseEndDate;
+    }
+
+    const endDateWithGrace = new Date(baseEndDate);
+    endDateWithGrace.setDate(endDateWithGrace.getDate() + graceDays);
+    return endDateWithGrace;
+  }
+
   private toObjectId(value: string, fieldName: string): Types.ObjectId {
     if (!Types.ObjectId.isValid(value)) {
       throw new Error(`Invalid ${fieldName}`);
@@ -795,6 +865,29 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       undefined,
       { status: submission.status },
     );
+  }
+
+  private async auditQuarterAssignmentBlockedAttempt(
+    quarterAssignment: any,
+    submission: IEmployeeAchievementSubmission | null | undefined,
+    action: string,
+    details: Record<string, unknown>,
+  ): Promise<void> {
+    const actor = this.requireActor();
+
+    await auditService.createAuditLog({
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+      action,
+      entityType: submission ? 'EMPLOYEE_ACHIEVEMENT_SUBMISSION' : 'QUARTER_ASSIGNMENT',
+      entityId: submission ? submission._id.toString() : quarterAssignment._id.toString(),
+      assignmentId: quarterAssignment.annualAssignmentId.toString(),
+      newValue: {
+        quarterAssignmentId: quarterAssignment._id.toString(),
+        status: submission?.status,
+        ...details,
+      },
+    });
   }
 
   private async audit(

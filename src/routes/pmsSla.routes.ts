@@ -11,6 +11,7 @@ const SUPPORTED_SLA_EVENT_TYPES = [
   'objective_submission_pending',
   'objective_approval_pending',
   'quarter_review_pending',
+  'employee_achievement_submission_pending',
 ] as const;
 
 const SUPPORTED_ENTITY_TYPE = 'QUARTER_ASSIGNMENT';
@@ -19,6 +20,7 @@ const ALLOWED_TARGET_ROLES: Record<string, string[]> = {
   objective_submission_pending: [PmsRole.EMPLOYEE, PmsRole.MANAGER],
   objective_approval_pending: [PmsRole.MANAGER],
   quarter_review_pending: [PmsRole.MANAGER],
+  employee_achievement_submission_pending: [PmsRole.EMPLOYEE],
 };
 
 export async function pmsSlaRoutes(fastify: FastifyInstance) {
@@ -130,7 +132,7 @@ export async function pmsSlaRoutes(fastify: FastifyInstance) {
   fastify.post('/trigger-check', { preHandler: [authenticate] }, async (request, reply) => {
     if (!assertAdmin(request, reply)) return;
 
-    const result = await slaService.processSlas();
+    const result = await slaService.processSlas(request.container?.requestContext.pmsCurrentDate);
     return reply.send(successResponse('PMS SLA engine processed successfully', result));
   });
 
