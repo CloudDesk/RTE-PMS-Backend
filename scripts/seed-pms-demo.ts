@@ -6,14 +6,18 @@ import {
   AnnualWorkflowState,
   ObjectiveSource,
   ObjectiveStatus,
+  PmsTemplateStatus,
   QuarterWorkflowState,
 } from '../src/constants/pms.enums';
 import { AnnualAssignment } from '../src/models/pms-annual-assignment.model';
 import { AnnualCycle } from '../src/models/pms-annual-cycle.model';
 import { Objective } from '../src/models/pms-objective.model';
 import { QuarterAssignment } from '../src/models/pms-quarter-assignment.model';
+import { ReminderRule } from '../src/models/pms-reminder-rule.model';
 import type { IQuarterAssignment } from '../src/models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../src/models/pms-quarter-cycle.model';
+import { SlaRule } from '../src/models/pms-sla-rule.model';
+import { PmsTemplateVersion } from '../src/models/pms-template-version.model';
 import { User } from '../src/models/user.model';
 
 type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
@@ -31,19 +35,23 @@ async function seedPmsDemo(): Promise<void> {
   await connectDB();
 
   const { adminId, managerId, employeeId } = await resolveDemoUsers();
-  const annualCycle = await upsertAnnualCycle();
+  const achievementTemplateVersion = await resolveAchievementTemplateVersion();
+  const annualCycle = await upsertAnnualCycle(achievementTemplateVersion?._id);
   const quarterCycles = await upsertQuarterCycles(annualCycle._id);
   const annualAssignment = await upsertAnnualAssignment(
     annualCycle._id,
     employeeId,
     managerId,
+    achievementTemplateVersion?._id,
   );
   const quarterAssignments = await upsertQuarterAssignments(
     annualAssignment._id,
     annualCycle._id,
     employeeId,
     managerId,
+    quarterCycles,
   );
+  await upsertAchievementSlaRules();
 
   annualCycle.quarterCycleIds = quarterCycles.map((quarterCycle) => quarterCycle._id);
   await annualCycle.save();
@@ -69,6 +77,13 @@ async function seedPmsDemo(): Promise<void> {
       id: quarterAssignment._id,
     })),
   });
+
+  if (!achievementTemplateVersion?._id) {
+    console.warn(
+      'No active template version with Employee Achievement Submission was found. ' +
+      'Demo SLA rules and windows were seeded, but achievement SLA events will not generate until a compatible template is assigned.',
+    );
+  }
 }
 
 async function resolveDemoUsers(): Promise<{
@@ -89,9 +104,15 @@ async function resolveDemoUsers(): Promise<{
   };
 }
 
-async function upsertAnnualCycle() {
+async function upsertAnnualCycle(templateVersionId?: Types.ObjectId) {
   const existing = await AnnualCycle.findOne({ code: DEMO_CYCLE_CODE });
-  if (existing) return existing;
+  if (existing) {
+    if (templateVersionId && !existing.templateVersionId) {
+      existing.templateVersionId = templateVersionId;
+      await existing.save();
+    }
+    return existing;
+  }
 
   return AnnualCycle.create({
     name: 'PMS Demo Cycle 2026',
@@ -100,6 +121,7 @@ async function upsertAnnualCycle() {
     startDate: new Date('2026-01-01T00:00:00.000Z'),
     endDate: new Date('2026-12-31T23:59:59.999Z'),
     status: AnnualWorkflowState.DRAFT,
+    templateVersionId,
   });
 }
 
@@ -138,19 +160,30 @@ async function upsertQuarterCycles(cycleId: Types.ObjectId) {
         quarterCode: quarterInput.quarter,
       },
       {
-        $setOnInsert: {
-          cycleId,
-          quarterCode: quarterInput.quarter,
-          startDate: quarterInput.startDate,
-          endDate: quarterInput.endDate,
+        $set: {
           objectiveSettingWindow: {
             startDate: quarterInput.startDate,
             endDate: quarterInput.endDate,
+          },
+          achievementSubmissionWindow: {
+            enabled: true,
+            startDate: quarterInput.startDate,
+            endDate: quarterInput.endDate,
+            dueDate: quarterInput.endDate,
+            graceDays: 3,
+            reminderDaysBefore: [2],
+            escalationDaysAfterDue: 1,
           },
           managerReviewWindow: {
             startDate: quarterInput.startDate,
             endDate: quarterInput.endDate,
           },
+        },
+        $setOnInsert: {
+          cycleId,
+          quarterCode: quarterInput.quarter,
+          startDate: quarterInput.startDate,
+          endDate: quarterInput.endDate,
           status: QuarterWorkflowState.NOT_STARTED,
         },
       },
@@ -165,17 +198,25 @@ async function upsertAnnualAssignment(
   cycleId: Types.ObjectId,
   employeeId: Types.ObjectId,
   managerId: Types.ObjectId,
+  templateVersionId?: Types.ObjectId,
 ) {
   const existing = await AnnualAssignment.findOne({
     cycleId,
     employeeId,
   });
-  if (existing) return existing;
+  if (existing) {
+    if (templateVersionId && !existing.templateVersionId) {
+      existing.templateVersionId = templateVersionId;
+      await existing.save();
+    }
+    return existing;
+  }
 
   return AnnualAssignment.create({
     cycleId,
     employeeId,
     assignedManagerId: managerId,
+    templateVersionId,
     annualState: AnnualWorkflowState.DRAFT,
     finalDecisionStatus: AnnualDecisionStatus.DRAFT,
     applicableQuarters: ['Q1', 'Q2', 'Q3', 'Q4'],
@@ -188,8 +229,12 @@ async function upsertQuarterAssignments(
   cycleId: Types.ObjectId,
   employeeId: Types.ObjectId,
   managerId: Types.ObjectId,
+  quarterCycles: Array<{ _id: Types.ObjectId; quarterCode: QuarterCode }>,
 ) {
   const quarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+  const quarterCycleByCode = new Map(
+    quarterCycles.map((quarterCycle) => [quarterCycle.quarterCode, quarterCycle._id]),
+  );
 
   for (const quarter of quarters) {
     await QuarterAssignment.updateOne(
@@ -198,6 +243,9 @@ async function upsertQuarterAssignments(
         quarterCode: quarter,
       },
       {
+        $set: {
+          cycleQuarterId: quarterCycleByCode.get(quarter),
+        },
         $setOnInsert: {
           annualAssignmentId,
           cycleId,
@@ -212,6 +260,95 @@ async function upsertQuarterAssignments(
   }
 
   return QuarterAssignment.find({ annualAssignmentId }).sort({ quarterCode: 1 });
+}
+
+async function resolveAchievementTemplateVersion() {
+  return PmsTemplateVersion.findOne({
+    status: PmsTemplateStatus.ACTIVE,
+    isDeleted: false,
+    sections: {
+      $elemMatch: {
+        sectionKey: 'employee_achievement_submission',
+        level: 'QUARTER',
+      },
+    },
+  })
+    .select('_id metadata sections')
+    .lean();
+}
+
+async function upsertAchievementSlaRules(): Promise<void> {
+  const rule = await SlaRule.findOneAndUpdate(
+    {
+      eventType: 'employee_achievement_submission_pending',
+      entityType: 'QUARTER_ASSIGNMENT',
+      targetRole: 'EMPLOYEE',
+      cycleId: { $exists: false },
+    },
+    {
+      $set: {
+        name: 'Employee Achievement Submission Pending',
+        eventType: 'employee_achievement_submission_pending',
+        entityType: 'QUARTER_ASSIGNMENT',
+        targetRole: 'EMPLOYEE',
+        baseDatePointer: 'QUARTER_START',
+        offsetDays: 0,
+        isActive: true,
+        isDeleted: false,
+      },
+      $unset: {
+        cycleId: '',
+        fixedDate: '',
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+
+  const reminderInputs = [
+    {
+      name: 'Employee Achievement Reminder - 2 Days Before Due',
+      reminderType: 'PRE_DUE',
+      offsetDays: -2,
+      channel: 'EMAIL',
+      subjectTemplate: 'Employee Achievement Submission Due Soon',
+      bodyTemplate: 'Employee Achievement Submission is due on {dueDate}.',
+    },
+    {
+      name: 'Employee Achievement Overdue Notification',
+      reminderType: 'OVERDUE',
+      offsetDays: 1,
+      channel: 'EMAIL',
+      subjectTemplate: 'Employee Achievement Submission Overdue',
+      bodyTemplate: 'Employee Achievement Submission is overdue as of {dueDate}.',
+    },
+    {
+      name: 'Employee Achievement Escalation',
+      reminderType: 'ESCALATION',
+      offsetDays: 0,
+      channel: 'EMAIL',
+      subjectTemplate: 'Employee Achievement Submission Escalation',
+      bodyTemplate: 'Employee Achievement Submission remains pending after the allowed window.',
+    },
+  ] as const;
+
+  for (const reminderInput of reminderInputs) {
+    await ReminderRule.findOneAndUpdate(
+      {
+        slaRuleId: rule._id,
+        reminderType: reminderInput.reminderType,
+        name: reminderInput.name,
+      },
+      {
+        $set: {
+          ...reminderInput,
+          slaRuleId: rule._id,
+          isActive: true,
+          isDeleted: false,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  }
 }
 
 async function upsertQ1Objective(
@@ -281,6 +418,8 @@ function printSeedSummary(summary: {
   for (const quarterAssignment of summary.quarterAssignmentIds) {
     console.log(`  ${quarterAssignment.quarter}: ${quarterAssignment.id.toString()}`);
   }
+  console.log('SLA rule seeded: employee_achievement_submission_pending');
+  console.log('To run SLA check manually: POST /pms/sla/trigger-check');
 }
 
 seedPmsDemo()
