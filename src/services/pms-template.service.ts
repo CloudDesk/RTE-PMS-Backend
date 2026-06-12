@@ -12,6 +12,7 @@ import {
   FieldCategory,
   PmsRole,
 } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -35,7 +36,7 @@ export interface ResolveTemplateVersionInput {
   role: string;
   workflowState: string;
   hierarchyScope?: string;
-  quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarter?: AssessmentTermCodeType;
   visibilityFlags?: string[];
   values?: Record<string, unknown>;
   annualAssignmentId?: string;
@@ -97,7 +98,7 @@ export interface ResolvedTemplateVersion {
     annualAssignmentId?: string;
     quarterAssignmentId?: string;
     hierarchyScope?: string;
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
   };
 }
@@ -1145,7 +1146,7 @@ export class PmsTemplateService extends BaseService {
 
   private isSectionInScope(
     section: ITemplateSection,
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarter?: AssessmentTermCodeType,
   ): boolean {
     if (!quarter) return true;
     const scopedQuarters = section.quarterScope?.length
@@ -2188,7 +2189,7 @@ export class PmsTemplateService extends BaseService {
 
   private async resolveSimulationContext(input: SimulateTemplateAccessInput): Promise<{
     hierarchyScope?: string;
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
     annualAssignmentId?: string;
     quarterAssignmentId?: string;
@@ -2247,7 +2248,7 @@ export class PmsTemplateService extends BaseService {
     input: ResolveTemplateVersionInput,
   ): Promise<{
     hierarchyScope?: string;
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
     annualAssignmentId?: string;
     quarterAssignmentId?: string;

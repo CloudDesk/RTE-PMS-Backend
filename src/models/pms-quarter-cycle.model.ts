@@ -1,6 +1,10 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { QuarterWorkflowState } from '../constants/pms.enums';
-import type { QuarterWorkflowState as QuarterWorkflowStateType } from '../constants/pms.enums';
+import { AssessmentTermCode, AssessmentTermType, QuarterWorkflowState } from '../constants/pms.enums';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  AssessmentTermType as AssessmentTermTypeType,
+  QuarterWorkflowState as QuarterWorkflowStateType,
+} from '../constants/pms.enums';
 
 interface IDateWindow {
   startDate?: Date;
@@ -17,7 +21,10 @@ interface IAchievementSubmissionWindow extends IDateWindow {
 
 export interface IQuarterCycle extends Document {
   cycleId: Types.ObjectId;
-  quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode: AssessmentTermCodeType;
+  assessmentTermType?: AssessmentTermTypeType;
+  termCode?: AssessmentTermCodeType;
+  termLabel?: string;
   startDate: Date;
   endDate: Date;
   objectiveSettingWindow?: IDateWindow;
@@ -68,8 +75,17 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
     quarterCode: {
       type: String,
       required: true,
-      enum: ['Q1', 'Q2', 'Q3', 'Q4'],
+      enum: Object.values(AssessmentTermCode),
     },
+    assessmentTermType: {
+      type: String,
+      enum: Object.values(AssessmentTermType),
+    },
+    termCode: {
+      type: String,
+      enum: Object.values(AssessmentTermCode),
+    },
+    termLabel: { type: String, trim: true },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
     objectiveSettingWindow: dateWindowSchema,

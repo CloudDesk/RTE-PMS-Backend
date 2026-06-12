@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
+  AssessmentTermCode,
   ObjectiveSource,
   ObjectiveStatus,
   PmsRole,
@@ -29,7 +30,12 @@ import type {
   ITemplatePredefinedObjective,
   ITemplateSection,
 } from '../models/pms-template-version.model';
-import type { ObjectiveSource as ObjectiveSourceType } from '../constants/pms.enums';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  ObjectiveSource as ObjectiveSourceType,
+} from '../constants/pms.enums';
+
+type AssessmentTermCodeValue = AssessmentTermCodeType;
 
 interface ObjectiveAttachmentInput {
   fileName?: string;
@@ -118,7 +124,7 @@ type ObjectiveConfig = {
     targetValue?: string;
     weightage?: number;
     successCriteria?: string;
-    applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+    applicableQuarters?: AssessmentTermCodeValue[];
   }>;
   objectiveBuckets: IObjectiveBucket[];
 };
@@ -194,7 +200,7 @@ type AssignmentRecord = {
   quarterAssignmentId: string;
   cycleId: string;
   cycleName: string;
-  quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarter: AssessmentTermCodeValue;
   quarterState: string;
   employeeId: string;
   employeeName: string;
@@ -1170,7 +1176,7 @@ export class ObjectiveService extends BaseService {
 
   private resolveTemplateObjectiveConfig(
     sections: ITemplateSection[],
-    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarterCode: AssessmentTermCodeValue,
   ): ObjectiveConfig | undefined {
     const objectiveSection = sections.find((section) => {
       if (section.sectionType !== PmsTemplateSectionType.OBJECTIVES) return false;
@@ -1240,23 +1246,23 @@ export class ObjectiveService extends BaseService {
   }
 
   private normalizeScopedQuarters(
-    quarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>,
-  ): Array<'Q1' | 'Q2' | 'Q3' | 'Q4'> | undefined {
+    quarters?: AssessmentTermCodeValue[],
+  ): AssessmentTermCodeValue[] | undefined {
     if (!quarters?.length) {
       return undefined;
     }
 
-    const validQuarters: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'> = ['Q1', 'Q2', 'Q3', 'Q4'];
-    const normalized = quarters.filter((quarter): quarter is 'Q1' | 'Q2' | 'Q3' | 'Q4' =>
-      validQuarters.includes(quarter as 'Q1' | 'Q2' | 'Q3' | 'Q4'),
+    const validQuarters = Object.values(AssessmentTermCode) as AssessmentTermCodeValue[];
+    const normalized = quarters.filter((quarter): quarter is AssessmentTermCodeValue =>
+      validQuarters.includes(quarter as AssessmentTermCodeValue),
     );
 
     return Array.from(new Set(normalized));
   }
 
   private matchesPredefinedObjectiveQuarter(
-    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
-    applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>,
+    quarterCode: AssessmentTermCodeValue,
+    applicableQuarters?: AssessmentTermCodeValue[],
   ): boolean {
     if (typeof applicableQuarters === 'undefined') {
       return true;

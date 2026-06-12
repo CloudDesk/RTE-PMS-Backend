@@ -6,6 +6,7 @@ import {
   PmsTemplateStatus,
   FieldCategory,
   SemanticRole,
+  AssessmentTermCode,
 } from '../constants/pms.enums';
 import type {
   PmsTemplateFieldType as PmsTemplateFieldTypeType,
@@ -14,6 +15,7 @@ import type {
   PmsTemplateStatus as PmsTemplateStatusType,
   FieldCategory as FieldCategoryType,
   SemanticRole as SemanticRoleType,
+  AssessmentTermCode as AssessmentTermCodeType,
 } from '../constants/pms.enums';
 
 export interface ITemplateOption {
@@ -31,9 +33,9 @@ export interface ITemplatePredefinedObjective {
   targetValue?: string;
   weightage?: number;
   successCriteria?: string;
-  quarterScope?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
-  applicableQuarters?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
-  repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  quarterScope?: AssessmentTermCodeType[];
+  applicableQuarters?: AssessmentTermCodeType[];
+  repeatFor?: AssessmentTermCodeType[];
 }
 
 export interface ITemplateObjectiveConfig {
@@ -171,15 +173,15 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
     weightage: { type: Number, min: 0, max: 100 },
     successCriteria: { type: String, trim: true },
     quarterScope: {
-      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
     applicableQuarters: {
-      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
     repeatFor: {
-      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
   },
@@ -205,12 +207,12 @@ export interface ITemplateSection {
   sectionLabel: string;
   sectionType: PmsTemplateSectionTypeType;
   level: PmsTemplateSectionLevelType;
-  repeatFor?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  repeatFor?: AssessmentTermCodeType[];
   repeatable?: boolean;
   displayOrder?: number;
   layout?: 'vertical' | 'grid' | 'table' | 'bordered_grid';
   renderingScope?: 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
-  quarterScope?: Array<'Q1' | 'Q2' | 'Q3' | 'Q4'>;
+  quarterScope?: AssessmentTermCodeType[];
   sectionScoringConfig?: {
     participatesInScoring?: boolean;
     weightage?: number;
@@ -419,7 +421,7 @@ const templateSectionSchema = new Schema<ITemplateSection>(
       enum: Object.values(PmsTemplateSectionLevel),
     },
     repeatFor: {
-      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
     repeatable: { type: Boolean, default: false },
@@ -431,7 +433,7 @@ const templateSectionSchema = new Schema<ITemplateSection>(
       default: 'ANNUAL_ONLY',
     },
     quarterScope: {
-      type: [{ type: String, enum: ['Q1', 'Q2', 'Q3', 'Q4'] }],
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
     sectionScoringConfig: {

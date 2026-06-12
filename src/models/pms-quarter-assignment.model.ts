@@ -1,6 +1,10 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { QuarterWorkflowState } from '../constants/pms.enums';
-import type { QuarterWorkflowState as QuarterWorkflowStateType } from '../constants/pms.enums';
+import { AssessmentTermCode, AssessmentTermType, QuarterWorkflowState } from '../constants/pms.enums';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  AssessmentTermType as AssessmentTermTypeType,
+  QuarterWorkflowState as QuarterWorkflowStateType,
+} from '../constants/pms.enums';
 
 export interface IQuarterAssignment extends Document {
   annualAssignmentId: Types.ObjectId;
@@ -9,7 +13,10 @@ export interface IQuarterAssignment extends Document {
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
-  quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode: AssessmentTermCodeType;
+  assessmentTermType?: AssessmentTermTypeType;
+  termCode?: AssessmentTermCodeType;
+  termLabel?: string;
   quarterState: QuarterWorkflowStateType;
   previousQuarterState?: QuarterWorkflowStateType;
   lastTransitionAt?: Date;
@@ -66,8 +73,17 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
     quarterCode: {
       type: String,
       required: true,
-      enum: ['Q1', 'Q2', 'Q3', 'Q4'],
+      enum: Object.values(AssessmentTermCode),
     },
+    assessmentTermType: {
+      type: String,
+      enum: Object.values(AssessmentTermType),
+    },
+    termCode: {
+      type: String,
+      enum: Object.values(AssessmentTermCode),
+    },
+    termLabel: { type: String, trim: true },
     quarterState: {
       type: String,
       required: true,

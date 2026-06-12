@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { ObjectiveSource, ObjectiveStatus } from '../constants/pms.enums';
+import { AssessmentTermCode, ObjectiveSource, ObjectiveStatus } from '../constants/pms.enums';
 import type {
+  AssessmentTermCode as AssessmentTermCodeType,
   ObjectiveSource as ObjectiveSourceType,
   ObjectiveStatus as ObjectiveStatusType,
 } from '../constants/pms.enums';
@@ -18,7 +19,7 @@ export interface IObjective extends Document {
   annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
-  quarterCode?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode?: AssessmentTermCodeType;
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
   objectiveNo?: number;
@@ -86,7 +87,7 @@ const objectiveSchema = new Schema<IObjective>(
     },
     quarterCode: {
       type: String,
-      enum: ['Q1', 'Q2', 'Q3', 'Q4'],
+      enum: Object.values(AssessmentTermCode),
       index: true,
     },
     employeeId: {

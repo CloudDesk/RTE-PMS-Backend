@@ -1,6 +1,9 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { AnnualWorkflowState } from '../constants/pms.enums';
-import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constants/pms.enums';
+import { AnnualWorkflowState, AssessmentTermType, getDefaultAssessmentTermType } from '../constants/pms.enums';
+import type {
+  AnnualWorkflowState as AnnualWorkflowStateType,
+  AssessmentTermType as AssessmentTermTypeType,
+} from '../constants/pms.enums';
 
 export interface ICommunicationRuleConfig {
   skipNilOutcome?: boolean;
@@ -32,6 +35,7 @@ export interface IAnnualCycle extends Document {
   appraisalYear: number;
   startDate: Date;
   endDate: Date;
+  assessmentTermType: AssessmentTermTypeType;
   status: AnnualWorkflowStateType;
   templateVersionId?: Types.ObjectId;
   quarterCycleIds: Types.ObjectId[];
@@ -69,6 +73,12 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
     },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
+    assessmentTermType: {
+      type: String,
+      enum: Object.values(AssessmentTermType),
+      default: getDefaultAssessmentTermType,
+      index: true,
+    },
     status: {
       type: String,
       required: true,
