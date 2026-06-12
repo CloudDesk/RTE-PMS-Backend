@@ -596,7 +596,8 @@ export class SlaService {
         return false;
       }
 
-      return this.getDaysDiff(currentDate, escalationDate) === 0;
+      const offsetDays = Math.max(0, Number(reminderRule.offsetDays) || 0);
+      return this.getDaysDiff(currentDate, escalationDate) === offsetDays + 1;
     }
 
     return daysDiff > 0 && daysDiff === reminderRule.offsetDays;
