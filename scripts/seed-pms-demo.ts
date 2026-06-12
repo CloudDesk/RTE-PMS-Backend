@@ -4,6 +4,8 @@ import { connectDB } from '../src/config/database';
 import {
   AnnualDecisionStatus,
   AnnualWorkflowState,
+  AssessmentTermType,
+  getAssessmentTermLabel,
   ObjectiveSource,
   ObjectiveStatus,
   PmsTemplateStatus,
@@ -161,6 +163,9 @@ async function upsertQuarterCycles(cycleId: Types.ObjectId) {
       },
       {
         $set: {
+          assessmentTermType: AssessmentTermType.QUARTERLY,
+          termCode: quarterInput.quarter,
+          termLabel: getAssessmentTermLabel(quarterInput.quarter),
           objectiveSettingWindow: {
             startDate: quarterInput.startDate,
             endDate: quarterInput.endDate,
@@ -245,6 +250,9 @@ async function upsertQuarterAssignments(
       {
         $set: {
           cycleQuarterId: quarterCycleByCode.get(quarter),
+          assessmentTermType: AssessmentTermType.QUARTERLY,
+          termCode: quarter,
+          termLabel: getAssessmentTermLabel(quarter),
         },
         $setOnInsert: {
           annualAssignmentId,

@@ -165,6 +165,9 @@ export type QuarterReviewAssignmentRecord = {
   cycleId: string;
   cycleName: string;
   quarter: AssessmentTermCodeType;
+  assessmentTermType?: string;
+  termCode?: AssessmentTermCodeType;
+  termLabel?: string;
   quarterState: string;
   quarterWindows?: {
     objectiveSetting?: QuarterWindowRecord;
@@ -394,6 +397,9 @@ export class QuarterReviewService extends BaseService {
           'Performance Cycle',
         ),
         quarter: quarterAssignment.quarterCode,
+        assessmentTermType: quarterAssignment.assessmentTermType,
+        termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
+        termLabel: quarterAssignment.termLabel ?? quarterAssignment.termCode ?? quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
@@ -970,6 +976,9 @@ export class QuarterReviewService extends BaseService {
           'Performance Cycle',
         ),
         quarter: quarterAssignment.quarterCode,
+        assessmentTermType: quarterAssignment.assessmentTermType,
+        termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
+        termLabel: quarterAssignment.termLabel ?? quarterAssignment.termCode ?? quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
