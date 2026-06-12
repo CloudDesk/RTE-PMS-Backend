@@ -22,6 +22,10 @@ import { QuarterReviewValue } from '../models/pms-quarter-review-value.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
+import {
+  EmployeeAchievementSubmission,
+  EmployeeAchievementSubmissionStatus,
+} from '../models/pms-employee-achievement-submission.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -271,12 +275,13 @@ export class QuarterReviewService extends BaseService {
     }
 
     const quarterAssignments = await QuarterAssignment.find(filter)
-      .sort({ updatedAt: -1, quarterCode: 1 })
-      .lean();
+      .sort({ updatedAt: -1, quarterCode: 1 });
 
     if (quarterAssignments.length === 0) {
       return [];
     }
+
+    await this.advanceQuarterAssignmentsToManagerReviewIfEligible(quarterAssignments);
 
     const annualAssignmentIds = quarterAssignments.map((item) => item.annualAssignmentId);
     const cycleIds = quarterAssignments
@@ -811,11 +816,13 @@ export class QuarterReviewService extends BaseService {
     const quarterAssignments = await QuarterAssignment.find({
       _id: { $in: normalizedIds },
       isDeleted: false,
-    }).lean();
+    });
 
     if (quarterAssignments.length === 0) {
       return [];
     }
+
+    await this.advanceQuarterAssignmentsToManagerReviewIfEligible(quarterAssignments);
 
     const actor = this.requireActor();
     for (const quarterAssignment of quarterAssignments) {
@@ -2475,7 +2482,7 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Quarter assignment not found');
     }
 
-    return quarterAssignment;
+    return this.advanceQuarterAssignmentToManagerReviewIfEligible(quarterAssignment);
   }
 
   private async getAnnualAssignment(annualAssignmentId: string): Promise<IAnnualAssignment> {
@@ -2528,6 +2535,190 @@ export class QuarterReviewService extends BaseService {
 
   private getCurrentDate(): Date {
     return this.context.pmsCurrentDate ?? new Date();
+  }
+
+  private async advanceQuarterAssignmentsToManagerReviewIfEligible(
+    quarterAssignments: IQuarterAssignment[],
+  ): Promise<void> {
+    for (const quarterAssignment of quarterAssignments) {
+      await this.advanceQuarterAssignmentToManagerReviewIfEligible(quarterAssignment);
+    }
+  }
+
+  private async advanceQuarterAssignmentToManagerReviewIfEligible(
+    quarterAssignment: IQuarterAssignment,
+  ): Promise<IQuarterAssignment> {
+    const actorRole = normalizePmsRole(this.requireActor().actorRole);
+    if (actorRole !== PmsRole.MANAGER && actorRole !== PmsRole.ADMIN) {
+      return quarterAssignment;
+    }
+
+    const annualAssignment = await this.getAnnualAssignment(
+      quarterAssignment.annualAssignmentId.toString(),
+    );
+    const achievementConfig = await this.getAchievementStageConfig(
+      annualAssignment,
+      quarterAssignment.quarterCode,
+    );
+
+    if (quarterAssignment.quarterState === QuarterWorkflowState.OBJECTIVE_APPROVED) {
+      if (!achievementConfig.employeeAchievementEnabled) {
+        return transitionQuarterAssignmentState(
+          quarterAssignment._id.toString(),
+          QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+          this.requireActor(),
+          'Objective-approved quarter normalized into manager review stage',
+        );
+      }
+
+      quarterAssignment = await transitionQuarterAssignmentState(
+        quarterAssignment._id.toString(),
+        QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        this.requireActor(),
+        'Objective-approved quarter normalized into employee achievement stage',
+      );
+    }
+
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      return quarterAssignment;
+    }
+
+    if (!achievementConfig.employeeAchievementEnabled) {
+      return transitionQuarterAssignmentState(
+        quarterAssignment._id.toString(),
+        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+        this.requireActor(),
+        'Employee achievement stage not required for this template',
+      );
+    }
+
+    const submission = await EmployeeAchievementSubmission.findOne({
+      quarterAssignmentId: quarterAssignment._id,
+      isDeleted: false,
+    })
+      .select('status')
+      .lean();
+
+    if (
+      submission?.status === EmployeeAchievementSubmissionStatus.LOCKED ||
+      submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED
+    ) {
+      return transitionQuarterAssignmentState(
+        quarterAssignment._id.toString(),
+        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+        this.requireActor(),
+        'Employee achievement submission is locked; manager review can begin',
+      );
+    }
+
+    if (!achievementConfig.allowManagerReviewWithoutAchievement) {
+      return quarterAssignment;
+    }
+
+    const achievementWindow = await this.getAchievementSubmissionWindow(quarterAssignment);
+    if (achievementWindow?.enabled === true) {
+      const allowedUntil = this.getAchievementAllowedUntil(achievementWindow);
+      if (allowedUntil && this.getCurrentDate() <= allowedUntil) {
+        return quarterAssignment;
+      }
+    }
+
+    return transitionQuarterAssignmentState(
+      quarterAssignment._id.toString(),
+      QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+      this.requireActor(),
+      'Employee achievement stage bypassed based on template configuration',
+    );
+  }
+
+  private async getAchievementStageConfig(
+    annualAssignment: IAnnualAssignment,
+    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+  ): Promise<{
+    employeeAchievementEnabled: boolean;
+    allowManagerReviewWithoutAchievement: boolean;
+  }> {
+    const templateVersionId = annualAssignment.templateVersionId?.toString?.();
+    if (!templateVersionId) {
+      return {
+        employeeAchievementEnabled: false,
+        allowManagerReviewWithoutAchievement: true,
+      };
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
+      .select('sections metadata')
+      .lean();
+
+    if (!templateVersion) {
+      return {
+        employeeAchievementEnabled: false,
+        allowManagerReviewWithoutAchievement: true,
+      };
+    }
+
+    const sectionExists = Boolean((templateVersion.sections ?? []).find((section) => {
+      const quarterScope = [
+        ...(section.quarterScope ?? []),
+        ...(section.repeatFor ?? []),
+      ];
+
+      return (
+        section.sectionKey === 'employee_achievement_submission' &&
+        section.level === PmsTemplateSectionLevel.QUARTER &&
+        (quarterScope.length === 0 || quarterScope.includes(quarterCode))
+      );
+    }));
+
+    const metadata = (templateVersion.metadata ?? {}) as Record<string, any>;
+    const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
+      ? 'ACHIEVEMENT_THEN_MANAGER'
+      : 'MANAGER_ONLY';
+    const employeeAchievementEnabled =
+      employeeAchievementConfig.employeeAchievementEnabled !== undefined
+        ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
+        : sectionExists;
+
+    return {
+      employeeAchievementEnabled:
+        employeeAchievementEnabled && reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER',
+      allowManagerReviewWithoutAchievement:
+        employeeAchievementConfig.allowManagerReviewWithoutAchievement !== undefined
+          ? Boolean(employeeAchievementConfig.allowManagerReviewWithoutAchievement)
+          : true,
+    };
+  }
+
+  private async getAchievementSubmissionWindow(quarterAssignment: IQuarterAssignment) {
+    if (!quarterAssignment.cycleQuarterId) {
+      return undefined;
+    }
+
+    const quarterCycle = await QuarterCycle.findById(quarterAssignment.cycleQuarterId)
+      .select('achievementSubmissionWindow')
+      .lean();
+
+    return quarterCycle?.achievementSubmissionWindow;
+  }
+
+  private getAchievementAllowedUntil(
+    window:
+      | {
+          endDate?: Date;
+          dueDate?: Date;
+          graceDays?: number;
+        }
+      | undefined,
+  ): Date | undefined {
+    const baseDate = window?.endDate ?? window?.dueDate;
+    if (!baseDate) {
+      return undefined;
+    }
+
+    const allowedUntil = new Date(baseDate);
+    allowedUntil.setDate(allowedUntil.getDate() + Math.max(0, Number(window?.graceDays ?? 0)));
+    return allowedUntil;
   }
 
   private actorIdObject(): Types.ObjectId | undefined {
