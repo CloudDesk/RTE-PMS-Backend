@@ -3,6 +3,9 @@ import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
+  getAssessmentTerms,
+  getAssessmentTermLabel,
+  getDefaultAssessmentTermType,
   PmsTemplateStatus,
   PmsRole,
   QuarterWorkflowState,
@@ -19,9 +22,13 @@ import { auditService } from './audit.service';
 import { workflowService } from './workflow.service';
 import type { IAnnualCycle, ICommunicationRuleConfig } from '../models/pms-annual-cycle.model';
 import type { IQuarterCycle } from '../models/pms-quarter-cycle.model';
-import type { AnnualWorkflowState as AnnualWorkflowStateType } from '../constants/pms.enums';
+import type {
+  AnnualWorkflowState as AnnualWorkflowStateType,
+  AssessmentTermCode as AssessmentTermCodeType,
+  AssessmentTermType as AssessmentTermTypeType,
+} from '../constants/pms.enums';
 
-type QuarterCode = 'Q1' | 'Q2' | 'Q3' | 'Q4';
+type QuarterCode = AssessmentTermCodeType;
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
   | 'Q4_FINALIZATION'
@@ -41,9 +48,19 @@ export interface AchievementSubmissionWindowInput extends DateWindowInput {
   escalationDaysAfterDue?: number;
 }
 
+const ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS = {
+  enabled: true,
+  graceDays: 0,
+  reminderDaysBefore: [] as number[],
+  escalationDaysAfterDue: 0,
+} as const;
+
 export interface QuarterCycleInput {
   quarter?: QuarterCode;
   quarterCode?: QuarterCode;
+  assessmentTermType?: AssessmentTermTypeType;
+  termCode?: QuarterCode;
+  termLabel?: string;
   startDate: Date | string;
   endDate: Date | string;
   objectiveWindow?: DateWindowInput;
@@ -65,6 +82,7 @@ export interface CreateCycleInput {
   startDate: Date | string;
   endDate: Date | string;
   templateVersionId: string;
+  assessmentTermType?: AssessmentTermTypeType;
   quarters?: QuarterCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
@@ -100,6 +118,7 @@ export interface UpdateCycleInput {
   startDate?: Date | string;
   endDate?: Date | string;
   templateVersionId?: string;
+  assessmentTermType?: AssessmentTermTypeType;
   quarters?: QuarterCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
@@ -269,6 +288,7 @@ export class CycleService extends BaseService {
             appraisalYear: input.appraisalYear ?? input.year,
             startDate: new Date(input.startDate),
             endDate: new Date(input.endDate),
+            assessmentTermType: input.assessmentTermType ?? getDefaultAssessmentTermType(),
             status: AnnualWorkflowState.DRAFT,
             templateVersionId,
             appraisalWindowConfig: this.normalizeAppraisalWindowConfig(
@@ -401,6 +421,9 @@ export class CycleService extends BaseService {
       }
       if (input.startDate !== undefined) cycle.startDate = new Date(input.startDate);
       if (input.endDate !== undefined) cycle.endDate = new Date(input.endDate);
+      if (input.assessmentTermType !== undefined) {
+        cycle.assessmentTermType = input.assessmentTermType;
+      }
       if (input.appraisalWindowConfig !== undefined) {
         cycle.appraisalWindowConfig = this.normalizeAppraisalWindowConfig(
           input.appraisalWindowConfig,
@@ -414,6 +437,7 @@ export class CycleService extends BaseService {
       let quarterCycles: IQuarterCycle[] = existingQuarters;
       if (input.quarters) {
         const quarterPayloads = this.buildQuarterPayloads(mergedInput, cycle._id);
+        const activeQuarterCodes = quarterPayloads.map((payload) => payload.quarterCode);
         const upsertPromises = quarterPayloads.map((payload) =>
           QuarterCycle.findOneAndUpdate(
             { cycleId: cycle._id, quarterCode: payload.quarterCode },
@@ -422,6 +446,20 @@ export class CycleService extends BaseService {
           ),
         );
         quarterCycles = (await Promise.all(upsertPromises)) as IQuarterCycle[];
+        await QuarterCycle.updateMany(
+          {
+            cycleId: cycle._id,
+            quarterCode: { $nin: activeQuarterCodes },
+            isDeleted: false,
+          },
+          {
+            $set: {
+              isDeleted: true,
+              updatedBy: this.actorIdObject(),
+            },
+          },
+          { session },
+        );
         cycle.quarterCycleIds = quarterCycles.map((qc) => qc._id as Types.ObjectId);
       }
 
@@ -686,6 +724,9 @@ export class CycleService extends BaseService {
   ): Array<{
     cycleId: Types.ObjectId;
     quarterCode: QuarterCode;
+    assessmentTermType?: AssessmentTermTypeType;
+    termCode?: QuarterCode;
+    termLabel?: string;
     startDate: Date;
     endDate: Date;
     objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
@@ -704,10 +745,16 @@ export class CycleService extends BaseService {
     slaConfig?: Record<string, unknown>;
     closureRules?: Record<string, unknown>;
     status: QuarterWorkflowState;
+    isDeleted?: boolean;
     createdBy?: Types.ObjectId;
   }> {
-    const quarters = input.quarters ?? this.createDefaultQuarterDates(input.startDate, input.endDate);
-    const expectedQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const assessmentTermType = input.assessmentTermType ?? getDefaultAssessmentTermType();
+    const quarters = input.quarters ?? this.createDefaultQuarterDates(
+      input.startDate,
+      input.endDate,
+      assessmentTermType,
+    );
+    const expectedQuarters = getAssessmentTerms(assessmentTermType);
     const submittedQuarters = new Set(quarters.map((quarter) => this.getQuarterCode(quarter)));
 
     for (const quarter of expectedQuarters) {
@@ -725,6 +772,9 @@ export class CycleService extends BaseService {
       return {
         cycleId,
         quarterCode: quarter,
+        assessmentTermType: quarterInput.assessmentTermType ?? assessmentTermType,
+        termCode: quarterInput.termCode ?? quarter,
+        termLabel: quarterInput.termLabel ?? getAssessmentTermLabel(quarterInput.termCode ?? quarter),
         startDate: new Date(quarterInput.startDate),
         endDate: new Date(quarterInput.endDate),
         objectiveSettingWindow: this.normalizeWindow(
@@ -743,6 +793,7 @@ export class CycleService extends BaseService {
         slaConfig: quarterInput.slaConfig ?? {},
         closureRules: quarterInput.closureRules ?? {},
         status: QuarterWorkflowState.NOT_STARTED,
+        isDeleted: false,
         createdBy: this.actorIdObject(),
       };
     });
@@ -751,20 +802,24 @@ export class CycleService extends BaseService {
   private createDefaultQuarterDates(
     startDateInput: Date | string,
     endDateInput: Date | string,
+    assessmentTermType: AssessmentTermTypeType = getDefaultAssessmentTermType(),
   ): QuarterCycleInput[] {
     const startDate = new Date(startDateInput);
     const endDate = new Date(endDateInput);
-    const quarterLengthMs = Math.floor((endDate.getTime() - startDate.getTime() + 1) / 4);
-    const quarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const terms = getAssessmentTerms(assessmentTermType);
+    const termLengthMs = Math.floor((endDate.getTime() - startDate.getTime() + 1) / terms.length);
 
-    return quarters.map((quarter, index) => {
-      const quarterStart = new Date(startDate.getTime() + quarterLengthMs * index);
-      const quarterEnd = index === 3
+    return terms.map((termCode, index) => {
+      const quarterStart = new Date(startDate.getTime() + termLengthMs * index);
+      const quarterEnd = index === terms.length - 1
         ? endDate
-        : new Date(startDate.getTime() + quarterLengthMs * (index + 1) - 1);
+        : new Date(startDate.getTime() + termLengthMs * (index + 1) - 1);
 
       return {
-        quarterCode: quarter,
+        quarterCode: termCode,
+        assessmentTermType,
+        termCode,
+        termLabel: getAssessmentTermLabel(termCode),
         startDate: quarterStart,
         endDate: quarterEnd,
       };
@@ -789,6 +844,8 @@ export class CycleService extends BaseService {
       startDate: input.startDate ?? cycle.startDate,
       endDate: input.endDate ?? cycle.endDate,
       templateVersionId,
+      assessmentTermType:
+        input.assessmentTermType ?? cycle.assessmentTermType ?? getDefaultAssessmentTermType(),
       quarters: input.quarters ?? this.quarterCyclesToInput(existingQuarters),
       appraisalWindowConfig: input.appraisalWindowConfig ?? cycle.appraisalWindowConfig ?? {},
       communicationRuleConfig:
@@ -799,6 +856,9 @@ export class CycleService extends BaseService {
   private quarterCyclesToInput(quarterCycles: IQuarterCycle[]): QuarterCycleInput[] {
     return quarterCycles.map((quarterCycle) => ({
       quarterCode: quarterCycle.quarterCode,
+      assessmentTermType: quarterCycle.assessmentTermType,
+      termCode: quarterCycle.termCode,
+      termLabel: quarterCycle.termLabel,
       startDate: quarterCycle.startDate,
       endDate: quarterCycle.endDate,
       objectiveSettingWindow: quarterCycle.objectiveSettingWindow,
@@ -837,19 +897,16 @@ export class CycleService extends BaseService {
     | undefined {
     if (!window) return undefined;
 
+    const endDate = window.endDate ? new Date(window.endDate) : undefined;
+
     return {
-      enabled: window.enabled === undefined ? undefined : Boolean(window.enabled),
+      enabled: ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.enabled,
       startDate: window.startDate ? new Date(window.startDate) : undefined,
-      endDate: window.endDate ? new Date(window.endDate) : undefined,
-      dueDate: window.dueDate ? new Date(window.dueDate) : undefined,
-      graceDays: window.graceDays === undefined ? undefined : Number(window.graceDays),
-      reminderDaysBefore: Array.isArray(window.reminderDaysBefore)
-        ? window.reminderDaysBefore.map((days) => Number(days))
-        : undefined,
-      escalationDaysAfterDue:
-        window.escalationDaysAfterDue === undefined
-          ? undefined
-          : Number(window.escalationDaysAfterDue),
+      endDate,
+      dueDate: endDate,
+      graceDays: ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.graceDays,
+      reminderDaysBefore: [...ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.reminderDaysBefore],
+      escalationDaysAfterDue: ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.escalationDaysAfterDue,
     };
   }
 
@@ -928,8 +985,13 @@ export class CycleService extends BaseService {
     const cycleEnd = new Date(input.endDate);
     this.assertValidDateRange(cycleStart, cycleEnd, 'Annual cycle');
 
-    const quarters = input.quarters ?? this.createDefaultQuarterDates(input.startDate, input.endDate);
-    this.validateQuarterWindows(quarters, cycleStart, cycleEnd);
+    const assessmentTermType = input.assessmentTermType ?? getDefaultAssessmentTermType();
+    const quarters = input.quarters ?? this.createDefaultQuarterDates(
+      input.startDate,
+      input.endDate,
+      assessmentTermType,
+    );
+    this.validateQuarterWindows(quarters, cycleStart, cycleEnd, assessmentTermType);
     const appraisalWindowConfig = this.normalizeAppraisalWindowConfig(
       input.appraisalWindowConfig,
     );
@@ -1060,8 +1122,9 @@ export class CycleService extends BaseService {
     quarters: QuarterCycleInput[],
     cycleStart: Date,
     cycleEnd: Date,
+    assessmentTermType: AssessmentTermTypeType = getDefaultAssessmentTermType(),
   ): void {
-    const expectedQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const expectedQuarters = getAssessmentTerms(assessmentTermType);
     const seen = new Set<QuarterCode>();
     const normalized = quarters.map((quarter) => {
       const quarterCode = this.getQuarterCode(quarter);
@@ -1178,42 +1241,6 @@ export class CycleService extends BaseService {
       if (startDate < quarterStart || endDate > quarterEnd) {
         throw new Error(`${label} must be within quarter dates`);
       }
-    }
-
-    if (window.dueDate) {
-      const dueDate = new Date(window.dueDate);
-      this.assertValidDate(dueDate, `${label} dueDate`);
-      if (dueDate < quarterStart || dueDate > quarterEnd) {
-        throw new Error(`${label} dueDate must be within quarter dates`);
-      }
-    }
-
-    this.assertNonNegativeIntegerIfPresent(window.graceDays, `${label} graceDays`);
-    this.assertNonNegativeIntegerIfPresent(
-      window.escalationDaysAfterDue,
-      `${label} escalationDaysAfterDue`,
-    );
-
-    if (window.reminderDaysBefore !== undefined) {
-      if (!Array.isArray(window.reminderDaysBefore)) {
-        throw new Error(`${label} reminderDaysBefore must be an array`);
-      }
-
-      for (const reminderDays of window.reminderDaysBefore) {
-        this.assertNonNegativeIntegerIfPresent(
-          reminderDays,
-          `${label} reminderDaysBefore`,
-        );
-      }
-    }
-  }
-
-  private assertNonNegativeIntegerIfPresent(value: unknown, label: string): void {
-    if (value === undefined || value === null || value === '') return;
-
-    const normalized = Number(value);
-    if (!Number.isInteger(normalized) || normalized < 0) {
-      throw new Error(`${label} must be a non-negative integer`);
     }
   }
 
@@ -1369,7 +1396,9 @@ export class CycleService extends BaseService {
   }
 
   private async assertLaunchReady(cycle: IAnnualCycle): Promise<void> {
-    const expectedQuarters: QuarterCode[] = ['Q1', 'Q2', 'Q3', 'Q4'];
+    const expectedQuarters = getAssessmentTerms(
+      cycle.assessmentTermType ?? getDefaultAssessmentTermType(),
+    );
     const quarterCycles = await QuarterCycle.find({
       cycleId: cycle._id,
       isDeleted: false,
@@ -1546,18 +1575,19 @@ export class CycleService extends BaseService {
     }
 
     if (config.base === 'Q4_FINALIZATION') {
-      return await this.getQ4FinalizationWindowEndDate(cycle._id) ?? allQuartersCompletedAt;
+      return await this.getFinalizationWindowEndDate(cycle) ?? allQuartersCompletedAt;
     }
 
     return allQuartersCompletedAt;
   }
 
-  private async getQ4FinalizationWindowEndDate(
-    cycleId: Types.ObjectId,
+  private async getFinalizationWindowEndDate(
+    cycle: IAnnualCycle,
   ): Promise<Date | string | null> {
+    const finalTermCode = this.getFinalizationTermCode(cycle);
     const quarterCycle = await QuarterCycle.findOne({
-      cycleId,
-      quarterCode: 'Q4',
+      cycleId: cycle._id,
+      quarterCode: finalTermCode,
       isDeleted: false,
     })
       .select('quarterFinalizationWindow closureRules')
@@ -1575,6 +1605,11 @@ export class CycleService extends BaseService {
       this.getWindowEndDate(closureRules?.finalizationWindow) ??
       null
     );
+  }
+
+  private getFinalizationTermCode(cycle: IAnnualCycle): string {
+    const terms = getAssessmentTerms(cycle.assessmentTermType ?? getDefaultAssessmentTermType());
+    return terms[terms.length - 1] ?? 'Q4';
   }
 
   private getWindowEndDate(window: unknown): Date | string | undefined {

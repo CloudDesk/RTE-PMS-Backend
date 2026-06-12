@@ -17,6 +17,65 @@ export const PmsRoleLabel: Record<string, string> = {
   [PmsRole.DIRECTOR]: 'Director',
 };
 
+export const AssessmentTermType = {
+  QUARTERLY: 'QUARTERLY',
+  HALF_YEARLY: 'HALF_YEARLY',
+  YEARLY: 'YEARLY',
+} as const;
+
+export type AssessmentTermType =
+  (typeof AssessmentTermType)[keyof typeof AssessmentTermType];
+
+export const AssessmentTermCode = {
+  Q1: 'Q1',
+  Q2: 'Q2',
+  Q3: 'Q3',
+  Q4: 'Q4',
+  H1: 'H1',
+  H2: 'H2',
+  Y1: 'Y1',
+} as const;
+
+export type AssessmentTermCode =
+  (typeof AssessmentTermCode)[keyof typeof AssessmentTermCode];
+
+export const AssessmentTermLabels: Record<AssessmentTermCode, string> = {
+  [AssessmentTermCode.Q1]: 'Q1',
+  [AssessmentTermCode.Q2]: 'Q2',
+  [AssessmentTermCode.Q3]: 'Q3',
+  [AssessmentTermCode.Q4]: 'Q4',
+  [AssessmentTermCode.H1]: 'H1',
+  [AssessmentTermCode.H2]: 'H2',
+  [AssessmentTermCode.Y1]: 'Y1',
+};
+
+export function getDefaultAssessmentTermType(): AssessmentTermType {
+  return AssessmentTermType.QUARTERLY;
+}
+
+export function getAssessmentTerms(type?: AssessmentTermType | string): AssessmentTermCode[] {
+  switch (type) {
+    case AssessmentTermType.HALF_YEARLY:
+      return [AssessmentTermCode.H1, AssessmentTermCode.H2];
+    case AssessmentTermType.YEARLY:
+      return [AssessmentTermCode.Y1];
+    case AssessmentTermType.QUARTERLY:
+    default:
+      return [
+        AssessmentTermCode.Q1,
+        AssessmentTermCode.Q2,
+        AssessmentTermCode.Q3,
+        AssessmentTermCode.Q4,
+      ];
+  }
+}
+
+export function getAssessmentTermLabel(code?: AssessmentTermCode | string): string {
+  return code && AssessmentTermLabels[code as AssessmentTermCode]
+    ? AssessmentTermLabels[code as AssessmentTermCode]
+    : String(code ?? '');
+}
+
 export const QuarterWorkflowState = {
   NOT_STARTED: 'NOT_STARTED',
   OBJECTIVE_SETTING_OPEN: 'OBJECTIVE_SETTING_OPEN',

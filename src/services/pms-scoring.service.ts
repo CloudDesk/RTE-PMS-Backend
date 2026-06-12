@@ -532,10 +532,9 @@ export class PmsScoringService {
     },
   ): number | undefined {
     const excluded = new Set(annualScoringConfig?.excludedQuarters ?? []);
-    const entries = ['Q1', 'Q2', 'Q3', 'Q4']
-      .filter((quarter) => !excluded.has(quarter))
-      .map((quarter) => ({ quarter, score: quarterScores[quarter] }))
-      .filter((item): item is { quarter: string; score: number } => Number.isFinite(Number(item.score)));
+    const entries = Object.entries(quarterScores)
+      .filter(([quarter, score]) => !excluded.has(quarter) && Number.isFinite(Number(score)))
+      .map(([quarter, score]) => ({ quarter, score: Number(score) }));
 
     if (entries.length === 0) return undefined;
 

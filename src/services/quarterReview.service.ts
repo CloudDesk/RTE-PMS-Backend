@@ -12,6 +12,7 @@ import {
   QuarterReviewStatus,
   QuarterWorkflowState,
 } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { Objective } from '../models/pms-objective.model';
@@ -163,7 +164,10 @@ export type QuarterReviewAssignmentRecord = {
   quarterAssignmentId: string;
   cycleId: string;
   cycleName: string;
-  quarter: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarter: AssessmentTermCodeType;
+  assessmentTermType?: string;
+  termCode?: AssessmentTermCodeType;
+  termLabel?: string;
   quarterState: string;
   quarterWindows?: {
     objectiveSetting?: QuarterWindowRecord;
@@ -393,6 +397,9 @@ export class QuarterReviewService extends BaseService {
           'Performance Cycle',
         ),
         quarter: quarterAssignment.quarterCode,
+        assessmentTermType: quarterAssignment.assessmentTermType,
+        termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
+        termLabel: quarterAssignment.termLabel ?? quarterAssignment.termCode ?? quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
@@ -969,6 +976,9 @@ export class QuarterReviewService extends BaseService {
           'Performance Cycle',
         ),
         quarter: quarterAssignment.quarterCode,
+        assessmentTermType: quarterAssignment.assessmentTermType,
+        termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
+        termLabel: quarterAssignment.termLabel ?? quarterAssignment.termCode ?? quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),
@@ -2186,7 +2196,7 @@ export class QuarterReviewService extends BaseService {
 
   private async getQuarterReviewConfig(
     annualAssignment: IAnnualAssignment | Record<string, any>,
-    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarterCode: AssessmentTermCodeType,
   ): Promise<QuarterReviewConfig> {
     const templateVersionId = annualAssignment.templateVersionId?.toString?.();
     if (!templateVersionId) {
@@ -2314,7 +2324,7 @@ export class QuarterReviewService extends BaseService {
 
   private isQuarterReviewSectionInScope(
     section: ITemplateSection,
-    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarterCode: AssessmentTermCodeType,
   ): boolean {
     const allowedTypes: string[] = [
       PmsTemplateSectionType.QUARTER_REVIEW,
@@ -2633,7 +2643,7 @@ export class QuarterReviewService extends BaseService {
 
   private async getAchievementStageConfig(
     annualAssignment: IAnnualAssignment,
-    quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarterCode: AssessmentTermCodeType,
   ): Promise<{
     employeeAchievementEnabled: boolean;
     allowManagerReviewWithoutAchievement: boolean;

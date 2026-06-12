@@ -11,7 +11,9 @@ import {
   QuarterWorkflowState,
   FieldCategory,
   PmsRole,
+  AssessmentTermCode,
 } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -35,7 +37,7 @@ export interface ResolveTemplateVersionInput {
   role: string;
   workflowState: string;
   hierarchyScope?: string;
-  quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarter?: AssessmentTermCodeType;
   visibilityFlags?: string[];
   values?: Record<string, unknown>;
   annualAssignmentId?: string;
@@ -97,7 +99,7 @@ export interface ResolvedTemplateVersion {
     annualAssignmentId?: string;
     quarterAssignmentId?: string;
     hierarchyScope?: string;
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
   };
 }
@@ -1145,7 +1147,7 @@ export class PmsTemplateService extends BaseService {
 
   private isSectionInScope(
     section: ITemplateSection,
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4',
+    quarter?: AssessmentTermCodeType,
   ): boolean {
     if (!quarter) return true;
     const scopedQuarters = section.quarterScope?.length
@@ -1476,7 +1478,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   private validateSections(sections: TemplateSection[]): void {
-    const allowedQuarters = new Set(['Q1', 'Q2', 'Q3', 'Q4']);
+    const allowedQuarters = new Set(Object.values(AssessmentTermCode));
     const sectionKeys = new Set<string>();
     const allFieldKeys = new Set<string>();
     const conditionalDependencies = new Map<string, string[]>();
@@ -1788,7 +1790,7 @@ export class PmsTemplateService extends BaseService {
     // Check 12: Quarter scope validity
     // Check 13: Objective bucket validations
     // Check 14: Competency matrix validations
-    const allowedQuarters = new Set(['Q1', 'Q2', 'Q3', 'Q4']);
+    const allowedQuarters = new Set(Object.values(AssessmentTermCode));
 
     for (const section of version.sections ?? []) {
       // Check 12: Quarter scope validity for sections
@@ -2031,7 +2033,11 @@ export class PmsTemplateService extends BaseService {
       | undefined;
     const quarterWeights = annualScoringConfig?.quarterWeights;
     if (quarterWeights && Object.keys(quarterWeights).length > 0) {
-      for (const quarter of ['Q1', 'Q2', 'Q3', 'Q4']) {
+      for (const quarter of Object.keys(quarterWeights)) {
+        if (!allowedQuarters.has(quarter as AssessmentTermCodeType)) {
+          errors.push(`Annual scoring quarter ${quarter} is not a supported assessment term`);
+          continue;
+        }
         const weight = Number(quarterWeights[quarter] ?? 0);
         if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
           errors.push(`Annual scoring quarter ${quarter} weightage must be between 0 and 100`);
@@ -2039,7 +2045,7 @@ export class PmsTemplateService extends BaseService {
       }
 
       const excluded = new Set(annualScoringConfig?.excludedQuarters ?? []);
-      const totalQuarterWeight = ['Q1', 'Q2', 'Q3', 'Q4']
+      const totalQuarterWeight = Object.keys(quarterWeights)
         .filter((quarter) => !excluded.has(quarter))
         .reduce((total, quarter) => total + Number(quarterWeights[quarter] ?? 0), 0);
 
@@ -2188,7 +2194,7 @@ export class PmsTemplateService extends BaseService {
 
   private async resolveSimulationContext(input: SimulateTemplateAccessInput): Promise<{
     hierarchyScope?: string;
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
     annualAssignmentId?: string;
     quarterAssignmentId?: string;
@@ -2247,7 +2253,7 @@ export class PmsTemplateService extends BaseService {
     input: ResolveTemplateVersionInput,
   ): Promise<{
     hierarchyScope?: string;
-    quarter?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+    quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
     annualAssignmentId?: string;
     quarterAssignmentId?: string;

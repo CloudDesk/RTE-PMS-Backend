@@ -1,4 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import { AssessmentTermCode } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 
 export const EmployeeAchievementSubmissionStatus = {
   DRAFT: 'DRAFT',
@@ -46,7 +48,7 @@ export interface IEmployeeAchievementSubmission extends Document {
   employeeId: Types.ObjectId;
   managerId: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
-  quarterCode: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode: AssessmentTermCodeType;
   achievementItems: IAchievementItem[];
   achievementValues: IEmployeeAchievementValue[];
   status: EmployeeAchievementSubmissionStatus;
@@ -146,7 +148,7 @@ const employeeAchievementSubmissionSchema = new Schema<IEmployeeAchievementSubmi
     quarterCode: {
       type: String,
       required: true,
-      enum: ['Q1', 'Q2', 'Q3', 'Q4'],
+      enum: Object.values(AssessmentTermCode),
       index: true,
     },
     achievementItems: { type: [achievementItemSchema], default: [] },

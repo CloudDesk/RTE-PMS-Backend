@@ -6,6 +6,8 @@ import {
   AnnualDecisionStatus,
   AnnualWorkflowState,
   AppraisalOutcomeType,
+  getAssessmentTerms,
+  getDefaultAssessmentTermType,
   normalizePmsRole,
   PmsRole,
   QuarterWorkflowState,
@@ -1652,18 +1654,19 @@ export class AnnualDecisionService extends BaseService {
     }
 
     if (config.base === 'Q4_FINALIZATION') {
-      return await this.getQ4FinalizationWindowEndDate(cycle._id) ?? allQuartersCompletedAt;
+      return await this.getFinalizationWindowEndDate(cycle) ?? allQuartersCompletedAt;
     }
 
     return allQuartersCompletedAt;
   }
 
-  private async getQ4FinalizationWindowEndDate(
-    cycleId: Types.ObjectId,
+  private async getFinalizationWindowEndDate(
+    cycle: IAnnualCycle,
   ): Promise<Date | string | null> {
+    const finalTermCode = this.getFinalizationTermCode(cycle);
     const quarterCycle = await QuarterCycle.findOne({
-      cycleId,
-      quarterCode: 'Q4',
+      cycleId: cycle._id,
+      quarterCode: finalTermCode,
       isDeleted: false,
     })
       .select('quarterFinalizationWindow closureRules')
@@ -1681,6 +1684,11 @@ export class AnnualDecisionService extends BaseService {
       this.getWindowEndDate(closureRules?.finalizationWindow) ??
       null
     );
+  }
+
+  private getFinalizationTermCode(cycle: IAnnualCycle): string {
+    const terms = getAssessmentTerms(cycle.assessmentTermType ?? getDefaultAssessmentTermType());
+    return terms[terms.length - 1] ?? 'Q4';
   }
 
   private getWindowEndDate(window: unknown): Date | string | undefined {

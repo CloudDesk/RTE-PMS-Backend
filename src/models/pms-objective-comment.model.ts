@@ -1,11 +1,13 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import { AssessmentTermCode } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 
 export interface IObjectiveComment extends Document {
   objectiveId: Types.ObjectId;
   quarterAssignmentId: Types.ObjectId;
   annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
-  quarterCode?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode?: AssessmentTermCodeType;
   employeeId?: Types.ObjectId;
   commentType: string;
   commentText: string;
@@ -45,7 +47,7 @@ const objectiveCommentSchema = new Schema<IObjectiveComment>(
     },
     quarterCode: {
       type: String,
-      enum: ['Q1', 'Q2', 'Q3', 'Q4'],
+      enum: Object.values(AssessmentTermCode),
       index: true,
     },
     employeeId: {

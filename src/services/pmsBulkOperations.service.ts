@@ -19,6 +19,7 @@ import {
   normalizePmsRole,
   PmsRole,
 } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { auditService } from './audit.service';
 import { AssignmentService } from './assignment.service';
 import { AnnualDecisionService } from './annualDecision.service';
@@ -29,7 +30,7 @@ export interface BulkAssignInputItem {
   managerId?: string;
   templateVersionId?: string;
   assignmentReason?: string;
-  applicableQuarters?: ('Q1' | 'Q2' | 'Q3' | 'Q4')[];
+  applicableQuarters?: AssessmentTermCodeType[];
 }
 
 export interface BulkVisibilityUpdateInput {

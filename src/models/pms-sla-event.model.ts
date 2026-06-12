@@ -1,11 +1,13 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
+import { AssessmentTermCode } from '../constants/pms.enums';
+import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 
 export interface ISlaEvent extends Document {
   slaType: string;
   entityType: string;
   entityId: Types.ObjectId;
   cycleId?: Types.ObjectId;
-  quarterCode?: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  quarterCode?: AssessmentTermCodeType;
   ownerUserId: Types.ObjectId;
   dueAt: Date;
   status: string;
@@ -47,7 +49,7 @@ const slaEventSchema = new Schema<ISlaEvent>(
     },
     quarterCode: {
       type: String,
-      enum: ['Q1', 'Q2', 'Q3', 'Q4'],
+      enum: Object.values(AssessmentTermCode),
       index: true,
     },
     ownerUserId: {
