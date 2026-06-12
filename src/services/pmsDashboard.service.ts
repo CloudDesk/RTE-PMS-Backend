@@ -27,12 +27,16 @@ export class PmsDashboardService extends BaseService {
       query.cycleId = new Types.ObjectId(cycleId);
     }
 
-    // Load active or most recent Annual Assignment
-    const annualAssignment = await AnnualAssignment.findOne(query)
+    // Load active or most relevant Annual Assignment
+    const annualAssignments = await AnnualAssignment.find(query)
       .populate('cycleId', 'name startDate endDate')
       .populate('assignedManagerId', 'name email employeeCode')
       .sort({ createdAt: -1 })
       .lean();
+    const annualAssignment = await this.selectEmployeeDashboardAssignment(
+      annualAssignments,
+      Boolean(cycleId),
+    );
 
     if (!annualAssignment) {
       return {
@@ -138,6 +142,53 @@ export class PmsDashboardService extends BaseService {
     };
   }
 
+  private async selectEmployeeDashboardAssignment(
+    annualAssignments: any[],
+    hasExplicitCycle: boolean,
+  ) {
+    if (annualAssignments.length <= 1 || hasExplicitCycle) {
+      return annualAssignments[0] ?? null;
+    }
+
+    const annualAssignmentIds = annualAssignments.map((item) => item._id);
+    const [objectiveActivity, quarterActivity] = await Promise.all([
+      Objective.aggregate([
+        {
+          $match: {
+            annualAssignmentId: { $in: annualAssignmentIds },
+            isDeleted: false,
+          },
+        },
+        { $group: { _id: '$annualAssignmentId', count: { $sum: 1 } } },
+      ]),
+      QuarterAssignment.aggregate([
+        {
+          $match: {
+            annualAssignmentId: { $in: annualAssignmentIds },
+            isDeleted: false,
+            quarterState: { $ne: 'NOT_STARTED' },
+          },
+        },
+        { $group: { _id: '$annualAssignmentId', count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const objectiveActivityIds = new Set(
+      objectiveActivity.map((item) => item._id.toString()),
+    );
+    const quarterActivityIds = new Set(
+      quarterActivity.map((item) => item._id.toString()),
+    );
+
+    return (
+      annualAssignments.find((item) => objectiveActivityIds.has(item._id.toString())) ??
+      annualAssignments.find((item) => quarterActivityIds.has(item._id.toString())) ??
+      annualAssignments.find((item) => ['ACTIVE', 'IN_PROGRESS'].includes(item.annualState)) ??
+      annualAssignments[0] ??
+      null
+    );
+  }
+
   /**
    * Get PMS Manager Dashboard Data
    */
@@ -154,25 +205,34 @@ export class PmsDashboardService extends BaseService {
     const assignedAnnuals = await AnnualAssignment.find(query).select('_id employeeId cycleId').lean();
     const employeeIds = assignedAnnuals.map((a) => a.employeeId);
     const annualAssignmentIds = assignedAnnuals.map((a) => a._id);
+    const managerQuarterAssignmentQuery = {
+      assignedManagerId: managerObjectId,
+      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
+      isDeleted: false,
+    };
 
-    // 1. Objectives Approval Queue (Objectives in SUBMITTED state for direct reports)
+    const managerQuarterAssignments = await QuarterAssignment.find(managerQuarterAssignmentQuery)
+      .select('_id annualAssignmentId employeeId assignedManagerId cycleId quarterCode quarterState updatedAt')
+      .populate('employeeId', 'name email employeeCode')
+      .sort({ updatedAt: -1, quarterCode: 1 })
+      .lean();
+    const managerQuarterAssignmentIds = managerQuarterAssignments.map((item) => item._id);
+
+    // 1. Objectives Approval Queue (submitted objectives linked to manager-owned quarter assignments)
     const pendingObjectives = await Objective.find({
-      annualAssignmentId: { $in: annualAssignmentIds },
+      quarterAssignmentId: { $in: managerQuarterAssignmentIds },
+      assignedManagerId: managerObjectId,
       status: 'OBJECTIVE_SUBMITTED',
       isDeleted: false,
     })
       .populate('employeeId', 'name email employeeCode')
+      .sort({ updatedAt: -1, objectiveNo: 1 })
       .lean();
 
-    // 2. Quarter Review Queue (Quarter assignments currently in MANAGER_REVIEW_OPEN or MANAGER_REVIEW_DRAFT)
-    const quarterReviewQueue = await QuarterAssignment.find({
-      assignedManagerId: managerObjectId,
-      quarterState: { $in: ['MANAGER_REVIEW_OPEN', 'OBJECTIVE_APPROVED'] }, // objectives approved means ready for review
-      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
-      isDeleted: false,
-    })
-      .populate('employeeId', 'name email employeeCode')
-      .lean();
+    // 2. Quarter Review Queue (actual manager review action state)
+    const quarterReviewQueue = managerQuarterAssignments.filter(
+      (assignment) => assignment.quarterState === 'MANAGER_REVIEW_OPEN',
+    );
 
     // 3. Overdue SLA triggers owned by this manager
     const overdueSlas = await SlaEvent.find({
@@ -184,12 +244,24 @@ export class PmsDashboardService extends BaseService {
     }).lean();
 
     // 4. Finalized Quarters under this manager
-    const finalizedQuartersCount = await QuarterAssignment.countDocuments({
-      assignedManagerId: managerObjectId,
-      quarterState: 'QUARTER_FINALIZED',
-      ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
-      isDeleted: false,
-    });
+    const [totalQuarterAssignmentsCount, finalizedQuartersCount] = await Promise.all([
+      QuarterAssignment.countDocuments(managerQuarterAssignmentQuery),
+      QuarterAssignment.countDocuments({
+        ...managerQuarterAssignmentQuery,
+        quarterState: 'QUARTER_FINALIZED',
+      }),
+    ]);
+
+    const reassignmentAnnualAssignmentIds = cycleObjectId
+      ? (
+          await AnnualAssignment.find({
+            cycleId: cycleObjectId,
+            isDeleted: false,
+          })
+            .select('_id')
+            .lean()
+        ).map((assignment) => assignment._id)
+      : annualAssignmentIds;
 
     const [activeDelegationsIn, activeDelegationsOut, recentReassignments] = await Promise.all([
       Delegation.countDocuments({
@@ -207,8 +279,8 @@ export class PmsDashboardService extends BaseService {
         isDeleted: false,
       }),
       Reassignment.find({
-        ...(annualAssignmentIds.length > 0
-          ? { annualAssignmentId: { $in: annualAssignmentIds } }
+        ...(reassignmentAnnualAssignmentIds.length > 0
+          ? { annualAssignmentId: { $in: reassignmentAnnualAssignmentIds } }
           : { annualAssignmentId: { $in: [] } }),
         $or: [
           { fromManagerId: managerObjectId },
@@ -227,6 +299,7 @@ export class PmsDashboardService extends BaseService {
     return {
       teamStats: {
         totalDirectReports: employeeIds.length,
+        totalQuarterAssignmentsCount,
         finalizedQuartersCount,
         pendingApprovalsCount: pendingObjectives.length,
         pendingReviewsCount: quarterReviewQueue.length,
