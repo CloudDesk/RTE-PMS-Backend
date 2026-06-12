@@ -10,6 +10,7 @@ const activeClosableQuarterStates: readonly QuarterWorkflowStateType[] = [
   QuarterWorkflowState.OBJECTIVE_SUBMITTED,
   QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
   QuarterWorkflowState.OBJECTIVE_APPROVED,
+  QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
   QuarterWorkflowState.MANAGER_REVIEW_OPEN,
   QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
   QuarterWorkflowState.REOPENED_BY_ADMIN,
@@ -35,6 +36,10 @@ const quarterTransitionsBase = {
     QuarterWorkflowState.OBJECTIVE_SUBMITTED,
   ],
   [QuarterWorkflowState.OBJECTIVE_APPROVED]: [
+    QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+    QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+  ],
+  [QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: [
     QuarterWorkflowState.MANAGER_REVIEW_OPEN,
   ],
   [QuarterWorkflowState.MANAGER_REVIEW_OPEN]: [
@@ -93,6 +98,10 @@ export const quarterTransitions: Record<
   [QuarterWorkflowState.OBJECTIVE_APPROVED]: withAdminClose(
     QuarterWorkflowState.OBJECTIVE_APPROVED,
     quarterTransitionsBase[QuarterWorkflowState.OBJECTIVE_APPROVED],
+  ),
+  [QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: withAdminClose(
+    QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+    quarterTransitionsBase[QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN],
   ),
   [QuarterWorkflowState.MANAGER_REVIEW_OPEN]: withAdminClose(
     QuarterWorkflowState.MANAGER_REVIEW_OPEN,

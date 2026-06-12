@@ -164,10 +164,10 @@ export class PmsDashboardService extends BaseService {
       .populate('employeeId', 'name email employeeCode')
       .lean();
 
-    // 2. Quarter Review Queue (Quarter assignments currently in MANAGER_REVIEW_OPEN or MANAGER_REVIEW_DRAFT)
+    // 2. Quarter Review Queue
     const quarterReviewQueue = await QuarterAssignment.find({
       assignedManagerId: managerObjectId,
-      quarterState: { $in: ['MANAGER_REVIEW_OPEN', 'OBJECTIVE_APPROVED'] }, // objectives approved means ready for review
+      quarterState: { $in: ['MANAGER_REVIEW_OPEN'] },
       ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       isDeleted: false,
     })

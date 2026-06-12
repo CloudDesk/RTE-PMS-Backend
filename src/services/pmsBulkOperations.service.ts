@@ -618,7 +618,7 @@ export class PmsBulkOperationsService extends BaseService {
       // Find Quarter Assignments where manager review is pending
       const quarterAssignments = await QuarterAssignment.find({
         cycleQuarterId: { $in: activeQuarterIds },
-        quarterState: { $in: ['MANAGER_REVIEW_OPEN', 'OBJECTIVE_APPROVED'] },
+        quarterState: { $in: ['MANAGER_REVIEW_OPEN'] },
         isDeleted: false,
       })
         .populate('employeeId', 'name email employeeCode')

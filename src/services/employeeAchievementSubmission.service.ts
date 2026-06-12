@@ -2,7 +2,7 @@ import { MultipartFile } from '@fastify/multipart';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
-import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
+import { normalizePmsRole, PmsRole, QuarterWorkflowState } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
@@ -16,6 +16,7 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { gcpFileStorageService } from './gcp-file-storage.service';
+import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 
 interface AchievementAttachmentInput {
   fileName?: string;
@@ -143,7 +144,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   async getSubmission(quarterAssignmentId: string): Promise<AchievementSubmissionDetail> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
     await this.assertViewAccess(quarterAssignment);
 
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
@@ -155,6 +156,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
+
+    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
 
     const submission = await EmployeeAchievementSubmission.findOne({
       quarterAssignmentId: quarterAssignment._id,
@@ -181,6 +184,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       submission: submission ? this.mapSubmissionRecord(submission) : null,
       canEdit:
         actor.actorId === quarterAssignment.employeeId.toString() &&
+        quarterAssignment.quarterState === QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
         (!submission || submission.status !== EmployeeAchievementSubmissionStatus.LOCKED),
     };
   }
@@ -189,8 +193,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     quarterAssignmentId: string,
     input: SaveAchievementDraftInput,
   ): Promise<AchievementSubmissionRecord> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertEmployeeEditAccess(quarterAssignment);
+    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
 
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
@@ -201,6 +204,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
+
+    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
+    await this.assertEmployeeEditAccess(quarterAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
       quarterAssignmentId: quarterAssignment._id,
@@ -281,8 +287,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     quarterAssignmentId: string,
     input: SubmitAchievementInput,
   ): Promise<AchievementSubmissionRecord> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertEmployeeEditAccess(quarterAssignment);
+    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
 
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
@@ -293,6 +298,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
+
+    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
+    await this.assertEmployeeEditAccess(quarterAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
       quarterAssignmentId: quarterAssignment._id,
@@ -377,6 +385,17 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       submission.toObject(),
     );
 
+    if (quarterAssignment.quarterState === QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      // TODO(PMS v3.1): If admin/system-driven stage advancement is introduced later,
+      // move this transition into the shared quarter workflow orchestration layer.
+      await transitionQuarterAssignmentState(
+        quarterAssignment._id.toString(),
+        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+        this.requireActor(),
+        'Employee achievement submission locked; manager review can begin',
+      );
+    }
+
     return this.mapSubmissionRecord(submission.toObject());
   }
 
@@ -384,8 +403,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     quarterAssignmentId: string,
     file: MultipartFile,
   ): Promise<UploadedAchievementAttachment> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertEmployeeEditAccess(quarterAssignment);
+    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
 
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
@@ -396,6 +414,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
+
+    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
+    await this.assertEmployeeEditAccess(quarterAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
       quarterAssignmentId: quarterAssignment._id,
@@ -707,8 +728,31 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee can edit only own achievement submission');
     }
 
-    // TODO(PMS v3.1 Phase C): Surface achievement window status in frontend
-    // labels/disable states without changing the current backend enforcement rules.
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      throw new Error('Employee Achievement Submission can be edited only during the Employee Achievement Submission stage.');
+    }
+  }
+
+  private async ensureAchievementStageOpen(
+    quarterAssignment: any,
+    config: AchievementTemplateConfig,
+  ) {
+    if (
+      quarterAssignment.quarterState === QuarterWorkflowState.OBJECTIVE_APPROVED &&
+      config.employeeAchievementEnabled &&
+      config.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER'
+    ) {
+      await transitionQuarterAssignmentState(
+        quarterAssignment._id.toString(),
+        QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        this.requireActor(),
+        'Legacy objective-approved quarter normalized into employee achievement stage',
+      );
+
+      return this.getQuarterAssignment(quarterAssignment._id.toString());
+    }
+
+    return quarterAssignment;
   }
 
   private async assertSubmitWindowOpen(
