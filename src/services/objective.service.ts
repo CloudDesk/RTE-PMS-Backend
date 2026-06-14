@@ -245,6 +245,9 @@ type AssignmentRecord = {
   cycleId: string;
   cycleName: string;
   quarter: AssessmentTermCodeValue;
+  assessmentTermType?: string;
+  termCode?: AssessmentTermCodeValue;
+  termLabel?: string;
   quarterState: string;
   employeeId: string;
   employeeName: string;
@@ -455,6 +458,9 @@ export class ObjectiveService extends BaseService {
         cycleId: quarterAssignment.cycleId?.toString() ?? '',
         cycleName: this.getCycleName(annualAssignment),
         quarter: quarterAssignment.quarterCode,
+        assessmentTermType: quarterAssignment.assessmentTermType,
+        termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
+        termLabel: quarterAssignment.termLabel ?? quarterAssignment.termCode ?? quarterAssignment.quarterCode,
         quarterState: quarterAssignment.quarterState,
         quarterWindows: this.mapQuarterWindows(quarterCycle),
         employeeId: quarterAssignment.employeeId.toString(),

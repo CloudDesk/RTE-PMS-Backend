@@ -50,7 +50,7 @@ export class PmsDashboardService extends BaseService {
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
     })
-      .populate('cycleQuarterId', 'name quarterCode')
+      .populate('cycleQuarterId', 'name quarterCode assessmentTermType termCode termLabel')
       .sort({ quarterCode: 1 })
       .lean();
 
@@ -212,7 +212,7 @@ export class PmsDashboardService extends BaseService {
     };
 
     const managerQuarterAssignments = await QuarterAssignment.find(managerQuarterAssignmentQuery)
-      .select('_id annualAssignmentId employeeId assignedManagerId cycleId quarterCode quarterState updatedAt')
+      .select('_id annualAssignmentId employeeId assignedManagerId cycleId quarterCode assessmentTermType termCode termLabel quarterState updatedAt')
       .populate('employeeId', 'name email employeeCode')
       .sort({ updatedAt: -1, quarterCode: 1 })
       .lean();

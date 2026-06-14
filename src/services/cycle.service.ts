@@ -48,6 +48,13 @@ export interface AchievementSubmissionWindowInput extends DateWindowInput {
   escalationDaysAfterDue?: number;
 }
 
+const ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS = {
+  enabled: true,
+  graceDays: 0,
+  reminderDaysBefore: [] as number[],
+  escalationDaysAfterDue: 0,
+} as const;
+
 export interface QuarterCycleInput {
   quarter?: QuarterCode;
   quarterCode?: QuarterCode;
@@ -890,19 +897,16 @@ export class CycleService extends BaseService {
     | undefined {
     if (!window) return undefined;
 
+    const endDate = window.endDate ? new Date(window.endDate) : undefined;
+
     return {
-      enabled: window.enabled === undefined ? undefined : Boolean(window.enabled),
+      enabled: ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.enabled,
       startDate: window.startDate ? new Date(window.startDate) : undefined,
-      endDate: window.endDate ? new Date(window.endDate) : undefined,
-      dueDate: window.dueDate ? new Date(window.dueDate) : undefined,
-      graceDays: window.graceDays === undefined ? undefined : Number(window.graceDays),
-      reminderDaysBefore: Array.isArray(window.reminderDaysBefore)
-        ? window.reminderDaysBefore.map((days) => Number(days))
-        : undefined,
-      escalationDaysAfterDue:
-        window.escalationDaysAfterDue === undefined
-          ? undefined
-          : Number(window.escalationDaysAfterDue),
+      endDate,
+      dueDate: endDate,
+      graceDays: ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.graceDays,
+      reminderDaysBefore: [...ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.reminderDaysBefore],
+      escalationDaysAfterDue: ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS.escalationDaysAfterDue,
     };
   }
 
@@ -1238,42 +1242,6 @@ export class CycleService extends BaseService {
         throw new Error(`${label} must be within quarter dates`);
       }
     }
-
-    if (window.dueDate) {
-      const dueDate = new Date(window.dueDate);
-      this.assertValidDate(dueDate, `${label} dueDate`);
-      if (dueDate < quarterStart || dueDate > quarterEnd) {
-        throw new Error(`${label} dueDate must be within quarter dates`);
-      }
-    }
-
-    this.assertNonNegativeIntegerIfPresent(window.graceDays, `${label} graceDays`);
-    this.assertNonNegativeIntegerIfPresent(
-      window.escalationDaysAfterDue,
-      `${label} escalationDaysAfterDue`,
-    );
-
-    if (window.reminderDaysBefore !== undefined) {
-      if (!Array.isArray(window.reminderDaysBefore)) {
-        throw new Error(`${label} reminderDaysBefore must be an array`);
-      }
-
-      for (const reminderDays of window.reminderDaysBefore) {
-        this.assertNonNegativeIntegerIfPresent(
-          reminderDays,
-          `${label} reminderDaysBefore`,
-        );
-      }
-    }
-  }
-
-  private assertNonNegativeIntegerIfPresent(value: unknown, label: string): void {
-    if (value === undefined || value === null || value === '') return;
-
-    const normalized = Number(value);
-    if (!Number.isInteger(normalized) || normalized < 0) {
-      throw new Error(`${label} must be a non-negative integer`);
-    }
   }
 
   private validateQuarterWindowSequence(
@@ -1607,18 +1575,19 @@ export class CycleService extends BaseService {
     }
 
     if (config.base === 'Q4_FINALIZATION') {
-      return await this.getQ4FinalizationWindowEndDate(cycle._id) ?? allQuartersCompletedAt;
+      return await this.getFinalizationWindowEndDate(cycle) ?? allQuartersCompletedAt;
     }
 
     return allQuartersCompletedAt;
   }
 
-  private async getQ4FinalizationWindowEndDate(
-    cycleId: Types.ObjectId,
+  private async getFinalizationWindowEndDate(
+    cycle: IAnnualCycle,
   ): Promise<Date | string | null> {
+    const finalTermCode = this.getFinalizationTermCode(cycle);
     const quarterCycle = await QuarterCycle.findOne({
-      cycleId,
-      quarterCode: 'Q4',
+      cycleId: cycle._id,
+      quarterCode: finalTermCode,
       isDeleted: false,
     })
       .select('quarterFinalizationWindow closureRules')
@@ -1636,6 +1605,11 @@ export class CycleService extends BaseService {
       this.getWindowEndDate(closureRules?.finalizationWindow) ??
       null
     );
+  }
+
+  private getFinalizationTermCode(cycle: IAnnualCycle): string {
+    const terms = getAssessmentTerms(cycle.assessmentTermType ?? getDefaultAssessmentTermType());
+    return terms[terms.length - 1] ?? 'Q4';
   }
 
   private getWindowEndDate(window: unknown): Date | string | undefined {
