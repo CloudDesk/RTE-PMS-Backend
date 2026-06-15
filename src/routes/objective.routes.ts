@@ -4,9 +4,11 @@ import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
   AddObjectiveCommentInput,
+  BulkCreateManagerObjectiveInput,
   CreateObjectiveInput,
   CorrectObjectiveInput,
   ReturnObjectiveInput,
+  SaveManagerObjectiveLibraryInput,
   UpdateObjectiveInput,
 } from '../services/objective.service';
 
@@ -22,6 +24,49 @@ export const objectiveRoutes: RouteHandler = async (
           request.body as CreateObjectiveInput,
         );
         return reply.status(201).send(successResponse('Objective created successfully', objective));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/bulk-manager',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.bulkCreateManagerObjectives(
+          request.body as BulkCreateManagerObjectiveInput,
+        );
+        return reply.status(201).send(successResponse('Manager objectives assigned successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/manager-library',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const objectives = await request.container!.objectiveService.listManagerObjectiveLibrary();
+        return reply.send(successResponse('Manager objective library fetched successfully', objectives));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/manager-library',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const objectives = await request.container!.objectiveService.saveManagerObjectiveLibrary(
+          request.body as SaveManagerObjectiveLibraryInput,
+        );
+        return reply.send(successResponse('Manager objective library saved successfully', objectives));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
