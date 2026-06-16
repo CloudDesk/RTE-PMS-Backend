@@ -1,4 +1,4 @@
-import { PmsTemplateFieldType, PmsTemplateSectionType } from '../constants/pms.enums';
+import { ObjectiveSource, PmsTemplateFieldType, PmsTemplateSectionType } from '../constants/pms.enums';
 
 export type PmsScoringReviewValue = {
   fieldKey?: string;
@@ -223,18 +223,14 @@ export class PmsScoringService {
     const buckets = section.objectiveBuckets ?? [];
     const objectivesByBucket = new Map<string, any[]>();
 
-    for (const obj of approvedObjectives) {
+    for (const obj of approvedObjectives.filter((objective) => objective.source === ObjectiveSource.PREDEFINED)) {
       let bucketKey = 'employee_dynamic';
-      if (obj.source === 'PREDEFINED') bucketKey = 'template_predefined';
-      else if (obj.source === 'EMPLOYEE_CREATED') bucketKey = 'employee_dynamic';
-      else if (obj.source === 'MANAGER_CREATED') bucketKey = 'manager_dynamic';
+      if (obj.source === ObjectiveSource.PREDEFINED) bucketKey = 'template_predefined';
 
       const matchedBucket = buckets.find(
         (b) =>
           b.bucketKey === bucketKey ||
-          (obj.source === 'PREDEFINED' && b.source === 'TEMPLATE_PREDEFINED') ||
-          (obj.source === 'EMPLOYEE_CREATED' && b.source === 'EMPLOYEE_DYNAMIC') ||
-          (obj.source === 'MANAGER_CREATED' && b.source === 'MANAGER_DYNAMIC'),
+          (obj.source === ObjectiveSource.PREDEFINED && b.source === 'TEMPLATE_PREDEFINED'),
       );
       const actualBucketKey = matchedBucket ? matchedBucket.bucketKey : bucketKey;
 

@@ -69,6 +69,8 @@ export interface CreateObjectiveInput {
   quarterAssignmentId: string;
   title: string;
   description?: string;
+  priority?: string;
+  expectedOutcome?: string;
   targetMetric?: string;
   targetValue?: string;
   targetDate?: Date | string;
@@ -76,6 +78,7 @@ export interface CreateObjectiveInput {
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
   objectiveValues?: ObjectiveValueInput[];
+  commentText?: string;
 }
 
 type BulkManagerObjectiveDraftInput = Omit<CreateObjectiveInput, 'quarterAssignmentId'> & {
@@ -100,6 +103,8 @@ export interface ManagerObjectiveLibraryDraftInput {
   source?: ObjectiveSourceType;
   title: string;
   description?: string;
+  priority?: string;
+  expectedOutcome?: string;
   kpi?: string;
   targetValue?: string;
   dueDate?: string;
@@ -123,6 +128,8 @@ export interface BulkCreateManagerObjectiveInput extends Partial<BulkManagerObje
 export interface UpdateObjectiveInput {
   title?: string;
   description?: string;
+  priority?: string;
+  expectedOutcome?: string;
   targetMetric?: string;
   targetValue?: string;
   targetDate?: Date | string;
@@ -148,6 +155,8 @@ export interface CorrectObjectiveInput {
   targetMetric?: string;
   targetValue?: string;
   targetDate?: Date | string;
+  priority?: string;
+  expectedOutcome?: string;
   weightage?: number;
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
@@ -175,12 +184,14 @@ type ObjectiveConfig = {
 
 type ObjectiveCommentRecord = {
   id: string;
-  type: string;
+  commentType: string;
   commentText: string;
-  actorId: string;
+  actorUserId: string;
   actorRole: string;
   actorName: string;
   createdAt: string;
+  type: string;
+  actorId: string;
 };
 
 type ObjectiveRecord = {
@@ -197,6 +208,8 @@ type ObjectiveRecord = {
   isPredefined: boolean;
   title: string;
   description: string;
+  priority?: string;
+  expectedOutcome?: string;
   kpi: string;
   targetValue: string;
   dueDate: string;
@@ -539,16 +552,20 @@ export class ObjectiveService extends BaseService {
 
     await this.assertAssignmentAccess('objective.create', quarterAssignment);
     await this.assertObjectiveWindow(quarterAssignment, 'setting');
+    this.validateContextObjectivePayload(input as unknown as Record<string, unknown>, source);
     this.validateObjectiveInput(input);
+    this.validateContextObjectiveRequiredFields(input, source);
     this.validateCreateAgainstConfig(source, objectiveConfig);
-    await this.validateQuarterObjectiveRules(
-      quarterAssignment,
-      input.weightage,
-      undefined,
-      source,
-      objectiveConfig,
-      false,
-    );
+    if (source === ObjectiveSource.PREDEFINED) {
+      await this.validateQuarterObjectiveRules(
+        quarterAssignment,
+        input.weightage,
+        undefined,
+        source,
+        objectiveConfig,
+        false,
+      );
+    }
 
     if (quarterAssignment.quarterState === QuarterWorkflowState.NOT_STARTED) {
       await this.ensureQuarterState(
@@ -596,11 +613,13 @@ export class ObjectiveService extends BaseService {
       source,
       title: input.title.trim(),
       description: input.description?.trim(),
-      targetMetric: input.targetMetric?.trim(),
-      targetValue: input.targetValue?.trim(),
-      targetDate: input.targetDate ? new Date(input.targetDate) : undefined,
-      weightage: input.weightage,
-      successCriteria: input.successCriteria?.trim(),
+      priority: this.normalizeObjectivePriority(input.priority),
+      expectedOutcome: input.expectedOutcome?.trim(),
+      targetMetric: source === ObjectiveSource.PREDEFINED ? input.targetMetric?.trim() : undefined,
+      targetValue: source === ObjectiveSource.PREDEFINED ? input.targetValue?.trim() : undefined,
+      targetDate: source === ObjectiveSource.PREDEFINED && input.targetDate ? new Date(input.targetDate) : undefined,
+      weightage: source === ObjectiveSource.PREDEFINED ? input.weightage : undefined,
+      successCriteria: source === ObjectiveSource.PREDEFINED ? input.successCriteria?.trim() : undefined,
       status: source === ObjectiveSource.MANAGER_CREATED
         ? ObjectiveStatus.OBJECTIVE_APPROVED
         : ObjectiveStatus.OBJECTIVE_DRAFT,
@@ -615,6 +634,13 @@ export class ObjectiveService extends BaseService {
     });
 
     await this.replaceObjectiveAttachments(objective, input.attachments ?? [], actor.actorRole);
+    if (input.commentText?.trim()) {
+      await this.createCommentRecord(
+        objective,
+        input.commentText.trim(),
+        'OBJECTIVE_CREATION',
+      );
+    }
     await this.persistObjectiveValues(
       objective,
       quarterAssignment,
@@ -653,17 +679,15 @@ export class ObjectiveService extends BaseService {
     if (objectiveInputs.length === 0) {
       throw new Error('At least one objective is required');
     }
+    if ((input.weightageAdjustments ?? []).length > 0 || (input.objectiveWeightageOverrides ?? []).length > 0) {
+      throw new Error('Manager-created objectives are context-only and cannot carry weightage adjustments');
+    }
 
     const actor = this.requireActor();
     const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
     const created: BulkCreateManagerObjectiveResult['created'] = [];
     const updated: BulkCreateManagerObjectiveResult['updated'] = [];
     const failed: BulkCreateManagerObjectiveResult['failed'] = [];
-    const adjustmentsByQuarterAssignmentId = this.groupBulkWeightageAdjustments(
-      input.weightageAdjustments ?? [],
-    );
-    const objectiveWeightageOverridesByQuarterAssignmentId =
-      this.groupBulkObjectiveWeightageOverrides(input.objectiveWeightageOverrides ?? []);
 
     for (const quarterAssignmentId of quarterAssignmentIds) {
       let quarterAssignment: IQuarterAssignment | null = null;
@@ -713,62 +737,19 @@ export class ObjectiveService extends BaseService {
           originalOwnerUserId = quarterAssignment.assignedManagerId;
         }
 
-        const adjustmentInputs = adjustmentsByQuarterAssignmentId.get(quarterAssignmentId) ?? [];
-        const preparedAdjustments = await this.prepareBulkManagerWeightageAdjustments(
-          quarterAssignment,
-          source,
-          adjustmentInputs,
-        );
-        const objectiveInputsForAssignment = this.applyBulkObjectiveWeightageOverrides(
-          objectiveInputs,
-          objectiveWeightageOverridesByQuarterAssignmentId.get(quarterAssignmentId) ?? [],
-        );
-        this.assertBulkManagerObjectiveWeightageTotal(
-          quarterAssignmentId,
-          preparedAdjustments.existingWeightageAfterAdjustments,
-          objectiveInputsForAssignment,
-        );
-        for (const adjustment of preparedAdjustments.adjustments) {
-          const previousValue = adjustment.objective.toObject();
-          const previousWeightage = adjustment.objective.weightage;
-          adjustment.objective.weightage = adjustment.weightage;
-          adjustment.objective.updatedBy = actorObjectId;
-          adjustment.objective.version += 1;
-          if (actingDelegateUserId) {
-            adjustment.objective.actingDelegateUserId = actingDelegateUserId;
-            adjustment.objective.originalOwnerUserId = originalOwnerUserId;
-          }
-          await adjustment.objective.save();
-          await this.audit(
-            'PMS_MANAGER_OBJECTIVE_BULK_WEIGHTAGE_UPDATED',
-            'OBJECTIVE',
-            adjustment.objective._id.toString(),
-            previousValue,
-            adjustment.objective.toObject(),
-          );
-          updated.push({
-            quarterAssignmentId,
-            objectiveId: adjustment.objective._id.toString(),
-            objectiveTitle: adjustment.objective.title,
-            previousWeightage,
-            weightage: adjustment.weightage,
-          });
-        }
+        const objectiveInputsForAssignment = objectiveInputs;
 
         for (const objectiveInput of objectiveInputsForAssignment) {
           try {
+            this.validateContextObjectivePayload(
+              objectiveInput as unknown as Record<string, unknown>,
+              source,
+            );
             this.validateObjectiveInput({
               ...objectiveInput,
               quarterAssignmentId,
             });
-            await this.validateQuarterObjectiveRules(
-              quarterAssignment,
-              objectiveInput.weightage,
-              undefined,
-              source,
-              objectiveConfig,
-              false,
-            );
+            this.validateContextObjectiveRequiredFields(objectiveInput, source);
 
             const objective = await Objective.create({
               quarterAssignmentId: quarterAssignment._id,
@@ -781,11 +762,13 @@ export class ObjectiveService extends BaseService {
               source,
               title: objectiveInput.title.trim(),
               description: objectiveInput.description?.trim(),
-              targetMetric: objectiveInput.targetMetric?.trim(),
-              targetValue: objectiveInput.targetValue?.trim(),
-              targetDate: objectiveInput.targetDate ? new Date(objectiveInput.targetDate) : undefined,
-              weightage: objectiveInput.weightage,
-              successCriteria: objectiveInput.successCriteria?.trim(),
+              priority: this.normalizeObjectivePriority(objectiveInput.priority),
+              expectedOutcome: objectiveInput.expectedOutcome?.trim(),
+              targetMetric: undefined,
+              targetValue: undefined,
+              targetDate: undefined,
+              weightage: undefined,
+              successCriteria: undefined,
               status: ObjectiveStatus.OBJECTIVE_APPROVED,
               attachments: this.normalizeAttachments(objectiveInput.attachments ?? []),
               createdByRole: actor.actorRole,
@@ -868,10 +851,16 @@ export class ObjectiveService extends BaseService {
         throw new Error('Predefined objectives are read-only and cannot be modified');
       }
     }
+    this.validateContextObjectivePayload(
+      input as unknown as Record<string, unknown>,
+      objective.source as ObjectiveSourceType,
+    );
     this.validateObjectiveInput({
       quarterAssignmentId: objective.quarterAssignmentId.toString(),
       title: input.title ?? objective.title,
       description: input.description ?? objective.description,
+      priority: input.priority ?? objective.priority,
+      expectedOutcome: input.expectedOutcome ?? objective.expectedOutcome,
       targetMetric: input.targetMetric ?? objective.targetMetric,
       targetValue: input.targetValue ?? objective.targetValue,
       targetDate: input.targetDate ?? objective.targetDate,
@@ -879,10 +868,19 @@ export class ObjectiveService extends BaseService {
       successCriteria: input.successCriteria ?? objective.successCriteria,
       attachments: input.attachments ?? this.mapExistingAttachments(objective.attachments),
     });
+    this.validateContextObjectiveRequiredFields(
+      {
+        title: input.title ?? objective.title,
+        description: input.description ?? objective.description,
+        priority: input.priority ?? objective.priority,
+        expectedOutcome: input.expectedOutcome ?? objective.expectedOutcome,
+      },
+      objective.source as ObjectiveSourceType,
+    );
     await this.validateUpdateAgainstConfig(
       objective,
       objectiveConfig,
-      input.weightage ?? objective.weightage,
+      objective.source === ObjectiveSource.PREDEFINED ? input.weightage ?? objective.weightage : undefined,
     );
 
     let actingDelegateUserId: Types.ObjectId | undefined;
@@ -907,21 +905,37 @@ export class ObjectiveService extends BaseService {
     objective.description = input.description === undefined
       ? objective.description
       : input.description.trim();
-    objective.targetMetric = input.targetMetric === undefined
+    objective.priority = input.priority === undefined
+      ? objective.priority
+      : this.normalizeObjectivePriority(input.priority);
+    objective.expectedOutcome = input.expectedOutcome === undefined
+      ? objective.expectedOutcome
+      : input.expectedOutcome.trim();
+    objective.targetMetric = objective.source !== ObjectiveSource.PREDEFINED
+      ? objective.targetMetric
+      : input.targetMetric === undefined
       ? objective.targetMetric
       : input.targetMetric.trim();
-    objective.targetValue = input.targetValue === undefined
+    objective.targetValue = objective.source !== ObjectiveSource.PREDEFINED
+      ? objective.targetValue
+      : input.targetValue === undefined
       ? objective.targetValue
       : input.targetValue.trim();
-    objective.targetDate = input.targetDate === undefined
+    objective.targetDate = objective.source !== ObjectiveSource.PREDEFINED
+      ? objective.targetDate
+      : input.targetDate === undefined
       ? objective.targetDate
       : input.targetDate
         ? new Date(input.targetDate)
         : undefined;
-    objective.weightage = input.weightage === undefined
+    objective.weightage = objective.source !== ObjectiveSource.PREDEFINED
+      ? objective.weightage
+      : input.weightage === undefined
       ? objective.weightage
       : input.weightage;
-    objective.successCriteria = input.successCriteria === undefined
+    objective.successCriteria = objective.source !== ObjectiveSource.PREDEFINED
+      ? objective.successCriteria
+      : input.successCriteria === undefined
       ? objective.successCriteria
       : input.successCriteria.trim();
     objective.attachments = input.attachments === undefined
@@ -976,14 +990,16 @@ export class ObjectiveService extends BaseService {
     this.validateObjectiveForSubmit(objective);
     const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
-    await this.validateQuarterObjectiveRules(
-      quarterAssignment,
-      objective.weightage,
-      objective._id.toString(),
-      objective.source as ObjectiveSourceType,
-      objectiveConfig,
-      true,
-    );
+    if (objective.source === ObjectiveSource.PREDEFINED) {
+      await this.validateQuarterObjectiveRules(
+        quarterAssignment,
+        objective.weightage,
+        objective._id.toString(),
+        objective.source as ObjectiveSourceType,
+        objectiveConfig,
+        true,
+      );
+    }
 
     await this.transitionQuarterIfNeeded(
       objective.quarterAssignmentId.toString(),
@@ -1124,7 +1140,7 @@ export class ObjectiveService extends BaseService {
     objective.version += 1;
     await objective.save();
 
-    await this.createCommentRecord(objective, reason, 'RETURN_REASON');
+    await this.createCommentRecord(objective, reason, 'RETURN_FOR_REVISION');
 
     await this.audit(
       'PMS_OBJECTIVE_RETURNED_FOR_REVISION',
@@ -1166,12 +1182,18 @@ export class ObjectiveService extends BaseService {
     if (objective.status !== ObjectiveStatus.OBJECTIVE_APPROVED) {
       throw new Error('Only approved objectives can be corrected through correction flow');
     }
+    this.validateContextObjectivePayload(
+      input as unknown as Record<string, unknown>,
+      objective.source as ObjectiveSourceType,
+    );
 
     const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
     const previousValue = objective.toObject();
     const nextValues = {
       title: input.title ?? objective.title,
       description: input.description ?? objective.description,
+      priority: input.priority ?? objective.priority,
+      expectedOutcome: input.expectedOutcome ?? objective.expectedOutcome,
       targetMetric: input.targetMetric ?? objective.targetMetric,
       targetValue: input.targetValue ?? objective.targetValue,
       targetDate: input.targetDate === undefined
@@ -1190,6 +1212,8 @@ export class ObjectiveService extends BaseService {
       quarterAssignmentId: objective.quarterAssignmentId.toString(),
       title: String(nextValues.title ?? ''),
       description: nextValues.description ?? undefined,
+      priority: nextValues.priority ?? undefined,
+      expectedOutcome: nextValues.expectedOutcome ?? undefined,
       targetMetric: nextValues.targetMetric ?? undefined,
       targetValue: nextValues.targetValue ?? undefined,
       targetDate: nextValues.targetDate as Date | undefined,
@@ -1213,6 +1237,12 @@ export class ObjectiveService extends BaseService {
     objective.title = String(nextValues.title).trim();
     objective.description = nextValues.description
       ? String(nextValues.description).trim()
+      : undefined;
+    objective.priority = nextValues.priority
+      ? this.normalizeObjectivePriority(String(nextValues.priority))
+      : undefined;
+    objective.expectedOutcome = nextValues.expectedOutcome
+      ? String(nextValues.expectedOutcome).trim()
       : undefined;
     objective.targetMetric = nextValues.targetMetric
       ? String(nextValues.targetMetric).trim()
@@ -1644,6 +1674,8 @@ export class ObjectiveService extends BaseService {
       isPredefined: objective.source === ObjectiveSource.PREDEFINED,
       title: objective.title ?? '',
       description: objective.description ?? '',
+      priority: objective.priority,
+      expectedOutcome: objective.expectedOutcome ?? '',
       kpi: objective.targetMetric ?? '',
       targetValue: objective.targetValue ?? '',
       dueDate: objective.targetDate ? new Date(objective.targetDate).toISOString().slice(0, 10) : '',
@@ -1659,9 +1691,9 @@ export class ObjectiveService extends BaseService {
       ),
       comments: comments.map((comment) => ({
         id: comment._id.toString(),
-        type: comment.commentType,
+        commentType: comment.commentType,
         commentText: comment.commentText,
-        actorId: comment.actorUserId.toString(),
+        actorUserId: comment.actorUserId.toString(),
         actorRole: comment.actorRole,
         actorName: this.resolveActorName(
           annualAssignment,
@@ -1669,6 +1701,8 @@ export class ObjectiveService extends BaseService {
           comment.actorRole,
         ),
         createdAt: new Date(comment.createdAt).toISOString(),
+        type: comment.commentType,
+        actorId: comment.actorUserId.toString(),
       })),
       objectiveValues: objectiveValues.map((value) => ({
         templateFieldId: value.templateFieldId,
@@ -1862,7 +1896,101 @@ export class ObjectiveService extends BaseService {
     }
   }
 
+  private validateContextObjectivePayload(
+    input: Record<string, unknown>,
+    source: ObjectiveSourceType,
+  ): void {
+    if (
+      source !== ObjectiveSource.EMPLOYEE_CREATED &&
+      source !== ObjectiveSource.MANAGER_CREATED
+    ) {
+      return;
+    }
+
+    const blockedFields = [
+      'weightage',
+      'rating',
+      'score',
+      'weightedScore',
+      'targetMetric',
+      'kpi',
+      'targetValue',
+      'targetDate',
+      'dueDate',
+      'successCriteria',
+    ];
+    const sentBlockedField = blockedFields.find((field) =>
+      Object.prototype.hasOwnProperty.call(input, field) &&
+      input[field] !== undefined &&
+      input[field] !== null &&
+      input[field] !== '',
+    );
+
+    if (sentBlockedField) {
+      throw new Error(
+        `Employee-created and manager-created objectives are context-only; ${sentBlockedField} is not allowed`,
+      );
+    }
+
+    if (input.scoringParticipation === true) {
+      throw new Error(
+        'Employee-created and manager-created objectives cannot participate in scoring',
+      );
+    }
+  }
+
+  private normalizeObjectivePriority(priority?: string): 'LOW' | 'MEDIUM' | 'HIGH' | undefined {
+    if (priority === undefined || priority === null || !String(priority).trim()) {
+      return undefined;
+    }
+
+    const normalized = String(priority).trim().toUpperCase();
+    if (normalized !== 'LOW' && normalized !== 'MEDIUM' && normalized !== 'HIGH') {
+      throw new Error('Objective priority must be LOW, MEDIUM, or HIGH');
+    }
+
+    return normalized;
+  }
+
+  private validateContextObjectiveRequiredFields(
+    input: Pick<CreateObjectiveInput | UpdateObjectiveInput, 'title' | 'description' | 'priority' | 'expectedOutcome'>,
+    source: ObjectiveSourceType,
+  ): void {
+    if (
+      source !== ObjectiveSource.EMPLOYEE_CREATED &&
+      source !== ObjectiveSource.MANAGER_CREATED
+    ) {
+      return;
+    }
+
+    const missingFields: string[] = [];
+    if (!input.title?.trim()) missingFields.push('title');
+    if (!input.description?.trim()) missingFields.push('description');
+    if (!this.normalizeObjectivePriority(input.priority)) missingFields.push('priority');
+    if (!input.expectedOutcome?.trim()) missingFields.push('expectedOutcome');
+
+    if (missingFields.length > 0) {
+      throw new Error(`Context objective requires: ${missingFields.join(', ')}`);
+    }
+  }
+
   private validateObjectiveForSubmit(objective: IObjective): void {
+    if (
+      objective.source === ObjectiveSource.EMPLOYEE_CREATED ||
+      objective.source === ObjectiveSource.MANAGER_CREATED
+    ) {
+      this.validateContextObjectiveRequiredFields(
+        {
+          title: objective.title,
+          description: objective.description,
+          priority: objective.priority,
+          expectedOutcome: objective.expectedOutcome,
+        },
+        objective.source as ObjectiveSourceType,
+      );
+      return;
+    }
+
     if (!objective.description?.trim()) {
       throw new Error('Objective description is required on submit');
     }
@@ -2077,16 +2205,25 @@ export class ObjectiveService extends BaseService {
     if (!title) {
       throw new Error(`Objective ${index + 1}: title is required`);
     }
+    if (!objective.description?.trim()) {
+      throw new Error(`Objective ${index + 1}: description is required`);
+    }
+    const priority = this.normalizeObjectivePriority(objective.priority);
+    if (!priority) {
+      throw new Error(`Objective ${index + 1}: priority is required`);
+    }
+    if (!objective.expectedOutcome?.trim()) {
+      throw new Error(`Objective ${index + 1}: expected outcome is required`);
+    }
+    this.validateContextObjectivePayload(
+      objective as unknown as Record<string, unknown>,
+      ObjectiveSource.MANAGER_CREATED,
+    );
 
     const existing = objective as ManagerObjectiveLibraryDraftInput & {
       createdAt?: Date | string;
       updatedAt?: Date | string;
     };
-    const rawWeightage = objective.weightage as unknown;
-    const weightage =
-      rawWeightage === undefined || rawWeightage === null || rawWeightage === ''
-        ? undefined
-        : Number(rawWeightage);
     const now = new Date();
     const createdAt = existing.createdAt ? new Date(existing.createdAt) : now;
 
@@ -2095,11 +2232,13 @@ export class ObjectiveService extends BaseService {
       source: ObjectiveSource.MANAGER_CREATED,
       title,
       description: objective.description?.trim(),
-      kpi: objective.kpi?.trim(),
-      targetValue: objective.targetValue?.trim(),
-      dueDate: objective.dueDate?.trim(),
-      weightage: Number.isFinite(weightage) ? weightage : undefined,
-      successCriteria: objective.successCriteria?.trim(),
+      priority,
+      expectedOutcome: objective.expectedOutcome?.trim(),
+      kpi: undefined,
+      targetValue: undefined,
+      dueDate: undefined,
+      weightage: undefined,
+      successCriteria: undefined,
       attachments: (objective.attachments ?? []) as unknown as Record<string, unknown>[],
       objectiveValues: (objective.objectiveValues ?? []) as unknown as Record<string, unknown>[],
       createdAt: Number.isNaN(createdAt.getTime()) ? now : createdAt,
@@ -2115,11 +2254,13 @@ export class ObjectiveService extends BaseService {
       source: ObjectiveSource.MANAGER_CREATED,
       title: objective.title,
       description: objective.description ?? '',
-      kpi: objective.kpi ?? '',
-      targetValue: objective.targetValue ?? '',
-      dueDate: objective.dueDate ?? '',
-      weightage: objective.weightage,
-      successCriteria: objective.successCriteria ?? '',
+      priority: objective.priority,
+      expectedOutcome: objective.expectedOutcome ?? '',
+      kpi: '',
+      targetValue: '',
+      dueDate: '',
+      weightage: undefined,
+      successCriteria: '',
       attachments: objective.attachments ?? [],
       objectiveValues: objective.objectiveValues ?? [],
       createdAt: objective.createdAt,
@@ -2142,156 +2283,6 @@ export class ObjectiveService extends BaseService {
       ...objectiveInput
     } = input;
     return [objectiveInput as BulkManagerObjectiveDraftInput];
-  }
-
-  private groupBulkObjectiveWeightageOverrides(
-    overrides: BulkManagerObjectiveWeightageOverrideInput[],
-  ): Map<string, BulkManagerObjectiveWeightageOverrideInput[]> {
-    const grouped = new Map<string, BulkManagerObjectiveWeightageOverrideInput[]>();
-
-    for (const override of overrides) {
-      if (!override?.quarterAssignmentId) continue;
-      const hasObjectiveReference =
-        Boolean(override.clientObjectiveId) || override.objectiveIndex !== undefined;
-      if (!hasObjectiveReference) continue;
-
-      const bucket = grouped.get(override.quarterAssignmentId) ?? [];
-      bucket.push(override);
-      grouped.set(override.quarterAssignmentId, bucket);
-    }
-
-    return grouped;
-  }
-
-  private applyBulkObjectiveWeightageOverrides(
-    objectiveInputs: BulkManagerObjectiveDraftInput[],
-    overrides: BulkManagerObjectiveWeightageOverrideInput[],
-  ): BulkManagerObjectiveDraftInput[] {
-    if (overrides.length === 0) return objectiveInputs;
-
-    const overrideByClientId = new Map<string, number>();
-    const overrideByObjectiveIndex = new Map<number, number>();
-
-    for (const override of overrides) {
-      const weightage = Number(override.weightage);
-      if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
-        throw new Error('Objective assignment weightage must be between 0 and 100');
-      }
-
-      if (override.clientObjectiveId) {
-        overrideByClientId.set(override.clientObjectiveId, weightage);
-      }
-      if (override.objectiveIndex !== undefined) {
-        overrideByObjectiveIndex.set(Number(override.objectiveIndex), weightage);
-      }
-    }
-
-    return objectiveInputs.map((objectiveInput, index) => {
-      const weightage =
-        (objectiveInput.clientObjectiveId
-          ? overrideByClientId.get(objectiveInput.clientObjectiveId)
-          : undefined) ?? overrideByObjectiveIndex.get(index);
-
-      if (weightage === undefined) return objectiveInput;
-
-      return {
-        ...objectiveInput,
-        weightage,
-      };
-    });
-  }
-
-  private groupBulkWeightageAdjustments(
-    adjustments: BulkManagerObjectiveWeightageAdjustmentInput[],
-  ): Map<string, BulkManagerObjectiveWeightageAdjustmentInput[]> {
-    const grouped = new Map<string, BulkManagerObjectiveWeightageAdjustmentInput[]>();
-
-    for (const adjustment of adjustments) {
-      if (!adjustment?.quarterAssignmentId || !adjustment?.objectiveId) continue;
-      const bucket = grouped.get(adjustment.quarterAssignmentId) ?? [];
-      bucket.push(adjustment);
-      grouped.set(adjustment.quarterAssignmentId, bucket);
-    }
-
-    return grouped;
-  }
-
-  private async prepareBulkManagerWeightageAdjustments(
-    quarterAssignment: IQuarterAssignment,
-    source: ObjectiveSourceType,
-    adjustments: BulkManagerObjectiveWeightageAdjustmentInput[],
-  ): Promise<{
-    adjustments: Array<{ objective: IObjective; weightage: number }>;
-    existingWeightageAfterAdjustments: number;
-  }> {
-    const existingManagerObjectives = await Objective.find({
-      quarterAssignmentId: quarterAssignment._id,
-      source,
-      isDeleted: false,
-    });
-
-    if (adjustments.length === 0) {
-      return {
-        adjustments: [],
-        existingWeightageAfterAdjustments: existingManagerObjectives.reduce(
-          (total, objective) => total + Number(objective.weightage ?? 0),
-          0,
-        ),
-      };
-    }
-
-    const objectivesById = new Map(
-      existingManagerObjectives.map((objective) => [objective._id.toString(), objective]),
-    );
-    const preparedAdjustments: Array<{ objective: IObjective; weightage: number }> = [];
-    const nextWeightageByObjectiveId = new Map<string, number>();
-
-    for (const adjustment of adjustments) {
-      const objectiveId = this.toObjectId(adjustment.objectiveId, 'objectiveId').toString();
-      const objective = objectivesById.get(objectiveId);
-      if (!objective) {
-        throw new Error('Weightage adjustment objective must belong to the selected assignment');
-      }
-
-      const weightage = Number(adjustment.weightage);
-      if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
-        throw new Error(`Weightage for "${objective.title}" must be between 0 and 100`);
-      }
-
-      nextWeightageByObjectiveId.set(objectiveId, weightage);
-      preparedAdjustments.push({ objective, weightage });
-    }
-
-    const existingWeightageAfterAdjustments = existingManagerObjectives.reduce(
-      (total, objective) =>
-        total +
-        Number(
-          nextWeightageByObjectiveId.get(objective._id.toString()) ??
-            objective.weightage ??
-            0,
-        ),
-      0,
-    );
-
-    return { adjustments: preparedAdjustments, existingWeightageAfterAdjustments };
-  }
-
-  private assertBulkManagerObjectiveWeightageTotal(
-    quarterAssignmentId: string,
-    existingWeightage: number,
-    objectiveInputs: BulkManagerObjectiveDraftInput[],
-  ): void {
-    const assigningWeightage = objectiveInputs.reduce(
-      (total, objectiveInput) => total + Number(objectiveInput.weightage ?? 0),
-      0,
-    );
-    const nextTotal = existingWeightage + assigningWeightage;
-
-    if (nextTotal > 100) {
-      throw new Error(
-        `Manager objective weightage for assignment ${quarterAssignmentId} cannot exceed 100% (currently ${nextTotal}%)`,
-      );
-    }
   }
 
   private async validateUpdateAgainstConfig(

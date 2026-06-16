@@ -6,6 +6,8 @@ export interface IManagerObjectiveLibraryItem {
   source: typeof ObjectiveSource.MANAGER_CREATED;
   title: string;
   description?: string;
+  priority?: string;
+  expectedOutcome?: string;
   kpi?: string;
   targetValue?: string;
   dueDate?: string;
@@ -34,6 +36,13 @@ const managerObjectiveLibraryItemSchema = new Schema(
     },
     title: { type: String, required: true, trim: true },
     description: { type: String, trim: true },
+    priority: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      enum: ['LOW', 'MEDIUM', 'HIGH'],
+    },
+    expectedOutcome: { type: String, trim: true },
     kpi: { type: String, trim: true },
     targetValue: { type: String, trim: true },
     dueDate: { type: String, trim: true },

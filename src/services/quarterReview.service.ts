@@ -5,6 +5,7 @@ import { RequestContext } from '../types/context';
 import {
   normalizePmsRole,
   ObjectiveStatus,
+  ObjectiveSource,
   PmsRole,
   PmsTemplateFieldType,
   PmsTemplateSectionLevel,
@@ -428,8 +429,11 @@ export class QuarterReviewService extends BaseService {
         },
         approvedObjectives: objectives.map((objective) => ({
           id: objective._id.toString(),
+          source: objective.source,
           title: objective.title,
           description: objective.description ?? '',
+          priority: objective.priority,
+          expectedOutcome: objective.expectedOutcome ?? '',
           targetMetric: objective.targetMetric ?? '',
           targetValue: objective.targetValue ?? '',
           successCriteria: objective.successCriteria ?? '',
@@ -1007,8 +1011,11 @@ export class QuarterReviewService extends BaseService {
         },
         approvedObjectives: objectives.map((objective) => ({
           id: objective._id.toString(),
+          source: objective.source,
           title: objective.title,
           description: objective.description ?? '',
+          priority: objective.priority,
+          expectedOutcome: objective.expectedOutcome ?? '',
           targetMetric: objective.targetMetric ?? '',
           targetValue: objective.targetValue ?? '',
           successCriteria: objective.successCriteria ?? '',
@@ -1192,10 +1199,12 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Review score cannot be negative');
     }
 
-    if (this.requiresObjectiveRatings(reviewConfig)) {
+    const rateableObjectives = this.getRateableObjectives(approvedObjectives);
+
+    if (this.requiresObjectiveRatings(reviewConfig) && rateableObjectives.length > 0) {
       this.validateRatingsAgainstObjectives(
         input.ratings ?? [],
-        approvedObjectives,
+        rateableObjectives,
         false,
         reviewConfig,
       );
@@ -1209,7 +1218,9 @@ export class QuarterReviewService extends BaseService {
     reviewConfig: QuarterReviewConfig,
     resolvedScore?: number,
   ): void {
-    if (this.requiresObjectiveRatings(reviewConfig) && (!Array.isArray(input.ratings) || input.ratings.length === 0)) {
+    const rateableObjectives = this.getRateableObjectives(approvedObjectives);
+
+    if (this.requiresObjectiveRatings(reviewConfig) && rateableObjectives.length > 0 && (!Array.isArray(input.ratings) || input.ratings.length === 0)) {
       throw new Error('At least one review rating is required');
     }
 
@@ -1225,10 +1236,10 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Review score cannot be negative');
     }
 
-    if (this.requiresObjectiveRatings(reviewConfig)) {
+    if (this.requiresObjectiveRatings(reviewConfig) && rateableObjectives.length > 0) {
       this.validateRatingsAgainstObjectives(
         input.ratings,
-        approvedObjectives,
+        rateableObjectives,
         true,
         reviewConfig,
       );
@@ -1256,7 +1267,7 @@ export class QuarterReviewService extends BaseService {
     const { sectionScores, sectionsSnapshot } = this.scoringService.calculateSectionScores(
       mergedReviewValues,
       reviewConfig,
-      approvedObjectives,
+      this.getRateableObjectives(approvedObjectives),
       input.ratings ?? [],
     );
     const computedOverallScore = this.scoringService.calculateOverallScore(sectionScores, reviewConfig);
@@ -1318,8 +1329,12 @@ export class QuarterReviewService extends BaseService {
     }
 
     if (requireAllObjectives && ratedObjectiveIds.size !== approvedObjectiveIds.size) {
-      throw new Error('All approved objectives must be rated before quarter review submission');
+      throw new Error('All predefined scoring objectives must be rated before quarter review submission');
     }
+  }
+
+  private getRateableObjectives<T extends Record<string, any>>(approvedObjectives: T[]): T[] {
+    return approvedObjectives.filter((objective) => objective.source === ObjectiveSource.PREDEFINED);
   }
 
   private validateObjectiveRatingAgainstTemplate(
@@ -1746,18 +1761,14 @@ export class QuarterReviewService extends BaseService {
         const buckets = section.objectiveBuckets ?? [];
         const objectivesByBucket = new Map<string, any[]>();
 
-        for (const obj of approvedObjectives) {
+        for (const obj of this.getRateableObjectives(approvedObjectives)) {
           let bucketKey = 'employee_dynamic';
-          if (obj.source === 'PREDEFINED') bucketKey = 'template_predefined';
-          else if (obj.source === 'EMPLOYEE_CREATED') bucketKey = 'employee_dynamic';
-          else if (obj.source === 'MANAGER_CREATED') bucketKey = 'manager_dynamic';
+          if (obj.source === ObjectiveSource.PREDEFINED) bucketKey = 'template_predefined';
 
           const matchedBucket = buckets.find(
             (b) =>
               b.bucketKey === bucketKey ||
-              (obj.source === 'PREDEFINED' && b.source === 'TEMPLATE_PREDEFINED') ||
-              (obj.source === 'EMPLOYEE_CREATED' && b.source === 'EMPLOYEE_DYNAMIC') ||
-              (obj.source === 'MANAGER_CREATED' && b.source === 'MANAGER_DYNAMIC'),
+              (obj.source === ObjectiveSource.PREDEFINED && b.source === 'TEMPLATE_PREDEFINED'),
           );
           const actualBucketKey = matchedBucket ? matchedBucket.bucketKey : bucketKey;
 
