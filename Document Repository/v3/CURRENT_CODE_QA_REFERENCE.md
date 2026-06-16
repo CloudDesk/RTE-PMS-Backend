@@ -1,234 +1,61 @@
-# Current Code Q&A Reference
+# Current PMS Code Reference
 
-This note stores previous chat answers that describe mostly current PMS code behavior.
+Last updated: 16 Jun 2026, 8:30 PM IST
 
-## Question 1: Cycle Launch Table Records
+This document records the current PMS v3 implementation status only.
 
-When you select users in `LaunchCycleAssignmentsModal` and click Launch, this happens:
+## Current Term Model
 
-1. For each selected employee, frontend calls:
-   `POST /pms/cycles/:id/assign`
-
-2. Backend creates one `annual_assignments` record per selected employee.
-
-   Key fields:
-   - `employeeId`
-   - `assignedManagerId`
-   - `cycleId`
-   - `templateVersionId`
-   - `annualState: DRAFT`
-   - `finalDecisionStatus: DRAFT`
-   - `applicableQuarters` / terms
-   - employee, manager, org snapshots
-
-3. Backend creates `quarter_assignments` records for that employee.
-
-   Count depends on term type:
-   - Quarterly: 4 records
-   - Half-Yearly: 2 records
-   - Yearly: 1 record
-
-   Key fields:
-   - `annualAssignmentId`
-   - `cycleId`
-   - `cycleQuarterId`
-   - `employeeId`
-   - `assignedManagerId`
-   - `quarterCode` / term code
-   - `quarterState: NOT_STARTED`
-
-4. `annual_assignments.quarterAssignmentIds` is updated with the created term assignment IDs.
-
-5. If the template has predefined objectives, the system may also create `objectives` records for quarter assignments.
-
-6. Audit logs are created:
-   - `PMS_EMPLOYEE_ASSIGNED`
-   - `PMS_QUARTER_ASSIGNMENT_SEEDED_REVIEW_OPEN`, if seeded objectives advance workflow
-
-7. After all assignments are created, frontend calls:
-   `POST /pms/cycles/:id/launch`
-
-8. Backend updates the `annual_cycles` record:
-   - `DRAFT -> SCHEDULED`
-   - `SCHEDULED -> ACTIVE`
-   - sets `launchedAt`
-
-9. Audit logs are created for cycle transition:
-   - `PMS_CYCLE_SCHEDULED`
-   - `PMS_CYCLE_LAUNCHED`
-
-Crisp summary: launch creates `annual_assignments`, `quarter_assignments`, optionally `objectives`, audit logs, and updates the existing `annual_cycles` status to `ACTIVE`.
-
-## Question 2: Objective Creation Flow After Cycle Launch
-
-After launch, `quarter_assignments` already exist per employee per term.
-
-Example:
-- Quarterly: 4 `quarter_assignments`
-- Half-Yearly: 2 `quarter_assignments`
-- Yearly: 1 `quarter_assignment`
-
-Each has:
-- `cycleId`
-- `cycleQuarterId`
-- `annualAssignmentId`
-- `employeeId`
-- `assignedManagerId`
-- `templateVersionId`
-- `quarterCode` / `termCode`
-- `quarterState`
-
-### Employee Login Flow
-
-Employee sees assignments from:
+The current code still uses some historical names:
 
 ```text
-GET /pms/objectives/assignments?mode=employee
-```
-
-Backend filters:
-
-```text
-quarter_assignments.employeeId = logged in user
-```
-
-When employee creates an objective:
-
-```text
-POST /pms/objectives
-```
-
-Creates record in:
-
-```text
-objectives
-```
-
-Captured fields:
-- `quarterAssignmentId`
-- `annualAssignmentId`
-- `cycleId`
-- `quarterCode`
-- `employeeId`
-- `assignedManagerId`
-- `source: EMPLOYEE_CREATED`
-- `title`
-- `description`
-- `targetMetric`
-- `targetValue`
-- `targetDate`
-- `weightage`
-- `successCriteria`
-- `status: OBJECTIVE_DRAFT`
-- `createdByRole`
-- `createdByUserId`
-
-Also may create:
-- `objective_values`
-- `objective_attachments`
-
-Quarter assignment update:
-- If `quarterState = NOT_STARTED`, it becomes `OBJECTIVE_SETTING_OPEN`
-- Then employee-created objective creation can move it to `OBJECTIVE_DRAFT`
-- On submit, quarter assignment moves to `OBJECTIVE_SUBMITTED`
-
-### Manager Login Flow
-
-Manager sees assignments from:
-
-```text
-GET /pms/objectives/assignments?mode=manager
-```
-
-Backend filters:
-
-```text
-quarter_assignments.assignedManagerId = logged in manager
-```
-
-Manager can create objectives and assign them to selected employee quarter assignments via:
-
-```text
-POST /pms/objectives/bulk-manager
-```
-
-This creates one `objectives` record for each selected `quarterAssignmentId`.
-
-For manager-created objectives:
-- `source: MANAGER_CREATED`
-- `status: OBJECTIVE_APPROVED`
-- `approvedAt` set immediately
-- `approvedBy` set to manager/admin/delegate user
-
-Captured fields are the same main objective fields:
-- `quarterAssignmentId`
-- `annualAssignmentId`
-- `cycleId`
-- `quarterCode`
-- `employeeId`
-- `assignedManagerId`
-- `title`
-- `description`
-- `targetMetric`
-- `targetValue`
-- `targetDate`
-- `weightage`
-- `successCriteria`
-- attachments / values if any
-
-### Do We Update `quarter_assignments`?
-
-Yes, but only workflow/status fields. We do not store objective IDs inside `quarter_assignments`.
-
-Updated fields can include:
-- `quarterState`
-- `previousQuarterState`
-- `lastTransitionAt`
-- `lastTransitionBy`
-- `lastTransitionRole`
-- `lastTransitionReason`
-- `updatedBy`
-- `version`
-
-The relationship is:
-
-```text
-objectives.quarterAssignmentId -> quarter_assignments._id
-```
-
-Other tables created or updated:
-- `objectives`: main objective records
-- `objective_values`: custom/template field values
-- `objective_attachments`: uploaded attachment metadata
-- `objective_comments`: comments/return reasons
-- `workflow_events`: quarter assignment state transitions
-- `audit_logs`: objective and workflow audit trail
-- `pms_manager_objective_libraries`: if manager saves reusable objective library drafts
-
-Crisp summary: objective creation creates `objectives`, optionally `objective_values` and `objective_attachments`; manager bulk assignment creates objectives against selected `quarter_assignments`; `quarter_assignments` is updated only for workflow state, not to store objective data.
-
-## Question 3: Predefined Objectives And Quarter Assignments
-
-No. We do not create a new `quarter_assignments` record for each objective.
-
-The structure is:
-
-```text
-annual_assignments
-  1 per employee per cycle
-
 quarter_assignments
-  1 per employee per assessment term
-  Example:
-    Quarterly = 4 records
-    Half-Yearly = 2 records
-    Yearly = 1 record
-
-objectives
-  many objectives can belong to the same quarter_assignment
+quarterCode
+level: "QUARTER"
 ```
 
-Relationship:
+In the current implementation, these names mean assessment-term-level behavior.
+
+Supported assessment term types:
+
+```text
+Quarterly   -> Q1, Q2, Q3, Q4
+Half-Yearly -> H1, H2
+Yearly      -> Y1
+```
+
+Important current rule:
+
+```text
+level: "QUARTER" = assessment-term-level section
+```
+
+It is not limited to only Q1-Q4 in behavior.
+
+## Cycle Launch And Assignments
+
+Cycle launch creates assignment records based on the cycle assessment term type.
+
+For each selected employee:
+
+```text
+1 annual_assignments record
+N quarter_assignments records
+```
+
+Assignment count:
+
+```text
+Quarterly   -> 4 quarter_assignments
+Half-Yearly -> 2 quarter_assignments
+Yearly      -> 1 quarter_assignment
+```
+
+`annual_assignments` stores the employee/cycle/template mapping and links to all term assignments.
+
+`quarter_assignments` stores the employee, manager, cycle, template version, term code, and workflow state. It does not store objective details inside the assignment row.
+
+Objective relation:
 
 ```text
 quarter_assignments._id
@@ -237,192 +64,392 @@ quarter_assignments._id
 objectives.quarterAssignmentId
 ```
 
-So if one employee has a Q1 `quarter_assignment`, and the template has 3 predefined objectives for Q1, then:
+## Predefined Objectives
+
+Predefined objectives are seeded from the active template version into the `objectives` table during assignment/launch.
+
+They are scoring objectives.
+
+Stored identity:
 
 ```text
-quarter_assignments
-  Q1 assignment = 1 record
-
-objectives
-  predefined objective 1 = 1 record
-  predefined objective 2 = 1 record
-  predefined objective 3 = 1 record
+source: PREDEFINED
+isPredefined: true
+status: OBJECTIVE_APPROVED
 ```
 
-All 3 objectives point to the same `quarterAssignmentId`.
-
-Answer:
-- `quarter_assignments` are created during employee assignment to cycle.
-- `objectives` are created under existing `quarter_assignments`.
-- Predefined objectives do not create more `quarter_assignments`.
-- Multiple objectives can map to one `quarter_assignment`.
-
-## Question 4: Does `quarter_assignments` Store Predefined Objective Details?
-
-During assignment/launch, the system creates:
+Predefined objectives may use scoring/template fields:
 
 ```text
-annual_assignments
-  1 record per employee per cycle
+targetMetric / kpi
+targetValue
+targetDate / dueDate
+weightage
+successCriteria
+objectiveValues
+templateObjectiveKey
 ```
 
-and based on term type:
+Predefined/template objectives are still used for official manager review scoring.
+
+## Employee-Created Objectives
+
+Employee-created objectives are context/evidence only.
+
+They are not scoring objectives.
+
+Allowed create/update fields:
 
 ```text
-quarter_assignments
-  Quarterly   = 4 records
-  Half-Yearly = 2 records
-  Yearly      = 1 record
+title
+description
+priority
+expectedOutcome
+attachments optional
+comments optional
 ```
 
-Each `quarter_assignments` record stores assignment-level mapping fields like:
+Allowed priority values:
 
 ```text
-annualAssignmentId
-cycleId
-cycleQuarterId
-employeeId
-assignedManagerId
-templateVersionId
-quarterCode / termCode
-quarterState
+low
+medium
+high
 ```
 
-So yes: `quarter_assignments` stores the `templateVersionId`, but it does not store predefined objective details inside itself.
-
-Predefined objectives are stored separately in the `objectives` table.
-
-If the selected template version contains predefined objectives, then after creating the `quarter_assignments`, backend reads the template version and creates objective records like:
+Workflow:
 
 ```text
-objectives
-  quarterAssignmentId
-  annualAssignmentId
-  cycleId
-  templateVersionId
-  employeeId
-  assignedManagerId
-  source: PREDEFINED
-  isPredefined: true
-  templateObjectiveKey
-  title
-  description
-  targetMetric
-  targetValue
-  weightage
-  successCriteria
-  status: OBJECTIVE_APPROVED
+create/save draft
+submit
+manager approve or manager return for revision
 ```
 
-Relationship:
+Status flow:
 
 ```text
-quarter_assignments._id
-        |
-        v
-objectives.quarterAssignmentId
+OBJECTIVE_DRAFT
+OBJECTIVE_SUBMITTED
+OBJECTIVE_APPROVED or OBJECTIVE_REVISION_REQUIRED
 ```
 
-Example:
+## Manager-Created Objectives
 
-If employee has a Q1 assignment and the template has 3 predefined objectives for Q1:
+Manager-created objectives are context/evidence only.
+
+They are not scoring objectives.
+
+Allowed create/update fields:
 
 ```text
-quarter_assignments
-  Q1 = 1 record
-
-objectives
-  Objective 1 = 1 record, points to Q1 quarterAssignmentId
-  Objective 2 = 1 record, points to Q1 quarterAssignmentId
-  Objective 3 = 1 record, points to Q1 quarterAssignmentId
+title
+description
+priority
+expectedOutcome
+attachments optional
+comments optional
 ```
 
-Final answer:
-
-`quarter_assignments` stores `templateVersionId` and assignment/workflow info only. Predefined objective actual data is stored in `objectives`, linked back by `quarterAssignmentId`.
-
-## Question 5: How Do We Show Respective Employee Objectives?
-
-We show the respective employee objectives by using `quarterAssignmentId` as the main link.
-
-Flow:
+Workflow:
 
 ```text
-Login user
-  |
-  v
-GET /pms/objectives/assignments?mode=employee or manager
-  |
-  v
-Backend finds matching quarter_assignments
-  |
-  v
-Backend finds objectives where:
-objectives.quarterAssignmentId IN matching quarter_assignment ids
-  |
-  v
-Frontend shows those objectives inside that employee/quarter card
+create
+auto-approved immediately
 ```
 
-For employee login:
+Stored status:
 
 ```text
-quarter_assignments.employeeId = logged in employee id
+OBJECTIVE_APPROVED
 ```
 
-So employee only gets their own quarter assignments. Then objectives are loaded for those assignment IDs.
+Manager-created objectives cannot be submitted by the employee because they are already manager-owned and approved.
 
-For manager login:
+## Context Objective Scoring Restrictions
+
+Employee-created and manager-created objectives must not collect, send, store, validate, calculate, or display scoring inputs.
+
+Blocked fields for context objectives:
 
 ```text
-quarter_assignments.assignedManagerId = logged in manager id
+weightage
+rating
+score
+weightedScore
+targetMetric
+kpi
+targetValue
+targetDate
+dueDate
+successCriteria
+scoringParticipation
 ```
 
-So manager gets employees assigned to that manager. Then objectives are loaded for those employees' quarter assignments.
-
-All objective types come from the same table:
+Backend rejects scoring-style payloads for:
 
 ```text
-objectives
+EMPLOYEE_CREATED
+MANAGER_CREATED
 ```
 
-They are differentiated by `source`:
+Frontend create/edit/bulk manager objective flows do not send scoring fields for context objectives.
+
+Scoring fields remain valid only for:
 
 ```text
-PREDEFINED        = from template
-EMPLOYEE_CREATED  = created by employee
-MANAGER_CREATED   = created by manager
+PREDEFINED objectives
+template-configured scoring sections
+manager review scoring fields
 ```
 
-Important point:
+## Objective Comments
 
-Predefined objectives are not shown directly from the template at UI time. They are first created/seeded as rows in `objectives`, linked to the employee's `quarterAssignmentId`.
+Objective comments are stored as comment history records, not as one plain text field on the objective.
 
-Example:
+Comment storage:
 
 ```text
-Employee A
-  Q1 quarter_assignment id = QA001
-
-objectives table:
-  Obj 1 -> quarterAssignmentId QA001, source PREDEFINED
-  Obj 2 -> quarterAssignmentId QA001, source MANAGER_CREATED
-  Obj 3 -> quarterAssignmentId QA001, source EMPLOYEE_CREATED
+objective_comments
 ```
 
-Frontend receives:
+Each comment records:
 
 ```text
-assignment QA001
-  objectives: [Obj 1, Obj 2, Obj 3]
+commentText
+actorUserId
+actorRole
+createdAt
+commentType
 ```
 
-Then UI labels them as:
+Common comment types:
 
 ```text
-PREDEFINED        -> Predefined / Template Seed
-EMPLOYEE_CREATED  -> Employee Created
-MANAGER_CREATED   -> Manager Created
+OBJECTIVE_CREATION
+OBJECTIVE_SUBMISSION
+RETURN_FOR_REVISION
+REVISION_RESPONSE
+APPROVAL_COMMENT
+MANAGER_NOTE
+HR_ADMIN_OVERRIDE_NOTE
+GENERAL
 ```
 
-Crisp summary: respective employee objectives are shown by filtering `quarter_assignments` for the logged-in employee/manager, then fetching all `objectives` linked to those `quarterAssignmentId`s. Predefined, manager-created, and employee-created objectives all come from `objectives.source`.
+Rules:
+
+```text
+Objective creation comment is optional.
+Manager return-for-revision comment/reason is mandatory.
+```
+
+## Achievement Submission
+
+Employee Achievement Submission is enabled by template section/configuration.
+
+Section key:
+
+```text
+employee_achievement_submission
+```
+
+When enabled, approved predefined objectives can move the term workflow to:
+
+```text
+EMPLOYEE_ACHIEVEMENT_OPEN
+```
+
+After achievement submission/lock, the workflow moves toward manager review.
+
+If achievement submission is not enabled and direct manager review is allowed, the workflow can move to:
+
+```text
+MANAGER_REVIEW_OPEN
+```
+
+## Term Scope Compatibility
+
+Current compatibility rule:
+
+```text
+If a template section is scoped to all Q1-Q4 terms,
+then it also applies to H1, H2, and Y1.
+```
+
+This keeps existing templates working for Quarterly, Half-Yearly, and Yearly cycles without renaming existing stored data.
+
+This compatibility is used in:
+
+```text
+predefined objective seeding / objective config resolution
+employee achievement submission section lookup
+objective approval next-state decision
+assignment launch next-state decision
+SLA achievement-submission checks
+manager-review gating checks
+```
+
+Important fixed behavior:
+
+```text
+Quarterly   -> achievement form works
+Half-Yearly -> achievement form works
+Yearly      -> achievement form works
+```
+
+Current behavior treats all-term Q1-Q4 scope as applicable to H1/H2/Y1 also.
+
+## Manager Review And Scoring
+
+Official scoring remains template-driven.
+
+Objective rating rows are only for:
+
+```text
+PREDEFINED objectives
+```
+
+Employee-created and manager-created objectives are shown only as context/evidence during review.
+
+They are not directly rated and are not included in objective weightage calculations.
+
+## High Importance: Do Not Rename `level: "QUARTER"` Casually
+
+If we rename:
+
+```text
+level: "QUARTER"
+```
+
+to something like:
+
+```text
+level: "TERM"
+level: "ASSESSMENT_TERM"
+```
+
+it becomes a bigger FE + BE change. It touches template creation, template validation, cycle launch, assignment seeding, objective display, achievement submission, manager review, scoring, and old data compatibility.
+
+Places to change:
+
+Constants/types:
+
+```text
+Server/src/constants/pms.enums.ts
+Client/src/lib/types/pms.ts
+Client/src/lib/types/pmsTemplate.ts
+```
+
+Template builder / template API:
+
+```text
+Client/src/lib/components/pms/templates/*
+Client/src/lib/services/api/pmsTemplates.ts
+Server/src/services/pms-template.service.ts
+Server/src/models/pms-template-version.model.ts
+```
+
+Cycle launch / assignment:
+
+```text
+Server/src/services/assignment.service.ts
+Server/src/services/cycle.service.ts
+Any template section filtering during launch/predefined objective seeding
+```
+
+Objectives flow:
+
+```text
+Server/src/services/objective.service.ts
+Client/src/lib/components/pms/objectives/ObjectiveWorkspace.svelte
+Client/src/lib/services/api/pmsObjectives.ts
+```
+
+Achievement submission:
+
+```text
+Server/src/services/employeeAchievementSubmission.service.ts
+Server/src/services/sla.service.ts
+Client/src/lib/components/pms/achievements/EmployeeAchievementWorkspace.svelte
+```
+
+Manager review/scoring:
+
+```text
+Server/src/services/quarterReview.service.ts
+Server/src/services/pms-scoring.service.ts
+Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte
+```
+
+Existing data compatibility:
+
+```text
+Existing DB template sections already have level: "QUARTER".
+Need either migration or compatibility helper.
+```
+
+Example compatibility helper:
+
+```ts
+function isTermLevel(level: string) {
+  return level === "QUARTER" || level === "TERM" || level === "ASSESSMENT_TERM";
+}
+```
+
+Recommendation:
+
+```text
+Do not rename now unless it is planned as a cleanup/migration task.
+```
+
+Safer current approach:
+
+```text
+Keep stored level: "QUARTER" for backward compatibility.
+Add helper naming in BE/FE: isAssessmentTermLevel(section.level).
+Internally treat QUARTER as term-level.
+Update labels/docs to say "Assessment Term" instead of "Quarter" where possible.
+```
+
+This gives correct behavior for Quarterly, Half-Yearly, and Yearly without breaking existing templates.
+
+## Current Files Involved
+
+Backend:
+
+```text
+Server/src/constants/pms.enums.ts
+Server/src/models/pms-objective.model.ts
+Server/src/models/pms-manager-objective-library.model.ts
+Server/src/models/pms-template-version.model.ts
+Server/src/services/assignment.service.ts
+Server/src/services/cycle.service.ts
+Server/src/services/employeeAchievementSubmission.service.ts
+Server/src/services/objective.service.ts
+Server/src/services/pms-scoring.service.ts
+Server/src/services/pms-template.service.ts
+Server/src/services/quarterReview.service.ts
+Server/src/services/sla.service.ts
+```
+
+Frontend:
+
+```text
+Client/src/lib/components/pms/achievements/EmployeeAchievementWorkspace.svelte
+Client/src/lib/components/pms/objectives/ObjectiveWorkspace.svelte
+Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte
+Client/src/lib/components/pms/templates/*
+Client/src/lib/services/api/pmsObjectives.ts
+Client/src/lib/services/api/pmsTemplates.ts
+Client/src/lib/types/pms.ts
+Client/src/lib/types/pmsTemplate.ts
+```
+
+## Verification Status
+
+Current verification notes:
+
+```text
+Server TypeScript build passed.
+Related frontend filtered diagnostics were checked.
+Only existing label accessibility warnings were seen in the related frontend check.
+```
