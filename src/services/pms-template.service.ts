@@ -1766,12 +1766,13 @@ export class PmsTemplateService extends BaseService {
 
     // Check 4: Field weights sum to 100% inside scoring sections
     for (const section of scoringSections) {
+      const isObjectiveScoringSection = section.sectionType === PmsTemplateSectionType.OBJECTIVES;
       const scoringFields = (section.fields ?? []).filter(
         (field) => field.scoringConfig?.participatesInScoring === true || field.fieldCategory === 'SCORING',
       );
-      if (scoringFields.length === 0) {
+      if (scoringFields.length === 0 && !isObjectiveScoringSection) {
         errors.push(`Scoring section "${section.sectionLabel || section.sectionKey}" must contain at least one scoring field`);
-      } else {
+      } else if (scoringFields.length > 0) {
         const fieldWeightTotal = scoringFields.reduce(
           (total, field) => total + Number(field.scoringConfig?.weight ?? field.scoringConfig?.weightage ?? 0),
           0,
