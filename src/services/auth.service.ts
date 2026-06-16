@@ -47,8 +47,10 @@ export class AuthService {
 
 
   async forgotPassword(email: string) {
+    console.log(email.length,"length");
+    console.log(email," forgot password email");
     // Treat missing/undefined portalAccess as portal (existing users created before field existed).
-    const user = await User.findOne({ email: email.toLowerCase().trim(), portalAccess: { $ne: false } }).select('+resetToken +resetTokenExpiry');
+    const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+resetToken +resetTokenExpiry');
     if (!user) {
       throw new Error('User not found');
     }

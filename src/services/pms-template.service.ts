@@ -1154,7 +1154,32 @@ export class PmsTemplateService extends BaseService {
       ? section.quarterScope
       : section.repeatFor ?? [];
     if (scopedQuarters.length === 0) return true;
-    return scopedQuarters.includes(quarter);
+    return this.assessmentTermScopeMatches(scopedQuarters, quarter);
+  }
+
+  private assessmentTermScopeMatches(
+    scopedTerms: AssessmentTermCodeType[],
+    termCode: AssessmentTermCodeType,
+  ): boolean {
+    if (scopedTerms.includes(termCode)) {
+      return true;
+    }
+
+    const quarterlyTerms = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ] as AssessmentTermCodeType[];
+    const allQuarterlyTermsSelected = quarterlyTerms.every((quarter) =>
+      scopedTerms.includes(quarter),
+    );
+
+    return allQuarterlyTermsSelected && (
+      termCode === AssessmentTermCode.H1 ||
+      termCode === AssessmentTermCode.H2 ||
+      termCode === AssessmentTermCode.Y1
+    );
   }
 
   private isFieldVisible(
