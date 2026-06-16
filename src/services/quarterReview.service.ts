@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
+  AssessmentTermCode,
   normalizePmsRole,
   ObjectiveStatus,
   ObjectiveSource,
@@ -2715,7 +2716,7 @@ export class QuarterReviewService extends BaseService {
       return (
         section.sectionKey === 'employee_achievement_submission' &&
         section.level === PmsTemplateSectionLevel.QUARTER &&
-        (quarterScope.length === 0 || quarterScope.includes(quarterCode))
+        this.assessmentTermScopeMatches(quarterScope, quarterCode)
       );
     }));
 
@@ -2737,6 +2738,30 @@ export class QuarterReviewService extends BaseService {
           ? Boolean(employeeAchievementConfig.allowManagerReviewWithoutAchievement)
           : true,
     };
+  }
+
+  private assessmentTermScopeMatches(
+    scopedTerms: AssessmentTermCodeType[],
+    termCode: AssessmentTermCodeType,
+  ): boolean {
+    if (scopedTerms.length === 0) return true;
+    if (scopedTerms.includes(termCode)) return true;
+
+    const quarterlyTerms = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ] as AssessmentTermCodeType[];
+    const allQuarterlyTermsSelected = quarterlyTerms.every((quarter) =>
+      scopedTerms.includes(quarter),
+    );
+
+    return allQuarterlyTermsSelected && (
+      termCode === AssessmentTermCode.H1 ||
+      termCode === AssessmentTermCode.H2 ||
+      termCode === AssessmentTermCode.Y1
+    );
   }
 
   private async getAchievementSubmissionWindow(quarterAssignment: IQuarterAssignment) {

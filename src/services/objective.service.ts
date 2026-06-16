@@ -2510,7 +2510,7 @@ export class ObjectiveService extends BaseService {
       return (
         section.sectionKey === 'employee_achievement_submission' &&
         section.level === 'QUARTER' &&
-        (quarterScope.length === 0 || quarterScope.includes(quarterAssignment.quarterCode))
+        this.assessmentTermScopeMatches(quarterScope, quarterAssignment.quarterCode)
       );
     }));
 
