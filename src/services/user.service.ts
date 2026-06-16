@@ -416,7 +416,7 @@ export class UserService extends BaseService {
       // Apply role-based access control
       if (this.context.reqRole === 'MANAGER') {
         filter.managerId = this.context.user?._id;
-      } else if (this.context.reqRole !== 'ADMIN') {
+      } else if (!['ADMIN', 'MANAGEMENT', 'DIRECTOR'].includes(this.context.reqRole)) {
         filter._id = this.context.user?._id;
       }
     }

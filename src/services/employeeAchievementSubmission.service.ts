@@ -690,7 +690,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
 
-    if (mappedRole === PmsRole.ADMIN) {
+    if (
+      mappedRole === PmsRole.ADMIN ||
+      mappedRole === PmsRole.MANAGEMENT ||
+      mappedRole === PmsRole.DIRECTOR
+    ) {
       return;
     }
 
