@@ -28,6 +28,8 @@ export interface IObjective extends Document {
   isPredefined?: boolean;
   title: string;
   description?: string;
+  priority?: string;
+  expectedOutcome?: string;
   targetMetric?: string;
   targetValue?: string;
   targetDate?: Date;
@@ -125,6 +127,13 @@ const objectiveSchema = new Schema<IObjective>(
       maxlength: 200,
     },
     description: { type: String, trim: true },
+    priority: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      enum: ['LOW', 'MEDIUM', 'HIGH'],
+    },
+    expectedOutcome: { type: String, trim: true },
     targetMetric: { type: String, trim: true },
     targetValue: { type: String, trim: true },
     targetDate: Date,
