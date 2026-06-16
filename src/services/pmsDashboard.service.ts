@@ -14,7 +14,6 @@ import {
   Reassignment,
 } from '../models';
 import { visibilityMaskService } from './visibilityMask.service';
-import { AssignmentService } from './assignment.service';
 import { accessService } from './access.service';
 
 export class PmsDashboardService extends BaseService {
@@ -488,10 +487,10 @@ export class PmsDashboardService extends BaseService {
       query.cycleId = new Types.ObjectId(cycleId);
     }
 
-    const assignmentService = new AssignmentService(this.context);
-    await assignmentService.applyScopedAssignmentFilter(query);
-
-    const annualAssignments = await AnnualAssignment.find(query).select('_id').lean();
+    const [annualAssignments, assignedManagerIds] = await Promise.all([
+      AnnualAssignment.find(query).select('_id').lean(),
+      AnnualAssignment.distinct('assignedManagerId', query),
+    ]);
     const annualAssignmentIds = annualAssignments.map((item) => item._id);
 
     // 1. Annual Appraisals Pending vs Decision Drafts vs Finalized
@@ -573,6 +572,7 @@ export class PmsDashboardService extends BaseService {
     ]);
 
     const totalAssignments = annualAssignments.length;
+    const assignedManagerCount = assignedManagerIds.length;
     const cycleCompletionPercentage = totalAssignments > 0 
       ? Math.round((frozenDecisionCount / totalAssignments) * 100) 
       : 0;
@@ -585,6 +585,8 @@ export class PmsDashboardService extends BaseService {
         nilOutcomes: nilOutcomesCount,
       },
       readiness: {
+        totalAssignments,
+        assignedManagerCount,
         communicationReady: communicationReadinessCount,
         decisionDrafts: decisionDraftCount,
         decisionsFinalized: frozenDecisionCount,

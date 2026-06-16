@@ -12,6 +12,42 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
   fastify.get(
+    '/attachments/download',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { fileUrl, fileName } = request.query as {
+          fileUrl?: string;
+          fileName?: string;
+        };
+
+        if (!fileUrl) {
+          throw new Error('File URL is required');
+        }
+
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Unable to download attachment. Status: ${response.status}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const contentType =
+          response.headers.get('content-type') || 'application/octet-stream';
+        const safeFileName = (fileName || 'achievement-attachment').replace(/["\r\n]/g, '');
+
+        return reply
+          .header('Content-Type', contentType)
+          .header('Content-Length', String(buffer.length))
+          .header('Content-Disposition', `attachment; filename="${safeFileName}"`)
+          .send(buffer);
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
     '/:quarterAssignmentId',
     { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
     async (request, reply) => {

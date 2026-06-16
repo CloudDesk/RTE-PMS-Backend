@@ -1154,7 +1154,32 @@ export class PmsTemplateService extends BaseService {
       ? section.quarterScope
       : section.repeatFor ?? [];
     if (scopedQuarters.length === 0) return true;
-    return scopedQuarters.includes(quarter);
+    return this.assessmentTermScopeMatches(scopedQuarters, quarter);
+  }
+
+  private assessmentTermScopeMatches(
+    scopedTerms: AssessmentTermCodeType[],
+    termCode: AssessmentTermCodeType,
+  ): boolean {
+    if (scopedTerms.includes(termCode)) {
+      return true;
+    }
+
+    const quarterlyTerms = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ] as AssessmentTermCodeType[];
+    const allQuarterlyTermsSelected = quarterlyTerms.every((quarter) =>
+      scopedTerms.includes(quarter),
+    );
+
+    return allQuarterlyTermsSelected && (
+      termCode === AssessmentTermCode.H1 ||
+      termCode === AssessmentTermCode.H2 ||
+      termCode === AssessmentTermCode.Y1
+    );
   }
 
   private isFieldVisible(
@@ -1766,12 +1791,13 @@ export class PmsTemplateService extends BaseService {
 
     // Check 4: Field weights sum to 100% inside scoring sections
     for (const section of scoringSections) {
+      const isObjectiveScoringSection = section.sectionType === PmsTemplateSectionType.OBJECTIVES;
       const scoringFields = (section.fields ?? []).filter(
         (field) => field.scoringConfig?.participatesInScoring === true || field.fieldCategory === 'SCORING',
       );
-      if (scoringFields.length === 0) {
+      if (scoringFields.length === 0 && !isObjectiveScoringSection) {
         errors.push(`Scoring section "${section.sectionLabel || section.sectionKey}" must contain at least one scoring field`);
-      } else {
+      } else if (scoringFields.length > 0) {
         const fieldWeightTotal = scoringFields.reduce(
           (total, field) => total + Number(field.scoringConfig?.weight ?? field.scoringConfig?.weightage ?? 0),
           0,

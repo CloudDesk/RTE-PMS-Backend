@@ -82,6 +82,8 @@ export interface AnnualDecisionListItem {
   annualAssignmentId: string;
   cycleId: string;
   cycleName: string;
+  cycleStartDate?: string;
+  cycleEndDate?: string;
   employeeId: string;
   employeeName: string;
   employeeCode?: string;
@@ -249,6 +251,8 @@ export class AnnualDecisionService extends BaseService {
         annualAssignmentId: annualAssignment._id.toString(),
         cycleId: annualAssignment.cycleId.toString(),
         cycleName: cycle?.name ?? 'Performance Cycle',
+        cycleStartDate: cycle?.startDate?.toISOString(),
+        cycleEndDate: cycle?.endDate?.toISOString(),
         employeeId: annualAssignment.employeeId.toString(),
         employeeName: String(employeeSnapshot.name ?? 'Employee'),
         employeeCode,

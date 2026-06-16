@@ -55,6 +55,9 @@ const ACHIEVEMENT_SUBMISSION_WINDOW_DEFAULTS = {
   escalationDaysAfterDue: 0,
 } as const;
 
+const MS_PER_DAY = 86400000;
+const MIN_ASSESSMENT_TERM_DAYS = 29;
+
 export interface QuarterCycleInput {
   quarter?: QuarterCode;
   quarterCode?: QuarterCode;
@@ -983,9 +986,21 @@ export class CycleService extends BaseService {
 
     const cycleStart = new Date(input.startDate);
     const cycleEnd = new Date(input.endDate);
-    this.assertValidDateRange(cycleStart, cycleEnd, 'Annual cycle');
-
     const assessmentTermType = input.assessmentTermType ?? getDefaultAssessmentTermType();
+    const expectedTerms = getAssessmentTerms(assessmentTermType);
+    this.assertValidDateRange(cycleStart, cycleEnd, 'Annual cycle');
+    if (this.dateOnlyTime(cycleEnd) <= this.dateOnlyTime(cycleStart)) {
+      throw new Error('Annual cycle End Date must be after Cycle Start Date');
+    }
+
+    const minimumCycleDays = expectedTerms.length * MIN_ASSESSMENT_TERM_DAYS;
+    const cycleDurationDays = this.inclusiveDurationDays(cycleStart, cycleEnd);
+    if (cycleDurationDays < minimumCycleDays) {
+      throw new Error(
+        `Annual cycle is too short for configured Assessment Terms. Minimum is ${minimumCycleDays} inclusive days (${MIN_ASSESSMENT_TERM_DAYS} days per Assessment Term)`,
+      );
+    }
+
     const quarters = input.quarters ?? this.createDefaultQuarterDates(
       input.startDate,
       input.endDate,
@@ -1129,51 +1144,62 @@ export class CycleService extends BaseService {
     const normalized = quarters.map((quarter) => {
       const quarterCode = this.getQuarterCode(quarter);
       if (!quarterCode) {
-        throw new Error('Quarter code is required');
+        throw new Error('Assessment Term code is required');
       }
 
       if (seen.has(quarterCode)) {
         throw new Error(`Duplicate ${quarterCode} configuration`);
       }
+      if (!expectedQuarters.includes(quarterCode)) {
+        throw new Error(`${quarterCode} is not valid for the selected Assessment Term Type`);
+      }
       seen.add(quarterCode);
 
       const startDate = new Date(quarter.startDate);
       const endDate = new Date(quarter.endDate);
-      this.assertValidDateRange(startDate, endDate, `${quarterCode} cycle`);
+      this.assertValidDateRange(startDate, endDate, `${quarterCode} Assessment Term`);
 
-      if (startDate < cycleStart || endDate > cycleEnd) {
-        throw new Error(`${quarterCode} dates must be within annual cycle dates`);
+      const termDurationDays = this.inclusiveDurationDays(startDate, endDate);
+      if (termDurationDays < MIN_ASSESSMENT_TERM_DAYS) {
+        throw new Error(`${quarterCode} Assessment Term must be at least ${MIN_ASSESSMENT_TERM_DAYS} inclusive days`);
+      }
+
+      if (
+        this.dateOnlyTime(startDate) < this.dateOnlyTime(cycleStart) ||
+        this.dateOnlyTime(endDate) > this.dateOnlyTime(cycleEnd)
+      ) {
+        throw new Error(`${quarterCode} Assessment Term dates must be within annual cycle dates`);
       }
 
       this.validateWindowWithinQuarter(
         quarter.objectiveSettingWindow ?? quarter.objectiveWindow,
         startDate,
         endDate,
-        `${quarterCode} objective setting window`,
+        `${quarterCode} Objective Setting window`,
       );
       this.validateWindowWithinQuarter(
         quarter.objectiveApprovalWindow,
         startDate,
         endDate,
-        `${quarterCode} objective approval window`,
+        `${quarterCode} Objective Approval window`,
       );
       this.validateAchievementSubmissionWindow(
         quarter.achievementSubmissionWindow,
         startDate,
         endDate,
-        `${quarterCode} employee achievement submission window`,
+        `${quarterCode} Employee Achievement Submission Window`,
       );
       this.validateWindowWithinQuarter(
         quarter.managerReviewWindow ?? quarter.reviewWindow,
         startDate,
         endDate,
-        `${quarterCode} manager review window`,
+        `${quarterCode} Manager Review window`,
       );
       this.validateWindowWithinQuarter(
         this.getQuarterFinalizationWindowInput(quarter),
         startDate,
         endDate,
-        `${quarterCode} quarter finalization window`,
+        `${quarterCode} Finalization window`,
       );
       this.validateQuarterWindowSequence(quarter, quarterCode);
 
@@ -1191,12 +1217,25 @@ export class CycleService extends BaseService {
         expectedQuarters.indexOf(left.quarterCode) - expectedQuarters.indexOf(right.quarterCode),
     );
 
+    const firstTerm = sorted[0];
+    if (firstTerm && this.dateOnlyTime(firstTerm.startDate) !== this.dateOnlyTime(cycleStart)) {
+      throw new Error(`${firstTerm.quarterCode} Assessment Term must start on the annual cycle start date`);
+    }
+
     for (let index = 1; index < sorted.length; index += 1) {
       const previous = sorted[index - 1];
       const current = sorted[index];
-      if (current.startDate <= previous.endDate) {
-        throw new Error(`${current.quarterCode} dates must not overlap previous quarter`);
+      if (this.dateOnlyTime(current.startDate) <= this.dateOnlyTime(previous.endDate)) {
+        throw new Error(`${current.quarterCode} Assessment Term dates must not overlap previous Assessment Term`);
       }
+      if (this.dateOnlyTime(current.startDate) !== this.addDays(previous.endDate, 1).getTime()) {
+        throw new Error(`${current.quarterCode} Assessment Term must start immediately after ${previous.quarterCode} ends`);
+      }
+    }
+
+    const finalTerm = sorted[sorted.length - 1];
+    if (finalTerm && this.dateOnlyTime(finalTerm.endDate) !== this.dateOnlyTime(cycleEnd)) {
+      throw new Error(`${finalTerm.quarterCode} Assessment Term must end on the annual cycle end date`);
     }
   }
 
@@ -1206,7 +1245,9 @@ export class CycleService extends BaseService {
     quarterEnd: Date,
     label: string,
   ): void {
-    if (!window) return;
+    if (!window) {
+      throw new Error(`${label} is required`);
+    }
 
     const startDate = window.startDate ? new Date(window.startDate) : undefined;
     const endDate = window.endDate ? new Date(window.endDate) : undefined;
@@ -1215,8 +1256,11 @@ export class CycleService extends BaseService {
     }
 
     this.assertValidDateRange(startDate, endDate, label);
-    if (startDate < quarterStart || endDate > quarterEnd) {
-      throw new Error(`${label} must be within quarter dates`);
+    if (
+      this.dateOnlyTime(startDate) < this.dateOnlyTime(quarterStart) ||
+      this.dateOnlyTime(endDate) > this.dateOnlyTime(quarterEnd)
+    ) {
+      throw new Error(`${label} must be within Assessment Term dates`);
     }
   }
 
@@ -1226,21 +1270,27 @@ export class CycleService extends BaseService {
     quarterEnd: Date,
     label: string,
   ): void {
-    if (!window) return;
+    if (!window) {
+      throw new Error(`${label} is required and must have at least one full day`);
+    }
 
     const hasStart = Boolean(window.startDate);
     const hasEnd = Boolean(window.endDate);
-    if (hasStart || hasEnd) {
-      if (!hasStart || !hasEnd) {
-        throw new Error(`${label} must include both startDate and endDate when dates are provided`);
-      }
+    if (!hasStart || !hasEnd) {
+      throw new Error(`${label} is required and must include both startDate and endDate`);
+    }
 
-      const startDate = new Date(window.startDate as Date | string);
-      const endDate = new Date(window.endDate as Date | string);
-      this.assertValidDateRange(startDate, endDate, label);
-      if (startDate < quarterStart || endDate > quarterEnd) {
-        throw new Error(`${label} must be within quarter dates`);
-      }
+    const startDate = new Date(window.startDate as Date | string);
+    const endDate = new Date(window.endDate as Date | string);
+    this.assertValidDateRange(startDate, endDate, label);
+    if (this.inclusiveDurationDays(startDate, endDate) < 1) {
+      throw new Error(`${label} must have at least one full day`);
+    }
+    if (
+      this.dateOnlyTime(startDate) < this.dateOnlyTime(quarterStart) ||
+      this.dateOnlyTime(endDate) > this.dateOnlyTime(quarterEnd)
+    ) {
+      throw new Error(`${label} must be within Assessment Term dates`);
     }
   }
 
@@ -1259,11 +1309,7 @@ export class CycleService extends BaseService {
       },
       {
         label: 'employee achievement submission window',
-        window:
-          quarter.achievementSubmissionWindow?.startDate &&
-          quarter.achievementSubmissionWindow?.endDate
-            ? quarter.achievementSubmissionWindow
-            : undefined,
+        window: quarter.achievementSubmissionWindow,
       },
       {
         label: 'manager review window',
@@ -1285,10 +1331,27 @@ export class CycleService extends BaseService {
       const previous = sequence[index - 1];
       const current = sequence[index];
 
-      if (current.startDate <= previous.endDate) {
+      if (this.dateOnlyTime(current.startDate) <= this.dateOnlyTime(previous.endDate)) {
         throw new Error(
           `${quarterCode} ${current.label} must start after ${previous.label} ends`,
         );
+      }
+    }
+
+    const objectiveApproval = quarter.objectiveApprovalWindow;
+    const achievementSubmission = quarter.achievementSubmissionWindow;
+    const managerReview = quarter.managerReviewWindow ?? quarter.reviewWindow;
+    if (objectiveApproval?.endDate && achievementSubmission?.startDate) {
+      const expectedAchievementStart = this.addDays(new Date(objectiveApproval.endDate), 1);
+      if (this.dateOnlyTime(new Date(achievementSubmission.startDate)) !== expectedAchievementStart.getTime()) {
+        throw new Error(`${quarterCode} Employee Achievement Submission Window must start immediately after Objective Approval ends`);
+      }
+    }
+
+    if (achievementSubmission?.endDate && managerReview?.startDate) {
+      const expectedManagerReviewStart = this.addDays(new Date(achievementSubmission.endDate), 1);
+      if (this.dateOnlyTime(new Date(managerReview.startDate)) !== expectedManagerReviewStart.getTime()) {
+        throw new Error(`${quarterCode} Manager Review must start immediately after Employee Achievement Submission Window ends`);
       }
     }
   }
@@ -1306,6 +1369,32 @@ export class CycleService extends BaseService {
     if (Number.isNaN(date.getTime())) {
       throw new Error(`${label} has invalid date`);
     }
+  }
+
+  private inclusiveDurationDays(startDate: Date, endDate: Date): number {
+    this.assertValidDate(startDate, 'duration startDate');
+    this.assertValidDate(endDate, 'duration endDate');
+    const start = this.dateOnlyTime(startDate);
+    const end = this.dateOnlyTime(endDate);
+    return Math.floor((end - start) / MS_PER_DAY) + 1;
+  }
+
+  private dateOnlyTime(date: Date): number {
+    this.assertValidDate(date, 'date');
+    return Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+    );
+  }
+
+  private addDays(date: Date, offset: number): Date {
+    this.assertValidDate(date, 'date');
+    return new Date(Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate() + offset,
+    ));
   }
 
   private getQuarterCode(quarter: QuarterCycleInput): QuarterCode {

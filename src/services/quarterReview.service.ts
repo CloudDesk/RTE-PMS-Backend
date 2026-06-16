@@ -158,6 +158,14 @@ type QuarterWindowRecord = {
   endDate: string;
 };
 
+type AchievementSubmissionWindowRecord = Partial<QuarterWindowRecord> & {
+  enabled?: boolean;
+  dueDate?: string;
+  graceDays?: number;
+  reminderDaysBefore?: number[];
+  escalationDaysAfterDue?: number;
+};
+
 export type QuarterReviewAssignmentRecord = {
   id: string;
   annualAssignmentId: string;
@@ -172,6 +180,7 @@ export type QuarterReviewAssignmentRecord = {
   quarterWindows?: {
     objectiveSetting?: QuarterWindowRecord;
     objectiveApproval?: QuarterWindowRecord;
+    achievementSubmission?: AchievementSubmissionWindowRecord;
     managerReview?: QuarterWindowRecord;
     quarterFinalization?: QuarterWindowRecord;
   };
@@ -1098,9 +1107,28 @@ export class QuarterReviewService extends BaseService {
       };
     };
 
+    const achievementSubmissionWindow = quarterCycle.achievementSubmissionWindow
+      ? {
+          enabled: quarterCycle.achievementSubmissionWindow.enabled === true,
+          startDate: quarterCycle.achievementSubmissionWindow.startDate
+            ? new Date(quarterCycle.achievementSubmissionWindow.startDate).toISOString()
+            : undefined,
+          endDate: quarterCycle.achievementSubmissionWindow.endDate
+            ? new Date(quarterCycle.achievementSubmissionWindow.endDate).toISOString()
+            : undefined,
+          dueDate: quarterCycle.achievementSubmissionWindow.dueDate
+            ? new Date(quarterCycle.achievementSubmissionWindow.dueDate).toISOString()
+            : undefined,
+          graceDays: quarterCycle.achievementSubmissionWindow.graceDays,
+          reminderDaysBefore: quarterCycle.achievementSubmissionWindow.reminderDaysBefore,
+          escalationDaysAfterDue: quarterCycle.achievementSubmissionWindow.escalationDaysAfterDue,
+        }
+      : undefined;
+
     return {
       objectiveSetting: mapWindow(quarterCycle.objectiveSettingWindow),
       objectiveApproval: mapWindow(quarterCycle.objectiveApprovalWindow),
+      achievementSubmission: achievementSubmissionWindow,
       managerReview: mapWindow(quarterCycle.managerReviewWindow),
       quarterFinalization: mapWindow(quarterCycle.quarterFinalizationWindow),
     };

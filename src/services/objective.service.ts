@@ -1503,7 +1503,7 @@ export class ObjectiveService extends BaseService {
         ...(section.repeatFor ?? []),
       ];
 
-      return allowedQuarters.length === 0 || allowedQuarters.includes(quarterCode);
+      return this.assessmentTermScopeMatches(allowedQuarters, quarterCode);
     });
 
     if (!objectiveSection?.objectiveConfig) {
@@ -1588,7 +1588,36 @@ export class ObjectiveService extends BaseService {
       return false;
     }
 
-    return applicableQuarters.includes(quarterCode);
+    return this.assessmentTermScopeMatches(applicableQuarters, quarterCode);
+  }
+
+  private assessmentTermScopeMatches(
+    scopedTerms: AssessmentTermCodeValue[],
+    termCode: AssessmentTermCodeValue,
+  ): boolean {
+    if (scopedTerms.length === 0) {
+      return true;
+    }
+
+    if (scopedTerms.includes(termCode)) {
+      return true;
+    }
+
+    const quarterlyTerms = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ] as AssessmentTermCodeValue[];
+    const allQuarterlyTermsSelected = quarterlyTerms.every((quarter) =>
+      scopedTerms.includes(quarter),
+    );
+
+    return allQuarterlyTermsSelected && (
+      termCode === AssessmentTermCode.H1 ||
+      termCode === AssessmentTermCode.H2 ||
+      termCode === AssessmentTermCode.Y1
+    );
   }
 
   private mapObjectiveRecord(
