@@ -8,7 +8,7 @@ import { User } from '../models/user.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { Types } from 'mongoose';
 import { NotificationEvent } from '../models/pms-notification-event.model';
-import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
+import { AssessmentTermCode, normalizePmsRole, PmsRole } from '../constants/pms.enums';
 import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import {
@@ -708,7 +708,7 @@ export class SlaService {
       return (
         item.sectionKey === 'employee_achievement_submission' &&
         item.level === 'QUARTER' &&
-        (quarterScope.length === 0 || quarterScope.includes(quarterCode))
+        this.assessmentTermScopeMatches(quarterScope, quarterCode)
       );
     });
 
@@ -724,6 +724,30 @@ export class SlaService {
         : sectionExists;
 
     return employeeAchievementEnabled && reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER';
+  }
+
+  private assessmentTermScopeMatches(
+    scopedTerms: AssessmentTermCodeType[],
+    termCode: AssessmentTermCodeType,
+  ): boolean {
+    if (scopedTerms.length === 0) return true;
+    if (scopedTerms.includes(termCode)) return true;
+
+    const quarterlyTerms = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ] as AssessmentTermCodeType[];
+    const allQuarterlyTermsSelected = quarterlyTerms.every((quarter) =>
+      scopedTerms.includes(quarter),
+    );
+
+    return allQuarterlyTermsSelected && (
+      termCode === AssessmentTermCode.H1 ||
+      termCode === AssessmentTermCode.H2 ||
+      termCode === AssessmentTermCode.Y1
+    );
   }
 
   private getDaysDiff(currentDate: Date, baseDate: Date): number {
