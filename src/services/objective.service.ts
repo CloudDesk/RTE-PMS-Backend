@@ -184,12 +184,14 @@ type ObjectiveConfig = {
 
 type ObjectiveCommentRecord = {
   id: string;
-  type: string;
+  commentType: string;
   commentText: string;
-  actorId: string;
+  actorUserId: string;
   actorRole: string;
   actorName: string;
   createdAt: string;
+  type: string;
+  actorId: string;
 };
 
 type ObjectiveRecord = {
@@ -1138,7 +1140,7 @@ export class ObjectiveService extends BaseService {
     objective.version += 1;
     await objective.save();
 
-    await this.createCommentRecord(objective, reason, 'RETURN_REASON');
+    await this.createCommentRecord(objective, reason, 'RETURN_FOR_REVISION');
 
     await this.audit(
       'PMS_OBJECTIVE_RETURNED_FOR_REVISION',
@@ -1689,9 +1691,9 @@ export class ObjectiveService extends BaseService {
       ),
       comments: comments.map((comment) => ({
         id: comment._id.toString(),
-        type: comment.commentType,
+        commentType: comment.commentType,
         commentText: comment.commentText,
-        actorId: comment.actorUserId.toString(),
+        actorUserId: comment.actorUserId.toString(),
         actorRole: comment.actorRole,
         actorName: this.resolveActorName(
           annualAssignment,
@@ -1699,6 +1701,8 @@ export class ObjectiveService extends BaseService {
           comment.actorRole,
         ),
         createdAt: new Date(comment.createdAt).toISOString(),
+        type: comment.commentType,
+        actorId: comment.actorUserId.toString(),
       })),
       objectiveValues: objectiveValues.map((value) => ({
         templateFieldId: value.templateFieldId,
