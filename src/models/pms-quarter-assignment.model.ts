@@ -23,6 +23,10 @@ export interface IQuarterAssignment extends Document {
   lastTransitionBy?: Types.ObjectId;
   lastTransitionRole?: string;
   lastTransitionReason?: string;
+  objectiveSettingClosedBy?: Types.ObjectId;
+  objectiveSettingClosedAt?: Date;
+  objectiveSettingCloseReason?: string;
+  objectiveSettingCloseSource?: string;
   quarterScore?: number;
   quarterRating?: string;
   quarterSummary?: Record<string, unknown>;
@@ -101,6 +105,13 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
     },
     lastTransitionRole: String,
     lastTransitionReason: String,
+    objectiveSettingClosedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    objectiveSettingClosedAt: Date,
+    objectiveSettingCloseReason: String,
+    objectiveSettingCloseSource: { type: String, trim: true },
     quarterScore: { type: Number, min: 0 },
     quarterRating: String,
     quarterSummary: { type: Schema.Types.Mixed, default: {} },

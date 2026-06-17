@@ -34,6 +34,7 @@ import { User } from '../models/user.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
+import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
@@ -348,8 +349,7 @@ export class AssignmentService extends BaseService {
       quarterAssignments,
       quarterCycleById,
     );
-    await this.openSeededQuarterAssignmentsForManagerReview(
-      annualAssignment,
+    await this.openSeededQuarterAssignmentsForObjectiveSetting(
       quarterAssignments,
       seededQuarterAssignmentIds,
     );
@@ -1111,8 +1111,7 @@ export class AssignmentService extends BaseService {
     return seededQuarterAssignmentIds;
   }
 
-  private async openSeededQuarterAssignmentsForManagerReview(
-    annualAssignment: IAnnualAssignment,
+  private async openSeededQuarterAssignmentsForObjectiveSetting(
     quarterAssignments: IQuarterAssignment[],
     seededQuarterAssignmentIds: Set<string>,
   ): Promise<void> {
@@ -1120,94 +1119,39 @@ export class AssignmentService extends BaseService {
       return;
     }
 
-    const actorId = this.actorIdObject();
-    const now = new Date();
-
     for (const quarterAssignment of quarterAssignments) {
       const quarterAssignmentId = quarterAssignment._id.toString();
       if (!seededQuarterAssignmentIds.has(quarterAssignmentId)) {
         continue;
       }
 
-      const targetState = await this.resolvePostObjectiveApprovalState(
-        annualAssignment,
-        quarterAssignment,
-      );
+      const targetState = QuarterWorkflowState.OBJECTIVE_SETTING_OPEN;
 
       if (quarterAssignment.quarterState === targetState) {
         continue;
       }
 
-      quarterAssignment.previousQuarterState = quarterAssignment.quarterState;
-      quarterAssignment.quarterState = targetState;
-      quarterAssignment.lastTransitionAt = now;
-      quarterAssignment.lastTransitionBy = actorId;
-      quarterAssignment.lastTransitionRole = this.context.user?.role;
-      quarterAssignment.lastTransitionReason = 'Seeded predefined objectives are approved during assignment launch';
-      quarterAssignment.updatedBy = actorId;
-      quarterAssignment.version += 1;
-      await quarterAssignment.save();
+      const previousState = quarterAssignment.quarterState;
+      const updatedQuarterAssignment = await transitionQuarterAssignmentState(
+        quarterAssignmentId,
+        targetState,
+        this.requireActor(),
+        'Seeded predefined objectives are approved; objective setting remains open for additional objectives',
+      );
 
       await this.audit(
-        'PMS_QUARTER_ASSIGNMENT_SEEDED_REVIEW_OPEN',
+        'PMS_QUARTER_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
         'QUARTER_ASSIGNMENT',
         quarterAssignment._id.toString(),
         {
-          quarterState: quarterAssignment.previousQuarterState,
+          quarterState: previousState,
         },
         {
-          quarterState: quarterAssignment.quarterState,
+          quarterState: updatedQuarterAssignment.quarterState,
         },
-        'Seeded predefined objectives advanced the quarter workflow at assignment launch',
+        'Seeded predefined objectives opened the objective-setting workflow at assignment launch',
       );
     }
-  }
-
-  private async resolvePostObjectiveApprovalState(
-    annualAssignment: IAnnualAssignment,
-    quarterAssignment: IQuarterAssignment,
-  ): Promise<QuarterWorkflowState> {
-    const templateVersionId = annualAssignment.templateVersionId?.toString();
-    if (!templateVersionId) {
-      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
-    }
-
-    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
-      .select('sections metadata')
-      .lean();
-
-    if (!templateVersion) {
-      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
-    }
-
-    const sectionExists = Boolean((templateVersion.sections ?? []).find((section) => {
-      const quarterScope = [
-        ...(section.quarterScope ?? []),
-        ...(section.repeatFor ?? []),
-      ];
-
-      return (
-        section.sectionKey === 'employee_achievement_submission' &&
-        section.level === 'QUARTER' &&
-        this.assessmentTermScopeMatches(quarterScope, quarterAssignment.quarterCode)
-      );
-    }));
-
-    const metadata = (templateVersion.metadata ?? {}) as Record<string, any>;
-    const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
-    const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
-      ? 'ACHIEVEMENT_THEN_MANAGER'
-      : 'MANAGER_ONLY';
-    const employeeAchievementEnabled =
-      employeeAchievementConfig.employeeAchievementEnabled !== undefined
-        ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
-        : sectionExists;
-
-    if (!employeeAchievementEnabled || reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
-      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
-    }
-
-    return QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN;
   }
 
   private resolveTemplateObjectiveConfig(

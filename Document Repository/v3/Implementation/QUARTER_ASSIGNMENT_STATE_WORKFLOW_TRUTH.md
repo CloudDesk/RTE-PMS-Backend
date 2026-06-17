@@ -2,22 +2,49 @@
 
 Last updated: 17 June 2026
 
-This document is the single implementation reference for current PMS v3 `quarterAssignment.quarterState` behavior around predefined objectives, employee achievement submission, and manager review state movement.
+This document is the single implementation reference for PMS v3 `quarterAssignment.quarterState` behavior around predefined objectives, objective setting close, manual admin workflow sync, employee achievement submission, and manager review state movement.
 
-## Core Truth
+## Final Confirmed Flow
 
-The current implementation treats predefined template objectives as already approved seed data.
+Manual Sync must not close Objective Setting silently.
 
-When an employee is assigned to a launched cycle:
+The confirmed flow is:
 
 ```text
-quarter_assignments are created
--> predefined objectives are seeded
--> predefined objectives are stored as OBJECTIVE_APPROVED
--> quarterState is moved to the next stage
+Launch / Assignment
+-> Quarter Assignment created
+-> Predefined objectives seeded as OBJECTIVE_APPROVED
+-> quarterState stays OBJECTIVE_SETTING_OPEN
+
+Manager/Admin action
+-> Close Objective Setting
+-> quarterState becomes OBJECTIVE_APPROVED
+
+Manual Sync
+-> checks date/window/config
+-> moves OBJECTIVE_APPROVED to EMPLOYEE_ACHIEVEMENT_OPEN if achievement is enabled
+
+Employee action
+-> Employee submits/locks achievement
+
+Manual Sync
+-> moves EMPLOYEE_ACHIEVEMENT_OPEN to MANAGER_REVIEW_OPEN when eligible
+
+Manager action
+-> Manager submits review
+
+Existing flow
+-> MANAGER_REVIEW_SUBMITTED to QUARTER_FINALIZED as per current finalization logic
 ```
 
-Because of this, assignments with predefined objectives do not stay in `OBJECTIVE_SETTING_OPEN`.
+If employee achievement is disabled:
+
+```text
+OBJECTIVE_SETTING_OPEN
+-> Manager/Admin closes objective setting
+-> OBJECTIVE_APPROVED
+-> Manual Sync moves to MANAGER_REVIEW_OPEN
+```
 
 ## Assessment Term Creation
 
@@ -68,59 +95,264 @@ status = OBJECTIVE_APPROVED
 createdByRole = SYSTEM
 ```
 
+After seeding predefined objectives, launch must keep/set:
+
+```text
+quarterState = OBJECTIVE_SETTING_OPEN
+```
+
+Predefined objectives are approved template/reference objectives, but they do not close objective setting.
+
 Source:
 
 ```text
 Server/src/services/assignment.service.ts
 seedPredefinedObjectives(...)
+openSeededQuarterAssignmentsForObjectiveSetting(...)
 ```
 
-## Why quarterState Becomes EMPLOYEE_ACHIEVEMENT_OPEN
+## Objective Setting Stage
 
-After predefined objectives are seeded, assignment launch calls:
+When `quarterState` is:
 
 ```text
-openSeededQuarterAssignmentsForManagerReview(...)
+OBJECTIVE_SETTING_OPEN
 ```
 
-Despite the method name, this does not always open manager review. It calculates the correct post-objective-approval state.
-
-The target state is resolved by:
+the Objective Setting flow should:
 
 ```text
-resolvePostObjectiveApprovalState(...)
+show predefined objectives as approved/template reference
+allow employee-created objectives if configured
+allow manager-created objectives if configured
+keep employee-created submit -> manager approve/return flow
+keep manager-created auto-approve flow
 ```
 
-If the template has Employee Achievement Submission enabled, and the review flow mode is:
+Employee-created objectives:
 
 ```text
-ACHIEVEMENT_THEN_MANAGER
+create/save
+-> OBJECTIVE_DRAFT
+-> submit
+-> OBJECTIVE_SUBMITTED
+-> manager approve/return
 ```
 
-then the target state becomes:
+Manager-created objectives:
 
 ```text
-EMPLOYEE_ACHIEVEMENT_OPEN
+create
+-> OBJECTIVE_APPROVED
 ```
 
-If employee achievement is not enabled, or the flow is manager-only, the target state becomes:
+Manager-created objectives still auto-approve, but they must not move the assignment forward by themselves.
+
+## Close Objective Setting
+
+The move out of objective setting must be explicit.
+
+Required action:
 
 ```text
-MANAGER_REVIEW_OPEN
+CLOSE_OBJECTIVE_SETTING
 ```
 
-Current launch flow with starter/predefined template:
+Recommended confirmation text:
 
 ```text
-NOT_STARTED
--> predefined objectives seeded as OBJECTIVE_APPROVED
+Predefined objectives are approved. No additional objectives will be accepted after moving forward.
+```
+
+Permissions:
+
+```text
+Manager can close objective setting for their employee.
+Admin can override/close.
+Employee should not close objective setting alone.
+```
+
+Close action state movement:
+
+```text
+OBJECTIVE_SETTING_OPEN
+-> OBJECTIVE_APPROVED
+```
+
+Close should validate:
+
+```text
+confirmation accepted
+actor is Manager/Admin
+assignment ownership/permission
+current state is objective-setting/objective-approved path
+no pending employee/manager-created objectives are waiting for approval
+```
+
+Recommended tracked fields:
+
+```text
+objectiveSettingClosedBy
+objectiveSettingClosedAt
+objectiveSettingCloseReason
+objectiveSettingCloseSource: MANAGER | ADMIN
+```
+
+Important:
+
+```text
+Close Objective Setting does not itself open Employee Achievement or Manager Review.
+Manual Sync handles the next state after OBJECTIVE_APPROVED.
+```
+
+## Manual Admin Workflow Sync
+
+Manual Sync is a HR/Admin-triggered backend action.
+
+It is not a cron job in the current phase.
+
+Manual Sync must not close Objective Setting silently.
+
+Admin flow:
+
+```text
+HR/Admin opens Cycle / Assignment screen
+-> clicks "Sync Workflow States"
+-> backend checks current date + configured windows
+-> backend updates only eligible states
+-> UI shows summary
+```
+
+Frontend only triggers the sync action and displays the result.
+
+Frontend must not directly update:
+
+```text
+quarterState
+```
+
+All state changes must happen in the backend using the existing workflow transition service.
+
+Manual Sync allowed forward movements:
+
+```text
+OBJECTIVE_APPROVED
 -> EMPLOYEE_ACHIEVEMENT_OPEN
 ```
 
-This applies to all supported term types as long as the template section scope matches:
+when employee achievement is enabled and the achievement window/config is eligible.
 
 ```text
-Q1, Q2, Q3, Q4, H1, H2, Y1
+OBJECTIVE_APPROVED
+-> MANAGER_REVIEW_OPEN
+```
+
+when employee achievement is disabled or manager-only flow is configured.
+
+```text
+EMPLOYEE_ACHIEVEMENT_OPEN
+-> MANAGER_REVIEW_OPEN
+```
+
+when employee achievement is submitted/locked or bypass is valid by config.
+
+```text
+MANAGER_REVIEW_SUBMITTED
+-> QUARTER_FINALIZED
+```
+
+as per current finalization logic.
+
+Manual Sync must not move:
+
+```text
+OBJECTIVE_SETTING_OPEN
+-> OBJECTIVE_APPROVED
+```
+
+That movement belongs only to the Manager/Admin Close Objective Setting action.
+
+Manual Sync must never move records backward.
+
+Existing records already moved to:
+
+```text
+EMPLOYEE_ACHIEVEMENT_OPEN
+MANAGER_REVIEW_OPEN
+MANAGER_REVIEW_SUBMITTED
+QUARTER_FINALIZED
+```
+
+must not be moved back automatically.
+
+Recommended confirmation message:
+
+```text
+This will update eligible PMS assignment states based on the configured assessment term windows. Existing records will not be moved backward.
+```
+
+Recommended sync result summary:
+
+```text
+Total checked
+Total updated
+Skipped because not eligible
+Skipped because already advanced
+Skipped because objective setting is still open
+Skipped because transition not allowed
+Failed with reason
+```
+
+## Employee Achievement To Manager Review
+
+Employee achievement editing is allowed only when:
+
+```text
+quarterState === EMPLOYEE_ACHIEVEMENT_OPEN
+```
+
+After employee submits/locks achievement, Manual Sync may move:
+
+```text
+EMPLOYEE_ACHIEVEMENT_OPEN
+-> MANAGER_REVIEW_OPEN
+```
+
+when eligible.
+
+Source:
+
+```text
+Server/src/services/employeeAchievementSubmission.service.ts
+```
+
+## Manager Review Editing
+
+Manager review editing is allowed only when:
+
+```text
+quarterState === MANAGER_REVIEW_OPEN
+```
+
+Manager submits review:
+
+```text
+MANAGER_REVIEW_OPEN
+-> MANAGER_REVIEW_SUBMITTED
+```
+
+Existing finalization logic handles:
+
+```text
+MANAGER_REVIEW_SUBMITTED
+-> QUARTER_FINALIZED
+```
+
+Source:
+
+```text
+Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte
+canEditReview(...)
 ```
 
 ## Term Scope Compatibility
@@ -133,13 +365,19 @@ level: "QUARTER"
 
 But it is treated as assessment-term-level in code.
 
-Scope matching supports all terms directly. Also, if a section is scoped to all quarterly terms:
+Scope matching supports all terms directly:
+
+```text
+Q1, Q2, Q3, Q4, H1, H2, Y1
+```
+
+Also, if a section is scoped to all quarterly terms:
 
 ```text
 Q1, Q2, Q3, Q4
 ```
 
-the BE compatibility helper also treats it as matching:
+the backend compatibility helper also treats it as matching:
 
 ```text
 H1, H2, Y1
@@ -152,258 +390,33 @@ Server/src/services/assignment.service.ts
 assessmentTermScopeMatches(...)
 ```
 
-## MANAGER_REVIEW_OPEN State Change Points
-
-`MANAGER_REVIEW_OPEN` is changed only in the backend. Frontend only displays and gates actions based on the state.
-
-The common proper workflow transition writer is:
+Recommendation:
 
 ```text
-Server/src/services/quarter-assignment-workflow.service.ts
-transitionQuarterAssignmentState(...)
+Do not rename stored level: "QUARTER" now.
+Use helper naming/documentation to call it Assessment Term level.
 ```
 
-This updates:
+## Existing Data Compatibility
 
-```text
-quarterAssignment.quarterState
-previousQuarterState
-lastTransitionAt
-lastTransitionBy
-lastTransitionRole
-lastTransitionReason
-```
-
-and creates workflow/audit records.
-
-### Main Paths To MANAGER_REVIEW_OPEN
-
-1. Employee achievement submission is submitted/locked:
+Existing records already moved to:
 
 ```text
 EMPLOYEE_ACHIEVEMENT_OPEN
--> MANAGER_REVIEW_OPEN
+MANAGER_REVIEW_OPEN
+MANAGER_REVIEW_SUBMITTED
+QUARTER_FINALIZED
 ```
 
-Source:
+should not be automatically moved backward unless a deliberate migration/rollback plan is created.
+
+New launch/new workflow records should follow:
 
 ```text
-Server/src/services/employeeAchievementSubmission.service.ts
-submit(...)
-```
-
-2. All objectives are approved and employee achievement is not enabled:
-
-```text
-OBJECTIVE_APPROVED
--> MANAGER_REVIEW_OPEN
-```
-
-Source:
-
-```text
-Server/src/services/objective.service.ts
-updateQuarterStateAfterApproval(...)
-resolvePostObjectiveApprovalState(...)
-```
-
-3. Predefined objectives are seeded during launch and employee achievement is not enabled:
-
-```text
-NOT_STARTED
--> MANAGER_REVIEW_OPEN
-```
-
-Source:
-
-```text
-Server/src/services/assignment.service.ts
-openSeededQuarterAssignmentsForManagerReview(...)
-```
-
-4. Manager/admin review list or detail normalizes eligible old/current records:
-
-```text
-OBJECTIVE_APPROVED
+Launch
+-> OBJECTIVE_SETTING_OPEN
+-> Close Objective Setting
+-> OBJECTIVE_APPROVED
+-> Manual Sync
 -> EMPLOYEE_ACHIEVEMENT_OPEN or MANAGER_REVIEW_OPEN
 ```
-
-and:
-
-```text
-EMPLOYEE_ACHIEVEMENT_OPEN
--> MANAGER_REVIEW_OPEN
-```
-
-when achievement submission is already locked/submitted or when achievement stage can be bypassed by template config.
-
-Source:
-
-```text
-Server/src/services/quarterReview.service.ts
-advanceQuarterAssignmentsToManagerReviewIfEligible(...)
-```
-
-## Frontend Behavior
-
-Frontend does not change workflow state.
-
-Manager review editing is allowed only when:
-
-```text
-quarterState === MANAGER_REVIEW_OPEN
-```
-
-Source:
-
-```text
-Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte
-canEditReview(...)
-```
-
-Employee achievement editing is allowed only when:
-
-```text
-quarterState === EMPLOYEE_ACHIEVEMENT_OPEN
-```
-
-Source:
-
-```text
-Server/src/services/employeeAchievementSubmission.service.ts
-assertEmployeeEditAccess(...)
-```
-
-So once a term reaches `MANAGER_REVIEW_OPEN`, employee achievement can no longer be created or edited.
-
-## Current Issue
-
-Current launch behavior skips `OBJECTIVE_SETTING_OPEN` when predefined objectives exist.
-
-Current flow:
-
-```text
-Launch cycle
--> create quarter_assignments as NOT_STARTED
--> seed predefined objectives as OBJECTIVE_APPROVED
--> move directly to EMPLOYEE_ACHIEVEMENT_OPEN or MANAGER_REVIEW_OPEN
-```
-
-Problem:
-
-```text
-Predefined objectives exist
--> system auto-approves them
--> quarterState jumps forward
--> employee/manager cannot add objective-setting-stage objectives
-```
-
-This is acceptable only if predefined objectives are the complete final objective plan.
-
-It is not ideal if predefined objectives are meant to be baseline/reference objectives and employee/manager-created objectives are also allowed for the same term.
-
-## Recommended Target Flow
-
-If the product should support predefined objectives plus employee/manager-created objectives, launch should not skip objective setting.
-
-Recommended flow:
-
-```text
-Launch cycle
--> create quarter_assignments
--> seed predefined objectives as OBJECTIVE_APPROVED
--> set quarterState = OBJECTIVE_SETTING_OPEN
-```
-
-Objective Setting screen should then:
-
-```text
-show predefined objectives as approved/template reference
-allow employee-created objectives
-allow manager-created objectives
-keep employee-created submit -> manager approve/return flow
-keep manager-created auto-approve flow
-```
-
-Then manager/admin explicitly closes objective setting:
-
-```text
-OBJECTIVE_SETTING_OPEN
--> OBJECTIVE_APPROVED
--> EMPLOYEE_ACHIEVEMENT_OPEN
-```
-
-or, if employee achievement is not enabled:
-
-```text
-OBJECTIVE_SETTING_OPEN
--> OBJECTIVE_APPROVED
--> MANAGER_REVIEW_OPEN
-```
-
-## Required Confirmation And Audit
-
-The move out of objective setting should be explicit.
-
-Recommended action:
-
-```text
-CLOSE_OBJECTIVE_SETTING
-```
-
-Recommended confirmation text:
-
-```text
-Predefined objectives are approved. No additional objectives will be accepted after moving forward.
-```
-
-Recommended tracked fields:
-
-```text
-objectiveSettingClosedBy
-objectiveSettingClosedAt
-objectiveSettingCloseReason
-objectiveSettingCloseSource: MANAGER | ADMIN | SYSTEM
-```
-
-Recommended workflow event:
-
-```text
-ACTION: CLOSE_OBJECTIVE_SETTING
-FROM: OBJECTIVE_SETTING_OPEN
-TO: EMPLOYEE_ACHIEVEMENT_OPEN / MANAGER_REVIEW_OPEN
-```
-
-Recommended permissions for moving to the next state:
-
-```text
-Manager can close objective setting for their employee.
-Admin can override/close.
-Employee should not close objective setting alone.
-```
-
-So if no employee-created or manager-created objectives are needed, the next-state action should still be confirmed by:
-
-```text
-MANAGER or ADMIN
-```
-
-The system should not silently skip forward from objective setting without a visible action/audit trail.
-
-## Implementation Caution
-
-Changing launch behavior is a real workflow change.
-
-It affects:
-
-```text
-assignment launch
-predefined objective seeding
-objective workspace state gating
-employee achievement availability
-manager review availability
-workflow events/audit
-old data compatibility
-```
-
-Existing records that already jumped to `EMPLOYEE_ACHIEVEMENT_OPEN` or `MANAGER_REVIEW_OPEN` should not be automatically moved backward unless a deliberate migration/rollback plan is created.
