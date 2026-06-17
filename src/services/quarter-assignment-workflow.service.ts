@@ -13,6 +13,7 @@ export async function transitionQuarterAssignmentState(
   nextState: QuarterWorkflowState,
   actorContext: WorkflowActorContext,
   reason?: string,
+  action?: string,
 ): Promise<IQuarterAssignment> {
   const quarterAssignment = await QuarterAssignment.findById(quarterAssignmentId);
 
@@ -47,7 +48,7 @@ export async function transitionQuarterAssignmentState(
     cycleId: quarterAssignment.cycleId,
     fromState: transition.previousState,
     toState: transition.currentState,
-    action: `TRANSITION_${transition.previousState}_TO_${transition.currentState}`,
+    action: action || `TRANSITION_${transition.previousState}_TO_${transition.currentState}`,
     actorUserId: Types.ObjectId.isValid(actorContext.actorId)
       ? new Types.ObjectId(actorContext.actorId)
       : actorContext.actorId,

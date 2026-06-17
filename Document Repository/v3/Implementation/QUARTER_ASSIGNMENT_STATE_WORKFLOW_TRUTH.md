@@ -46,6 +46,55 @@ OBJECTIVE_SETTING_OPEN
 -> Manual Sync moves to MANAGER_REVIEW_OPEN
 ```
 
+## Final Ownership Rules
+
+Manual Sync is HR/Admin only, not Manager.
+
+Manager ownership:
+
+```text
+Can create manager objectives during OBJECTIVE_SETTING_OPEN.
+Can approve/return employee-created objectives during OBJECTIVE_SETTING_OPEN.
+Can click Close Objective Setting for assigned employees.
+Can edit/submit manager review only in MANAGER_REVIEW_OPEN.
+```
+
+Employee ownership:
+
+```text
+Can create/submit objectives during OBJECTIVE_SETTING_OPEN.
+Can revise returned objectives where allowed.
+Can submit achievement only in EMPLOYEE_ACHIEVEMENT_OPEN.
+```
+
+HR/Admin ownership:
+
+```text
+Can trigger Manual Sync.
+Can override/close Objective Setting where allowed.
+Can monitor and manage assignments.
+Can manage exception/override actions with audit.
+```
+
+State movement ownership:
+
+```text
+Launch:
+Backend sets quarterState = OBJECTIVE_SETTING_OPEN after predefined objectives are seeded as OBJECTIVE_APPROVED.
+
+Close Objective Setting:
+Manager/Admin explicit action moves OBJECTIVE_SETTING_OPEN -> OBJECTIVE_APPROVED.
+Manual Sync must not perform this transition silently.
+
+Manual Sync:
+HR/Admin action moves OBJECTIVE_APPROVED -> EMPLOYEE_ACHIEVEMENT_OPEN if achievement is enabled and eligible.
+HR/Admin action moves OBJECTIVE_APPROVED -> MANAGER_REVIEW_OPEN if achievement is disabled or manager-only flow is configured.
+HR/Admin action moves EMPLOYEE_ACHIEVEMENT_OPEN -> MANAGER_REVIEW_OPEN only if achievement is submitted/locked or valid bypass config exists.
+
+Manager Review:
+Manager can act only after quarterState becomes MANAGER_REVIEW_OPEN.
+```
+
 ## Assessment Term Creation
 
 Cycle term type controls which term assignments are created.
@@ -207,7 +256,9 @@ Manual Sync handles the next state after OBJECTIVE_APPROVED.
 
 ## Manual Admin Workflow Sync
 
-Manual Sync is a HR/Admin-triggered backend action.
+Manual Sync is a HR/Admin-triggered backend action only.
+
+Manager must not trigger Manual Sync.
 
 It is not a cron job in the current phase.
 
