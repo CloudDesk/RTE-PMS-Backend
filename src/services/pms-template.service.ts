@@ -77,9 +77,13 @@ export interface ResolvedTemplateSection {
   id: string;
   key: string;
   title: string;
+  sectionType?: string;
   module: string;
   level: 'quarter' | 'annual';
   layout: 'vertical' | 'grid' | 'table' | 'bordered_grid';
+  participatesInScoring?: boolean;
+  weightage?: number;
+  sectionScoringConfig?: ITemplateSection['sectionScoringConfig'];
   metadata?: Record<string, unknown>;
   fields: ResolvedTemplateField[];
 }
@@ -736,9 +740,13 @@ export class PmsTemplateService extends BaseService {
           id: section.sectionKey,
           key: section.sectionKey,
           title: section.sectionLabel,
+          sectionType: section.sectionType,
           module: this.mapSectionModule(section.sectionType),
           level: section.level === PmsTemplateSectionLevel.QUARTER ? 'quarter' : 'annual',
           layout: section.layout ?? 'vertical',
+          participatesInScoring: section.sectionScoringConfig?.participatesInScoring === true,
+          weightage: Number(section.sectionScoringConfig?.weightage ?? 0),
+          sectionScoringConfig: section.sectionScoringConfig,
           metadata: section.metadata ?? {},
           fields,
         } as ResolvedTemplateSection;
