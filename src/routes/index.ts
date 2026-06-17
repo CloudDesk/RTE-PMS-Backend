@@ -55,7 +55,7 @@ import {
 } from "../models";
 import { TaxDeclaration } from "../models/tax-declaration";
 import { TimesheetFile } from "../models/timesheet-file.model";
-// import { documentRoutes } from "./document.routes";
+import { pmsDocumentRoutes } from "./pmsDocument.routes";
 // import { bulkAttendanceUploadRoutes } from "./bulk-attendance-upload.routes";
 import { dashboardRoutes } from "./dashboard.routes";
 // import { dataMigrationRoutes } from "./data-migration.routes";
@@ -101,6 +101,7 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(delegationRoutes, { prefix: "/pms/delegations" });
   fastify.register(pmsDashboardRoutes, { prefix: "/pms/dashboard" });
   fastify.register(pmsBulkOperationsRoutes, { prefix: "/pms/bulk" });
+  fastify.register(pmsDocumentRoutes, { prefix: "/pms/documents" });
   // fastify.register(shiftRoutes, { prefix: "/shifts" });
   // fastify.register(trainingRoutes, { prefix: "/trainings" });
   // fastify.register(trainingAttendanceRoutes, {
@@ -118,7 +119,7 @@ export async function routes(fastify: FastifyInstance) {
   // fastify.register(timesheetRoutes, { prefix: "/timesheet" });
   // fastify.register(holidayCalendarRoutes, { prefix: "/holiday-calendar" });
   // fastify.register(weekendCalendarRoutes, { prefix: "/weekend-calendar" });
-  // fastify.register(documentRoutes, { prefix: "/documents" });
+  // Legacy HRMS document routes are intentionally not registered in PMS.
   // fastify.register(bulkAttendanceUploadRoutes, { prefix: "/bulk-upload" });
   fastify.register(dashboardRoutes, { prefix: "/dashboard" });
   // fastify.register(dataMigrationRoutes, { prefix: "/data-migration" });

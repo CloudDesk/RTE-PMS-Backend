@@ -23,7 +23,6 @@ import { OvertimeService } from '../services/overtime.service';
 import { ReportService } from '../services/reports.service';
 import { SalaryAssignmentService } from '../services/salary-assignment.service';
 import { WeekendCalendarService } from '../services/weekend-calendar.service';
-import { DocumentService } from '../services/document.service';
 import { DashboardService } from '../services/dashboard.service';
 import { PermissionService } from '../services/permission.service';
 import { PermissionSummaryService } from '../services/permission-summary.service';
@@ -47,6 +46,7 @@ import { DelegationService } from '../services/delegation.service';
 import { PmsDashboardService } from '../services/pmsDashboard.service';
 import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
 import { WorkflowSyncService } from '../services/workflow-sync.service';
+import { PmsDocumentService } from '../services/pms-document.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -74,7 +74,6 @@ export interface ServiceContainer {
   reportService: ReportService;
   salaryAssignmentService: SalaryAssignmentService;
   weekendCalendarService: WeekendCalendarService;
-  documentService: DocumentService;
   dashboardService: DashboardService;
   permissionService: PermissionService;
   permissionSummaryService: PermissionSummaryService;
@@ -98,4 +97,5 @@ export interface ServiceContainer {
   pmsDashboardService: PmsDashboardService;
   pmsBulkOperationsService: PmsBulkOperationsService;
   workflowSyncService: WorkflowSyncService;
-} 
+  pmsDocumentService: PmsDocumentService;
+}
