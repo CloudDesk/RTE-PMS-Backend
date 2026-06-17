@@ -148,6 +148,12 @@ export interface AddObjectiveCommentInput {
   commentType?: string;
 }
 
+export interface CloseObjectiveSettingInput {
+  confirm?: boolean;
+  confirmationAccepted?: boolean;
+  reason?: string;
+}
+
 export interface CorrectObjectiveInput {
   reason: string;
   title?: string;
@@ -658,12 +664,6 @@ export class ObjectiveService extends BaseService {
       objective.toObject(),
     );
 
-    if (source === ObjectiveSource.MANAGER_CREATED) {
-      await this.updateQuarterStateAfterApproval(
-        quarterAssignment._id.toString(),
-      );
-    }
-
     return objective;
   }
 
@@ -816,9 +816,6 @@ export class ObjectiveService extends BaseService {
           }
         }
 
-        if (created.some((item) => item.quarterAssignmentId === quarterAssignmentId)) {
-          await this.updateQuarterStateAfterApproval(quarterAssignmentId);
-        }
       } catch (error) {
         failed.push({
           quarterAssignmentId,
@@ -832,6 +829,107 @@ export class ObjectiveService extends BaseService {
     }
 
     return { created, updated, failed };
+  }
+
+  async closeObjectiveSetting(
+    quarterAssignmentId: string,
+    input: CloseObjectiveSettingInput = {},
+  ): Promise<IQuarterAssignment> {
+    const confirmed = input.confirm === true || input.confirmationAccepted === true;
+    if (!confirmed) {
+      throw new Error(
+        'Confirmation is required to close objective setting. Predefined objectives are approved. No additional objectives will be accepted after moving forward.',
+      );
+    }
+
+    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    const actor = this.requireActor();
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    const isAdmin = mappedRole === PmsRole.ADMIN;
+    const isAssignedManager =
+      actor.actorId === quarterAssignment.assignedManagerId.toString();
+    const isDelegate = await this.getObjectiveDelegation(
+      actor.actorId,
+      quarterAssignment.assignedManagerId.toString(),
+      quarterAssignment.cycleId?.toString(),
+    );
+
+    if (!isAdmin && !isAssignedManager && !isDelegate) {
+      throw new Error('Only the assigned manager or HR/Admin can close objective setting');
+    }
+
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_SETTING_OPEN) {
+      throw new Error(
+        `Objective setting can be closed only from ${QuarterWorkflowState.OBJECTIVE_SETTING_OPEN}. Current state: ${quarterAssignment.quarterState}`,
+      );
+    }
+
+    const objectives = await Objective.find({
+      quarterAssignmentId: quarterAssignment._id,
+      isDeleted: false,
+    })
+      .select('title status source')
+      .lean();
+
+    const pendingObjective = objectives.find(
+      (objective) => objective.status !== ObjectiveStatus.OBJECTIVE_APPROVED,
+    );
+    if (pendingObjective) {
+      throw new Error(
+        `Objective setting cannot be closed until all objectives are approved. Pending objective: ${pendingObjective.title}`,
+      );
+    }
+
+    const reason =
+      input.reason?.trim() ||
+      'Predefined objectives are approved. No additional objectives will be accepted after moving forward.';
+    const previousState = quarterAssignment.quarterState;
+
+    await transitionQuarterAssignmentState(
+      quarterAssignment._id.toString(),
+      QuarterWorkflowState.OBJECTIVE_APPROVED,
+      actor,
+      reason,
+      'CLOSE_OBJECTIVE_SETTING',
+    );
+
+    const approvedQuarterAssignment = await this.getQuarterAssignment(
+      quarterAssignment._id.toString(),
+    );
+    if (approvedQuarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_APPROVED) {
+      throw new Error(
+        `Objective setting cannot be closed from state ${approvedQuarterAssignment.quarterState}`,
+      );
+    }
+
+    const closedQuarterAssignment = await this.getQuarterAssignment(
+      approvedQuarterAssignment._id.toString(),
+    );
+    closedQuarterAssignment.objectiveSettingClosedBy = actorObjectId;
+    closedQuarterAssignment.objectiveSettingClosedAt = new Date();
+    closedQuarterAssignment.objectiveSettingCloseReason = reason;
+    closedQuarterAssignment.objectiveSettingCloseSource = isAdmin
+      ? 'ADMIN'
+      : 'MANAGER';
+    closedQuarterAssignment.updatedBy = actorObjectId;
+    closedQuarterAssignment.version += 1;
+    await closedQuarterAssignment.save();
+
+    await this.audit(
+      'PMS_OBJECTIVE_SETTING_CLOSED',
+      'QUARTER_ASSIGNMENT',
+      closedQuarterAssignment._id.toString(),
+      { quarterState: previousState },
+      {
+        quarterState: closedQuarterAssignment.quarterState,
+        objectiveSettingClosedAt: closedQuarterAssignment.objectiveSettingClosedAt,
+        objectiveSettingCloseSource: closedQuarterAssignment.objectiveSettingCloseSource,
+      },
+      reason,
+    );
+
+    return closedQuarterAssignment;
   }
 
   async updateObjective(objectiveId: string, input: UpdateObjectiveInput): Promise<IObjective> {
@@ -1356,6 +1454,7 @@ export class ObjectiveService extends BaseService {
     }
 
     const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    const now = new Date();
     const objectivePayloads: Array<Record<string, unknown>> = [];
 
     for (const quarterAssignment of quarterAssignments) {
@@ -1414,11 +1513,13 @@ export class ObjectiveService extends BaseService {
           targetValue: predefinedObjective.targetValue,
           weightage: predefinedObjective.weightage,
           successCriteria: predefinedObjective.successCriteria,
-          status: ObjectiveStatus.OBJECTIVE_DRAFT,
+          status: ObjectiveStatus.OBJECTIVE_APPROVED,
           attachments: [],
           createdByRole: 'SYSTEM',
           createdByUserId: actorId,
           createdBy: actorId,
+          approvedAt: now,
+          approvedBy: actorId,
         });
       }
 
@@ -2425,10 +2526,6 @@ export class ObjectiveService extends BaseService {
   }
 
   private async updateQuarterStateAfterApproval(quarterAssignmentId: string): Promise<void> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    const annualAssignment = await this.getAnnualAssignment(
-      quarterAssignment.annualAssignmentId.toString(),
-    );
     const objectives = await Objective.find({
       quarterAssignmentId,
       isDeleted: false,
@@ -2451,16 +2548,7 @@ export class ObjectiveService extends BaseService {
     await this.transitionQuarterIfNeeded(
       quarterAssignmentId,
       QuarterWorkflowState.OBJECTIVE_APPROVED,
-    );
-
-    const nextState = await this.resolvePostObjectiveApprovalState(
-      annualAssignment,
-      quarterAssignment,
-    );
-
-    await this.transitionQuarterIfNeeded(
-      quarterAssignmentId,
-      nextState,
+      'All submitted objectives are approved; waiting for manager/admin objective-setting close',
     );
   }
 
@@ -2482,53 +2570,6 @@ export class ObjectiveService extends BaseService {
       templateVersion.sections ?? [],
       quarterAssignment.quarterCode,
     ) ?? this.defaultObjectiveConfig();
-  }
-
-  private async resolvePostObjectiveApprovalState(
-    annualAssignment: IAnnualAssignment,
-    quarterAssignment: IQuarterAssignment,
-  ): Promise<QuarterWorkflowState> {
-    const templateVersionId = annualAssignment.templateVersionId?.toString();
-    if (!templateVersionId) {
-      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
-    }
-
-    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
-      .select('sections metadata')
-      .lean();
-
-    if (!templateVersion) {
-      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
-    }
-
-    const sectionExists = Boolean((templateVersion.sections ?? []).find((section) => {
-      const quarterScope = [
-        ...(section.quarterScope ?? []),
-        ...(section.repeatFor ?? []),
-      ];
-
-      return (
-        section.sectionKey === 'employee_achievement_submission' &&
-        section.level === 'QUARTER' &&
-        this.assessmentTermScopeMatches(quarterScope, quarterAssignment.quarterCode)
-      );
-    }));
-
-    const metadata = (templateVersion.metadata ?? {}) as Record<string, any>;
-    const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
-    const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
-      ? 'ACHIEVEMENT_THEN_MANAGER'
-      : 'MANAGER_ONLY';
-    const employeeAchievementEnabled =
-      employeeAchievementConfig.employeeAchievementEnabled !== undefined
-        ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
-        : sectionExists;
-
-    if (!employeeAchievementEnabled || reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
-      return QuarterWorkflowState.MANAGER_REVIEW_OPEN;
-    }
-
-    return QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN;
   }
 
   private async createCommentRecord(

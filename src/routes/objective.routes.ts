@@ -5,6 +5,7 @@ import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
   AddObjectiveCommentInput,
   BulkCreateManagerObjectiveInput,
+  CloseObjectiveSettingInput,
   CreateObjectiveInput,
   CorrectObjectiveInput,
   ReturnObjectiveInput,
@@ -81,6 +82,23 @@ export const objectiveRoutes: RouteHandler = async (
         const { mode = 'employee' } = request.query as { mode?: 'employee' | 'manager' };
         const assignments = await request.container!.objectiveService.listAssignments(mode);
         return reply.send(successResponse('Objective assignments fetched successfully', assignments));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignments/:quarterAssignmentId/close-objective-setting',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const { quarterAssignmentId } = request.params as { quarterAssignmentId: string };
+        const quarterAssignment = await request.container!.objectiveService.closeObjectiveSetting(
+          quarterAssignmentId,
+          request.body as CloseObjectiveSettingInput,
+        );
+        return reply.send(successResponse('Objective setting closed successfully', quarterAssignment));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

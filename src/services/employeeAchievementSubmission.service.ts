@@ -22,7 +22,6 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { gcpFileStorageService } from './gcp-file-storage.service';
-import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 
 interface AchievementAttachmentInput {
   fileName?: string;
@@ -391,17 +390,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       submission.toObject(),
     );
 
-    if (quarterAssignment.quarterState === QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
-      // TODO(PMS v3.1): If admin/system-driven stage advancement is introduced later,
-      // move this transition into the shared quarter workflow orchestration layer.
-      await transitionQuarterAssignmentState(
-        quarterAssignment._id.toString(),
-        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
-        this.requireActor(),
-        'Employee achievement submission locked; manager review can begin',
-      );
-    }
-
     return this.mapSubmissionRecord(submission.toObject());
   }
 
@@ -769,23 +757,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
   private async ensureAchievementStageOpen(
     quarterAssignment: any,
-    config: AchievementTemplateConfig,
+    _config: AchievementTemplateConfig,
   ) {
-    if (
-      quarterAssignment.quarterState === QuarterWorkflowState.OBJECTIVE_APPROVED &&
-      config.employeeAchievementEnabled &&
-      config.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER'
-    ) {
-      await transitionQuarterAssignmentState(
-        quarterAssignment._id.toString(),
-        QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-        this.requireActor(),
-        'Legacy objective-approved quarter normalized into employee achievement stage',
-      );
-
-      return this.getQuarterAssignment(quarterAssignment._id.toString());
-    }
-
     return quarterAssignment;
   }
 
