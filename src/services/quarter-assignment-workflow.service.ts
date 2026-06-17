@@ -14,6 +14,7 @@ export async function transitionQuarterAssignmentState(
   actorContext: WorkflowActorContext,
   reason?: string,
   action?: string,
+  metadata?: Record<string, unknown>,
 ): Promise<IQuarterAssignment> {
   const quarterAssignment = await QuarterAssignment.findById(quarterAssignmentId);
 
@@ -29,6 +30,7 @@ export async function transitionQuarterAssignmentState(
     actorId: actorContext.actorId,
     actorRole: actorContext.actorRole,
     reason,
+    metadata,
   });
 
   quarterAssignment.previousQuarterState = transition.previousState as QuarterWorkflowState;

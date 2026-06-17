@@ -47,6 +47,7 @@ import { PmsCommunicationService } from '../services/pmsCommunication.service';
 import { DelegationService } from '../services/delegation.service';
 import { PmsDashboardService } from '../services/pmsDashboard.service';
 import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
+import { WorkflowSyncService } from '../services/workflow-sync.service';
 
 export class Container {
   private static instance: Container;
@@ -116,6 +117,7 @@ export class Container {
       delegationService: new DelegationService(context),
       pmsDashboardService: new PmsDashboardService(context),
       pmsBulkOperationsService: new PmsBulkOperationsService(context),
+      workflowSyncService: new WorkflowSyncService(context),
     };
   }
 

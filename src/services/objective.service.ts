@@ -2490,6 +2490,10 @@ export class ObjectiveService extends BaseService {
       return;
     }
 
+    if (quarterAssignment.quarterState === QuarterWorkflowState.OBJECTIVE_SETTING_OPEN) {
+      return;
+    }
+
     const allowedTransitions: Partial<Record<QuarterWorkflowState, QuarterWorkflowState[]>> = {
       [QuarterWorkflowState.NOT_STARTED]: [QuarterWorkflowState.OBJECTIVE_SETTING_OPEN],
       [QuarterWorkflowState.OBJECTIVE_SETTING_OPEN]: [
@@ -2526,6 +2530,11 @@ export class ObjectiveService extends BaseService {
   }
 
   private async updateQuarterStateAfterApproval(quarterAssignmentId: string): Promise<void> {
+    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    if (quarterAssignment.quarterState === QuarterWorkflowState.OBJECTIVE_SETTING_OPEN) {
+      return;
+    }
+
     const objectives = await Objective.find({
       quarterAssignmentId,
       isDeleted: false,
