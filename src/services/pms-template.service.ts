@@ -1460,7 +1460,10 @@ export class PmsTemplateService extends BaseService {
   }
 
   private mapSectionModule(sectionType: string): string {
-    if (sectionType === PmsTemplateSectionType.QUARTER_REVIEW) {
+    if (
+      sectionType === PmsTemplateSectionType.QUARTER_REVIEW ||
+      sectionType === PmsTemplateSectionType.COMPETENCIES
+    ) {
       return 'Manager Quarterly Review Management';
     }
     if (
