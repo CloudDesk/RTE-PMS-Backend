@@ -40,6 +40,7 @@ interface WorkflowSyncCandidate {
   windowEnd?: Date;
   skipReason?: SyncSkipReason;
   reason: string;
+  windowOverrideApplied?: boolean;
 }
 
 export interface WorkflowSyncInput {
@@ -47,6 +48,7 @@ export interface WorkflowSyncInput {
   assessmentTermCode?: AssessmentTermCodeType;
   dryRun?: boolean;
   reason?: string;
+  ignoreWindowDates?: boolean;
 }
 
 export interface WorkflowSyncResultItem {
@@ -61,6 +63,7 @@ export interface WorkflowSyncResultItem {
   windowName?: string;
   windowStart?: string;
   windowEnd?: string;
+  windowOverrideApplied?: boolean;
   status: 'UPDATED' | 'DRY_RUN' | 'SKIPPED' | 'FAILED';
   skipReason?: SyncSkipReason;
   message?: string;
@@ -75,6 +78,8 @@ export interface WorkflowSyncResult {
   skippedTransitionNotAllowed: number;
   failed: number;
   dryRun: boolean;
+  windowOverrideRequested: boolean;
+  windowOverrideAllowed: boolean;
   results: WorkflowSyncResultItem[];
 }
 
@@ -95,6 +100,12 @@ const FORWARD_STATE_ORDER: QuarterWorkflowStateType[] = [
 export class WorkflowSyncService extends BaseService {
   async syncWorkflowStates(cycleId: string, input: WorkflowSyncInput = {}): Promise<WorkflowSyncResult> {
     await this.assertAdmin('workflow.sync');
+    const windowOverrideRequested = input.ignoreWindowDates === true;
+    const windowOverrideAllowed = this.isWindowOverrideAllowed();
+
+    if (windowOverrideRequested && !windowOverrideAllowed) {
+      throw new Error('Workflow window date override is disabled in this environment.');
+    }
 
     const cycleObjectId = this.toObjectId(input.cycleId ?? cycleId, 'cycleId');
     const cycle = await AnnualCycle.findOne({ _id: cycleObjectId, isDeleted: false }).lean();
@@ -128,6 +139,8 @@ export class WorkflowSyncService extends BaseService {
       skippedTransitionNotAllowed: 0,
       failed: 0,
       dryRun: input.dryRun === true,
+      windowOverrideRequested,
+      windowOverrideAllowed,
       results: [],
     };
 
@@ -163,7 +176,9 @@ export class WorkflowSyncService extends BaseService {
     quarterCycle: IQuarterCycle | undefined,
     input: WorkflowSyncInput,
   ): Promise<WorkflowSyncResultItem> {
-    const candidate = await this.resolveCandidate(quarterAssignment, quarterCycle);
+    const candidate = await this.resolveCandidate(quarterAssignment, quarterCycle, {
+      ignoreWindowDates: input.ignoreWindowDates === true,
+    });
     const baseItem = this.buildBaseResultItem(quarterAssignment, candidate);
 
     if (!candidate.targetState) {
@@ -223,6 +238,7 @@ export class WorkflowSyncService extends BaseService {
           windowName: candidate.windowName,
           windowStart: candidate.windowStart,
           windowEnd: candidate.windowEnd,
+          windowOverrideApplied: candidate.windowOverrideApplied === true,
         },
       );
 
@@ -244,9 +260,11 @@ export class WorkflowSyncService extends BaseService {
   private async resolveCandidate(
     quarterAssignment: IQuarterAssignment,
     quarterCycle?: IQuarterCycle,
+    options: { ignoreWindowDates?: boolean } = {},
   ): Promise<WorkflowSyncCandidate> {
     const state = quarterAssignment.quarterState;
     const now = this.getCurrentDate();
+    const ignoreWindowDates = options.ignoreWindowDates === true;
 
     if (!quarterCycle) {
       return {
@@ -264,7 +282,7 @@ export class WorkflowSyncService extends BaseService {
 
     if (state === QuarterWorkflowState.NOT_STARTED) {
       const window = quarterCycle.objectiveSettingWindow;
-      if (!this.isWindowActive(now, window)) {
+      if (!ignoreWindowDates && !this.isWindowActive(now, window)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
           reason: 'Objective setting window is not active.',
@@ -274,14 +292,17 @@ export class WorkflowSyncService extends BaseService {
         QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
         'Objective Setting Window',
         window,
-        'Objective setting window is active.',
+        ignoreWindowDates
+          ? 'Objective setting window date bypassed for testing.'
+          : 'Objective setting window is active.',
+        ignoreWindowDates,
       );
     }
 
     if (state === QuarterWorkflowState.OBJECTIVE_APPROVED) {
       const achievementWindow = quarterCycle.achievementSubmissionWindow;
       if (achievementWindow?.enabled === true) {
-        if (!this.hasWindowStarted(now, achievementWindow)) {
+        if (!ignoreWindowDates && !this.hasWindowStarted(now, achievementWindow)) {
           return {
             skipReason: 'NOT_ELIGIBLE',
             reason: 'Employee achievement submission window has not started.',
@@ -291,12 +312,15 @@ export class WorkflowSyncService extends BaseService {
           QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
           'Employee Achievement Submission Window',
           achievementWindow,
-          'Employee achievement submission window is eligible.',
+          ignoreWindowDates
+            ? 'Employee achievement submission window date bypassed for testing.'
+            : 'Employee achievement submission window is eligible.',
+          ignoreWindowDates,
         );
       }
 
       const managerReviewWindow = quarterCycle.managerReviewWindow;
-      if (!this.hasWindowStarted(now, managerReviewWindow)) {
+      if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
           reason: 'Manager review window has not started.',
@@ -306,7 +330,10 @@ export class WorkflowSyncService extends BaseService {
         QuarterWorkflowState.MANAGER_REVIEW_OPEN,
         'Manager Review Window',
         managerReviewWindow,
-        'Employee achievement is disabled; manager review window is eligible.',
+        ignoreWindowDates
+          ? 'Employee achievement is disabled; manager review window date bypassed for testing.'
+          : 'Employee achievement is disabled; manager review window is eligible.',
+        ignoreWindowDates,
       );
     }
 
@@ -328,7 +355,7 @@ export class WorkflowSyncService extends BaseService {
       }
 
       const managerReviewWindow = quarterCycle.managerReviewWindow;
-      if (!this.hasWindowStarted(now, managerReviewWindow)) {
+      if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
           reason: 'Manager review window has not started.',
@@ -339,13 +366,16 @@ export class WorkflowSyncService extends BaseService {
         QuarterWorkflowState.MANAGER_REVIEW_OPEN,
         'Manager Review Window',
         managerReviewWindow,
-        'Employee achievement is submitted/locked and manager review window is eligible.',
+        ignoreWindowDates
+          ? 'Employee achievement is submitted/locked and manager review window date bypassed for testing.'
+          : 'Employee achievement is submitted/locked and manager review window is eligible.',
+        ignoreWindowDates,
       );
     }
 
     if (state === QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED) {
       const finalizationWindow = quarterCycle.quarterFinalizationWindow;
-      if (!this.hasWindowStarted(now, finalizationWindow)) {
+      if (!ignoreWindowDates && !this.hasWindowStarted(now, finalizationWindow)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
           reason: 'Finalization window has not started.',
@@ -356,7 +386,10 @@ export class WorkflowSyncService extends BaseService {
         QuarterWorkflowState.QUARTER_FINALIZED,
         'Finalization Window',
         finalizationWindow,
-        'Finalization window is eligible.',
+        ignoreWindowDates
+          ? 'Finalization window date bypassed for testing.'
+          : 'Finalization window is eligible.',
+        ignoreWindowDates,
       );
     }
 
@@ -382,6 +415,7 @@ export class WorkflowSyncService extends BaseService {
     windowName: string,
     window: DateWindowLike | undefined,
     reason: string,
+    windowOverrideApplied = false,
   ): WorkflowSyncCandidate {
     return {
       targetState,
@@ -389,6 +423,7 @@ export class WorkflowSyncService extends BaseService {
       windowStart: window?.startDate,
       windowEnd: window?.endDate ?? window?.dueDate,
       reason,
+      windowOverrideApplied,
     };
   }
 
@@ -408,6 +443,7 @@ export class WorkflowSyncService extends BaseService {
       windowName: candidate.windowName,
       windowStart: candidate.windowStart?.toISOString(),
       windowEnd: candidate.windowEnd?.toISOString(),
+      windowOverrideApplied: candidate.windowOverrideApplied === true,
       status: 'SKIPPED',
     };
   }
@@ -439,6 +475,10 @@ export class WorkflowSyncService extends BaseService {
 
   private getCurrentDate(): Date {
     return this.context.pmsCurrentDate ?? new Date();
+  }
+
+  private isWindowOverrideAllowed(): boolean {
+    return process.env.PMS_DISABLE_WORKFLOW_WINDOW_OVERRIDE !== 'true';
   }
 
   private toObjectId(value: string, label: string): Types.ObjectId {
