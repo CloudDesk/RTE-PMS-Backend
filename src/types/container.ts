@@ -46,6 +46,7 @@ import { PmsCommunicationService } from '../services/pmsCommunication.service';
 import { DelegationService } from '../services/delegation.service';
 import { PmsDashboardService } from '../services/pmsDashboard.service';
 import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
+import { WorkflowSyncService } from '../services/workflow-sync.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -96,5 +97,5 @@ export interface ServiceContainer {
   delegationService: DelegationService;
   pmsDashboardService: PmsDashboardService;
   pmsBulkOperationsService: PmsBulkOperationsService;
+  workflowSyncService: WorkflowSyncService;
 } 
-

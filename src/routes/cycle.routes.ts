@@ -9,6 +9,7 @@ import type {
   UpdateCycleInput,
   QuarterCycleInput,
 } from '../services/cycle.service';
+import type { WorkflowSyncInput } from '../services/workflow-sync.service';
 
 export const cycleRoutes: RouteHandler = async (
   fastify: FastifyInstance,
@@ -228,6 +229,23 @@ export const cycleRoutes: RouteHandler = async (
           request.body as CancelCycleInput,
         );
         return reply.send(successResponse('PMS cycle cancelled successfully', cycle));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/workflow-sync',
+    { onRequest: [authenticate], schema: { tags: ['PMS Cycle Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.workflowSyncService.syncWorkflowStates(
+          id,
+          request.body as WorkflowSyncInput,
+        );
+        return reply.send(successResponse('PMS workflow states synced successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
