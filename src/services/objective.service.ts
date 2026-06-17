@@ -856,21 +856,13 @@ export class ObjectiveService extends BaseService {
     );
 
     if (!isAdmin && !isAssignedManager && !isDelegate) {
-      throw new Error('Only the assigned manager or admin can close objective setting');
+      throw new Error('Only the assigned manager or HR/Admin can close objective setting');
     }
 
-    if (
-      quarterAssignment.quarterState === QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN ||
-      quarterAssignment.quarterState === QuarterWorkflowState.MANAGER_REVIEW_OPEN ||
-      quarterAssignment.quarterState === QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED ||
-      quarterAssignment.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
-      quarterAssignment.quarterState === QuarterWorkflowState.CLOSED_BY_ADMIN
-    ) {
-      throw new Error('Objective setting is already closed for this assessment term');
-    }
-
-    if (quarterAssignment.quarterState === QuarterWorkflowState.NOT_STARTED) {
-      throw new Error('Objective setting must be opened before it can be closed');
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_SETTING_OPEN) {
+      throw new Error(
+        `Objective setting can be closed only from ${QuarterWorkflowState.OBJECTIVE_SETTING_OPEN}. Current state: ${quarterAssignment.quarterState}`,
+      );
     }
 
     const objectives = await Objective.find({
@@ -879,10 +871,6 @@ export class ObjectiveService extends BaseService {
     })
       .select('title status source')
       .lean();
-
-    if (objectives.length === 0) {
-      throw new Error('Objective setting cannot be closed without at least one approved objective');
-    }
 
     const pendingObjective = objectives.find(
       (objective) => objective.status !== ObjectiveStatus.OBJECTIVE_APPROVED,
@@ -898,13 +886,13 @@ export class ObjectiveService extends BaseService {
       'Predefined objectives are approved. No additional objectives will be accepted after moving forward.';
     const previousState = quarterAssignment.quarterState;
 
-    if (quarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_APPROVED) {
-      await this.transitionQuarterIfNeeded(
-        quarterAssignment._id.toString(),
-        QuarterWorkflowState.OBJECTIVE_APPROVED,
-        reason,
-      );
-    }
+    await transitionQuarterAssignmentState(
+      quarterAssignment._id.toString(),
+      QuarterWorkflowState.OBJECTIVE_APPROVED,
+      actor,
+      reason,
+      'CLOSE_OBJECTIVE_SETTING',
+    );
 
     const approvedQuarterAssignment = await this.getQuarterAssignment(
       quarterAssignment._id.toString(),
