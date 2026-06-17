@@ -869,11 +869,11 @@ export class PmsTemplateService extends BaseService {
         quarterScope: quarterScope ?? repeatFor,
         sectionScoringConfig: sectionScoringConfig
           ? {
-              participatesInScoring: !!sectionScoringConfig.participatesInScoring,
-              weightage: Number(sectionScoringConfig.weightage ?? 0),
-              aggregationMethod: sectionScoringConfig.aggregationMethod ?? 'WEIGHTED_AVERAGE',
-              maxSectionScore: Number(sectionScoringConfig.maxSectionScore ?? 100),
-            }
+            participatesInScoring: !!sectionScoringConfig.participatesInScoring,
+            weightage: Number(sectionScoringConfig.weightage ?? 0),
+            aggregationMethod: sectionScoringConfig.aggregationMethod ?? 'WEIGHTED_AVERAGE',
+            maxSectionScore: Number(sectionScoringConfig.maxSectionScore ?? 100),
+          }
           : undefined,
         visibilityRules: section.visibilityRules ?? rulePatch.visibilityRules ?? {},
         editabilityRules: section.editabilityRules ?? rulePatch.editabilityRules ?? {},
@@ -881,16 +881,16 @@ export class PmsTemplateService extends BaseService {
         objectiveConfig: this.normalizeObjectiveConfig(objectiveConfig),
         objectiveBuckets: Array.isArray(section.objectiveBuckets)
           ? section.objectiveBuckets.map((bucket: any) => ({
-              bucketKey: String(bucket.bucketKey ?? '').trim(),
-              label: String(bucket.label ?? '').trim(),
-              source: bucket.source,
-              owner: bucket.owner,
-              bucketWeightage: Number(bucket.bucketWeightage ?? 0),
-              rowWeightMode: bucket.rowWeightMode,
-              editableBy: Array.isArray(bucket.editableBy) ? bucket.editableBy.map(String) : [],
-              requiresManagerApproval: !!bucket.requiresManagerApproval,
-              autoApprove: !!bucket.autoApprove,
-            }))
+            bucketKey: String(bucket.bucketKey ?? '').trim(),
+            label: String(bucket.label ?? '').trim(),
+            source: bucket.source,
+            owner: bucket.owner,
+            bucketWeightage: Number(bucket.bucketWeightage ?? 0),
+            rowWeightMode: bucket.rowWeightMode,
+            editableBy: Array.isArray(bucket.editableBy) ? bucket.editableBy.map(String) : [],
+            requiresManagerApproval: !!bucket.requiresManagerApproval,
+            autoApprove: !!bucket.autoApprove,
+          }))
           : undefined,
         fields: (section.fields ?? []).map((field, fieldIndex) =>
           this.normalizeField(field, fieldIndex),
@@ -988,20 +988,20 @@ export class PmsTemplateService extends BaseService {
       options: normalizedOptions,
       behaviors: Array.isArray(field.behaviors)
         ? field.behaviors.map((behavior: any) => ({
-            workflowState: behavior.workflowState,
-            role: this.normalizeRoleCode(behavior.role),
-            visibility: behavior.visibility === 'HIDDEN' ? 'HIDDEN' : 'VISIBLE',
-            editability: behavior.editability === 'EDITABLE' ? 'EDITABLE' : 'READ_ONLY',
-            mandatory: !!behavior.mandatory,
-          }))
+          workflowState: behavior.workflowState,
+          role: this.normalizeRoleCode(behavior.role),
+          visibility: behavior.visibility === 'HIDDEN' ? 'HIDDEN' : 'VISIBLE',
+          editability: behavior.editability === 'EDITABLE' ? 'EDITABLE' : 'READ_ONLY',
+          mandatory: !!behavior.mandatory,
+        }))
         : [],
       conditionalRendering: field.conditionalRendering
         ? {
-            dependsOn: String((field.conditionalRendering as any).dependsOn ?? ''),
-            operator: (field.conditionalRendering as any).operator,
-            value: (field.conditionalRendering as any).value,
-            action: (field.conditionalRendering as any).action === 'HIDE' ? 'HIDE' : 'SHOW',
-          }
+          dependsOn: String((field.conditionalRendering as any).dependsOn ?? ''),
+          operator: (field.conditionalRendering as any).operator,
+          value: (field.conditionalRendering as any).value,
+          action: (field.conditionalRendering as any).action === 'HIDE' ? 'HIDE' : 'SHOW',
+        }
         : undefined,
       matrixConfig: field.matrixConfig
         ? {
@@ -1079,17 +1079,17 @@ export class PmsTemplateService extends BaseService {
       allowManagerCreated: config.allowManagerCreated !== false,
       predefinedObjectives: Array.isArray(config.predefinedObjectives)
         ? config.predefinedObjectives.map((objective: Record<string, any>) => ({
-            objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
-            title: String(objective.title ?? '').trim(),
-            description: objective.description ? String(objective.description) : undefined,
-            kpi: objective.kpi ? String(objective.kpi) : undefined,
-            targetValue: objective.targetValue ? String(objective.targetValue) : undefined,
-            weightage:
-              objective.weightage === undefined || objective.weightage === ''
-                ? undefined
-                : Number(objective.weightage),
-            successCriteria: objective.successCriteria ? String(objective.successCriteria) : undefined,
-          }))
+          objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
+          title: String(objective.title ?? '').trim(),
+          description: objective.description ? String(objective.description) : undefined,
+          kpi: objective.kpi ? String(objective.kpi) : undefined,
+          targetValue: objective.targetValue ? String(objective.targetValue) : undefined,
+          weightage:
+            objective.weightage === undefined || objective.weightage === ''
+              ? undefined
+              : Number(objective.weightage),
+          successCriteria: objective.successCriteria ? String(objective.successCriteria) : undefined,
+        }))
         : [],
     };
   }
@@ -2064,9 +2064,9 @@ export class PmsTemplateService extends BaseService {
     // Annual scoring weights check
     const annualScoringConfig = version.annualScoringConfig as
       | {
-          quarterWeights?: Record<string, number>;
-          excludedQuarters?: string[];
-        }
+        quarterWeights?: Record<string, number>;
+        excludedQuarters?: string[];
+      }
       | undefined;
     const quarterWeights = annualScoringConfig?.quarterWeights;
     if (quarterWeights && Object.keys(quarterWeights).length > 0) {
@@ -2324,9 +2324,9 @@ export class PmsTemplateService extends BaseService {
 
     const annualAssignment = annualAssignmentId
       ? await AnnualAssignment.findOne({
-          _id: annualAssignmentId,
-          isDeleted: false,
-        }).lean()
+        _id: annualAssignmentId,
+        isDeleted: false,
+      }).lean()
       : null;
 
     if (!annualAssignment) {
