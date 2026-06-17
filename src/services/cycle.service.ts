@@ -441,14 +441,15 @@ export class CycleService extends BaseService {
       if (input.quarters) {
         const quarterPayloads = this.buildQuarterPayloads(mergedInput, cycle._id);
         const activeQuarterCodes = quarterPayloads.map((payload) => payload.quarterCode);
-        const upsertPromises = quarterPayloads.map((payload) =>
-          QuarterCycle.findOneAndUpdate(
+        quarterCycles = [];
+        for (const payload of quarterPayloads) {
+          const quarterCycle = await QuarterCycle.findOneAndUpdate(
             { cycleId: cycle._id, quarterCode: payload.quarterCode },
             { $set: { ...payload, updatedBy: this.actorIdObject() } },
             { upsert: true, new: true, session },
-          ),
-        );
-        quarterCycles = (await Promise.all(upsertPromises)) as IQuarterCycle[];
+          );
+          quarterCycles.push(quarterCycle as IQuarterCycle);
+        }
         await QuarterCycle.updateMany(
           {
             cycleId: cycle._id,
