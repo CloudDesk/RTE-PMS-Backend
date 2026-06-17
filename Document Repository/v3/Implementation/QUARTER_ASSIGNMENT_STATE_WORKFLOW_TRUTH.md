@@ -4,6 +4,38 @@ Last updated: 17 June 2026
 
 This document is the single implementation reference for PMS v3 `quarterAssignment.quarterState` behavior around predefined objectives, objective setting close, manual admin workflow sync, employee achievement submission, and manager review state movement.
 
+## Current Implementation Status
+
+Phase 1 to Phase 6 are complete and aligned with this workflow truth.
+
+Confirmed implementation points:
+
+```text
+Manual Sync is HR/Admin only.
+Close Objective Setting is explicit.
+Objective actions no longer move quarterAssignment.quarterState while the assignment is OBJECTIVE_SETTING_OPEN.
+Existing manager review finalization remains unchanged.
+Frontend does not directly mutate quarterAssignment.quarterState.
+```
+
+Current verification coverage:
+
+```text
+Server/test/services/quarterAssignmentWorkflowState.test.ts
+```
+
+The focused workflow tests cover:
+
+```text
+predefined objective launch opens/keeps OBJECTIVE_SETTING_OPEN
+employee objective submit does not move quarterState
+objective return does not move quarterState
+objective approval does not silently close objective setting
+Close Objective Setting moves OBJECTIVE_SETTING_OPEN -> OBJECTIVE_APPROVED
+Manual Sync skips OBJECTIVE_SETTING_OPEN
+Manual Sync moves OBJECTIVE_APPROVED forward only after objective setting is closed
+```
+
 ## Final Confirmed Flow
 
 Manual Sync must not close Objective Setting silently.
@@ -197,6 +229,38 @@ create
 
 Manager-created objectives still auto-approve, but they must not move the assignment forward by themselves.
 
+Objective actions must update objective-level status only while the assignment is in:
+
+```text
+quarterAssignment.quarterState === OBJECTIVE_SETTING_OPEN
+```
+
+Objective create/submit/approve/return must not move `quarterAssignment.quarterState` to:
+
+```text
+OBJECTIVE_DRAFT
+OBJECTIVE_SUBMITTED
+OBJECTIVE_REVISION_REQUIRED
+OBJECTIVE_APPROVED
+EMPLOYEE_ACHIEVEMENT_OPEN
+MANAGER_REVIEW_OPEN
+```
+
+Only Close Objective Setting may move:
+
+```text
+OBJECTIVE_SETTING_OPEN
+-> OBJECTIVE_APPROVED
+```
+
+Source:
+
+```text
+Server/src/services/objective.service.ts
+transitionQuarterIfNeeded(...)
+updateQuarterStateAfterApproval(...)
+```
+
 ## Close Objective Setting
 
 The move out of objective setting must be explicit.
@@ -234,7 +298,7 @@ Close should validate:
 confirmation accepted
 actor is Manager/Admin
 assignment ownership/permission
-current state is objective-setting/objective-approved path
+current state is OBJECTIVE_SETTING_OPEN
 no pending employee/manager-created objectives are waiting for approval
 ```
 
@@ -305,14 +369,21 @@ EMPLOYEE_ACHIEVEMENT_OPEN
 -> MANAGER_REVIEW_OPEN
 ```
 
-when employee achievement is submitted/locked or bypass is valid by config.
+when employee achievement is submitted/locked.
+
+Current implementation note:
+
+```text
+No separate bypass-config branch is implemented in Phase 1-6.
+If bypass behavior is required later, implement it as a separate explicit config-backed change.
+```
 
 ```text
 MANAGER_REVIEW_SUBMITTED
 -> QUARTER_FINALIZED
 ```
 
-as per current finalization logic.
+as per current finalization logic. This finalization behavior is intentionally unchanged in Phase 1-6.
 
 Manual Sync must not move:
 
@@ -377,6 +448,14 @@ Source:
 Server/src/services/employeeAchievementSubmission.service.ts
 ```
 
+Current implementation:
+
+```text
+Employee submit sets the achievement submission status to LOCKED.
+Employee submit does not directly move quarterAssignment.quarterState to MANAGER_REVIEW_OPEN.
+Manual Sync performs EMPLOYEE_ACHIEVEMENT_OPEN -> MANAGER_REVIEW_OPEN after the submission is submitted/locked and the manager review window is eligible.
+```
+
 ## Manager Review Editing
 
 Manager review editing is allowed only when:
@@ -404,6 +483,36 @@ Source:
 ```text
 Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte
 canEditReview(...)
+```
+
+The objective workspace may allow manager objective actions during `OBJECTIVE_SETTING_OPEN`, but that is separate from manager review editing. Manager review editing remains gated by `MANAGER_REVIEW_OPEN`.
+
+## Frontend Behavior
+
+Frontend behavior is display and API orchestration only.
+
+Frontend must:
+
+```text
+display current quarterState
+gate buttons/actions by role and state
+call backend APIs for workflow actions
+show Close Objective Setting and Manual Sync results
+```
+
+Frontend must not:
+
+```text
+directly mutate quarterAssignment.quarterState
+perform hidden workflow transitions
+show Manual Sync to non-HR/Admin users
+```
+
+Current source:
+
+```text
+Client/src/lib/components/pms/cycles/CycleDetailTabs.svelte
+Sync Workflow States button is guarded by the normalized admin role.
 ```
 
 ## Term Scope Compatibility

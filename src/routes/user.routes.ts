@@ -1869,7 +1869,6 @@ export const userRoutes: RouteHandler = async (
           'Manager Name',
           'Active',
           'Joining Date',
-          'Country',
           'Location',
           'Phone'
         ];
@@ -1897,7 +1896,6 @@ export const userRoutes: RouteHandler = async (
             user.managerName || '',
             user.active ? 'Yes' : 'No',
             user.joiningDate ? new Date(user.joiningDate).toLocaleDateString() : '',
-            user.country || '',
             user.location || '',
             user.phone || ''
           ];
@@ -1915,12 +1913,12 @@ export const userRoutes: RouteHandler = async (
         // Add some styling
         worksheet.getColumn('A').width = 25; // Name
         worksheet.getColumn('B').width = 30; // Email
-        worksheet.getColumn('C').width = 15; // Role
-        worksheet.getColumn('D').width = 20; // Department ID
-        worksheet.getColumn('E').width = 25; // Manager Name
-        worksheet.getColumn('F').width = 10; // Active
-        worksheet.getColumn('G').width = 15; // Joining Date
-        worksheet.getColumn('H').width = 10; // Country
+        worksheet.getColumn('C').width = 15; // Employee Code
+        worksheet.getColumn('D').width = 20; // Role
+        worksheet.getColumn('E').width = 20; // Department ID
+        worksheet.getColumn('F').width = 25; // Manager Name
+        worksheet.getColumn('G').width = 10; // Active
+        worksheet.getColumn('H').width = 15; // Joining Date
         worksheet.getColumn('I').width = 20; // Location
         worksheet.getColumn('J').width = 15; // Phone
 
