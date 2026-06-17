@@ -24,7 +24,6 @@ import { OvertimeService } from '../services/overtime.service';
 import { ReportService } from '../services/reports.service';
 import { SalaryAssignmentService } from '../services/salary-assignment.service';
 import { WeekendCalendarService } from '../services/weekend-calendar.service';
-import { DocumentService } from '../services/document.service';
 import { DashboardService } from '../services/dashboard.service';
 import { PermissionService } from '../services/permission.service';
 import { PermissionSummaryService } from '../services/permission-summary.service';
@@ -48,6 +47,7 @@ import { DelegationService } from '../services/delegation.service';
 import { PmsDashboardService } from '../services/pmsDashboard.service';
 import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
 import { WorkflowSyncService } from '../services/workflow-sync.service';
+import { PmsDocumentService } from '../services/pms-document.service';
 
 export class Container {
   private static instance: Container;
@@ -94,7 +94,6 @@ export class Container {
       reportService: new ReportService(context),
       salaryAssignmentService: new SalaryAssignmentService(context),
       weekendCalendarService: new WeekendCalendarService(context),
-      documentService: new DocumentService(context),
       dashboardService: new DashboardService(context),
       permissionService: new PermissionService(context),
       permissionSummaryService: new PermissionSummaryService(context),
@@ -118,6 +117,7 @@ export class Container {
       pmsDashboardService: new PmsDashboardService(context),
       pmsBulkOperationsService: new PmsBulkOperationsService(context),
       workflowSyncService: new WorkflowSyncService(context),
+      pmsDocumentService: new PmsDocumentService(context),
     };
   }
 

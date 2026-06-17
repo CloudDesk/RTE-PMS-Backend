@@ -162,6 +162,12 @@ db.quarter_review_values.find({
   quarterAssignmentId,
   isDeleted: false
 });
+
+db.pms_documents.find({
+  annualAssignmentId,
+  quarterAssignmentId,
+  isDeleted: false
+}).sort({ uploadedAt: -1 });
 ```
 
 Expected:
@@ -170,6 +176,7 @@ Expected:
 reviewStatus: "MANAGER_REVIEW_OPEN"
 // then after submit:
 reviewStatus: "MANAGER_REVIEW_SUBMITTED"
+// manager review attachments are stored in pms_documents and referenced by quarter_reviews.attachments
 ```
 
 After admin workflow sync override/finalization:
@@ -248,6 +255,11 @@ db.quarter_review_values.find({
   isDeleted: false
 });
 
+db.pms_documents.find({
+  annualAssignmentId,
+  isDeleted: false
+}).sort({ uploadedAt: -1 });
+
 db.annual_decisions.find({
   annualAssignmentId,
   isDeleted: false
@@ -279,6 +291,6 @@ pms_templates
   -> objectives
   -> employee_achievement_submissions
   -> quarter_reviews
+  -> pms_documents
   -> annual_decisions
 ```
-
