@@ -13,6 +13,7 @@ import { Objective } from '../models/pms-objective.model';
 import { ObjectiveValue } from '../models/pms-objective-value.model';
 import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
 import { ObjectiveComment } from '../models/pms-objective-comment.model';
+import { PmsDocument } from '../models/pms-document.model';
 import { ManagerObjectiveLibrary } from '../models/pms-manager-objective-library.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -407,10 +408,21 @@ export class ObjectiveService extends BaseService {
 
     await this.ensurePredefinedObjectivesForAssignments(annualAssignments, quarterAssignments);
 
-    const objectives = await Objective.find({
+    const objectiveFilter: Record<string, unknown> = {
       quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
       isDeleted: false,
-    })
+    };
+
+    if (mode === 'manager') {
+      objectiveFilter.$nor = [
+        {
+          source: ObjectiveSource.EMPLOYEE_CREATED,
+          status: ObjectiveStatus.OBJECTIVE_DRAFT,
+        },
+      ];
+    }
+
+    const objectives = await Objective.find(objectiveFilter)
       .sort({ objectiveNo: 1, createdAt: 1 })
       .lean();
 
@@ -513,6 +525,7 @@ export class ObjectiveService extends BaseService {
   async getObjectiveDetail(objectiveId: string): Promise<ObjectiveRecord> {
     const objective = await this.getObjective(objectiveId);
     await this.assertObjectiveAccess('objective.view', objective, false);
+    this.assertEmployeeDraftVisibility(objective);
 
     const annualAssignment = objective.annualAssignmentId
       ? await AnnualAssignment.findById(objective.annualAssignmentId).lean()
@@ -1082,6 +1095,118 @@ export class ObjectiveService extends BaseService {
     );
 
     return objective;
+  }
+
+  async deleteDraftObjective(objectiveId: string): Promise<{ deleted: boolean; objectiveId: string }> {
+    const objective = await this.getObjective(objectiveId);
+    const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
+
+    if (objective.source !== ObjectiveSource.EMPLOYEE_CREATED) {
+      throw new Error('Only employee-created draft objectives can be deleted');
+    }
+
+    if (objective.status !== ObjectiveStatus.OBJECTIVE_DRAFT) {
+      throw new Error('Only draft objectives can be deleted');
+    }
+
+    if (
+      quarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_SETTING_OPEN &&
+      quarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_DRAFT
+    ) {
+      throw new Error(
+        `Draft objectives can be deleted only during objective setting. Current state: ${quarterAssignment.quarterState}`,
+      );
+    }
+
+    const isOwnerEmployee =
+      actor.actorId === objective.employeeId.toString() &&
+      actor.actorId === objective.createdByUserId.toString();
+    const isAdmin = mappedRole === PmsRole.ADMIN;
+
+    if (!isOwnerEmployee && !isAdmin) {
+      throw new Error('Only the employee who created this draft objective can delete it');
+    }
+
+    if (!isAdmin) {
+      await this.assertObjectiveWindow(quarterAssignment, 'setting');
+    }
+
+    const previousValue = objective.toObject();
+    const activeAttachments = await ObjectiveAttachment.find({
+      objectiveId: objective._id,
+      isDeleted: false,
+    }).lean();
+    const linkedDocumentIds = Array.from(
+      new Set(
+        [
+          ...activeAttachments.map((attachment) => attachment.documentId),
+          ...(objective.attachments ?? []).map((attachment) => attachment.documentId),
+        ]
+          .filter((documentId): documentId is string => Boolean(documentId))
+          .filter((documentId) => Types.ObjectId.isValid(documentId)),
+      ),
+    );
+
+    objective.isDeleted = true;
+    objective.updatedBy = actorObjectId;
+    objective.version += 1;
+    await objective.save();
+
+    await ObjectiveValue.updateMany(
+      { objectiveId: objective._id, isDeleted: false },
+      {
+        $set: {
+          isDeleted: true,
+          updatedBy: actorObjectId,
+        },
+      },
+    );
+
+    await ObjectiveAttachment.updateMany(
+      { objectiveId: objective._id, isDeleted: false },
+      {
+        $set: {
+          isDeleted: true,
+          updatedBy: actorObjectId,
+        },
+      },
+    );
+
+    await ObjectiveComment.updateMany(
+      { objectiveId: objective._id, isDeleted: false },
+      {
+        $set: {
+          isDeleted: true,
+          updatedBy: actorObjectId,
+        },
+      },
+    );
+
+    if (linkedDocumentIds.length > 0) {
+      await PmsDocument.updateMany(
+        {
+          _id: { $in: linkedDocumentIds.map((documentId) => new Types.ObjectId(documentId)) },
+          isDeleted: false,
+        },
+        { $set: { isDeleted: true } },
+      );
+    }
+
+    await this.reopenObjectiveSettingIfLastEmployeeDraftDeleted(quarterAssignment._id.toString());
+
+    await this.audit(
+      'PMS_OBJECTIVE_DRAFT_DELETED',
+      'OBJECTIVE',
+      objective._id.toString(),
+      previousValue,
+      { isDeleted: true },
+      'Employee-created draft objective deleted',
+    );
+
+    return { deleted: true, objectiveId: objective._id.toString() };
   }
 
   async submitObjective(objectiveId: string): Promise<IObjective> {
@@ -2476,6 +2601,23 @@ export class ObjectiveService extends BaseService {
     }
   }
 
+  private assertEmployeeDraftVisibility(objective: IObjective): void {
+    if (
+      objective.source !== ObjectiveSource.EMPLOYEE_CREATED ||
+      objective.status !== ObjectiveStatus.OBJECTIVE_DRAFT
+    ) {
+      return;
+    }
+
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    if (mappedRole === PmsRole.ADMIN || actor.actorId === objective.employeeId.toString()) {
+      return;
+    }
+
+    throw new Error('Objective not found');
+  }
+
   private async getNextObjectiveNo(quarterAssignmentId: Types.ObjectId): Promise<number> {
     const lastObjective = await Objective.findOne({
       quarterAssignmentId,
@@ -2593,6 +2735,52 @@ export class ObjectiveService extends BaseService {
     );
   }
 
+  private async reopenObjectiveSettingIfLastEmployeeDraftDeleted(quarterAssignmentId: string): Promise<void> {
+    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.OBJECTIVE_DRAFT) {
+      return;
+    }
+
+    const remainingEmployeeInProgressObjective = await Objective.exists({
+      quarterAssignmentId: quarterAssignment._id,
+      source: ObjectiveSource.EMPLOYEE_CREATED,
+      status: {
+        $in: [
+          ObjectiveStatus.OBJECTIVE_DRAFT,
+          ObjectiveStatus.OBJECTIVE_SUBMITTED,
+        ],
+      },
+      isDeleted: false,
+    });
+
+    if (remainingEmployeeInProgressObjective) {
+      return;
+    }
+
+    const actor = this.requireActor();
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
+    const previousState = quarterAssignment.quarterState;
+
+    quarterAssignment.previousQuarterState = previousState;
+    quarterAssignment.quarterState = QuarterWorkflowState.OBJECTIVE_SETTING_OPEN;
+    quarterAssignment.lastTransitionAt = new Date();
+    quarterAssignment.lastTransitionBy = actorObjectId;
+    quarterAssignment.lastTransitionRole = actor.actorRole;
+    quarterAssignment.lastTransitionReason = 'Last employee-created draft objective deleted';
+    quarterAssignment.updatedBy = actorObjectId;
+    quarterAssignment.version += 1;
+    await quarterAssignment.save();
+
+    await this.audit(
+      'PMS_OBJECTIVE_SETTING_REOPENED_AFTER_DRAFT_DELETE',
+      'QUARTER_ASSIGNMENT',
+      quarterAssignment._id.toString(),
+      { quarterState: previousState },
+      { quarterState: quarterAssignment.quarterState },
+      'Last employee-created draft objective deleted',
+    );
+  }
+
   private async getObjectiveConfigForAssignment(
     annualAssignment: IAnnualAssignment,
     quarterAssignment: IQuarterAssignment,
@@ -2670,6 +2858,7 @@ export class ObjectiveService extends BaseService {
         fileUrl: attachment.fileUrl,
         fileType: attachment.fileType,
         fileSize: attachment.fileSize,
+        documentId: attachment.documentId,
         uploadedBy: attachment.uploadedBy && Types.ObjectId.isValid(attachment.uploadedBy)
           ? new Types.ObjectId(attachment.uploadedBy)
           : objective.updatedBy ?? objective.createdByUserId,
