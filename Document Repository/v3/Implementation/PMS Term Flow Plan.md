@@ -717,3 +717,98 @@ Exit criteria:
 - Annual decision unlocks only at the correct time.
 - Admin remains exception handler, not a mandatory term reviewer.
 - UI and API consistently use term-based workflow language.
+
+## Current Implementation Status
+
+Status date: 18/06/2026
+
+### Completed
+
+Phase 1: Enum and Shared Workflow Helpers
+
+- Backend workflow enums were moved to term-based values:
+  - `QUARTER_FINALIZED` replaced by `TERM_FINALIZED`
+  - `ALL_QUARTERS_FINALIZED` replaced by `ALL_TERMS_FINALIZED`
+- Shared finalized-term helpers were added and reused.
+- Workflow transition configuration was updated to use term-based states.
+- Frontend PMS types were updated to use the same term-based state names.
+
+Phase 2: Manager Review Finalization and Annual Rollup
+
+- Manager review submission now finalizes the term through the backend workflow path.
+- Term finalization rollup was added for annual assignments.
+- When all applicable Q/H/Y terms are finalized or closed by admin, annual assignment rolls to `ALL_TERMS_FINALIZED`.
+- Audit coverage was updated for manager review submission, term finalization, and annual rollup.
+
+Phase 3: Annual Decision Gate and API Consistency
+
+- Annual decision readiness is now resolved centrally in the backend.
+- Annual decision APIs expose:
+  - term completion progress
+  - appraisal window status
+  - available actions
+  - locked reason
+  - final decision status
+- Annual decision save, submit, and freeze now validate the same readiness gates.
+- Error and locked-state messaging uses term-based wording.
+
+Phase 4: Frontend Labels, Readiness, and User Messaging
+
+- Frontend screens now display `TERM_FINALIZED` as `Term Finalized`.
+- Frontend screens now display `ALL_TERMS_FINALIZED` as `All Terms Finalized`.
+- Annual decision and assignment workspace screens consume backend readiness details.
+- Locked annual decision UI now shows a clear reason instead of only disabling actions.
+- Raw old quarter-finalized wording was removed from user-facing PMS screens.
+
+Phase 5: Regression, Data Cleanup, and UAT Verification
+
+- UAT verification routes were added:
+  - `GET /public/pms/term-flow/verify`
+  - `POST /public/pms/term-flow/verify`
+- Dry-run-first enum cleanup routes were added:
+  - `GET /public/pms/term-flow/enum-cleanup`
+  - `POST /public/pms/term-flow/enum-cleanup`
+- Verification checks identify:
+  - missing term records
+  - non-finalized terms
+  - finalized terms without annual rollup
+  - annual assignments marked ready too early
+  - old non-live enum values still present
+- Enum cleanup supports scoped execution by `cycleId`, `annualAssignmentId`, `quarterAssignmentId`, or `templateId`.
+- No DB cleanup is executed automatically.
+
+### Verification Completed
+
+- Server TypeScript verification passed:
+
+```txt
+npx tsc --noEmit
+```
+
+### Pending UAT Execution
+
+The code changes are implemented, but real-data UAT should still be executed for:
+
+- Quarterly cycle:
+  - Q1 only finalized keeps annual decision locked.
+  - Q1-Q4 finalized unlocks annual decision when appraisal window is open.
+- Half-yearly cycle:
+  - H1 only finalized keeps annual decision locked.
+  - H1-H2 finalized unlocks annual decision when appraisal window is open.
+- Yearly cycle:
+  - Y1 finalized unlocks annual decision when appraisal window is open.
+- Exception flows:
+  - admin manual finalize
+  - admin reopen finalized term
+  - reopened term blocks annual decision again
+  - workflow sync skips invalid states with clear messaging
+
+### Notes
+
+- Existing collection and field names remain unchanged for now:
+  - `quarter_assignments`
+  - `quarter_reviews`
+  - `quarterCode`
+  - `quarterState`
+- Business/workflow enum language is now term-based.
+- Admin remains an exception handler, not a mandatory reviewer in the normal manager-review completion path.
