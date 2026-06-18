@@ -11,9 +11,6 @@ dotenv.config();
 // Set timezone to UTC
 process.env.TZ = 'UTC';
 
-// Initialize cron job for automatic shift status updates
-import './utilis/corn';
-
 import fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';

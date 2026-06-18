@@ -1,7 +1,6 @@
 import { BaseService } from './base.service';
 import { User } from '../models/user.model';
 import { LOV } from '../models/lov.model';
-import { Document } from '../models/document.model';
 import { PmsRolePermission } from '../models/pms-role-permission.model';
 import { RequestContext } from '../types/context';
 import { Types } from 'mongoose';
@@ -804,75 +803,6 @@ export class UserService extends BaseService {
 
   async findById(id: string) {
     const user = await User.findById(id);
-
-    // Auto-sync academic details if empty but documents might exist
-    if (user && (!user.academicDetails || user.academicDetails.length === 0)) {
-      try {
-        const academicDocs = await Document.find({
-          employeeId: user._id,
-          type: 'Certificate',
-          'metadata.certificate.certificateType': 'Academic'
-        }).lean();
-
-        if (academicDocs.length > 0) {
-          console.log(`Auto-syncing academic details for user ${user.name} during findById`);
-          const academicDetails = academicDocs.map(doc => {
-            const cert = doc.metadata?.certificate;
-            const academic = cert?.academicDetails;
-            return {
-              qualificationType: academic?.qualificationType,
-              fieldOfStudy: academic?.fieldOfStudy,
-              institution: academic?.institution,
-              grade: academic?.grade,
-              yearOfCompletion: academic?.yearOfCompletion,
-              documentUrl: doc.filePath,
-              documentId: doc._id.toString(),
-              verificationStatus: cert?.verificationStatus || 'Pending'
-            };
-          });
-
-          user.academicDetails = academicDetails as any;
-          await User.findByIdAndUpdate(user._id, { $set: { academicDetails } });
-        }
-      } catch (syncError) {
-        console.error('Failed to auto-sync academic details in findById:', syncError);
-      }
-    }
-
-    // Auto-sync experience details if empty but documents might exist
-    if (user && (!user.experienceDetails || user.experienceDetails.length === 0)) {
-      try {
-        const experienceDocs = await Document.find({
-          employeeId: user._id,
-          type: 'Certificate',
-          'metadata.certificate.certificateType': 'Experience'
-        }).lean();
-
-        if (experienceDocs.length > 0) {
-          console.log(`Auto-syncing experience details for user ${user.name} during findById`);
-          const experienceDetails = experienceDocs.map(doc => {
-            const cert = doc.metadata?.certificate;
-            const exp = cert?.experienceDetails;
-            return {
-              companyName: exp?.companyName || 'Unknown',
-              role: exp?.role,
-              startDate: exp?.startDate,
-              endDate: exp?.endDate,
-              duration: exp?.duration,
-              documentUrl: doc.filePath,
-              documentId: doc._id.toString(),
-              verificationStatus: cert?.verificationStatus || 'Pending'
-            };
-          });
-
-          user.experienceDetails = experienceDetails as any;
-          await User.findByIdAndUpdate(user._id, { $set: { experienceDetails } });
-        }
-      } catch (syncError) {
-        console.error('Failed to auto-sync experience details in findById:', syncError);
-      }
-    }
-
     console.log('User data retrieved:', user?._id);
     return user;
   }
@@ -1960,44 +1890,13 @@ export class UserService extends BaseService {
           console.error('Error deleting local file:', err);
         }
 
-        // Create Document record in database
-        const newDocument = new Document({
-          employeeId: new Types.ObjectId(userId),
-          type: 'GovernmentId',
-          category: 'Certification',
-          tags: [targetField, documentLabel, 'Government ID'],
-          fileName: newFileName,
-          filePath: fileUrl,
-          accessLevel: 'Private',
-          status: 'Uploaded',
-          uploadedBy: new Types.ObjectId(this.context.user?._id),
-          metadata: {
-            governmentId: {
-              idType: targetField,
-              label: documentLabel,
-              uploadedAt: new Date(),
-              verificationStatus: resolvedStatus
-            }
-          },
-          auditLog: [
-            {
-              action: 'Upload',
-              performedBy: new Types.ObjectId(this.context.user?._id),
-              timestamp: new Date(),
-              details: `Uploaded ${documentLabel} for ${user.name}`
-            }
-          ]
-        });
-
-        await newDocument.save();
-
-        // Update user's governmentIds with document ID and URL
+        // Legacy HRMS Document records are removed; store the uploaded file URL on the user.
         const govIds = user.governmentIds!;
         if (!govIds[targetField]) {
           govIds[targetField] = {} as any;
         }
         (govIds[targetField] as any).documentUrl = fileUrl;
-        (govIds[targetField] as any).documentId = newDocument._id.toString();
+        (govIds[targetField] as any).documentId = undefined;
         (govIds[targetField] as any).verificationStatus = resolvedStatus;
 
         console.log(`Successfully uploaded and stored ${documentLabel} document for user ${user.name}`);
@@ -2289,50 +2188,25 @@ export class UserService extends BaseService {
         console.error('Error deleting local file:', err);
       }
 
-      // Create Document record in database
-      const newDocument = new Document({
-        employeeId: new Types.ObjectId(userId),
+      const uploadedDocument = {
         type: 'Academic',
-        category: 'Certification',
-        tags: ['Academic', institution, academicDetail.yearOfCompletion || 'Unknown'],
         fileName: newFileName,
-        filePath: fileUrl,
-        accessLevel: 'Private',
-        status: 'Uploaded',
-        uploadedBy: new Types.ObjectId(this.context.user?._id),
-        metadata: {
-          academic: {
-            instituteName: institution,
-            yearOfPassing: academicDetail.yearOfCompletion ? String(academicDetail.yearOfCompletion) : undefined,
-            grade: academicDetail.grade,
-            uploadedAt: new Date(),
-            verificationStatus: resolvedStatus
-          }
-        },
-        auditLog: [
-          {
-            action: 'Upload',
-            performedBy: new Types.ObjectId(this.context.user?._id),
-            timestamp: new Date(),
-            details: `Uploaded academic document for ${institution} - ${user.name}`
-          }
-        ]
-      });
+        fileUrl,
+        verificationStatus: resolvedStatus,
+      };
 
-      await newDocument.save();
-
-      // Update user's academicDetails with document ID and URL
+      // Legacy HRMS Document records are removed; store the uploaded file URL on the user.
       if (!user.academicDetails) {
         user.academicDetails = [];
       }
       if (user.academicDetails[academicDetailIndex]) {
         user.academicDetails[academicDetailIndex].documentUrl = fileUrl;
-        user.academicDetails[academicDetailIndex].documentId = newDocument._id.toString();
+        user.academicDetails[academicDetailIndex].documentId = undefined;
         (user.academicDetails as any)[academicDetailIndex].verificationStatus = resolvedStatus;
       }
 
       await user.save();
-      return { user, document: newDocument };
+      return { user, document: uploadedDocument };
     } catch (error: any) {
       console.error(`Error processing academic document:`, error);
       // Clean up local file on error
@@ -2425,50 +2299,25 @@ export class UserService extends BaseService {
         console.error('Error deleting local file:', err);
       }
 
-      // Create Document record in database
-      const newDocument = new Document({
-        employeeId: new Types.ObjectId(userId),
+      const uploadedDocument = {
         type: 'Experience',
-        category: 'Certification',
-        tags: ['Experience', companyName, experienceDetail.duration || 'Unknown'],
         fileName: newFileName,
-        filePath: fileUrl,
-        accessLevel: 'Private',
-        status: 'Uploaded',
-        uploadedBy: new Types.ObjectId(this.context.user?._id),
-        metadata: {
-          experience: {
-            companyName: companyName,
-            period: experienceDetail.duration,
-            designation: experienceDetail.role,
-            uploadedAt: new Date(),
-            verificationStatus: resolvedStatus
-          }
-        },
-        auditLog: [
-          {
-            action: 'Upload',
-            performedBy: new Types.ObjectId(this.context.user?._id),
-            timestamp: new Date(),
-            details: `Uploaded experience document for ${companyName} - ${user.name}`
-          }
-        ]
-      });
+        fileUrl,
+        verificationStatus: resolvedStatus,
+      };
 
-      await newDocument.save();
-
-      // Update user's experienceDetails with document ID and URL
+      // Legacy HRMS Document records are removed; store the uploaded file URL on the user.
       if (!user.experienceDetails) {
         user.experienceDetails = [];
       }
       if (user.experienceDetails[experienceDetailIndex]) {
         user.experienceDetails[experienceDetailIndex].documentUrl = fileUrl;
-        user.experienceDetails[experienceDetailIndex].documentId = newDocument._id.toString();
+        user.experienceDetails[experienceDetailIndex].documentId = undefined;
         (user.experienceDetails as any)[experienceDetailIndex].verificationStatus = resolvedStatus;
       }
 
       await user.save();
-      return { user, document: newDocument };
+      return { user, document: uploadedDocument };
     } catch (error: any) {
       console.error(`Error processing experience document:`, error);
       // Clean up local file on error
