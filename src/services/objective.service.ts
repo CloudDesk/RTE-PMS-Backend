@@ -241,6 +241,7 @@ type ObjectiveRecord = {
   }>;
   attachments: Array<{
     id: string;
+    documentId?: string;
     fileName: string;
     fileType?: string;
     fileSize?: number;
@@ -425,9 +426,16 @@ export class ObjectiveService extends BaseService {
     })
       .sort({ createdAt: 1 })
       .lean();
+    const objectiveAttachments = await ObjectiveAttachment.find({
+      objectiveId: { $in: objectives.map((item) => item._id) },
+      isDeleted: false,
+    })
+      .sort({ uploadedAt: 1, createdAt: 1 })
+      .lean();
 
     const commentsByObjectiveId = this.groupCommentsByObjective(comments);
     const objectiveValuesByObjectiveId = this.groupObjectiveValuesByObjective(objectiveValues);
+    const attachmentsByObjectiveId = this.groupAttachmentsByObjective(objectiveAttachments);
     const objectivesByQuarterAssignmentId = new Map<string, typeof objectives>();
 
     for (const objective of objectives) {
@@ -452,6 +460,7 @@ export class ObjectiveService extends BaseService {
             annualAssignment,
             commentsByObjectiveId.get(objective._id.toString()) ?? [],
             objectiveValuesByObjectiveId.get(objective._id.toString()) ?? [],
+            attachmentsByObjectiveId.get(objective._id.toString()) ?? [],
           ),
         );
 
@@ -520,12 +529,19 @@ export class ObjectiveService extends BaseService {
     })
       .sort({ createdAt: 1 })
       .lean();
+    const objectiveAttachments = await ObjectiveAttachment.find({
+      objectiveId: objective._id,
+      isDeleted: false,
+    })
+      .sort({ uploadedAt: 1, createdAt: 1 })
+      .lean();
 
     return this.mapObjectiveRecord(
       objective.toObject(),
       annualAssignment,
       comments,
       objectiveValues,
+      objectiveAttachments,
     );
   }
 
@@ -1756,10 +1772,14 @@ export class ObjectiveService extends BaseService {
     annualAssignment: IAnnualAssignment | Record<string, any> | null | undefined,
     comments: Array<Record<string, any>>,
     objectiveValues: Array<Record<string, any>>,
+    attachments: Array<Record<string, any>> = [],
   ): ObjectiveRecord {
     const objectiveId = objective._id.toString();
     const employeeId = objective.employeeId.toString();
     const managerId = objective.assignedManagerId.toString();
+    const objectiveAttachments = attachments.length > 0
+      ? attachments
+      : (objective.attachments ?? []);
 
     return {
       id: objectiveId,
@@ -1818,8 +1838,9 @@ export class ObjectiveService extends BaseService {
         valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
         valueStatus: value.valueStatus,
       })),
-      attachments: (objective.attachments ?? []).map((attachment: Record<string, any>, index: number) => ({
+      attachments: objectiveAttachments.map((attachment: Record<string, any>, index: number) => ({
         id: `${objectiveId}-${attachment.documentId ?? attachment.fileName ?? index}`,
+        documentId: attachment.documentId,
         fileName: attachment.fileName ?? 'Attachment',
         fileType: attachment.fileType,
         fileSize: attachment.fileSize,
@@ -1858,6 +1879,17 @@ export class ObjectiveService extends BaseService {
       const key = value.objectiveId.toString();
       const bucket = grouped.get(key) ?? [];
       bucket.push(value);
+      grouped.set(key, bucket);
+    }
+    return grouped;
+  }
+
+  private groupAttachmentsByObjective(attachments: Array<Record<string, any>>) {
+    const grouped = new Map<string, Array<Record<string, any>>>();
+    for (const attachment of attachments) {
+      const key = attachment.objectiveId.toString();
+      const bucket = grouped.get(key) ?? [];
+      bucket.push(attachment);
       grouped.set(key, bucket);
     }
     return grouped;
