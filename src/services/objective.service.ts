@@ -2346,7 +2346,7 @@ export class ObjectiveService extends BaseService {
     requireExactBucketTotal = false,
   ): Promise<void> {
     if (
-      quarterAssignment.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
+      quarterAssignment.quarterState === QuarterWorkflowState.TERM_FINALIZED ||
       quarterAssignment.quarterState === QuarterWorkflowState.CLOSED_BY_ADMIN ||
       quarterAssignment.quarterState === QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED
     ) {

@@ -46,13 +46,13 @@ const quarterTransitionsBase = {
     QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
   ],
   [QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED]: [
-    QuarterWorkflowState.QUARTER_FINALIZED,
+    QuarterWorkflowState.TERM_FINALIZED,
   ],
-  [QuarterWorkflowState.QUARTER_FINALIZED]: [
+  [QuarterWorkflowState.TERM_FINALIZED]: [
     QuarterWorkflowState.REOPENED_BY_ADMIN,
   ],
   [QuarterWorkflowState.REOPENED_BY_ADMIN]: [
-    QuarterWorkflowState.QUARTER_FINALIZED,
+    QuarterWorkflowState.TERM_FINALIZED,
   ],
   [QuarterWorkflowState.CLOSED_BY_ADMIN]: [],
 } as const satisfies Record<
@@ -111,9 +111,9 @@ export const quarterTransitions: Record<
     QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
     quarterTransitionsBase[QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED],
   ),
-  [QuarterWorkflowState.QUARTER_FINALIZED]: withAdminClose(
-    QuarterWorkflowState.QUARTER_FINALIZED,
-    quarterTransitionsBase[QuarterWorkflowState.QUARTER_FINALIZED],
+  [QuarterWorkflowState.TERM_FINALIZED]: withAdminClose(
+    QuarterWorkflowState.TERM_FINALIZED,
+    quarterTransitionsBase[QuarterWorkflowState.TERM_FINALIZED],
   ),
   [QuarterWorkflowState.REOPENED_BY_ADMIN]: withAdminClose(
     QuarterWorkflowState.REOPENED_BY_ADMIN,
@@ -142,10 +142,10 @@ export const annualTransitions: Record<
     AnnualWorkflowState.CANCELLED,
   ],
   [AnnualWorkflowState.IN_PROGRESS]: [
-    AnnualWorkflowState.ALL_QUARTERS_FINALIZED,
+    AnnualWorkflowState.ALL_TERMS_FINALIZED,
     AnnualWorkflowState.CANCELLED,
   ],
-  [AnnualWorkflowState.ALL_QUARTERS_FINALIZED]: [
+  [AnnualWorkflowState.ALL_TERMS_FINALIZED]: [
     AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
   ],
   [AnnualWorkflowState.APPRAISAL_WINDOW_OPEN]: [

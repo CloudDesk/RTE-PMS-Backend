@@ -624,10 +624,10 @@ export class CycleService extends BaseService {
     if (
       cycle.status !== AnnualWorkflowState.ACTIVE &&
       cycle.status !== AnnualWorkflowState.IN_PROGRESS &&
-      cycle.status !== AnnualWorkflowState.ALL_QUARTERS_FINALIZED
+      cycle.status !== AnnualWorkflowState.ALL_TERMS_FINALIZED
     ) {
       throw new Error(
-        'Cycle progression can be synced only for ACTIVE, IN_PROGRESS, or ALL_QUARTERS_FINALIZED cycles',
+        'Cycle progression can be synced only for ACTIVE, IN_PROGRESS, or ALL_TERMS_FINALIZED cycles',
       );
     }
 
@@ -654,8 +654,8 @@ export class CycleService extends BaseService {
     if (updatedCycle.status === AnnualWorkflowState.IN_PROGRESS) {
       updatedCycle = await this.executeTransition(
         updatedCycle,
-        AnnualWorkflowState.ALL_QUARTERS_FINALIZED,
-        'PMS_CYCLE_ALL_QUARTERS_FINALIZED',
+        AnnualWorkflowState.ALL_TERMS_FINALIZED,
+        'PMS_CYCLE_ALL_TERMS_FINALIZED',
         { allQuartersFinalizedAt: completion.completedAt },
         undefined,
         { returnDocument: true },
@@ -663,7 +663,7 @@ export class CycleService extends BaseService {
     }
 
     if (
-      updatedCycle.status === AnnualWorkflowState.ALL_QUARTERS_FINALIZED &&
+      updatedCycle.status === AnnualWorkflowState.ALL_TERMS_FINALIZED &&
       await this.isAppraisalWindowOpen(updatedCycle, completion.completedAt)
     ) {
       updatedCycle = await this.executeTransition(
@@ -1600,7 +1600,7 @@ export class CycleService extends BaseService {
     }
 
     const completedStates = new Set<QuarterWorkflowState>([
-      QuarterWorkflowState.QUARTER_FINALIZED,
+      QuarterWorkflowState.TERM_FINALIZED,
       QuarterWorkflowState.CLOSED_BY_ADMIN,
     ]);
     let completedAt = cycle.updatedAt ?? new Date();

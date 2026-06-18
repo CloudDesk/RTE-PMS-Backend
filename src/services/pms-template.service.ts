@@ -1328,7 +1328,7 @@ export class PmsTemplateService extends BaseService {
           'EMPLOYEE_ACHIEVEMENT_OPEN',
           'MANAGER_REVIEW_OPEN',
           'MANAGER_REVIEW_SUBMITTED',
-          'QUARTER_FINALIZED',
+          'TERM_FINALIZED',
         ];
         if (allowedStates.includes(context.workflowState)) {
           isMatched = true;
