@@ -564,7 +564,7 @@ export class TaxDeclarationService extends BaseService {
             if (docForm12B && docForm12B.type === 'Form12B' && docForm12B.metadata?.form12B?.status === 'Verified') {
                 updatedTax.form12bTDSAmount = docForm12B.metadata.form12B.tdsDeducted || 0;
                 updatedTax.taxWithCess = updatedTax.finalTaxWithCess;
-                updatedTax.finalTaxWithCess = Math.max(0, updatedTax.taxWithCess - updatedTax.form12bTDSAmount);
+                updatedTax.finalTaxWithCess = Math.max(0, updatedTax.taxWithCess - 0);
             }
         }
         data.calculatedTaxAmount = updatedTax.taxAmount; //SBT
