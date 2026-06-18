@@ -36,6 +36,9 @@ COPY . .
 # Build the application
 RUN npm run build
 
+# Keep optional runtime asset copy steps stable even when source assets were removed.
+RUN mkdir -p templates
+
 # Stage 2: Production stage
 
  
