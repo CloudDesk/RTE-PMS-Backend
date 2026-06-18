@@ -75,10 +75,14 @@ RUN npm ci --omit=dev && \
  
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
+<<<<<<< Updated upstream
  
 # Copy templates directory (for runtime template access)
 COPY --from=builder /app/templates ./templates
  
+=======
+
+>>>>>>> Stashed changes
 # Create uploads directory and non-root user for security
 RUN mkdir -p /app/uploads && \
     groupadd -r appuser && useradd -r -g appuser appuser && \
