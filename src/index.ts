@@ -1,4 +1,3 @@
-// import './utilis/corn'
 import { FastifyInstance } from 'fastify';
 import awsLambdaFastify from '@fastify/aws-lambda';
 import { createApp } from './app';

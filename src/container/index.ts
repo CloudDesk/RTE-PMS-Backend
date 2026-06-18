@@ -1,40 +1,9 @@
 import { RequestContext } from '../types/context';
 import { ServiceContainer } from '../types/container';
 import { UserService } from '../services/user.service';
-import { ShiftService } from '../services/shift.service';
-import { BiometricAttendanceService } from '../services/biometric-attendance.service';
-import { LeaveService } from '../services/leave.service';
-import { LeaveSummaryService } from '../services/leave-summary.service';
 import { LovService } from '../services/lov.service';
-import { OrganizationService } from '../services/organization.service';
-import { TrainingService } from '../services/training.service';
-import { TrainingAttendanceService } from '../services/training-attendance.service';
 import { AuthService } from '../services/auth.service';
 import { CollectionService } from '../services/collection.service';
-import { AttendanceRegularizationService } from '../services/attendance-regularization.service';
-import { AttendanceOverrideService } from '../services/attendance-override.service';
-import { TimesheetService } from '../services/timesheet.service';
-import { TaxDeclarationService } from '../services/tax-declaration.service';
-import { TaxSlabService } from '../services/tax-slab.service';
-import { SalaryStructureService } from '../services/salary-structure.service';
-import { PayrollService } from '../services/payroll.service';
-import { PayslipService } from '../services/payslip.service';
-import { HolidayCalendarService } from '../services/holiday-calendar.service';
-import { OvertimeService } from '../services/overtime.service';
-import { ReportService } from '../services/reports.service';
-import { SalaryAssignmentService } from '../services/salary-assignment.service';
-import { WeekendCalendarService } from '../services/weekend-calendar.service';
-import { DashboardService } from '../services/dashboard.service';
-import { PermissionService } from '../services/permission.service';
-import { PermissionSummaryService } from '../services/permission-summary.service';
-import { WFHService } from '../services/wfh.service';
-import { WFHSummaryService } from '../services/wfh-summary.service';
-import { ShiftChangeService } from '../services/shift-change.service';
-import { OptionalHolidayService } from '../services/optional-holiday.service';
-import { PayslipPdfService } from '../services/payslip-pdf.service';
-import { SalaryStatementService } from '../services/salary-statement.service';
-import { TaxSalaryContextService } from '../services/tax-salary-context.service';
-import { CommunicationService } from '../services/communication.service';
 import { PmsTemplateService } from '../services/pms-template.service';
 import { CycleService } from '../services/cycle.service';
 import { AssignmentService } from '../services/assignment.service';
@@ -71,40 +40,9 @@ export class Container {
     return {
       requestContext: context,
       userService: new UserService(context),
-      shiftService: new ShiftService(context),
-      biometricAttendanceService: new BiometricAttendanceService(context),
-      trainingAttendanceService: new TrainingAttendanceService(context),
-      leaveService: new LeaveService(context),
-      leaveSummaryService: new LeaveSummaryService(context),
       lovService: new LovService(context),
-      organizationService: new OrganizationService(context),
-      trainingService: new TrainingService(context),
       authService: new AuthService(),
       collectionService: new CollectionService(context),
-      attendanceRegularizationService: new AttendanceRegularizationService(context),
-      attendanceOverrideService: new AttendanceOverrideService(context),
-      timesheetService: new TimesheetService(context),
-      taxDeclarationService: new TaxDeclarationService(context),
-      taxSlabService: new TaxSlabService(context),
-      salaryStructureService: new SalaryStructureService(context),
-      payrollService: new PayrollService(context),
-      payslipService: new PayslipService(context),
-      holidayCalendarService: new HolidayCalendarService(context),
-      overtimeService: new OvertimeService(context),
-      reportService: new ReportService(context),
-      salaryAssignmentService: new SalaryAssignmentService(context),
-      weekendCalendarService: new WeekendCalendarService(context),
-      dashboardService: new DashboardService(context),
-      permissionService: new PermissionService(context),
-      permissionSummaryService: new PermissionSummaryService(context),
-      wfhService: new WFHService(context),
-      wfhSummaryService: new WFHSummaryService(context),
-      shiftChangeService: new ShiftChangeService(context),
-      optionalHolidayService: new OptionalHolidayService(context),
-      payslipPdfService: new PayslipPdfService(context),
-      salaryStatementService: new SalaryStatementService(context),
-      taxSalaryContextService: new TaxSalaryContextService(context),
-      communicationService: new CommunicationService(context),
       pmsTemplateService: new PmsTemplateService(context),
       cycleService: new CycleService(context),
       assignmentService: new AssignmentService(context),
