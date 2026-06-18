@@ -145,6 +145,20 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.delete(
+    '/:id',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.objectiveService.deleteDraftObjective(id);
+        return reply.send(successResponse('Draft objective deleted successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/:id/submit',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
