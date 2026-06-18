@@ -74,6 +74,7 @@ RUN npm ci --only=production && \
  
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
+<<<<<<< Updated upstream
  
 # Copy templates directory (for runtime template access)
 COPY --from=builder /app/templates ./templates
@@ -81,6 +82,9 @@ COPY --from=builder /app/templates ./templates
 # Copy root-level template files (payslip templates, etc.)
 COPY --from=builder /app/*.docx ./
  
+=======
+
+>>>>>>> Stashed changes
 # Create uploads directory and non-root user for security
 RUN mkdir -p /app/uploads && \
     groupadd -r appuser && useradd -r -g appuser appuser && \

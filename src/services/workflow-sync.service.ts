@@ -3,12 +3,14 @@ import { BaseService } from './base.service';
 import { accessService } from './access.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 import {
+  ObjectiveStatus,
   PmsRole,
   QuarterWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { EmployeeAchievementSubmission, EmployeeAchievementSubmissionStatus } from '../models/pms-employee-achievement-submission.model';
+import { Objective } from '../models/pms-objective.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
@@ -41,6 +43,11 @@ interface WorkflowSyncCandidate {
   skipReason?: SyncSkipReason;
   reason: string;
   windowOverrideApplied?: boolean;
+}
+
+interface ObjectiveSettingCloseCheck {
+  canClose: boolean;
+  reason: string;
 }
 
 export interface WorkflowSyncInput {
@@ -176,6 +183,14 @@ export class WorkflowSyncService extends BaseService {
     quarterCycle: IQuarterCycle | undefined,
     input: WorkflowSyncInput,
   ): Promise<WorkflowSyncResultItem> {
+    if (quarterAssignment.quarterState === QuarterWorkflowState.OBJECTIVE_SETTING_OPEN) {
+      return this.processObjectiveSettingOpenAssignment(
+        quarterAssignment,
+        quarterCycle,
+        input,
+      );
+    }
+
     const candidate = await this.resolveCandidate(quarterAssignment, quarterCycle, {
       ignoreWindowDates: input.ignoreWindowDates === true,
     });
@@ -257,6 +272,157 @@ export class WorkflowSyncService extends BaseService {
     }
   }
 
+  private async processObjectiveSettingOpenAssignment(
+    quarterAssignment: IQuarterAssignment,
+    quarterCycle: IQuarterCycle | undefined,
+    input: WorkflowSyncInput,
+  ): Promise<WorkflowSyncResultItem> {
+    const closeCheck = await this.canAutoCloseObjectiveSetting(quarterAssignment);
+    if (!closeCheck.canClose) {
+      const candidate: WorkflowSyncCandidate = {
+        skipReason: 'OBJECTIVE_SETTING_OPEN',
+        reason: closeCheck.reason,
+      };
+      return {
+        ...this.buildBaseResultItem(quarterAssignment, candidate),
+        status: 'SKIPPED',
+        skipReason: 'OBJECTIVE_SETTING_OPEN',
+        message: closeCheck.reason,
+      };
+    }
+
+    const approvedCandidate = await this.resolveApprovedStateCandidate(
+      quarterCycle,
+      { ignoreWindowDates: input.ignoreWindowDates === true },
+    );
+    const finalCandidate: WorkflowSyncCandidate = approvedCandidate.targetState
+      ? {
+          ...approvedCandidate,
+          reason: `All objectives are approved; objective setting auto-closed during workflow sync. ${approvedCandidate.reason}`,
+        }
+      : {
+          targetState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+          reason: `All objectives are approved; objective setting auto-closed during workflow sync. ${approvedCandidate.reason}`,
+          windowOverrideApplied: false,
+        };
+    const baseItem = this.buildBaseResultItem(quarterAssignment, finalCandidate);
+    const actor = this.requireActor();
+    const closeReason =
+      input.reason?.trim() ||
+      'All objectives are approved; objective setting auto-closed during workflow sync.';
+
+    const closeValidation = workflowService.validateTransition({
+      entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
+      entityId: quarterAssignment._id.toString(),
+      currentState: QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
+      nextState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+      reason: closeReason,
+    });
+
+    if (!closeValidation.allowed) {
+      return {
+        ...baseItem,
+        toState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+        status: 'SKIPPED',
+        skipReason: 'TRANSITION_NOT_ALLOWED',
+        message: closeValidation.message,
+      };
+    }
+
+    if (
+      finalCandidate.targetState &&
+      finalCandidate.targetState !== QuarterWorkflowState.OBJECTIVE_APPROVED
+    ) {
+      const nextValidation = workflowService.validateTransition({
+        entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
+        entityId: quarterAssignment._id.toString(),
+        currentState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+        nextState: finalCandidate.targetState,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+        reason: input.reason?.trim() || finalCandidate.reason,
+      });
+
+      if (!nextValidation.allowed) {
+        return {
+          ...baseItem,
+          status: 'SKIPPED',
+          skipReason: 'TRANSITION_NOT_ALLOWED',
+          message: nextValidation.message,
+        };
+      }
+    }
+
+    if (input.dryRun === true) {
+      return {
+        ...baseItem,
+        status: 'DRY_RUN',
+        message: finalCandidate.reason,
+      };
+    }
+
+    try {
+      await transitionQuarterAssignmentState(
+        quarterAssignment._id.toString(),
+        QuarterWorkflowState.OBJECTIVE_APPROVED,
+        actor,
+        closeReason,
+        'ADMIN_WORKFLOW_SYNC_AUTO_CLOSE',
+        {
+          source: 'ADMIN_MANUAL_SYNC',
+          autoClosedObjectiveSetting: true,
+        },
+      );
+
+      const autoClosedAssignment = await QuarterAssignment.findById(quarterAssignment._id);
+      if (autoClosedAssignment) {
+        autoClosedAssignment.objectiveSettingClosedBy = this.toObjectId(actor.actorId, 'actorId');
+        autoClosedAssignment.objectiveSettingClosedAt = new Date();
+        autoClosedAssignment.objectiveSettingCloseReason = closeReason;
+        autoClosedAssignment.objectiveSettingCloseSource = 'ADMIN';
+        autoClosedAssignment.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+        autoClosedAssignment.version += 1;
+        await autoClosedAssignment.save();
+      }
+
+      if (
+        finalCandidate.targetState &&
+        finalCandidate.targetState !== QuarterWorkflowState.OBJECTIVE_APPROVED
+      ) {
+        await transitionQuarterAssignmentState(
+          quarterAssignment._id.toString(),
+          finalCandidate.targetState,
+          actor,
+          input.reason?.trim() || finalCandidate.reason,
+          'ADMIN_WORKFLOW_SYNC',
+          {
+            source: 'ADMIN_MANUAL_SYNC',
+            windowName: finalCandidate.windowName,
+            windowStart: finalCandidate.windowStart,
+            windowEnd: finalCandidate.windowEnd,
+            windowOverrideApplied: finalCandidate.windowOverrideApplied === true,
+            autoClosedObjectiveSetting: true,
+          },
+        );
+      }
+
+      return {
+        ...baseItem,
+        status: 'UPDATED',
+        message: finalCandidate.reason,
+      };
+    } catch (error) {
+      return {
+        ...baseItem,
+        status: 'FAILED',
+        skipReason: 'FAILED',
+        message: error instanceof Error ? error.message : 'Workflow sync failed',
+      };
+    }
+  }
+
   private async resolveCandidate(
     quarterAssignment: IQuarterAssignment,
     quarterCycle?: IQuarterCycle,
@@ -300,41 +466,7 @@ export class WorkflowSyncService extends BaseService {
     }
 
     if (state === QuarterWorkflowState.OBJECTIVE_APPROVED) {
-      const achievementWindow = quarterCycle.achievementSubmissionWindow;
-      if (achievementWindow?.enabled === true) {
-        if (!ignoreWindowDates && !this.hasWindowStarted(now, achievementWindow)) {
-          return {
-            skipReason: 'NOT_ELIGIBLE',
-            reason: 'Employee achievement submission window has not started.',
-          };
-        }
-        return this.transitionCandidate(
-          QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-          'Employee Achievement Submission Window',
-          achievementWindow,
-          ignoreWindowDates
-            ? 'Employee achievement submission window date bypassed for testing.'
-            : 'Employee achievement submission window is eligible.',
-          ignoreWindowDates,
-        );
-      }
-
-      const managerReviewWindow = quarterCycle.managerReviewWindow;
-      if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
-        return {
-          skipReason: 'NOT_ELIGIBLE',
-          reason: 'Manager review window has not started.',
-        };
-      }
-      return this.transitionCandidate(
-        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
-        'Manager Review Window',
-        managerReviewWindow,
-        ignoreWindowDates
-          ? 'Employee achievement is disabled; manager review window date bypassed for testing.'
-          : 'Employee achievement is disabled; manager review window is eligible.',
-        ignoreWindowDates,
-      );
+      return this.resolveApprovedStateCandidate(quarterCycle, { ignoreWindowDates });
     }
 
     if (state === QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
@@ -425,6 +557,90 @@ export class WorkflowSyncService extends BaseService {
       reason,
       windowOverrideApplied,
     };
+  }
+
+  private async canAutoCloseObjectiveSetting(
+    quarterAssignment: IQuarterAssignment,
+  ): Promise<ObjectiveSettingCloseCheck> {
+    const objectives = await Objective.find({
+      quarterAssignmentId: quarterAssignment._id,
+      isDeleted: false,
+    })
+      .select('title status')
+      .lean();
+
+    if (objectives.length === 0) {
+      return {
+        canClose: false,
+        reason: 'Objective setting is still open and no active objectives were found.',
+      };
+    }
+
+    const pendingObjective = objectives.find(
+      (objective) => objective.status !== ObjectiveStatus.OBJECTIVE_APPROVED,
+    );
+    if (pendingObjective) {
+      return {
+        canClose: false,
+        reason: `Objective setting is still open. Pending objective: ${pendingObjective.title}`,
+      };
+    }
+
+    return {
+      canClose: true,
+      reason: 'All objectives are approved.',
+    };
+  }
+
+  private resolveApprovedStateCandidate(
+    quarterCycle: IQuarterCycle | undefined,
+    options: { ignoreWindowDates?: boolean } = {},
+  ): WorkflowSyncCandidate {
+    const now = this.getCurrentDate();
+    const ignoreWindowDates = options.ignoreWindowDates === true;
+
+    if (!quarterCycle) {
+      return {
+        skipReason: 'NOT_ELIGIBLE',
+        reason: 'Assessment term window configuration was not found.',
+      };
+    }
+
+    const achievementWindow = quarterCycle.achievementSubmissionWindow;
+    if (achievementWindow?.enabled === true) {
+      if (!ignoreWindowDates && !this.hasWindowStarted(now, achievementWindow)) {
+        return {
+          skipReason: 'NOT_ELIGIBLE',
+          reason: 'Employee achievement submission window has not started.',
+        };
+      }
+      return this.transitionCandidate(
+        QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        'Employee Achievement Submission Window',
+        achievementWindow,
+        ignoreWindowDates
+          ? 'Employee achievement submission window date bypassed for testing.'
+          : 'Employee achievement submission window is eligible.',
+        ignoreWindowDates,
+      );
+    }
+
+    const managerReviewWindow = quarterCycle.managerReviewWindow;
+    if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
+      return {
+        skipReason: 'NOT_ELIGIBLE',
+        reason: 'Manager review window has not started.',
+      };
+    }
+    return this.transitionCandidate(
+      QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+      'Manager Review Window',
+      managerReviewWindow,
+      ignoreWindowDates
+        ? 'Employee achievement is disabled; manager review window date bypassed for testing.'
+        : 'Employee achievement is disabled; manager review window is eligible.',
+      ignoreWindowDates,
+    );
   }
 
   private buildBaseResultItem(

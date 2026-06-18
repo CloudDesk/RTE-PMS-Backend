@@ -19,6 +19,7 @@ import { delegationRoutes } from "./delegation.routes";
 import { pmsDashboardRoutes } from "./pmsDashboard.routes";
 import { pmsBulkOperationsRoutes } from "./pmsBulkOperations.routes";
 import { pmsDocumentRoutes } from "./pmsDocument.routes";
+import { publicPmsCleanupRoutes } from "./public-pms-cleanup.routes";
 import mongoose from "mongoose";
 
 export async function routes(fastify: FastifyInstance) {
@@ -43,6 +44,7 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(pmsDashboardRoutes, { prefix: "/pms/dashboard" });
   fastify.register(pmsBulkOperationsRoutes, { prefix: "/pms/bulk" });
   fastify.register(pmsDocumentRoutes, { prefix: "/pms/documents" });
+  fastify.register(publicPmsCleanupRoutes, { prefix: "/public/pms" });
   fastify.get("/test", async (_request, reply) => {
     // Removed verbose logging - use request.log instead if needed
     reply.send("Hello World");
