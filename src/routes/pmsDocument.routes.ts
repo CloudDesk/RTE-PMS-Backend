@@ -78,6 +78,12 @@ export const pmsDocumentRoutes = async (fastify: FastifyInstance) => {
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        if (/file too large/i.test(errorMessage)) {
+          return reply.status(413).send({
+            success: false,
+            error: 'Objective attachments must be less than 1 MB per file.',
+          });
+        }
         request.log.error({ error }, 'PMS document upload failed');
         return reply.status(500).send({
           success: false,

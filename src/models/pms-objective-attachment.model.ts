@@ -6,6 +6,7 @@ export interface IObjectiveAttachment extends Document {
   fileUrl?: string;
   fileType?: string;
   fileSize?: number;
+  documentId?: string;
   uploadedBy?: Types.ObjectId;
   uploadedByRole?: string;
   visibilityRules?: Record<string, unknown>;
@@ -31,6 +32,7 @@ const objectiveAttachmentSchema = new Schema<IObjectiveAttachment>(
     fileUrl: String,
     fileType: String,
     fileSize: Number,
+    documentId: String,
     uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     uploadedByRole: String,
     visibilityRules: { type: Schema.Types.Mixed, default: {} },

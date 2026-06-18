@@ -1,7 +1,12 @@
-import { FastifyInstance, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { Types } from 'mongoose';
 import { authenticate } from '../middleware/auth';
+import { Objective } from '../models/pms-objective.model';
+import { PmsDocument } from '../models/pms-document.model';
+import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
+import { parseMultipartForm } from '../utilis/parseMultiPartForm';
 import type {
   AddObjectiveCommentInput,
   BulkCreateManagerObjectiveInput,
@@ -13,6 +18,8 @@ import type {
   UpdateObjectiveInput,
 } from '../services/objective.service';
 
+const MAX_OBJECTIVE_ATTACHMENT_BYTES = 1024 * 1024;
+
 export const objectiveRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
@@ -21,8 +28,9 @@ export const objectiveRoutes: RouteHandler = async (
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
     async (request, reply) => {
       try {
+        const payload = await resolveObjectivePayloadWithAttachments(request);
         const objective = await request.container!.objectiveService.createObjective(
-          request.body as CreateObjectiveInput,
+          payload as unknown as CreateObjectiveInput,
         );
         return reply.status(201).send(successResponse('Objective created successfully', objective));
       } catch (error: unknown) {
@@ -125,9 +133,10 @@ export const objectiveRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
+        const payload = await resolveObjectivePayloadWithAttachments(request, id);
         const objective = await request.container!.objectiveService.updateObjective(
           id,
-          request.body as UpdateObjectiveInput,
+          payload as unknown as UpdateObjectiveInput,
         );
         return reply.send(successResponse('Objective updated successfully', objective));
       } catch (error: unknown) {
@@ -216,7 +225,139 @@ export const objectiveRoutes: RouteHandler = async (
   );
 };
 
+function isMultipartRequest(request: FastifyRequest) {
+  const contentType = String(request.headers['content-type'] || '');
+  return contentType.toLowerCase().includes('multipart/form-data');
+}
+
+function parseObjectivePayloadField(rawPayload: unknown) {
+  if (!rawPayload) {
+    return {};
+  }
+
+  if (typeof rawPayload === 'object') {
+    return rawPayload as Record<string, unknown>;
+  }
+
+  if (typeof rawPayload !== 'string') {
+    throw new Error('Invalid objective payload');
+  }
+
+  try {
+    return JSON.parse(rawPayload) as Record<string, unknown>;
+  } catch {
+    throw new Error('Invalid objectivePayload JSON');
+  }
+}
+
+async function resolveObjectivePayloadWithAttachments(
+  request: FastifyRequest,
+  objectiveId?: string,
+) {
+  if (!isMultipartRequest(request)) {
+    return request.body as Record<string, unknown>;
+  }
+
+  const uploadedDocumentIds: Types.ObjectId[] = [];
+
+  try {
+    const { body, files } = await parseMultipartForm(request);
+    const payload = parseObjectivePayloadField(
+      body.objectivePayload ?? body.payload ?? body.objective,
+    );
+
+    if (!files.length) {
+      return payload;
+    }
+
+    const oversizedFile = files.find((file) => {
+      const cachedBuffer = (file as any).__cachedBuffer as Buffer | undefined;
+      return (cachedBuffer?.length ?? 0) >= MAX_OBJECTIVE_ATTACHMENT_BYTES;
+    });
+
+    if (oversizedFile) {
+      throw new Error('Objective attachments must be less than 1 MB per file.');
+    }
+
+    const quarterAssignment = await resolveQuarterAssignmentForObjectivePayload(payload, objectiveId);
+    const termLabel = quarterAssignment.termLabel || quarterAssignment.termCode || quarterAssignment.quarterCode;
+    const documentName = `${String(payload.title || 'PMS Objective').trim() || 'PMS Objective'} - ${termLabel}`;
+
+    const uploadedAttachments = [];
+    for (const file of files) {
+      const uploaded = await request.container!.pmsDocumentService.uploadDocument({
+        employeeId: quarterAssignment.employeeId.toString(),
+        cycleId: quarterAssignment.cycleId?.toString(),
+        annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
+        quarterAssignmentId: quarterAssignment._id.toString(),
+        documentType: 'ObjectiveAttachment',
+        documentName,
+        documentDate: new Date(),
+        description: `PMS objective attachment for ${documentName}`,
+        file,
+      });
+
+      if (uploaded.documentId && Types.ObjectId.isValid(uploaded.documentId)) {
+        uploadedDocumentIds.push(new Types.ObjectId(uploaded.documentId));
+      }
+
+      uploadedAttachments.push({
+        documentId: uploaded.documentId?.toString?.() ?? String(uploaded.documentId || ''),
+        fileName: uploaded.fileName,
+        fileUrl: uploaded.fileUrl,
+        fileType: file.mimetype,
+        fileSize: (file as any).__cachedBuffer?.length,
+        uploadedAt: uploaded.uploadedAt,
+      });
+    }
+
+    return {
+      ...payload,
+      attachments: [
+        ...((Array.isArray(payload.attachments) ? payload.attachments : []) as unknown[]),
+        ...uploadedAttachments,
+      ],
+    };
+  } catch (error) {
+    if (uploadedDocumentIds.length > 0) {
+      await PmsDocument.updateMany(
+        { _id: { $in: uploadedDocumentIds } },
+        { $set: { isDeleted: true } },
+      ).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
+async function resolveQuarterAssignmentForObjectivePayload(
+  payload: Record<string, unknown>,
+  objectiveId?: string,
+) {
+  let quarterAssignmentId = typeof payload.quarterAssignmentId === 'string'
+    ? payload.quarterAssignmentId
+    : '';
+
+  if (!quarterAssignmentId && objectiveId) {
+    const objective = await Objective.findById(objectiveId).select('quarterAssignmentId').lean();
+    quarterAssignmentId = objective?.quarterAssignmentId?.toString?.() || '';
+  }
+
+  if (!quarterAssignmentId || !Types.ObjectId.isValid(quarterAssignmentId)) {
+    throw new Error('Valid quarterAssignmentId is required for objective attachments');
+  }
+
+  const quarterAssignment = await QuarterAssignment.findById(quarterAssignmentId).lean();
+  if (!quarterAssignment || quarterAssignment.isDeleted) {
+    throw new Error('Quarter assignment not found for objective attachments');
+  }
+
+  return quarterAssignment;
+}
+
 function sendRouteError(reply: FastifyReply, error: unknown) {
   const message = error instanceof Error ? error.message : 'Unexpected error';
+  if (/file too large|less than 1 MB/i.test(message)) {
+    return reply.status(413).send(errorResponse('PMS_OBJECTIVE_ERROR', 'Objective attachments must be less than 1 MB per file.'));
+  }
   return reply.status(400).send(errorResponse('PMS_OBJECTIVE_ERROR', message));
 }
