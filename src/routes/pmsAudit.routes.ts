@@ -80,7 +80,9 @@ export async function pmsAuditRoutes(fastify: FastifyInstance) {
           const action = String(log.action || '').toUpperCase();
           const isQuarterReviewAction =
             action.includes('QUARTER_REVIEW') ||
-            action.includes('QUARTER_ASSIGNMENT_FINALIZED') ||
+            action.includes('TERM_REVIEW') ||
+            action.includes('TERM_FINALIZED') ||
+            action.includes('TERM_REOPENED') ||
             action.includes('CORRECTION');
           const isAnnualDecisionAction =
             action.includes('ANNUAL_DECISION') ||

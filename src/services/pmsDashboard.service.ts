@@ -252,7 +252,7 @@ export class PmsDashboardService extends BaseService {
       QuarterAssignment.countDocuments(managerQuarterAssignmentQuery),
       QuarterAssignment.countDocuments({
         ...managerQuarterAssignmentQuery,
-        quarterState: 'QUARTER_FINALIZED',
+        quarterState: 'TERM_FINALIZED',
       }),
     ]);
 
@@ -368,7 +368,7 @@ export class PmsDashboardService extends BaseService {
     // 4. Appraisal Readiness (Quarters finalized vs total quarters)
     const [totalQuarters, finalizedQuarters] = await Promise.all([
       QuarterAssignment.countDocuments(qaQuery),
-      QuarterAssignment.countDocuments({ ...qaQuery, quarterState: 'QUARTER_FINALIZED' }),
+      QuarterAssignment.countDocuments({ ...qaQuery, quarterState: 'TERM_FINALIZED' }),
     ]);
 
     const appraisalReadiness = {

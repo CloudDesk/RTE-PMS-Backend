@@ -2,8 +2,12 @@ import { Types } from 'mongoose';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { WorkflowEvent } from '../models/pms-workflow-event.model';
-import { WorkflowEntityType } from '../constants/pms.enums';
+import {
+  QuarterWorkflowState as QuarterWorkflowStateEnum,
+  WorkflowEntityType,
+} from '../constants/pms.enums';
 import { auditService } from './audit.service';
+import { rollupAnnualAssignmentIfAllTermsFinalized } from './annual-term-rollup.service';
 import { workflowService } from './workflow.service';
 import type { QuarterWorkflowState } from '../types/pms.types';
 import type { WorkflowActorContext } from '../types/pms.types';
@@ -73,6 +77,14 @@ export async function transitionQuarterAssignmentState(
     newValue: { quarterState: transition.currentState },
     reason,
   });
+
+  if (updatedQuarterAssignment.quarterState === QuarterWorkflowStateEnum.TERM_FINALIZED) {
+    await rollupAnnualAssignmentIfAllTermsFinalized(
+      updatedQuarterAssignment.annualAssignmentId,
+      actorContext,
+      reason || 'Term finalized; checking annual assignment completion.',
+    );
+  }
 
   return updatedQuarterAssignment;
 }

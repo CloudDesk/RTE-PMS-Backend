@@ -597,7 +597,7 @@ export class QuarterReviewService extends BaseService {
       const finalizedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
         quarterAssignment,
         submittedReview,
-        'PMS_QUARTER_ASSIGNMENT_AUTO_FINALIZED_AFTER_MANAGER_SUBMISSION',
+        'PMS_TERM_AUTO_FINALIZED_AFTER_MANAGER_REVIEW_SUBMISSION',
       );
 
       return {
@@ -710,7 +710,7 @@ export class QuarterReviewService extends BaseService {
     );
 
     await this.audit(
-      'PMS_QUARTER_REVIEW_SUBMITTED',
+      'PMS_TERM_REVIEW_SUBMITTED',
       'QUARTER_REVIEW',
       quarterReview._id.toString(),
       existingReview?.toObject(),
@@ -720,7 +720,7 @@ export class QuarterReviewService extends BaseService {
     const finalizedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
       submittedQuarterAssignment,
       quarterReview,
-      'PMS_QUARTER_ASSIGNMENT_AUTO_FINALIZED_AFTER_MANAGER_SUBMISSION',
+      'PMS_TERM_AUTO_FINALIZED_AFTER_MANAGER_REVIEW_SUBMISSION',
     );
 
     return {
@@ -739,7 +739,7 @@ export class QuarterReviewService extends BaseService {
       quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED &&
       quarterAssignment.quarterState !== QuarterWorkflowState.REOPENED_BY_ADMIN
     ) {
-      throw new Error('Quarter can be finalized only after manager review submission or admin reopen');
+      throw new Error('Term can be finalized only after manager review submission or admin reopen');
     }
 
     const quarterReview = await QuarterReview.findOne({
@@ -754,7 +754,7 @@ export class QuarterReviewService extends BaseService {
     const updatedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
       quarterAssignment,
       quarterReview,
-      'PMS_QUARTER_ASSIGNMENT_FINALIZED',
+      'PMS_TERM_FINALIZED',
     );
 
     return { quarterAssignment: updatedQuarterAssignment };
@@ -771,8 +771,8 @@ export class QuarterReviewService extends BaseService {
       throw new Error('Reopen reason is required');
     }
 
-    if (quarterAssignment.quarterState !== QuarterWorkflowState.QUARTER_FINALIZED) {
-      throw new Error('Only finalized quarters can be reopened');
+    if (quarterAssignment.quarterState !== QuarterWorkflowState.TERM_FINALIZED) {
+      throw new Error('Only finalized terms can be reopened');
     }
 
     const finalizedReviewBeforeReopen = await QuarterReview.findOne({
@@ -807,7 +807,7 @@ export class QuarterReviewService extends BaseService {
     );
 
     await this.audit(
-      'PMS_QUARTER_ASSIGNMENT_REOPENED',
+      'PMS_TERM_REOPENED',
       'QUARTER_ASSIGNMENT',
       updatedQuarterAssignment._id.toString(),
       { quarterState: quarterAssignment.quarterState },
@@ -2098,7 +2098,7 @@ export class QuarterReviewService extends BaseService {
   ): Promise<IQuarterAssignment> {
     const updatedQuarterAssignment = await transitionQuarterAssignmentState(
       quarterAssignment._id.toString(),
-      QuarterWorkflowState.QUARTER_FINALIZED,
+      QuarterWorkflowState.TERM_FINALIZED,
       this.requireActor(),
     );
 

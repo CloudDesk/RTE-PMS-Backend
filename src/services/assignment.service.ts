@@ -565,7 +565,7 @@ export class AssignmentService extends BaseService {
     });
     const mutableQuarters = quarters.filter(
       (quarter) =>
-        quarter.quarterState !== QuarterWorkflowState.QUARTER_FINALIZED &&
+        quarter.quarterState !== QuarterWorkflowState.TERM_FINALIZED &&
         quarter.quarterState !== QuarterWorkflowState.CLOSED_BY_ADMIN,
     );
 
@@ -641,7 +641,7 @@ export class AssignmentService extends BaseService {
     const quarterAssignments = await QuarterAssignment.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
-      quarterState: { $ne: QuarterWorkflowState.QUARTER_FINALIZED },
+      quarterState: { $ne: QuarterWorkflowState.TERM_FINALIZED },
     });
 
     for (const quarterAssignment of quarterAssignments) {

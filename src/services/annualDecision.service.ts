@@ -8,9 +8,9 @@ import {
   AppraisalOutcomeType,
   getAssessmentTerms,
   getDefaultAssessmentTermType,
+  isTermFinalized,
   normalizePmsRole,
   PmsRole,
-  QuarterWorkflowState,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
@@ -57,8 +57,30 @@ type AppraisalWindowConfigInput = {
   durationDays?: number;
 };
 
+type AnnualDecisionAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY' | 'REOPEN';
+type AnnualDecisionGateAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE';
+
+interface AnnualDecisionReadiness {
+  isAppraisalWindowOpen: boolean;
+  quarterProgress: {
+    total: number;
+    completed: number;
+  };
+  allTermsFinalized: boolean;
+  availableActions: AnnualDecisionAction[];
+  lockedReason?: string;
+}
+
 export interface AnnualSummaryResult {
-  annualAssignment: Record<string, unknown> & { isAppraisalWindowOpen: boolean };
+  annualAssignment: Record<string, unknown> & {
+    isAppraisalWindowOpen: boolean;
+    quarterProgress: {
+      total: number;
+      completed: number;
+    };
+    availableActions: AnnualDecisionAction[];
+    lockedReason?: string;
+  };
   quarterAssignments: IQuarterAssignment[];
   objectives: IObjective[];
   quarterReviews: IQuarterReview[];
@@ -108,7 +130,8 @@ export interface AnnualDecisionListItem {
     managerMeritVisible: boolean;
   };
   isAppraisalWindowOpen: boolean;
-  availableActions: Array<'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY' | 'REOPEN'>;
+  availableActions: AnnualDecisionAction[];
+  lockedReason?: string;
 }
 
 export interface SaveDecisionDraftInput {
@@ -240,12 +263,16 @@ export class AnnualDecisionService extends BaseService {
         employeeSnapshot.departmentId ??
         '',
       );
-      const completedQuarters = relatedQuarters.filter(
-        (quarter) =>
-          quarter.quarterState === QuarterWorkflowState.QUARTER_FINALIZED ||
-          quarter.quarterState === QuarterWorkflowState.CLOSED_BY_ADMIN,
-      ).length;
-      const appraisalWindowStatus = await this.getAppraisalWindowStatus(annualAssignment, cycle);
+      const finalDecisionStatus =
+        decision?.decisionStatus ??
+        annualAssignment.finalDecisionStatus ??
+        AnnualDecisionStatus.DRAFT;
+      const readiness = await this.resolveAnnualDecisionReadiness(
+        annualAssignment,
+        relatedQuarters,
+        finalDecisionStatus,
+        cycle,
+      );
 
       return {
         annualAssignmentId: annualAssignment._id.toString(),
@@ -264,11 +291,8 @@ export class AnnualDecisionService extends BaseService {
         managerId: annualAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment.managerSnapshot?.name ?? 'Manager'),
         annualState: annualAssignment.annualState,
-        finalDecisionStatus: decision?.decisionStatus ?? annualAssignment.finalDecisionStatus ?? AnnualDecisionStatus.DRAFT,
-        quarterProgress: {
-          total: annualAssignment.applicableQuarters.length,
-          completed: completedQuarters,
-        },
+        finalDecisionStatus,
+        quarterProgress: readiness.quarterProgress,
         visibility: {
           employeeReviewVisible: annualAssignment.visibility.employeeReviewVisible,
           employeeGradeVisible: annualAssignment.visibility.employeeGradeVisible,
@@ -276,11 +300,9 @@ export class AnnualDecisionService extends BaseService {
           managerGradeVisible: annualAssignment.visibility.managerGradeVisible,
           managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
         },
-        isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
-        availableActions: this.resolveAvailableActions(
-          annualAssignment.finalDecisionStatus ?? decision?.decisionStatus ?? AnnualDecisionStatus.DRAFT,
-          completedQuarters === annualAssignment.applicableQuarters.length,
-        ),
+        isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
+        availableActions: readiness.availableActions,
+        lockedReason: readiness.lockedReason,
       };
     }));
 
@@ -294,6 +316,7 @@ export class AnnualDecisionService extends BaseService {
     const quarterAssignments = await QuarterAssignment.find({
       annualAssignmentId: annualAssignment._id,
       quarterCode: { $in: annualAssignment.applicableQuarters },
+      isDeleted: false,
     }).sort({ quarterCode: 1 });
 
     const quarterAssignmentIds = quarterAssignments.map((quarterAssignment) => quarterAssignment._id);
@@ -305,8 +328,17 @@ export class AnnualDecisionService extends BaseService {
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
     ]);
-    const appraisalWindowStatus = await this.getAppraisalWindowStatus(annualAssignment, cycle ?? undefined);
     const calculatedFinalScore = await this.tryCalculateAnnualFinalScore(annualAssignment);
+    const finalDecisionStatus =
+      annualDecision?.decisionStatus ??
+      annualAssignment.finalDecisionStatus ??
+      AnnualDecisionStatus.DRAFT;
+    const readiness = await this.resolveAnnualDecisionReadiness(
+      annualAssignment,
+      quarterAssignments,
+      finalDecisionStatus,
+      cycle ?? undefined,
+    );
 
     const annualDecisionValues = annualDecision
       ? await AnnualDecisionValue.find({
@@ -355,7 +387,11 @@ export class AnnualDecisionService extends BaseService {
     return {
       annualAssignment: {
         ...annualAssignment.toObject(),
-        isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
+        finalDecisionStatus,
+        isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
+        quarterProgress: readiness.quarterProgress,
+        availableActions: readiness.availableActions,
+        lockedReason: readiness.lockedReason,
       },
       quarterAssignments,
       objectives,
@@ -391,15 +427,18 @@ export class AnnualDecisionService extends BaseService {
   ): Promise<IAnnualDecision> {
     this.assertDecisionAdmin('annualDecision.draft');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
-    await this.assertAllQuartersComplete(annualAssignment._id);
-    await this.assertAppraisalWindowOpen(annualAssignment);
     const existingDecision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
     });
-
     if (existingDecision?.frozenAt || existingDecision?.decisionStatus === AnnualDecisionStatus.FROZEN) {
       throw new Error('Frozen annual decision cannot be edited');
     }
+
+    await this.assertAnnualDecisionGate(
+      annualAssignment,
+      'SAVE_DRAFT',
+      existingDecision?.decisionStatus ?? annualAssignment.finalDecisionStatus ?? AnnualDecisionStatus.DRAFT,
+    );
 
     const appraisalOutcomeType = this.deriveOutcome(
       input.isGradeApplied,
@@ -471,8 +510,6 @@ export class AnnualDecisionService extends BaseService {
   async submitDecision(annualAssignmentId: string): Promise<IAnnualDecision> {
     this.assertDecisionAdmin('annualDecision.submit');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
-    await this.assertAllQuartersComplete(annualAssignment._id);
-    await this.assertAppraisalWindowOpen(annualAssignment);
     const decision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
     });
@@ -484,6 +521,11 @@ export class AnnualDecisionService extends BaseService {
     if (decision.decisionStatus !== AnnualDecisionStatus.DRAFT) {
       throw new Error('Only draft annual decisions can be submitted');
     }
+    await this.assertAnnualDecisionGate(
+      annualAssignment,
+      'SUBMIT',
+      decision.decisionStatus,
+    );
 
     const annualDecisionValues = await AnnualDecisionValue.find({
       annualDecisionId: decision._id,
@@ -534,8 +576,6 @@ export class AnnualDecisionService extends BaseService {
   async freezeDecision(annualAssignmentId: string): Promise<IAnnualDecision> {
     this.assertDecisionAdmin('annualDecision.freeze');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
-    await this.assertAllQuartersComplete(annualAssignment._id);
-    await this.assertAppraisalWindowOpen(annualAssignment);
 
     const decision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
@@ -552,6 +592,11 @@ export class AnnualDecisionService extends BaseService {
     if (decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
       throw new Error('Annual decision must be submitted before freeze');
     }
+    await this.assertAnnualDecisionGate(
+      annualAssignment,
+      'FREEZE',
+      decision.decisionStatus,
+    );
 
     const previousValue = decision.toObject();
     decision.decisionStatus = AnnualDecisionStatus.FROZEN;
@@ -956,13 +1001,92 @@ export class AnnualDecisionService extends BaseService {
     return AppraisalOutcomeType.NIL;
   }
 
-  private resolveAvailableActions(
+  private async assertAnnualDecisionGate(
+    annualAssignment: IAnnualAssignment,
+    action: AnnualDecisionGateAction,
     finalDecisionStatus: string,
-    allQuartersComplete: boolean,
-  ): Array<'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY' | 'REOPEN'> {
-    if (!allQuartersComplete) {
-      return [];
+  ): Promise<void> {
+    const quarterAssignments = await QuarterAssignment.find({
+      annualAssignmentId: annualAssignment._id,
+      quarterCode: { $in: annualAssignment.applicableQuarters },
+      isDeleted: false,
+    }).select('quarterCode quarterState');
+    const readiness = await this.resolveAnnualDecisionReadiness(
+      annualAssignment,
+      quarterAssignments,
+      finalDecisionStatus,
+    );
+
+    if (!readiness.availableActions.includes(action)) {
+      throw new Error(
+        readiness.lockedReason ??
+        `Annual decision action ${action} is not available in the current state`,
+      );
     }
+  }
+
+  private async resolveAnnualDecisionReadiness(
+    annualAssignment: Pick<IAnnualAssignment, '_id' | 'cycleId' | 'applicableQuarters' | 'annualState'>,
+    quarterAssignments: Array<Pick<IQuarterAssignment, 'quarterCode' | 'quarterState'>>,
+    finalDecisionStatus: string,
+    cycleOverride?: IAnnualCycle | null,
+  ): Promise<AnnualDecisionReadiness> {
+    const applicableTerms = annualAssignment.applicableQuarters ?? [];
+    const termByCode = new Map(
+      quarterAssignments.map((quarterAssignment) => [
+        quarterAssignment.quarterCode,
+        quarterAssignment,
+      ]),
+    );
+    const completedTerms = applicableTerms.filter((termCode) => {
+      const termAssignment = termByCode.get(termCode);
+      return termAssignment ? isTermFinalized(termAssignment.quarterState) : false;
+    }).length;
+    const allTermsFinalized =
+      applicableTerms.length > 0 &&
+      completedTerms === applicableTerms.length;
+    const appraisalWindowStatus = await this.getAppraisalWindowStatus(
+      annualAssignment as IAnnualAssignment,
+      cycleOverride,
+    );
+    const annualState = String(annualAssignment.annualState ?? '');
+    const availableActions = this.resolveAvailableActions({
+      annualState,
+      finalDecisionStatus,
+      allTermsFinalized,
+      isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
+    });
+
+    return {
+      isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
+      quarterProgress: {
+        total: applicableTerms.length,
+        completed: completedTerms,
+      },
+      allTermsFinalized,
+      availableActions,
+      lockedReason: this.resolveAnnualDecisionLockedReason({
+        annualState,
+        finalDecisionStatus,
+        allTermsFinalized,
+        isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
+        availableActions,
+      }),
+    };
+  }
+
+  private resolveAvailableActions(input: {
+    annualState: string;
+    finalDecisionStatus: string;
+    allTermsFinalized: boolean;
+    isAppraisalWindowOpen: boolean;
+  }): AnnualDecisionAction[] {
+    const {
+      annualState,
+      finalDecisionStatus,
+      allTermsFinalized,
+      isAppraisalWindowOpen,
+    } = input;
 
     if (finalDecisionStatus === AnnualDecisionStatus.VISIBILITY_ENABLED) {
       return ['UPDATE_VISIBILITY', 'REOPEN'];
@@ -972,11 +1096,81 @@ export class AnnualDecisionService extends BaseService {
       return ['UPDATE_VISIBILITY', 'REOPEN'];
     }
 
+    if (!allTermsFinalized) {
+      return [];
+    }
+
+    if (!isAppraisalWindowOpen) {
+      return [];
+    }
+
     if (finalDecisionStatus === AnnualDecisionStatus.SUBMITTED) {
+      if (annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED) {
+        return [];
+      }
       return ['FREEZE'];
     }
 
+    if (
+      finalDecisionStatus !== AnnualDecisionStatus.DRAFT ||
+      (
+        annualState !== AnnualWorkflowState.ALL_TERMS_FINALIZED &&
+        annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT
+      )
+    ) {
+      return [];
+    }
+
     return ['SAVE_DRAFT', 'SUBMIT'];
+  }
+
+  private resolveAnnualDecisionLockedReason(input: {
+    annualState: string;
+    finalDecisionStatus: string;
+    allTermsFinalized: boolean;
+    isAppraisalWindowOpen: boolean;
+    availableActions: AnnualDecisionAction[];
+  }): string | undefined {
+    const {
+      annualState,
+      finalDecisionStatus,
+      allTermsFinalized,
+      isAppraisalWindowOpen,
+      availableActions,
+    } = input;
+
+    if (availableActions.length > 0) {
+      return undefined;
+    }
+
+    if (!allTermsFinalized) {
+      return 'Waiting for all terms to be finalized.';
+    }
+
+    if (!isAppraisalWindowOpen && finalDecisionStatus !== AnnualDecisionStatus.FROZEN) {
+      return 'All terms are finalized. Appraisal window is not open.';
+    }
+
+    if (finalDecisionStatus === AnnualDecisionStatus.SUBMITTED) {
+      return 'Annual decision is submitted, but annual assignment state is not ready for freeze.';
+    }
+
+    if (
+      finalDecisionStatus === AnnualDecisionStatus.FROZEN ||
+      finalDecisionStatus === AnnualDecisionStatus.VISIBILITY_ENABLED
+    ) {
+      return undefined;
+    }
+
+    if (
+      finalDecisionStatus === AnnualDecisionStatus.DRAFT &&
+      annualState !== AnnualWorkflowState.ALL_TERMS_FINALIZED &&
+      annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT
+    ) {
+      return 'Annual assignment is not ready for decision draft.';
+    }
+
+    return 'Annual decision is not available in the current state.';
   }
 
   private validateDecisionInput(
@@ -1042,11 +1236,6 @@ export class AnnualDecisionService extends BaseService {
   private async calculateAnnualFinalScore(
     annualAssignment: IAnnualAssignment,
   ): Promise<number> {
-    const completedStates = new Set<QuarterWorkflowState>([
-      QuarterWorkflowState.QUARTER_FINALIZED,
-      QuarterWorkflowState.CLOSED_BY_ADMIN,
-    ]);
-
     const quarterAssignments = await QuarterAssignment.find({
       annualAssignmentId: annualAssignment._id,
       quarterCode: { $in: annualAssignment.applicableQuarters },
@@ -1055,8 +1244,8 @@ export class AnnualDecisionService extends BaseService {
 
     const quarterScores: Record<string, number> = {};
     for (const quarter of quarterAssignments) {
-      if (!completedStates.has(quarter.quarterState as QuarterWorkflowState)) {
-        throw new Error('Annual final score is blocked until all applicable quarters are finalized or closed');
+      if (!isTermFinalized(quarter.quarterState)) {
+        throw new Error('Annual final score is blocked until all applicable terms are finalized or closed');
       }
 
       if (!Number.isFinite(Number(quarter.quarterScore))) {
@@ -1494,17 +1683,15 @@ export class AnnualDecisionService extends BaseService {
       quarterCode: { $in: annualAssignment.applicableQuarters },
     });
     if (quarterAssignments.length === 0) {
-      throw new Error('No quarter assignments found for annual assignment');
+      throw new Error('No term assignments found for annual assignment');
     }
 
-    const incompleteQuarter = quarterAssignments.find(
-      (quarterAssignment) =>
-        quarterAssignment.quarterState !== QuarterWorkflowState.QUARTER_FINALIZED &&
-        quarterAssignment.quarterState !== QuarterWorkflowState.CLOSED_BY_ADMIN,
+    const incompleteTerm = quarterAssignments.find(
+      (quarterAssignment) => !isTermFinalized(quarterAssignment.quarterState),
     );
 
-    if (incompleteQuarter) {
-      throw new Error('Annual decision is blocked until all applicable quarters are finalized or closed');
+    if (incompleteTerm) {
+      throw new Error('Annual decision is blocked until all applicable terms are finalized or closed');
     }
   }
 
@@ -1533,7 +1720,7 @@ export class AnnualDecisionService extends BaseService {
 
     const allQuartersCompletedAt = await this.getAllQuartersCompletedAt(annualAssignment);
     if (!allQuartersCompletedAt) {
-      throw new Error('Annual appraisal window is blocked until all applicable quarters are finalized or closed');
+      throw new Error('Annual appraisal window is blocked until all applicable terms are finalized or closed');
     }
 
     const relativeBaseDate = await this.resolveRelativeAppraisalBaseDate(
@@ -1612,11 +1799,6 @@ export class AnnualDecisionService extends BaseService {
   private async getAllQuartersCompletedAt(
     annualAssignment: IAnnualAssignment,
   ): Promise<Date | null> {
-    const completedStates = new Set<QuarterWorkflowState>([
-      QuarterWorkflowState.QUARTER_FINALIZED,
-      QuarterWorkflowState.CLOSED_BY_ADMIN,
-    ]);
-
     const quarterAssignments = await QuarterAssignment.find({
       annualAssignmentId: annualAssignment._id,
       quarterCode: { $in: annualAssignment.applicableQuarters },
@@ -1629,7 +1811,7 @@ export class AnnualDecisionService extends BaseService {
 
     let completedAt = new Date(0);
     for (const quarterAssignment of quarterAssignments) {
-      if (!completedStates.has(quarterAssignment.quarterState as QuarterWorkflowState)) {
+      if (!isTermFinalized(quarterAssignment.quarterState)) {
         return null;
       }
 

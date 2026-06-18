@@ -100,7 +100,7 @@ const FORWARD_STATE_ORDER: QuarterWorkflowStateType[] = [
   QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
   QuarterWorkflowState.MANAGER_REVIEW_OPEN,
   QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
-  QuarterWorkflowState.QUARTER_FINALIZED,
+  QuarterWorkflowState.TERM_FINALIZED,
   QuarterWorkflowState.CLOSED_BY_ADMIN,
 ];
 
@@ -515,7 +515,7 @@ export class WorkflowSyncService extends BaseService {
       }
 
       return this.transitionCandidate(
-        QuarterWorkflowState.QUARTER_FINALIZED,
+        QuarterWorkflowState.TERM_FINALIZED,
         'Finalization Window',
         finalizationWindow,
         ignoreWindowDates
@@ -527,7 +527,7 @@ export class WorkflowSyncService extends BaseService {
 
     if (
       state === QuarterWorkflowState.MANAGER_REVIEW_OPEN ||
-      state === QuarterWorkflowState.QUARTER_FINALIZED ||
+      state === QuarterWorkflowState.TERM_FINALIZED ||
       state === QuarterWorkflowState.CLOSED_BY_ADMIN
     ) {
       return {
