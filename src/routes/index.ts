@@ -17,6 +17,7 @@ import { pmsAuditRoutes } from "./pmsAudit.routes";
 import { pmsSlaRoutes } from "./pmsSla.routes";
 import { delegationRoutes } from "./delegation.routes";
 import { pmsDashboardRoutes } from "./pmsDashboard.routes";
+import { pmsManagementEmployeeRoutes } from "./pmsManagementEmployee.routes";
 import { pmsBulkOperationsRoutes } from "./pmsBulkOperations.routes";
 import { pmsDocumentRoutes } from "./pmsDocument.routes";
 import { publicPmsCleanupRoutes } from "./public-pms-cleanup.routes";
@@ -42,6 +43,7 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(pmsSlaRoutes, { prefix: "/pms/sla" });
   fastify.register(delegationRoutes, { prefix: "/pms/delegations" });
   fastify.register(pmsDashboardRoutes, { prefix: "/pms/dashboard" });
+  fastify.register(pmsManagementEmployeeRoutes, { prefix: "/pms/management" });
   fastify.register(pmsBulkOperationsRoutes, { prefix: "/pms/bulk" });
   fastify.register(pmsDocumentRoutes, { prefix: "/pms/documents" });
   fastify.register(publicPmsCleanupRoutes, { prefix: "/public/pms" });

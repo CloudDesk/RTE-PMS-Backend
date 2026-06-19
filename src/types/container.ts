@@ -13,6 +13,7 @@ import { AnnualDecisionService } from '../services/annualDecision.service';
 import { PmsCommunicationService } from '../services/pmsCommunication.service';
 import { DelegationService } from '../services/delegation.service';
 import { PmsDashboardService } from '../services/pmsDashboard.service';
+import { PmsManagementEmployeeService } from '../services/pmsManagementEmployee.service';
 import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
 import { WorkflowSyncService } from '../services/workflow-sync.service';
 import { PmsDocumentService } from '../services/pms-document.service';
@@ -33,6 +34,7 @@ export interface ServiceContainer {
   pmsCommunicationService: PmsCommunicationService;
   delegationService: DelegationService;
   pmsDashboardService: PmsDashboardService;
+  pmsManagementEmployeeService: PmsManagementEmployeeService;
   pmsBulkOperationsService: PmsBulkOperationsService;
   workflowSyncService: WorkflowSyncService;
   pmsDocumentService: PmsDocumentService;

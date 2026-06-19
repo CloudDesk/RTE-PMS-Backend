@@ -95,6 +95,7 @@ export interface AnnualSummaryResult {
 
 export interface AnnualDecisionListQuery {
   cycleId?: string;
+  employeeId?: string;
   search?: string;
   finalDecisionStatus?: string;
   annualState?: string;
@@ -190,6 +191,10 @@ export class AnnualDecisionService extends BaseService {
 
     if (query.cycleId?.trim()) {
       filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
+    }
+
+    if (query.employeeId?.trim()) {
+      filter.employeeId = this.toObjectId(query.employeeId, 'employeeId');
     }
 
     if (query.finalDecisionStatus && query.finalDecisionStatus !== 'ALL') {
