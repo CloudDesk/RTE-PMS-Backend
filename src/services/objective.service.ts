@@ -182,8 +182,13 @@ type ObjectiveConfig = {
     description?: string;
     kpi?: string;
     targetValue?: string;
+    dueDate?: string;
     weightage?: number;
     successCriteria?: string;
+    attachmentAllowed?: boolean;
+    applyToAllQuarters?: boolean;
+    editable?: boolean;
+    isActive?: boolean;
     applicableQuarters?: AssessmentTermCodeValue[];
   }>;
   objectiveBuckets: IObjectiveBucket[];
@@ -1616,6 +1621,9 @@ export class ObjectiveService extends BaseService {
       let nextObjectiveNo = maxObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 0;
 
       for (const predefinedObjective of objectiveConfig.predefinedObjectives) {
+        if (predefinedObjective.isActive === false) {
+          continue;
+        }
         if (
           !this.matchesPredefinedObjectiveQuarter(
             quarterAssignment.quarterCode,
@@ -1635,6 +1643,9 @@ export class ObjectiveService extends BaseService {
 
         nextObjectiveNo += 1;
         existingKeys.add(predefinedObjective.key);
+        const predefinedDueDate = predefinedObjective.dueDate
+          ? new Date(predefinedObjective.dueDate)
+          : undefined;
 
         objectivePayloads.push({
           quarterAssignmentId: quarterAssignment._id,
@@ -1652,6 +1663,10 @@ export class ObjectiveService extends BaseService {
           description: predefinedObjective.description,
           targetMetric: predefinedObjective.kpi,
           targetValue: predefinedObjective.targetValue,
+          targetDate:
+            predefinedDueDate && !Number.isNaN(predefinedDueDate.getTime())
+              ? predefinedDueDate
+              : undefined,
           weightage: predefinedObjective.weightage,
           successCriteria: predefinedObjective.successCriteria,
           status: ObjectiveStatus.OBJECTIVE_APPROVED,
@@ -1800,8 +1815,13 @@ export class ObjectiveService extends BaseService {
           description: objective.description,
           kpi: objective.kpi,
           targetValue: objective.targetValue,
+          dueDate: objective.dueDate,
           weightage: objective.weightage,
           successCriteria: objective.successCriteria,
+          attachmentAllowed: objective.attachmentAllowed === true,
+          applyToAllQuarters: objective.applyToAllQuarters !== false,
+          editable: objective.editable !== false,
+          isActive: objective.isActive !== false,
           applicableQuarters: this.normalizeScopedQuarters(
             objective.quarterScope ?? objective.applicableQuarters ?? objective.repeatFor,
           ),

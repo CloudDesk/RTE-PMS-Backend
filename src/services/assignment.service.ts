@@ -1055,6 +1055,9 @@ export class AssignmentService extends BaseService {
       let nextObjectiveNo = nextObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 1;
 
       for (const predefinedObjective of config.predefinedObjectives) {
+        if (predefinedObjective.isActive === false) {
+          continue;
+        }
         if (!this.matchesPredefinedObjectiveQuarter(quarterAssignment.quarterCode, predefinedObjective.applicableQuarters)) {
           continue;
         }
@@ -1066,6 +1069,13 @@ export class AssignmentService extends BaseService {
         if (existingKeys.has(templateObjectiveKey)) {
           continue;
         }
+        const predefinedDueDate = predefinedObjective.dueDate
+          ? new Date(predefinedObjective.dueDate)
+          : undefined;
+        const targetDate =
+          predefinedDueDate && !Number.isNaN(predefinedDueDate.getTime())
+            ? predefinedDueDate
+            : defaultDueDate;
 
         objectivePayloads.push({
           quarterAssignmentId: quarterAssignment._id,
@@ -1083,7 +1093,7 @@ export class AssignmentService extends BaseService {
           description: predefinedObjective.description,
           targetMetric: predefinedObjective.kpi,
           targetValue: predefinedObjective.targetValue,
-          targetDate: defaultDueDate,
+          targetDate,
           weightage: predefinedObjective.weightage,
           successCriteria: predefinedObjective.successCriteria,
           status: ObjectiveStatus.OBJECTIVE_APPROVED,
@@ -1182,8 +1192,13 @@ export class AssignmentService extends BaseService {
           description: objective.description,
           kpi: objective.kpi,
           targetValue: objective.targetValue,
+          dueDate: objective.dueDate,
           weightage: objective.weightage,
           successCriteria: objective.successCriteria,
+          attachmentAllowed: objective.attachmentAllowed === true,
+          applyToAllQuarters: objective.applyToAllQuarters !== false,
+          editable: objective.editable !== false,
+          isActive: objective.isActive !== false,
           applicableQuarters: this.normalizeScopedQuarters(
             objective.quarterScope ?? objective.applicableQuarters ?? objective.repeatFor,
           ),

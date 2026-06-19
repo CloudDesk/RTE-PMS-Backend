@@ -1077,6 +1077,7 @@ export class PmsTemplateService extends BaseService {
       mode,
       allowEmployeeCreated: config.allowEmployeeCreated !== false,
       allowManagerCreated: config.allowManagerCreated !== false,
+      managerCreatedAutoApprove: config.managerCreatedAutoApprove !== false,
       predefinedObjectives: Array.isArray(config.predefinedObjectives)
         ? config.predefinedObjectives.map((objective: Record<string, any>) => ({
           objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
@@ -1084,11 +1085,31 @@ export class PmsTemplateService extends BaseService {
           description: objective.description ? String(objective.description) : undefined,
           kpi: objective.kpi ? String(objective.kpi) : undefined,
           targetValue: objective.targetValue ? String(objective.targetValue) : undefined,
+          dueDate: objective.dueDate ? String(objective.dueDate) : undefined,
           weightage:
             objective.weightage === undefined || objective.weightage === ''
               ? undefined
               : Number(objective.weightage),
           successCriteria: objective.successCriteria ? String(objective.successCriteria) : undefined,
+          attachmentAllowed: objective.attachmentAllowed === true,
+          applyToAllQuarters: objective.applyToAllQuarters !== false,
+          editable: objective.editable !== false,
+          isActive: objective.isActive !== false,
+          quarterScope: Array.isArray(objective.quarterScope)
+            ? objective.quarterScope.filter((quarter: unknown) =>
+              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+            )
+            : undefined,
+          applicableQuarters: Array.isArray(objective.applicableQuarters)
+            ? objective.applicableQuarters.filter((quarter: unknown) =>
+              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+            )
+            : undefined,
+          repeatFor: Array.isArray(objective.repeatFor)
+            ? objective.repeatFor.filter((quarter: unknown) =>
+              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+            )
+            : undefined,
         }))
         : [],
     };

@@ -31,8 +31,13 @@ export interface ITemplatePredefinedObjective {
   description?: string;
   kpi?: string;
   targetValue?: string;
+  dueDate?: string;
   weightage?: number;
   successCriteria?: string;
+  attachmentAllowed?: boolean;
+  applyToAllQuarters?: boolean;
+  editable?: boolean;
+  isActive?: boolean;
   quarterScope?: AssessmentTermCodeType[];
   applicableQuarters?: AssessmentTermCodeType[];
   repeatFor?: AssessmentTermCodeType[];
@@ -42,6 +47,7 @@ export interface ITemplateObjectiveConfig {
   mode: 'PREDEFINED' | 'DYNAMIC' | 'HYBRID';
   allowEmployeeCreated?: boolean;
   allowManagerCreated?: boolean;
+  managerCreatedAutoApprove?: boolean;
   predefinedObjectives?: ITemplatePredefinedObjective[];
 }
 
@@ -170,8 +176,13 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
     description: { type: String, trim: true },
     kpi: { type: String, trim: true },
     targetValue: { type: String, trim: true },
+    dueDate: { type: String, trim: true },
     weightage: { type: Number, min: 0, max: 100 },
     successCriteria: { type: String, trim: true },
+    attachmentAllowed: { type: Boolean, default: false },
+    applyToAllQuarters: { type: Boolean, default: true },
+    editable: { type: Boolean, default: true },
+    isActive: { type: Boolean, default: true },
     quarterScope: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
@@ -197,6 +208,7 @@ const objectiveConfigSchema = new Schema<ITemplateObjectiveConfig>(
     },
     allowEmployeeCreated: { type: Boolean, default: true },
     allowManagerCreated: { type: Boolean, default: true },
+    managerCreatedAutoApprove: { type: Boolean, default: true },
     predefinedObjectives: { type: [predefinedObjectiveSchema], default: [] },
   },
   { _id: false },
