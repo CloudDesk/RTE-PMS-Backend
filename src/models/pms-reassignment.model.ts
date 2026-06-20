@@ -9,8 +9,12 @@ export interface IReassignment extends Document {
   effectiveFrom: Date;
   appliesTo: string;
   reason: string;
+  status: 'ACTIVE' | 'CANCELLED';
   approvedBy?: Types.ObjectId;
   approvedAt?: Date;
+  cancelledBy?: Types.ObjectId;
+  cancelledAt?: Date;
+  cancelReason?: string;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -66,11 +70,26 @@ const reassignmentSchema = new Schema<IReassignment>(
       required: true,
       trim: true,
     },
+    status: {
+      type: String,
+      enum: ['ACTIVE', 'CANCELLED'],
+      default: 'ACTIVE',
+      index: true,
+    },
     approvedBy: {
       type: Schema.Types.ObjectId,
       ref: 'User',
     },
     approvedAt: Date,
+    cancelledBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    cancelledAt: Date,
+    cancelReason: {
+      type: String,
+      trim: true,
+    },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },

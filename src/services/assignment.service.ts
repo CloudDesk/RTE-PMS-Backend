@@ -21,6 +21,7 @@ import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AssignmentExceptionQueue } from '../models/pms-assignment-exception-queue.model';
+import { AuditLog } from '../models/audit-log.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
@@ -34,6 +35,7 @@ import { User } from '../models/user.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
+import { emailService } from './email.service';
 import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
@@ -104,6 +106,10 @@ export interface ReassignManagerInput {
   managerId: string;
   reason: string;
   applicableQuarters?: QuarterCode[];
+}
+
+export interface CancelReassignmentInput {
+  reason: string;
 }
 
 export interface AssignmentStateInput {
@@ -539,6 +545,7 @@ export class AssignmentService extends BaseService {
       .populate('fromManagerId', 'name email employeeCode')
       .populate('toManagerId', 'name email employeeCode')
       .populate('approvedBy', 'name email employeeCode')
+      .populate('cancelledBy', 'name email employeeCode')
       .sort({ effectiveFrom: -1, createdAt: -1 })
       .lean();
   }
@@ -563,9 +570,12 @@ export class AssignmentService extends BaseService {
       throw new Error('New manager must be different from current manager');
     }
 
-    const [, manager] = await Promise.all([
+    const [employee, manager, previousManager] = await Promise.all([
       User.findById(annualAssignment.employeeId).lean(),
       User.findById(newManagerId)
+        .select('employeeCode name email role specificRole departmentId location')
+        .lean(),
+      User.findById(annualAssignment.assignedManagerId)
         .select('employeeCode name email role specificRole departmentId location')
         .lean(),
     ]);
@@ -654,6 +664,14 @@ export class AssignmentService extends BaseService {
       },
     );
 
+    void this.sendReassignmentEmails({
+      employee,
+      previousManager,
+      newManager: manager,
+      reason: input.reason.trim(),
+      reassignedAt: reassignment.effectiveFrom,
+    });
+
     return {
       annualAssignment,
       reassignment,
@@ -661,6 +679,153 @@ export class AssignmentService extends BaseService {
       preservedQuarterAssignments: quarters.filter(
         (quarter) => !mutableQuarters.some((mutable) => mutable._id.equals(quarter._id)),
       ),
+    };
+  }
+
+  async cancelReassignment(
+    assignmentId: string,
+    reassignmentId: string,
+    input: CancelReassignmentInput,
+  ): Promise<{
+    annualAssignment: IAnnualAssignment;
+    reassignment: unknown;
+    updatedQuarterAssignments: IQuarterAssignment[];
+  }> {
+    await this.assertAdmin('assignment.reassignManager');
+    if (!input.reason?.trim()) {
+      throw new Error('Cancellation reason is required');
+    }
+
+    const annualAssignment = await this.getAnnualAssignment(assignmentId);
+    const reassignment = await Reassignment.findOne({
+      _id: this.toObjectId(reassignmentId, 'reassignmentId'),
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+      $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }],
+    });
+
+    if (!reassignment) {
+      throw new Error('Active reassignment record not found');
+    }
+
+    if (annualAssignment.assignedManagerId.toString() !== reassignment.toManagerId.toString()) {
+      throw new Error('Only the current active reassignment can be cancelled');
+    }
+
+    const newerActiveReassignment = await Reassignment.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+      _id: { $ne: reassignment._id },
+      effectiveFrom: { $gt: reassignment.effectiveFrom },
+      $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }],
+    }).lean();
+
+    if (newerActiveReassignment) {
+      throw new Error('This reassignment is not the latest active manager change');
+    }
+
+    const newManagerActivity = await AuditLog.findOne({
+      assignmentId: annualAssignment._id,
+      actorId: reassignment.toManagerId,
+      timestamp: { $gte: reassignment.effectiveFrom },
+      action: {
+        $nin: [
+          'PMS_ASSIGNMENT_MANAGER_REASSIGNED',
+          'PMS_ASSIGNMENT_REASSIGNMENT_CANCELLED',
+        ],
+      },
+    }).lean();
+
+    if (newManagerActivity) {
+      throw new Error(
+        'Reassignment cannot be cancelled because the new manager has already performed PMS actions. Please reassign back to the previous manager instead.',
+      );
+    }
+
+    const previousAssignment = annualAssignment.toObject();
+    const previousReassignment = reassignment.toObject();
+    const [employee, previousManager, removedManager] = await Promise.all([
+      User.findById(annualAssignment.employeeId).lean(),
+      User.findById(reassignment.fromManagerId)
+        .select('employeeCode name email role specificRole departmentId location')
+        .lean(),
+      User.findById(reassignment.toManagerId)
+        .select('employeeCode name email role specificRole departmentId location')
+        .lean(),
+    ]);
+
+    if (!previousManager) {
+      throw new Error('Previous manager not found');
+    }
+
+    const quarterAssignments = await QuarterAssignment.find({
+      annualAssignmentId: annualAssignment._id,
+      assignedManagerId: reassignment.toManagerId,
+      isDeleted: false,
+      quarterState: {
+        $nin: [
+          QuarterWorkflowState.TERM_FINALIZED,
+          QuarterWorkflowState.CLOSED_BY_ADMIN,
+        ],
+      },
+    });
+
+    for (const quarter of quarterAssignments) {
+      quarter.assignedManagerId = reassignment.fromManagerId;
+      quarter.updatedBy = this.actorIdObject();
+      quarter.version += 1;
+      await quarter.save();
+    }
+
+    annualAssignment.assignedManagerId = reassignment.fromManagerId;
+    annualAssignment.managerSnapshot = {
+      managerId: previousManager._id,
+      employeeCode: previousManager.employeeCode,
+      name: previousManager.name,
+      email: previousManager.email,
+      role: previousManager.role,
+      specificRole: previousManager.specificRole,
+    };
+    annualAssignment.updatedBy = this.actorIdObject();
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+
+    reassignment.status = 'CANCELLED';
+    reassignment.cancelReason = input.reason.trim();
+    reassignment.cancelledBy = this.actorIdObject();
+    reassignment.cancelledAt = new Date();
+    reassignment.updatedBy = this.actorIdObject();
+    reassignment.version += 1;
+    await reassignment.save();
+
+    await this.audit(
+      'PMS_ASSIGNMENT_REASSIGNMENT_CANCELLED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignment._id.toString(),
+      {
+        annualAssignment: previousAssignment,
+        reassignment: previousReassignment,
+      },
+      {
+        annualAssignment,
+        reassignment,
+        restoredQuarterAssignmentIds: quarterAssignments.map((quarter) => quarter._id),
+      },
+      input.reason.trim(),
+    );
+
+    void this.sendReassignmentCancelledEmails({
+      employee,
+      restoredManager: previousManager,
+      removedManager,
+      reason: input.reason.trim(),
+      cancelledAt: reassignment.cancelledAt || new Date(),
+    });
+
+    return {
+      annualAssignment,
+      reassignment,
+      updatedQuarterAssignments: quarterAssignments,
     };
   }
 
@@ -1634,6 +1799,91 @@ export class AssignmentService extends BaseService {
       actorId: user._id.toString(),
       actorRole: user.role,
     };
+  }
+
+  private async sendReassignmentEmails(input: {
+    employee: any;
+    previousManager: any;
+    newManager: any;
+    reason: string;
+    reassignedAt: Date;
+  }): Promise<void> {
+    const employeeName = this.userName(input.employee, 'Employee');
+    const previousManagerName = this.userName(input.previousManager, 'Previous manager');
+    const newManagerName = this.userName(input.newManager, 'New manager');
+    const date = this.formatNotificationDate(input.reassignedAt);
+
+    await this.sendBestEffortEmail(
+      input.newManager?.email,
+      'PMS Assignment Reassigned To You',
+      `Hello ${newManagerName},\n\nThe PMS assignment for ${employeeName} has been reassigned to you from ${previousManagerName} on ${date}.\n\nReason: ${input.reason}`,
+      `<p>Hello ${this.escapeHtml(newManagerName)},</p><p>The PMS assignment for <strong>${this.escapeHtml(employeeName)}</strong> has been reassigned to you from <strong>${this.escapeHtml(previousManagerName)}</strong> on <strong>${date}</strong>.</p><p><strong>Reason:</strong> ${this.escapeHtml(input.reason)}</p>`,
+    );
+
+    await this.sendBestEffortEmail(
+      input.previousManager?.email,
+      'PMS Assignment Reassigned',
+      `Hello ${previousManagerName},\n\nThe PMS assignment for ${employeeName} has been reassigned to ${newManagerName} on ${date}.\n\nReason: ${input.reason}`,
+      `<p>Hello ${this.escapeHtml(previousManagerName)},</p><p>The PMS assignment for <strong>${this.escapeHtml(employeeName)}</strong> has been reassigned to <strong>${this.escapeHtml(newManagerName)}</strong> on <strong>${date}</strong>.</p><p><strong>Reason:</strong> ${this.escapeHtml(input.reason)}</p>`,
+    );
+  }
+
+  private async sendReassignmentCancelledEmails(input: {
+    employee: any;
+    restoredManager: any;
+    removedManager: any;
+    reason: string;
+    cancelledAt: Date;
+  }): Promise<void> {
+    const employeeName = this.userName(input.employee, 'Employee');
+    const restoredManagerName = this.userName(input.restoredManager, 'Restored manager');
+    const removedManagerName = this.userName(input.removedManager, 'Removed manager');
+    const date = this.formatNotificationDate(input.cancelledAt);
+
+    await this.sendBestEffortEmail(
+      input.restoredManager?.email,
+      'PMS Reassignment Cancelled',
+      `Hello ${restoredManagerName},\n\nThe PMS reassignment for ${employeeName} has been cancelled on ${date}. The assignment is now back with you.\n\nReason: ${input.reason}`,
+      `<p>Hello ${this.escapeHtml(restoredManagerName)},</p><p>The PMS reassignment for <strong>${this.escapeHtml(employeeName)}</strong> has been cancelled on <strong>${date}</strong>. The assignment is now back with you.</p><p><strong>Reason:</strong> ${this.escapeHtml(input.reason)}</p>`,
+    );
+
+    await this.sendBestEffortEmail(
+      input.removedManager?.email,
+      'PMS Reassignment Cancelled',
+      `Hello ${removedManagerName},\n\nThe PMS reassignment for ${employeeName} has been cancelled on ${date}. The assignment has returned to ${restoredManagerName}.\n\nReason: ${input.reason}`,
+      `<p>Hello ${this.escapeHtml(removedManagerName)},</p><p>The PMS reassignment for <strong>${this.escapeHtml(employeeName)}</strong> has been cancelled on <strong>${date}</strong>. The assignment has returned to <strong>${this.escapeHtml(restoredManagerName)}</strong>.</p><p><strong>Reason:</strong> ${this.escapeHtml(input.reason)}</p>`,
+    );
+  }
+
+  private async sendBestEffortEmail(
+    to: string | undefined,
+    subject: string,
+    text: string,
+    html: string,
+  ): Promise<void> {
+    if (!to) return;
+    try {
+      await emailService.sendEmail({ body: { to, subject, text, html } });
+    } catch (error) {
+      console.warn('PMS assignment email notification failed:', error);
+    }
+  }
+
+  private userName(user: any, fallback: string): string {
+    return user?.name || user?.employeeCode || user?.email || fallback;
+  }
+
+  private formatNotificationDate(value: Date): string {
+    return value.toLocaleDateString('en-GB');
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   private async audit(

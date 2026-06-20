@@ -4,6 +4,7 @@ import { RequestContext } from '../types/context';
 import { Delegation } from '../models/pms-delegation.model';
 import { User } from '../models/user.model';
 import { auditService } from './audit.service';
+import { emailService } from './email.service';
 import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
 
 export interface CreateDelegationInput {
@@ -97,6 +98,15 @@ export class DelegationService extends BaseService {
       undefined,
       delegation.toObject(),
     );
+
+    void this.sendDelegationCreatedEmails({
+      delegator,
+      delegate,
+      scopeType: delegation.scopeType,
+      validFrom: delegation.validFrom,
+      validTo: delegation.validTo,
+      reason: delegation.reason,
+    });
 
     return delegation;
   }
@@ -201,6 +211,20 @@ export class DelegationService extends BaseService {
       previousValue,
       delegation.toObject(),
     );
+
+    const [delegator, delegate] = await Promise.all([
+      User.findById(delegation.delegatorUserId).lean(),
+      User.findById(delegation.delegateUserId).lean(),
+    ]);
+
+    void this.sendDelegationRevokedEmails({
+      delegator,
+      delegate,
+      scopeType: delegation.scopeType,
+      validFrom: delegation.validFrom,
+      validTo: delegation.validTo,
+      reason,
+    });
 
     return delegation;
   }
@@ -403,5 +427,98 @@ export class DelegationService extends BaseService {
       previousValue,
       newValue,
     });
+  }
+
+  private async sendDelegationCreatedEmails(input: {
+    delegator: any;
+    delegate: any;
+    scopeType: string;
+    validFrom: Date;
+    validTo: Date;
+    reason?: string;
+  }): Promise<void> {
+    const delegatorName = this.userName(input.delegator, 'Original manager');
+    const delegateName = this.userName(input.delegate, 'Delegate manager');
+    const scope = this.formatScope(input.scopeType);
+    const window = `${this.formatDate(input.validFrom)} to ${this.formatDate(input.validTo)}`;
+    const reason = input.reason || 'Not provided';
+
+    await this.sendBestEffortEmail(
+      input.delegate?.email,
+      'PMS Delegation Assigned',
+      `Hello ${delegateName},\n\n${delegatorName} has delegated ${scope} PMS access to you for ${window}.\n\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegateName)},</p><p>${this.escapeHtml(delegatorName)} has delegated <strong>${this.escapeHtml(scope)}</strong> PMS access to you for <strong>${window}</strong>.</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+
+    await this.sendBestEffortEmail(
+      input.delegator?.email,
+      'PMS Delegation Created',
+      `Hello ${delegatorName},\n\nYour ${scope} PMS access has been delegated to ${delegateName} for ${window}.\n\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegatorName)},</p><p>Your <strong>${this.escapeHtml(scope)}</strong> PMS access has been delegated to <strong>${this.escapeHtml(delegateName)}</strong> for <strong>${window}</strong>.</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+  }
+
+  private async sendDelegationRevokedEmails(input: {
+    delegator: any;
+    delegate: any;
+    scopeType: string;
+    validFrom: Date;
+    validTo: Date;
+    reason?: string;
+  }): Promise<void> {
+    const delegatorName = this.userName(input.delegator, 'Original manager');
+    const delegateName = this.userName(input.delegate, 'Delegate manager');
+    const scope = this.formatScope(input.scopeType);
+    const window = `${this.formatDate(input.validFrom)} to ${this.formatDate(input.validTo)}`;
+    const reason = input.reason || 'Not provided';
+
+    await this.sendBestEffortEmail(
+      input.delegate?.email,
+      'PMS Delegation Cancelled',
+      `Hello ${delegateName},\n\nYour delegated ${scope} PMS access from ${delegatorName} has been cancelled.\n\nOriginal window: ${window}\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegateName)},</p><p>Your delegated <strong>${this.escapeHtml(scope)}</strong> PMS access from <strong>${this.escapeHtml(delegatorName)}</strong> has been cancelled.</p><p><strong>Original window:</strong> ${window}</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+
+    await this.sendBestEffortEmail(
+      input.delegator?.email,
+      'PMS Delegation Cancelled',
+      `Hello ${delegatorName},\n\nYour delegation to ${delegateName} has been cancelled.\n\nScope: ${scope}\nOriginal window: ${window}\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegatorName)},</p><p>Your delegation to <strong>${this.escapeHtml(delegateName)}</strong> has been cancelled.</p><p><strong>Scope:</strong> ${this.escapeHtml(scope)}</p><p><strong>Original window:</strong> ${window}</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+  }
+
+  private async sendBestEffortEmail(
+    to: string | undefined,
+    subject: string,
+    text: string,
+    html: string,
+  ): Promise<void> {
+    if (!to) return;
+    try {
+      await emailService.sendEmail({ body: { to, subject, text, html } });
+    } catch (error) {
+      console.warn('PMS delegation email notification failed:', error);
+    }
+  }
+
+  private userName(user: any, fallback: string): string {
+    return user?.name || user?.employeeCode || user?.email || fallback;
+  }
+
+  private formatScope(scopeType: string): string {
+    return scopeType.replace(/^PMS_/, '').replace(/_/g, ' ').toLowerCase();
+  }
+
+  private formatDate(value: Date): string {
+    return value.toLocaleDateString('en-GB');
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }
