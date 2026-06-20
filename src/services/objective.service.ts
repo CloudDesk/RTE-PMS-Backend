@@ -17,6 +17,7 @@ import { PmsDocument } from '../models/pms-document.model';
 import { ManagerObjectiveLibrary } from '../models/pms-manager-objective-library.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
@@ -270,6 +271,7 @@ type AssignmentRecord = {
   quarterAssignmentId: string;
   cycleId: string;
   cycleName: string;
+  cycleCode?: string;
   quarter: AssessmentTermCodeValue;
   assessmentTermType?: string;
   termCode?: AssessmentTermCodeValue;
@@ -397,6 +399,17 @@ export class ObjectiveService extends BaseService {
     const annualAssignmentMap = new Map(
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
+    const annualCycles = await AnnualCycle.find({
+      _id: {
+        $in: annualAssignments
+          .map((item) => item.cycleId)
+          .filter(Boolean),
+      },
+      isDeleted: false,
+    }).lean();
+    const annualCycleMap = new Map(
+      annualCycles.map((item) => [item._id.toString(), item]),
+    );
 
     const quarterCycles = await QuarterCycle.find({
       _id: {
@@ -501,7 +514,13 @@ export class ObjectiveService extends BaseService {
         annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
         quarterAssignmentId: quarterAssignment._id.toString(),
         cycleId: quarterAssignment.cycleId?.toString() ?? '',
-        cycleName: this.getCycleName(annualAssignment),
+        cycleName: this.getCycleName(
+          annualAssignment,
+          annualAssignment?.cycleId ? annualCycleMap.get(annualAssignment.cycleId.toString()) : undefined,
+        ),
+        cycleCode:
+          (annualAssignment?.cycleId ? annualCycleMap.get(annualAssignment.cycleId.toString())?.code : undefined) ??
+          undefined,
         quarter: quarterAssignment.quarterCode,
         assessmentTermType: quarterAssignment.assessmentTermType,
         termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
@@ -2078,14 +2097,21 @@ export class ObjectiveService extends BaseService {
     };
   }
 
-  private getCycleName(annualAssignment?: IAnnualAssignment | Record<string, any> | null): string {
+  private getCycleName(
+    annualAssignment?: IAnnualAssignment | Record<string, any> | null,
+    annualCycle?: Record<string, any> | null,
+  ): string {
     const snapshot = annualAssignment?.orgSnapshot as Record<string, any> | undefined;
     const assignmentRecord = annualAssignment as Record<string, any> | undefined;
     return String(
+      annualCycle?.name ??
+      annualCycle?.code ??
       snapshot?.cycleName ??
+      snapshot?.cycleCode ??
       assignmentRecord?.cycleName ??
       assignmentRecord?.cycleCode ??
-      'Performance Cycle',
+      assignmentRecord?.cycleId ??
+      'Cycle',
     );
   }
 

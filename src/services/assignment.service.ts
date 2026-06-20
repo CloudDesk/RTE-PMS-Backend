@@ -114,6 +114,26 @@ export interface ResolveExceptionInput {
   resolution: string;
 }
 
+const ANNUAL_DECISION_PROCESSING_STATES = new Set<AnnualWorkflowState>([
+  AnnualWorkflowState.ALL_TERMS_FINALIZED,
+  AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+  AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+  AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+  AnnualWorkflowState.ANNUAL_FINALIZED,
+  AnnualWorkflowState.VISIBILITY_ENABLED,
+  AnnualWorkflowState.COMMUNICATION_READY,
+  AnnualWorkflowState.COMMUNICATION_SENT,
+  AnnualWorkflowState.CLOSED,
+  AnnualWorkflowState.ARCHIVED,
+]);
+
+const ANNUAL_DECISION_PROCESSING_STATUSES = new Set<AnnualDecisionStatus>([
+  AnnualDecisionStatus.SUBMITTED,
+  AnnualDecisionStatus.FROZEN,
+  AnnualDecisionStatus.VISIBILITY_ENABLED,
+  AnnualDecisionStatus.CLOSED,
+]);
+
 export class AssignmentService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
@@ -568,6 +588,23 @@ export class AssignmentService extends BaseService {
         quarter.quarterState !== QuarterWorkflowState.TERM_FINALIZED &&
         quarter.quarterState !== QuarterWorkflowState.CLOSED_BY_ADMIN,
     );
+    const annualDecisionProcessing =
+      ANNUAL_DECISION_PROCESSING_STATES.has(annualAssignment.annualState) ||
+      ANNUAL_DECISION_PROCESSING_STATUSES.has(
+        annualAssignment.finalDecisionStatus as AnnualDecisionStatus,
+      );
+
+    if (mutableQuarters.length === 0 && annualDecisionProcessing) {
+      throw new Error(
+        'Reassignment is not allowed because all assessment terms are finalized and the assignment has moved to annual decision processing.',
+      );
+    }
+
+    if (mutableQuarters.length === 0) {
+      throw new Error(
+        'Reassignment is not allowed because all selected assessment terms are finalized or closed.',
+      );
+    }
 
     const reassignment = await Reassignment.create({
       annualAssignmentId: annualAssignment._id,

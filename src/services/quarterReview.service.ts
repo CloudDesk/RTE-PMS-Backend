@@ -169,6 +169,7 @@ export type QuarterReviewAssignmentRecord = {
   quarterAssignmentId: string;
   cycleId: string;
   cycleName: string;
+  cycleCode?: string;
   quarter: AssessmentTermCodeType;
   assessmentTermType?: string;
   termCode?: AssessmentTermCodeType;
@@ -399,9 +400,13 @@ export class QuarterReviewService extends BaseService {
         cycleId: quarterAssignment.cycleId?.toString() ?? '',
         cycleName: String(
           cycle?.name ??
+          cycle?.code ??
+          annualAssignment?.orgSnapshot?.cycleCode ??
           annualAssignment?.orgSnapshot?.cycleName ??
-          'Performance Cycle',
+          quarterAssignment.cycleId?.toString() ??
+          'Cycle',
         ),
+        cycleCode: cycle?.code,
         quarter: quarterAssignment.quarterCode,
         assessmentTermType: quarterAssignment.assessmentTermType,
         termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
@@ -981,9 +986,13 @@ export class QuarterReviewService extends BaseService {
         cycleId: quarterAssignment.cycleId?.toString() ?? '',
         cycleName: String(
           cycle?.name ??
+          cycle?.code ??
+          annualAssignment?.orgSnapshot?.cycleCode ??
           annualAssignment?.orgSnapshot?.cycleName ??
-          'Performance Cycle',
+          quarterAssignment.cycleId?.toString() ??
+          'Cycle',
         ),
+        cycleCode: cycle?.code,
         quarter: quarterAssignment.quarterCode,
         assessmentTermType: quarterAssignment.assessmentTermType,
         termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
