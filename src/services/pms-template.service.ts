@@ -121,6 +121,7 @@ export interface TemplateListQuery {
   search?: string;
   page?: string | number;
   limit?: string | number;
+  owner?: string;
 }
 
 export interface UpdateTemplateInput {
@@ -136,6 +137,9 @@ export interface CreateTemplateVersionInput {
   versionNumber?: number;
   sections?: unknown[];
   metadata?: Record<string, unknown>;
+  templateOwnership?: Record<string, unknown>;
+  launchPolicy?: Record<string, unknown>;
+  flowPolicy?: Record<string, unknown>;
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
@@ -160,6 +164,15 @@ export class PmsTemplateService extends BaseService {
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 10), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
+    const owner = String(query.owner || 'admin').toLowerCase();
+
+    if (owner !== 'all') {
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        { createdByRole: { $ne: 'MANAGER' } },
+        { visibilityScope: { $ne: 'MANAGER_TEAM' } },
+      ];
+    }
 
     if (query.status?.trim()) {
       filter.status = query.status.trim();
@@ -360,6 +373,9 @@ export class PmsTemplateService extends BaseService {
         status: PmsTemplateStatus.DRAFT,
         sections: version.sections,
         metadata: version.metadata ?? {},
+        templateOwnership: version.templateOwnership ?? {},
+        launchPolicy: version.launchPolicy ?? {},
+        flowPolicy: version.flowPolicy ?? {},
         themeConfig: version.themeConfig ?? {},
         scoringConfig: version.scoringConfig ?? {},
         annualScoringConfig: version.annualScoringConfig ?? {},
@@ -413,6 +429,9 @@ export class PmsTemplateService extends BaseService {
       versionNo,
       sections,
       metadata: input.metadata ?? latestVersion?.metadata ?? {},
+      templateOwnership: input.templateOwnership ?? latestVersion?.templateOwnership ?? {},
+      launchPolicy: input.launchPolicy ?? latestVersion?.launchPolicy ?? {},
+      flowPolicy: input.flowPolicy ?? latestVersion?.flowPolicy ?? {},
       themeConfig: input.themeConfig ?? latestVersion?.themeConfig ?? {},
       scoringConfig: input.scoringConfig ?? latestVersion?.scoringConfig ?? {},
       annualScoringConfig: input.annualScoringConfig ?? latestVersion?.annualScoringConfig ?? {},
@@ -586,6 +605,9 @@ export class PmsTemplateService extends BaseService {
     sections: unknown[],
     metadata: {
       metadata?: Record<string, unknown>;
+      templateOwnership?: Record<string, unknown>;
+      launchPolicy?: Record<string, unknown>;
+      flowPolicy?: Record<string, unknown>;
       annualScoringConfig?: Record<string, unknown>;
     } = {},
   ): Promise<IPmsTemplateVersion> {
@@ -597,6 +619,15 @@ export class PmsTemplateService extends BaseService {
     version.sections = normalizedSections;
     if (metadata.metadata !== undefined) {
       version.metadata = metadata.metadata;
+    }
+    if (metadata.templateOwnership !== undefined) {
+      version.templateOwnership = metadata.templateOwnership;
+    }
+    if (metadata.launchPolicy !== undefined) {
+      version.launchPolicy = metadata.launchPolicy;
+    }
+    if (metadata.flowPolicy !== undefined) {
+      version.flowPolicy = metadata.flowPolicy;
     }
     if (metadata.annualScoringConfig !== undefined) {
       version.annualScoringConfig = metadata.annualScoringConfig;

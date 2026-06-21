@@ -9,6 +9,11 @@ export interface IPmsTemplate extends Document {
   status: PmsTemplateStatusType;
   effectiveDate?: Date;
   currentVersionId?: Types.ObjectId;
+  createdByRole?: 'ADMIN' | 'MANAGER';
+  ownerManagerId?: Types.ObjectId;
+  visibilityScope?: 'GLOBAL' | 'MANAGER_TEAM';
+  templateLabel?: 'Company Template' | 'Manager Template';
+  approvalStatus?: 'DRAFT' | 'ACTIVE' | 'ADMIN_APPROVED';
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -44,6 +49,33 @@ const pmsTemplateSchema = new Schema<IPmsTemplate>(
       type: Schema.Types.ObjectId,
       ref: 'PmsTemplateVersion',
     },
+    createdByRole: {
+      type: String,
+      enum: ['ADMIN', 'MANAGER'],
+      default: 'ADMIN',
+      index: true,
+    },
+    ownerManagerId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    visibilityScope: {
+      type: String,
+      enum: ['GLOBAL', 'MANAGER_TEAM'],
+      default: 'GLOBAL',
+      index: true,
+    },
+    templateLabel: {
+      type: String,
+      enum: ['Company Template', 'Manager Template'],
+      default: 'Company Template',
+    },
+    approvalStatus: {
+      type: String,
+      enum: ['DRAFT', 'ACTIVE', 'ADMIN_APPROVED'],
+      default: 'ACTIVE',
+    },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -56,6 +88,7 @@ const pmsTemplateSchema = new Schema<IPmsTemplate>(
 );
 
 pmsTemplateSchema.index({ code: 1 }, { unique: true, name: 'idx_pms_template_code' });
+pmsTemplateSchema.index({ ownerManagerId: 1, visibilityScope: 1, isDeleted: 1 });
 
 export const PmsTemplate = mongoose.model<IPmsTemplate>(
   'PmsTemplate',

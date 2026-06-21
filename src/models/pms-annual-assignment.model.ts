@@ -30,6 +30,10 @@ export interface IAnnualAssignment extends Document {
   appraisalOutcomeType?: string;
   applicableTerms: QuarterCode[];
   assignmentReason: string;
+  launchSource?: 'ADMIN_CYCLE' | 'MANAGER_INITIATED';
+  launchedByRole?: 'ADMIN' | 'MANAGER';
+  launchedByUserId?: Types.ObjectId;
+  flowPolicy?: Record<string, unknown>;
   visibility: IVisibilityCache;
   employeeSnapshot?: Record<string, unknown>;
   managerSnapshot?: Record<string, unknown>;
@@ -105,6 +109,22 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
       default: ['Q1', 'Q2', 'Q3', 'Q4'],
     },
     assignmentReason: { type: String, default: 'FULL_YEAR' },
+    launchSource: {
+      type: String,
+      enum: ['ADMIN_CYCLE', 'MANAGER_INITIATED'],
+      default: 'ADMIN_CYCLE',
+      index: true,
+    },
+    launchedByRole: {
+      type: String,
+      enum: ['ADMIN', 'MANAGER'],
+    },
+    launchedByUserId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    flowPolicy: { type: Schema.Types.Mixed, default: {} },
     visibility: { type: visibilityCacheSchema, default: () => ({}) },
     employeeSnapshot: { type: Schema.Types.Mixed, default: {} },
     managerSnapshot: { type: Schema.Types.Mixed, default: {} },
@@ -130,6 +150,7 @@ annualAssignmentSchema.index({ cycleId: 1, assignedManagerId: 1, annualState: 1 
 annualAssignmentSchema.index({ cycleId: 1, appraisalOutcomeType: 1 });
 annualAssignmentSchema.index({ cycleId: 1, 'employeeSnapshot.department': 1 });
 annualAssignmentSchema.index({ cycleId: 1, 'orgSnapshot.businessUnit': 1 });
+annualAssignmentSchema.index({ launchSource: 1, launchedByUserId: 1, annualState: 1 });
 
 export const AnnualAssignment = mongoose.model<IAnnualAssignment>(
   'AnnualAssignment',

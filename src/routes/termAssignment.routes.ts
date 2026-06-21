@@ -13,7 +13,7 @@ export const termAssignmentRoutes: RouteHandler = async (
       try {
         const { id } = request.params as { id: string };
         const result = await request.container!.termReviewService.finalizeTermAssignment(id);
-        return reply.send(successResponse('Quarter assignment finalized successfully', result));
+        return reply.send(successResponse('Term assignment finalized successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

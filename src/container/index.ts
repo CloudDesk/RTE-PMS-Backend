@@ -18,6 +18,7 @@ import { PmsManagementEmployeeService } from '../services/pmsManagementEmployee.
 import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
 import { WorkflowSyncService } from '../services/workflow-sync.service';
 import { PmsDocumentService } from '../services/pms-document.service';
+import { ManagerInitiatedReviewService } from '../services/managerInitiatedReview.service';
 
 export class Container {
   private static instance: Container;
@@ -58,6 +59,7 @@ export class Container {
       pmsBulkOperationsService: new PmsBulkOperationsService(context),
       workflowSyncService: new WorkflowSyncService(context),
       pmsDocumentService: new PmsDocumentService(context),
+      managerInitiatedReviewService: new ManagerInitiatedReviewService(context),
     };
   }
 

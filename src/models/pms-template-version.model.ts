@@ -261,6 +261,9 @@ export interface IPmsTemplateVersion extends Document {
   status: PmsTemplateStatusType;
   sections: ITemplateSection[];
   metadata?: Record<string, unknown>;
+  templateOwnership?: Record<string, unknown>;
+  launchPolicy?: Record<string, unknown>;
+  flowPolicy?: Record<string, unknown>;
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
@@ -514,6 +517,9 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
     },
     sections: { type: [templateSectionSchema], default: [] },
     metadata: { type: Schema.Types.Mixed, default: {} },
+    templateOwnership: { type: Schema.Types.Mixed, default: {} },
+    launchPolicy: { type: Schema.Types.Mixed, default: {} },
+    flowPolicy: { type: Schema.Types.Mixed, default: {} },
     themeConfig: { type: Schema.Types.Mixed, default: {} },
     scoringConfig: { type: Schema.Types.Mixed, default: {} },
     annualScoringConfig: { type: Schema.Types.Mixed, default: {} },
