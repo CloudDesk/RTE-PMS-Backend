@@ -11,6 +11,14 @@ export const EmployeeAchievementSubmissionStatus = {
 export type EmployeeAchievementSubmissionStatus =
   (typeof EmployeeAchievementSubmissionStatus)[keyof typeof EmployeeAchievementSubmissionStatus];
 
+export const AchievementItemType = {
+  OBJECTIVE: 'OBJECTIVE',
+  ADDITIONAL: 'ADDITIONAL',
+} as const;
+
+export type AchievementItemType =
+  (typeof AchievementItemType)[keyof typeof AchievementItemType];
+
 export interface IAchievementAttachmentMetadata {
   fileName?: string;
   fileUrl?: string;
@@ -20,9 +28,24 @@ export interface IAchievementAttachmentMetadata {
   uploadedAt?: Date;
 }
 
+export interface IAchievementObjectiveSnapshot {
+  title?: string;
+  description?: string;
+  expectedOutcome?: string;
+  targetMetric?: string;
+  targetValue?: string;
+  targetDate?: Date;
+  weightage?: number;
+  source?: string;
+}
+
 export interface IAchievementItem {
+  type?: AchievementItemType;
+  objectiveId?: Types.ObjectId;
+  objectiveSnapshot?: IAchievementObjectiveSnapshot;
   subject: string;
   description: string;
+  outcome?: string;
   attachments?: IAchievementAttachmentMetadata[];
 }
 
@@ -77,10 +100,40 @@ const achievementAttachmentMetadataSchema = new Schema<IAchievementAttachmentMet
   { _id: false },
 );
 
+const achievementObjectiveSnapshotSchema = new Schema<IAchievementObjectiveSnapshot>(
+  {
+    title: String,
+    description: String,
+    expectedOutcome: String,
+    targetMetric: String,
+    targetValue: String,
+    targetDate: Date,
+    weightage: Number,
+    source: String,
+  },
+  { _id: false },
+);
+
 const achievementItemSchema = new Schema<IAchievementItem>(
   {
+    type: {
+      type: String,
+      enum: Object.values(AchievementItemType),
+      default: AchievementItemType.ADDITIONAL,
+      index: true,
+    },
+    objectiveId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Objective',
+      index: true,
+    },
+    objectiveSnapshot: {
+      type: achievementObjectiveSnapshotSchema,
+      default: undefined,
+    },
     subject: { type: String, required: true, trim: true },
     description: { type: String, required: true, trim: true },
+    outcome: { type: String, trim: true },
     attachments: { type: [achievementAttachmentMetadataSchema], default: [] },
   },
   { _id: false },
@@ -185,6 +238,7 @@ employeeAchievementSubmissionSchema.index(
 );
 employeeAchievementSubmissionSchema.index({ annualAssignmentId: 1, quarterCode: 1 });
 employeeAchievementSubmissionSchema.index({ employeeId: 1, cycleId: 1, quarterCode: 1 });
+employeeAchievementSubmissionSchema.index({ 'achievementItems.objectiveId': 1 });
 
 export const EmployeeAchievementSubmission = mongoose.model<IEmployeeAchievementSubmission>(
   'EmployeeAchievementSubmission',

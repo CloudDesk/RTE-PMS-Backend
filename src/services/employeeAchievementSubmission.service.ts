@@ -5,15 +5,19 @@ import { RequestContext } from '../types/context';
 import {
   AssessmentTermCode,
   normalizePmsRole,
+  ObjectiveSource,
+  ObjectiveStatus,
   PmsRole,
   QuarterWorkflowState,
 } from '../constants/pms.enums';
 import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import { Objective } from '../models/pms-objective.model';
 import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
 import { QuarterCycle } from '../models/pms-quarter-cycle.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
 import {
+  AchievementItemType,
   EmployeeAchievementSubmission,
   EmployeeAchievementSubmissionStatus,
   type IEmployeeAchievementSubmission,
@@ -33,9 +37,24 @@ interface AchievementAttachmentInput {
 }
 
 interface AchievementItemInput {
+  type?: 'OBJECTIVE' | 'ADDITIONAL';
+  objectiveId?: string | Types.ObjectId;
+  objectiveSnapshot?: AchievementObjectiveSnapshotInput;
   subject?: string;
   description?: string;
+  outcome?: string;
   attachments?: AchievementAttachmentInput[];
+}
+
+interface AchievementObjectiveSnapshotInput {
+  title?: string;
+  description?: string;
+  expectedOutcome?: string;
+  targetMetric?: string;
+  targetValue?: string;
+  targetDate?: Date | string;
+  weightage?: number;
+  source?: string;
 }
 
 interface AchievementValueInput {
@@ -63,8 +82,25 @@ type AchievementTemplateConfig = {
   reviewFlowMode: 'MANAGER_ONLY' | 'ACHIEVEMENT_THEN_MANAGER';
   employeeAchievementEnabled: boolean;
   achievementSubmissionRequired: boolean;
+  objectiveLinkedAchievementRequired: boolean;
+  additionalContributionsEnabled: boolean;
   allowManagerReviewWithoutAchievement: boolean;
   managerCanEditEmployeeAchievement: false;
+};
+
+type AchievementObjectiveRecord = {
+  id: string;
+  objectiveNo?: number;
+  title: string;
+  description?: string;
+  expectedOutcome?: string;
+  targetMetric?: string;
+  targetValue?: string;
+  targetDate?: string;
+  weightage?: number;
+  source?: string;
+  isPredefined?: boolean;
+  isScoreable: boolean;
 };
 
 type AchievementSubmissionRecord = {
@@ -78,8 +114,12 @@ type AchievementSubmissionRecord = {
   quarterCode: AssessmentTermCodeType;
   status: string;
   achievementItems: Array<{
+    type: 'OBJECTIVE' | 'ADDITIONAL';
+    objectiveId?: string;
+    objectiveSnapshot?: AchievementObjectiveSnapshotInput;
     subject: string;
     description: string;
+    outcome?: string;
     attachments: Array<{
       fileName?: string;
       fileUrl?: string;
@@ -127,6 +167,7 @@ type AchievementSubmissionDetail = {
     fieldKey: string;
     fieldLabel: string;
   };
+  objectives: AchievementObjectiveRecord[];
   submission: AchievementSubmissionRecord | null;
   canEdit: boolean;
 };
@@ -169,6 +210,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       isDeleted: false,
     }).lean();
     const actor = this.requireActor();
+    const objectives = await this.getApprovedObjectives(quarterAssignment._id);
 
     return {
       quarterAssignmentId: quarterAssignment._id.toString(),
@@ -186,6 +228,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         fieldKey: field.fieldKey,
         fieldLabel: field.fieldLabel,
       },
+      objectives,
       submission: submission ? this.mapSubmissionRecord(submission) : null,
       canEdit:
         actor.actorId === quarterAssignment.employeeId.toString() &&
@@ -223,7 +266,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Submitted employee achievement is locked and cannot be edited');
     }
 
-    const normalizedItems = this.normalizeAchievementItems(input.achievementItems ?? [], false);
+    const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
+    const normalizedItems = this.normalizeAchievementItems(
+      input.achievementItems ?? [],
+      false,
+      approvedObjectives,
+      config,
+    );
     const normalizedValues = this.normalizeAchievementValues(
       input.achievementValues ?? [],
       normalizedItems,
@@ -231,7 +280,15 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       false,
     );
 
-    this.validateAchievementPayload(section, field, normalizedItems, normalizedValues, false, config);
+    this.validateAchievementPayload(
+      section,
+      field,
+      normalizedItems,
+      normalizedValues,
+      false,
+      config,
+      approvedObjectives,
+    );
 
     const actorObjectId = this.actorIdObject();
     const previousValue = existingSubmission?.toObject();
@@ -319,18 +376,29 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
     await this.assertSubmitWindowOpen(quarterAssignment, existingSubmission);
 
-    const normalizedItems = this.normalizeAchievementItems(
+    const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
+    const submitItems = this.normalizeAchievementItems(
       input.achievementItems ?? existingSubmission?.achievementItems ?? [],
       true,
+      approvedObjectives,
+      config,
     );
-    const normalizedValues = this.normalizeAchievementValues(
+    const submitValues = this.normalizeAchievementValues(
       input.achievementValues ?? [],
-      normalizedItems,
+      submitItems,
       field,
       true,
     );
 
-    this.validateAchievementPayload(section, field, normalizedItems, normalizedValues, true, config);
+    this.validateAchievementPayload(
+      section,
+      field,
+      submitItems,
+      submitValues,
+      true,
+      config,
+      approvedObjectives,
+    );
 
     const actorObjectId = this.actorIdObject();
     const previousValue = existingSubmission?.toObject();
@@ -341,8 +409,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           existingSubmission._id,
           {
             $set: {
-              achievementItems: normalizedItems,
-              achievementValues: normalizedValues,
+              achievementItems: submitItems,
+              achievementValues: submitValues,
               status: EmployeeAchievementSubmissionStatus.LOCKED,
               submittedBy: actorObjectId,
               submittedAt: now,
@@ -364,8 +432,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           managerId: quarterAssignment.assignedManagerId,
           templateVersionId: annualAssignment.templateVersionId,
           quarterCode: quarterAssignment.quarterCode,
-          achievementItems: normalizedItems,
-          achievementValues: normalizedValues,
+          achievementItems: submitItems,
+          achievementValues: submitValues,
           status: EmployeeAchievementSubmissionStatus.LOCKED,
           draftSavedAt: now,
           submittedBy: actorObjectId,
@@ -464,8 +532,27 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       quarterCode: submission.quarterCode,
       status: submission.status,
       achievementItems: (submission.achievementItems ?? []).map((item: Record<string, any>) => ({
+        type: item.type === AchievementItemType.OBJECTIVE
+          ? AchievementItemType.OBJECTIVE
+          : AchievementItemType.ADDITIONAL,
+        objectiveId: item.objectiveId?.toString?.(),
+        objectiveSnapshot: item.objectiveSnapshot
+          ? {
+              title: item.objectiveSnapshot.title,
+              description: item.objectiveSnapshot.description,
+              expectedOutcome: item.objectiveSnapshot.expectedOutcome,
+              targetMetric: item.objectiveSnapshot.targetMetric,
+              targetValue: item.objectiveSnapshot.targetValue,
+              targetDate: item.objectiveSnapshot.targetDate
+                ? new Date(item.objectiveSnapshot.targetDate).toISOString()
+                : undefined,
+              weightage: item.objectiveSnapshot.weightage,
+              source: item.objectiveSnapshot.source,
+            }
+          : undefined,
         subject: String(item.subject ?? ''),
         description: String(item.description ?? ''),
+        outcome: item.outcome,
         attachments: (item.attachments ?? []).map((attachment: Record<string, any>) => ({
           fileName: attachment.fileName,
           fileUrl: attachment.fileUrl,
@@ -501,10 +588,55 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   private normalizeAchievementItems(
     items: AchievementItemInput[],
     isSubmit: boolean,
+    approvedObjectives: AchievementObjectiveRecord[] = [],
+    config?: AchievementTemplateConfig,
   ) {
-    return items.map((item, index) => {
-      const subject = String(item.subject ?? '').trim();
+    const objectiveById = new Map(approvedObjectives.map((objective) => [objective.id, objective]));
+    const normalized = items.map((item, index) => {
+      const itemType = item.type === AchievementItemType.OBJECTIVE || item.objectiveId
+        ? AchievementItemType.OBJECTIVE
+        : AchievementItemType.ADDITIONAL;
+      const objectiveId = item.objectiveId ? String(item.objectiveId).trim() : undefined;
+      const objective = objectiveId ? objectiveById.get(objectiveId) : undefined;
+      const subject = itemType === AchievementItemType.OBJECTIVE
+        ? String(objective?.title ?? item.subject ?? '').trim()
+        : String(item.subject ?? '').trim();
       const description = String(item.description ?? '').trim();
+      const outcome = String(item.outcome ?? '').trim();
+      const attachments = (item.attachments ?? []).map((attachment) => ({
+        fileName: attachment.fileName?.trim(),
+        fileUrl: attachment.fileUrl?.trim(),
+        fileType: attachment.fileType?.trim(),
+        fileSize: attachment.fileSize === undefined ? undefined : Number(attachment.fileSize),
+        documentId: attachment.documentId?.trim(),
+        uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
+      }));
+
+      const isEmptyAdditional =
+        itemType === AchievementItemType.ADDITIONAL &&
+        !subject &&
+        !description &&
+        !outcome &&
+        attachments.every((attachment) => !attachment.fileName && !attachment.fileUrl && !attachment.documentId);
+      const isEmptyObjective =
+        itemType === AchievementItemType.OBJECTIVE &&
+        !description &&
+        !outcome &&
+        attachments.every((attachment) => !attachment.fileName && !attachment.fileUrl && !attachment.documentId);
+
+      if (!isSubmit && (isEmptyAdditional || isEmptyObjective)) {
+        return null;
+      }
+
+      if (itemType === AchievementItemType.OBJECTIVE) {
+        if (!objectiveId || !objective) {
+          throw new Error(`Approved objective is required for achievement row ${index + 1}`);
+        }
+      }
+
+      if (itemType === AchievementItemType.ADDITIONAL && config?.additionalContributionsEnabled === false) {
+        throw new Error('Additional achievements are not enabled for this template');
+      }
 
       if (isSubmit && !subject) {
         throw new Error(`Achievement Subject is required for row ${index + 1}`);
@@ -514,18 +646,21 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       }
 
       return {
+        type: itemType,
+        objectiveId: itemType === AchievementItemType.OBJECTIVE && objectiveId
+          ? new Types.ObjectId(objectiveId)
+          : undefined,
+        objectiveSnapshot: itemType === AchievementItemType.OBJECTIVE && objective
+          ? this.buildObjectiveSnapshot(objective)
+          : undefined,
         subject,
         description,
-        attachments: (item.attachments ?? []).map((attachment) => ({
-          fileName: attachment.fileName?.trim(),
-          fileUrl: attachment.fileUrl?.trim(),
-          fileType: attachment.fileType?.trim(),
-          fileSize: attachment.fileSize === undefined ? undefined : Number(attachment.fileSize),
-          documentId: attachment.documentId?.trim(),
-          uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
-        })),
+        outcome: outcome || undefined,
+        attachments,
       };
     });
+
+    return normalized.filter((item): item is Exclude<typeof item, null> => Boolean(item));
   }
 
   private normalizeAchievementValues(
@@ -577,6 +712,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     values: Array<Record<string, any>>,
     isSubmit: boolean,
     config: AchievementTemplateConfig,
+    approvedObjectives: AchievementObjectiveRecord[] = [],
   ): void {
     if (section.level !== 'QUARTER') {
       throw new Error('Employee Achievement Submission section must be quarter-level');
@@ -597,6 +733,21 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
     if (isSubmit && config.achievementSubmissionRequired && items.length === 0) {
       throw new Error('At least one achievement item is required before submission');
+    }
+
+    if (isSubmit && config.objectiveLinkedAchievementRequired) {
+      const submittedObjectiveIds = new Set(
+        items
+          .filter((item) => item.type === AchievementItemType.OBJECTIVE && item.objectiveId && item.description)
+          .map((item) => item.objectiveId.toString()),
+      );
+      const missingObjective = approvedObjectives.find(
+        (objective) => objective.isScoreable && !submittedObjectiveIds.has(objective.id),
+      );
+
+      if (missingObjective) {
+        throw new Error(`Achievement details are required for objective: ${missingObjective.title}`);
+      }
     }
 
     const gridColumns = Array.isArray(field.gridConfig?.columns) ? field.gridConfig.columns : [];
@@ -634,6 +785,66 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           ? Boolean(employeeAchievementConfig.allowManagerReviewWithoutAchievement)
           : true,
       managerCanEditEmployeeAchievement: false,
+      objectiveLinkedAchievementRequired:
+        employeeAchievementConfig.objectiveLinkedAchievementRequired !== undefined
+          ? Boolean(employeeAchievementConfig.objectiveLinkedAchievementRequired)
+          : true,
+      additionalContributionsEnabled:
+        employeeAchievementConfig.additionalContributionsEnabled !== undefined
+          ? Boolean(employeeAchievementConfig.additionalContributionsEnabled)
+          : true,
+    };
+  }
+
+  private async getApprovedObjectives(
+    quarterAssignmentId: Types.ObjectId,
+  ): Promise<AchievementObjectiveRecord[]> {
+    const objectives = await Objective.find({
+      quarterAssignmentId,
+      status: ObjectiveStatus.OBJECTIVE_APPROVED,
+      isDeleted: false,
+    })
+      .select(
+        'objectiveNo title description expectedOutcome targetMetric targetValue targetDate weightage source isPredefined',
+      )
+      .sort({ objectiveNo: 1, createdAt: 1 })
+      .lean();
+
+    return objectives.map((objective: Record<string, any>) => {
+      const weightage = objective.weightage === undefined || objective.weightage === null
+        ? undefined
+        : Number(objective.weightage);
+
+      return {
+        id: objective._id.toString(),
+        objectiveNo: objective.objectiveNo,
+        title: String(objective.title ?? ''),
+        description: objective.description,
+        expectedOutcome: objective.expectedOutcome,
+        targetMetric: objective.targetMetric,
+        targetValue: objective.targetValue,
+        targetDate: objective.targetDate ? new Date(objective.targetDate).toISOString() : undefined,
+        weightage,
+        source: objective.source,
+        isPredefined: Boolean(objective.isPredefined),
+        isScoreable:
+          Number.isFinite(weightage) ||
+          objective.source === ObjectiveSource.PREDEFINED ||
+          objective.isPredefined === true,
+      };
+    });
+  }
+
+  private buildObjectiveSnapshot(objective: AchievementObjectiveRecord) {
+    return {
+      title: objective.title,
+      description: objective.description,
+      expectedOutcome: objective.expectedOutcome,
+      targetMetric: objective.targetMetric,
+      targetValue: objective.targetValue,
+      targetDate: objective.targetDate ? new Date(objective.targetDate) : undefined,
+      weightage: objective.weightage,
+      source: objective.source,
     };
   }
 
