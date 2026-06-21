@@ -4,10 +4,10 @@ import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/
 
 export interface IObjectiveComment extends Document {
   objectiveId: Types.ObjectId;
-  quarterAssignmentId: Types.ObjectId;
+  termAssignmentId: Types.ObjectId;
   annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
-  quarterCode?: AssessmentTermCodeType;
+  assessmentTermCode?: AssessmentTermCodeType;
   employeeId?: Types.ObjectId;
   commentType: string;
   commentText: string;
@@ -29,10 +29,10 @@ const objectiveCommentSchema = new Schema<IObjectiveComment>(
       ref: 'Objective',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     annualAssignmentId: {
@@ -45,7 +45,7 @@ const objectiveCommentSchema = new Schema<IObjectiveComment>(
       ref: 'AnnualCycle',
       index: true,
     },
-    quarterCode: {
+    assessmentTermCode: {
       type: String,
       enum: Object.values(AssessmentTermCode),
       index: true,
@@ -76,7 +76,7 @@ const objectiveCommentSchema = new Schema<IObjectiveComment>(
 );
 
 objectiveCommentSchema.index({ objectiveId: 1, createdAt: -1 });
-objectiveCommentSchema.index({ quarterAssignmentId: 1, createdAt: -1 });
+objectiveCommentSchema.index({ termAssignmentId: 1, createdAt: -1 });
 
 export const ObjectiveComment = mongoose.model<IObjectiveComment>(
   'ObjectiveComment',

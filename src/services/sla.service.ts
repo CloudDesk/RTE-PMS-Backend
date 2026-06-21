@@ -3,9 +3,9 @@ import { ReminderRule } from '../models/pms-reminder-rule.model';
 import { SlaEvent } from '../models/pms-sla-event.model';
 import { pmsNotificationService } from './pms-notification.service';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
-import { QuarterCycle } from '../models/pms-quarter-cycle.model';
+import { TermCycle } from '../models/pms-term-cycle.model';
 import { User } from '../models/user.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
 import { Types } from 'mongoose';
 import { NotificationEvent } from '../models/pms-notification-event.model';
 import { AssessmentTermCode, normalizePmsRole, PmsRole } from '../constants/pms.enums';
@@ -19,16 +19,16 @@ import { PmsTemplateVersion, type ITemplateSection } from '../models/pms-templat
 
 const SUPPORTED_SLA_RULES = {
   objective_submission_pending: {
-    quarterStates: ['NOT_STARTED', 'OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'],
+    termStates: ['NOT_STARTED', 'OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'],
   },
   objective_approval_pending: {
-    quarterStates: ['OBJECTIVE_SUBMITTED'],
+    termStates: ['OBJECTIVE_SUBMITTED'],
   },
-  quarter_review_pending: {
-    quarterStates: ['MANAGER_REVIEW_OPEN'],
+  term_review_pending: {
+    termStates: ['MANAGER_REVIEW_OPEN'],
   },
   employee_achievement_submission_pending: {
-    quarterStates: [
+    termStates: [
       'EMPLOYEE_ACHIEVEMENT_OPEN',
     ],
   },
@@ -51,7 +51,7 @@ export class SlaService {
     offsetDays: number,
     context: {
       cycleId?: string;
-      quarterCycleId?: string;
+      termCycleId?: string;
       previousTransitionDate?: Date;
       fixedDate?: Date;
     }
@@ -61,8 +61,8 @@ export class SlaService {
     if (baseDatePointer === 'CYCLE_START' && context.cycleId) {
       const cycle = await AnnualCycle.findById(context.cycleId).lean();
       if (cycle) baseDate = new Date(cycle.startDate);
-    } else if (baseDatePointer === 'QUARTER_START' && context.quarterCycleId) {
-      const qCycle = await QuarterCycle.findById(context.quarterCycleId).lean();
+    } else if (baseDatePointer === 'QUARTER_START' && context.termCycleId) {
+      const qCycle = await TermCycle.findById(context.termCycleId).lean();
       if (qCycle) baseDate = new Date(qCycle.startDate);
     } else if (baseDatePointer === 'PREVIOUS_TRANSITION' && context.previousTransitionDate) {
       baseDate = new Date(context.previousTransitionDate);
@@ -83,7 +83,7 @@ export class SlaService {
     entityType: string;
     entityId: string;
     cycleId?: string;
-    quarterCode?: AssessmentTermCodeType;
+    assessmentTermCode?: AssessmentTermCodeType;
     ownerUserId: string;
     dueAt: Date;
     escalationTargetUserId?: string;
@@ -94,7 +94,7 @@ export class SlaService {
       entityType: input.entityType,
       entityId: new Types.ObjectId(input.entityId),
       cycleId: input.cycleId ? new Types.ObjectId(input.cycleId) : undefined,
-      quarterCode: input.quarterCode,
+      assessmentTermCode: input.assessmentTermCode,
       ownerUserId: new Types.ObjectId(input.ownerUserId),
       dueAt: input.dueAt,
       status: 'OPEN',
@@ -116,7 +116,7 @@ export class SlaService {
         isActive: true,
         isDeleted: false,
         eventType: { $in: Object.keys(SUPPORTED_SLA_RULES) },
-        entityType: 'QUARTER_ASSIGNMENT',
+        entityType: 'TERM_ASSIGNMENT',
       })
         .sort({ cycleId: -1, createdAt: 1 })
         .lean();
@@ -168,7 +168,7 @@ export class SlaService {
             rule.offsetDays,
             {
               cycleId: qa.cycleId?.toString(),
-              quarterCycleId: qa.cycleQuarterId?.toString(),
+              termCycleId: qa.cycleTermId?.toString(),
               previousTransitionDate: qa.lastTransitionAt,
               fixedDate: rule.fixedDate,
             },
@@ -183,7 +183,7 @@ export class SlaService {
               entityType: rule.entityType,
               entityId: qa._id,
               cycleId: qa.cycleId,
-              quarterCode: qa.quarterCode,
+              assessmentTermCode: qa.assessmentTermCode,
               ownerUserId,
               dueAt,
               status: 'OPEN',
@@ -347,12 +347,12 @@ export class SlaService {
     cycleId?: Types.ObjectId;
   }) {
     const supportedRule = SUPPORTED_SLA_RULES[rule.eventType as keyof typeof SUPPORTED_SLA_RULES];
-    if (!supportedRule || rule.entityType !== 'QUARTER_ASSIGNMENT') {
+    if (!supportedRule || rule.entityType !== 'TERM_ASSIGNMENT') {
       return [];
     }
 
-    return QuarterAssignment.find({
-      quarterState: { $in: supportedRule.quarterStates },
+    return TermAssignment.find({
+      termState: { $in: supportedRule.termStates },
       isDeleted: false,
       ...(rule.cycleId ? { cycleId: rule.cycleId } : {}),
     }).lean();
@@ -363,13 +363,13 @@ export class SlaService {
     entityType: string;
     cycleId?: Types.ObjectId;
   }): Promise<PendingSlaTarget[]> {
-    if (rule.entityType !== 'QUARTER_ASSIGNMENT') {
+    if (rule.entityType !== 'TERM_ASSIGNMENT') {
       return [];
     }
 
     const supportedRule = SUPPORTED_SLA_RULES.employee_achievement_submission_pending;
-    const assignments = await QuarterAssignment.find({
-      quarterState: { $in: supportedRule.quarterStates },
+    const assignments = await TermAssignment.find({
+      termState: { $in: supportedRule.termStates },
       isDeleted: false,
       ...(rule.cycleId ? { cycleId: rule.cycleId } : {}),
     }).lean();
@@ -378,11 +378,11 @@ export class SlaService {
       return [];
     }
 
-    const quarterAssignmentIds = assignments.map((assignment) => assignment._id);
-    const cycleQuarterIds = Array.from(
+    const termAssignmentIds = assignments.map((assignment) => assignment._id);
+    const cycleTermIds = Array.from(
       new Set(
         assignments
-          .map((assignment) => assignment.cycleQuarterId?.toString())
+          .map((assignment) => assignment.cycleTermId?.toString())
           .filter((value): value is string => Boolean(value)),
       ),
     );
@@ -390,9 +390,9 @@ export class SlaService {
       new Set(assignments.map((assignment) => assignment.annualAssignmentId.toString())),
     );
 
-    const [quarterCycles, annualAssignments, submissions, annualCycles, adminUsers] = await Promise.all([
-      QuarterCycle.find({
-        _id: { $in: cycleQuarterIds.map((id) => new Types.ObjectId(id)) },
+    const [termCycles, annualAssignments, submissions, annualCycles, adminUsers] = await Promise.all([
+      TermCycle.find({
+        _id: { $in: cycleTermIds.map((id) => new Types.ObjectId(id)) },
         isDeleted: false,
       })
         .select('achievementSubmissionWindow')
@@ -404,10 +404,10 @@ export class SlaService {
         .select('templateVersionId orgSnapshot cycleId employeeSnapshot managerSnapshot')
         .lean(),
       EmployeeAchievementSubmission.find({
-        quarterAssignmentId: { $in: quarterAssignmentIds },
+        termAssignmentId: { $in: termAssignmentIds },
         isDeleted: false,
       })
-        .select('quarterAssignmentId status')
+        .select('termAssignmentId status')
         .lean(),
       AnnualCycle.find({
         _id: {
@@ -443,10 +443,10 @@ export class SlaService {
         .lean()
       : [];
 
-    const quarterCycleById = new Map(quarterCycles.map((cycle) => [cycle._id.toString(), cycle]));
+    const termCycleById = new Map(termCycles.map((cycle) => [cycle._id.toString(), cycle]));
     const annualAssignmentById = new Map(annualAssignments.map((assignment) => [assignment._id.toString(), assignment]));
-    const submissionByQuarterAssignmentId = new Map(
-      submissions.map((submission) => [submission.quarterAssignmentId.toString(), submission]),
+    const submissionByTermAssignmentId = new Map(
+      submissions.map((submission) => [submission.termAssignmentId.toString(), submission]),
     );
     const annualCycleById = new Map(annualCycles.map((cycle) => [cycle._id.toString(), cycle]));
     const templateVersionById = new Map(templateVersions.map((template) => [template._id.toString(), template]));
@@ -457,12 +457,12 @@ export class SlaService {
     const targets: PendingSlaTarget[] = [];
 
     for (const assignment of assignments) {
-      if (!assignment.cycleQuarterId) {
+      if (!assignment.cycleTermId) {
         continue;
       }
 
-      const quarterCycle = quarterCycleById.get(assignment.cycleQuarterId.toString());
-      const window = quarterCycle?.achievementSubmissionWindow;
+      const termCycle = termCycleById.get(assignment.cycleTermId.toString());
+      const window = termCycle?.achievementSubmissionWindow;
       if (!window || window.enabled !== true) {
         continue;
       }
@@ -477,11 +477,11 @@ export class SlaService {
         ? templateVersionById.get(annualAssignment.templateVersionId.toString())
         : undefined;
 
-      if (!this.isEmployeeAchievementEnabledForTemplate(templateVersion, assignment.quarterCode)) {
+      if (!this.isEmployeeAchievementEnabledForTemplate(templateVersion, assignment.assessmentTermCode)) {
         continue;
       }
 
-      const submission = submissionByQuarterAssignmentId.get(assignment._id.toString());
+      const submission = submissionByTermAssignmentId.get(assignment._id.toString());
       if (
         submission?.status === EmployeeAchievementSubmissionStatus.LOCKED ||
         submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED
@@ -524,7 +524,7 @@ export class SlaService {
           employeeName,
           managerName,
           cycleName,
-          quarterCode: assignment.quarterCode,
+          assessmentTermCode: assignment.assessmentTermCode,
           dueDate: dueAt.toISOString(),
           allowedUntilAt: allowedUntilAt.toISOString(),
           graceDays,
@@ -666,7 +666,7 @@ export class SlaService {
           ? 'An Employee Achievement Submission is still pending and now requires escalation attention.'
           : 'An Employee Achievement Submission is overdue.',
       `Employee: ${metadata.employeeName || 'Employee'}`,
-      `Cycle / Quarter: ${metadata.cycleName || 'Performance Cycle'} / ${metadata.quarterCode || sla.quarterCode || ''}`,
+      `Cycle / Quarter: ${metadata.cycleName || 'Performance Cycle'} / ${metadata.assessmentTermCode || sla.assessmentTermCode || ''}`,
       `Due Date: ${dueDate}`,
       `Current Status: ${metadata.currentStatus || 'DRAFT'}`,
       actionLink
@@ -693,22 +693,22 @@ export class SlaService {
 
   private isEmployeeAchievementEnabledForTemplate(
     templateVersion: { metadata?: Record<string, unknown>; sections?: ITemplateSection[] } | null | undefined,
-    quarterCode: AssessmentTermCodeType,
+    assessmentTermCode: AssessmentTermCodeType,
   ): boolean {
     if (!templateVersion) {
       return false;
     }
 
     const section = (templateVersion.sections ?? []).find((item) => {
-      const quarterScope = [
-        ...(item.quarterScope ?? []),
+      const termScope = [
+        ...(item.termScope ?? []),
         ...(item.repeatFor ?? []),
       ];
 
       return (
         item.sectionKey === 'employee_achievement_submission' &&
-        item.level === 'QUARTER' &&
-        this.assessmentTermScopeMatches(quarterScope, quarterCode)
+        this.isTermLevelTemplateSection(item.level) &&
+        this.assessmentTermScopeMatches(termScope, assessmentTermCode)
       );
     });
 
@@ -748,6 +748,11 @@ export class SlaService {
       termCode === AssessmentTermCode.H2 ||
       termCode === AssessmentTermCode.Y1
     );
+  }
+
+  private isTermLevelTemplateSection(level?: unknown): boolean {
+    const normalized = String(level ?? '').trim().toUpperCase();
+    return normalized === 'TERM';
   }
 
   private getDaysDiff(currentDate: Date, baseDate: Date): number {

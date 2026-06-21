@@ -2,7 +2,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IReassignment extends Document {
   annualAssignmentId: Types.ObjectId;
-  quarterAssignmentId?: Types.ObjectId;
+  termAssignmentId?: Types.ObjectId;
   employeeId: Types.ObjectId;
   fromManagerId: Types.ObjectId;
   toManagerId: Types.ObjectId;
@@ -31,9 +31,9 @@ const reassignmentSchema = new Schema<IReassignment>(
       ref: 'AnnualAssignment',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     employeeId: {

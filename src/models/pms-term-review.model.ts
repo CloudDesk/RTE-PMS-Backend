@@ -1,6 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { QuarterReviewStatus } from '../constants/pms.enums';
-import type { QuarterReviewStatus as QuarterReviewStatusType } from '../constants/pms.enums';
+import { TermReviewStatus } from '../constants/pms.enums';
+import type { TermReviewStatus as TermReviewStatusType } from '../constants/pms.enums';
 
 interface IPmsAttachment {
   fileName?: string;
@@ -10,25 +10,25 @@ interface IPmsAttachment {
   uploadedAt?: Date;
 }
 
-interface IQuarterReviewRating {
+interface ITermReviewRating {
   objectiveId?: Types.ObjectId;
   rating?: number;
   comments?: string;
 }
 
-export interface IQuarterReview extends Document {
-  quarterAssignmentId: Types.ObjectId;
+export interface ITermReview extends Document {
+  termAssignmentId: Types.ObjectId;
   annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
   employeeId: Types.ObjectId;
   managerId: Types.ObjectId;
-  reviewStatus: QuarterReviewStatusType;
-  ratings: IQuarterReviewRating[];
+  reviewStatus: TermReviewStatusType;
+  ratings: ITermReviewRating[];
   comments?: string;
   score?: number;
   overallScore?: number;
   overallRating?: string;
-  finalQuarterRemarks?: string;
+  finalTermRemarks?: string;
   recommendation?: string;
   achievements?: string;
   developmentObservations?: string;
@@ -57,7 +57,7 @@ const attachmentSchema = new Schema<IPmsAttachment>(
   { _id: false },
 );
 
-const ratingSchema = new Schema<IQuarterReviewRating>(
+const ratingSchema = new Schema<ITermReviewRating>(
   {
     objectiveId: { type: Schema.Types.ObjectId, ref: 'Objective' },
     rating: { type: Number, min: 0 },
@@ -66,12 +66,12 @@ const ratingSchema = new Schema<IQuarterReviewRating>(
   { _id: false },
 );
 
-const quarterReviewSchema = new Schema<IQuarterReview>(
+const termReviewSchema = new Schema<ITermReview>(
   {
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
     },
     annualAssignmentId: {
       type: Schema.Types.ObjectId,
@@ -98,8 +98,8 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     reviewStatus: {
       type: String,
       required: true,
-      enum: Object.values(QuarterReviewStatus),
-      default: QuarterReviewStatus.MANAGER_REVIEW_OPEN,
+      enum: Object.values(TermReviewStatus),
+      default: TermReviewStatus.MANAGER_REVIEW_OPEN,
       index: true,
     },
     ratings: {
@@ -110,7 +110,7 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     score: { type: Number, min: 0 },
     overallScore: { type: Number, min: 0 },
     overallRating: String,
-    finalQuarterRemarks: String,
+    finalTermRemarks: String,
     recommendation: String,
     achievements: String,
     developmentObservations: String,
@@ -129,19 +129,19 @@ const quarterReviewSchema = new Schema<IQuarterReview>(
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'quarter_reviews',
+    collection: 'term_reviews',
     timestamps: true,
   },
 );
 
-quarterReviewSchema.index(
-  { quarterAssignmentId: 1 },
-  { unique: true, name: 'idx_quarter_review_quarter_assignment' },
+termReviewSchema.index(
+  { termAssignmentId: 1 },
+  { unique: true, name: 'idx_term_review_term_assignment' },
 );
-quarterReviewSchema.index({ managerId: 1, reviewStatus: 1 });
-quarterReviewSchema.index({ cycleId: 1, reviewStatus: 1 });
+termReviewSchema.index({ managerId: 1, reviewStatus: 1 });
+termReviewSchema.index({ cycleId: 1, reviewStatus: 1 });
 
-export const QuarterReview = mongoose.model<IQuarterReview>(
-  'QuarterReview',
-  quarterReviewSchema,
+export const TermReview = mongoose.model<ITermReview>(
+  'TermReview',
+  termReviewSchema,
 );

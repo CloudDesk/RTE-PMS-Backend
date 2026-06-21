@@ -6,12 +6,12 @@ import {
   AnnualDecision,
   AnnualCycle,
   CommunicationDispatch,
-  QuarterAssignment,
+  TermAssignment,
   PmsTemplate,
   PmsTemplateVersion,
   User,
   BulkOperationJob,
-  QuarterCycle,
+  TermCycle,
   NotificationEvent,
 } from '../models';
 import {
@@ -30,7 +30,7 @@ export interface BulkAssignInputItem {
   managerId?: string;
   templateVersionId?: string;
   assignmentReason?: string;
-  applicableQuarters?: AssessmentTermCodeType[];
+  applicableTerms?: AssessmentTermCodeType[];
 }
 
 export interface BulkVisibilityUpdateInput {
@@ -446,7 +446,7 @@ export class PmsBulkOperationsService extends BaseService {
         const seenEmployeeIds = new Set<string>();
 
     for (const item of assignments) {
-      const { employeeId, managerId, templateVersionId, assignmentReason, applicableQuarters } = item as any;
+      const { employeeId, managerId, templateVersionId, assignmentReason, applicableTerms } = item as any;
 
       if (!employeeId) {
         results.push({
@@ -480,7 +480,7 @@ export class PmsBulkOperationsService extends BaseService {
         if (!resolvedManagerId) {
           // Send to exception queue as required by Module 15 business rules
           const exception = await assignmentService.bulkAssign(cycleId, {
-            assignments: [{ employeeId, managerId: undefined, applicableQuarters, assignmentReason }]
+            assignments: [{ employeeId, managerId: undefined, applicableTerms, assignmentReason }]
           });
           results.push({
             employeeId,
@@ -496,7 +496,7 @@ export class PmsBulkOperationsService extends BaseService {
           employeeId,
           managerId: resolvedManagerId.toString(),
           templateVersionId,
-          applicableQuarters,
+          applicableTerms,
           assignmentReason: assignmentReason || 'BULK_LAUNCH',
         });
 
@@ -505,7 +505,7 @@ export class PmsBulkOperationsService extends BaseService {
           status: 'SUCCESS',
           message: 'Assignment successfully created',
           annualAssignmentId: assignRes.annualAssignment._id.toString(),
-          quarterAssignmentIds: assignRes.quarterAssignments.map((q: any) => q._id.toString()),
+          termAssignmentIds: assignRes.termAssignments.map((q: any) => q._id.toString()),
         });
         tracker.successCount += 1;
       } catch (err: any) {
@@ -586,25 +586,25 @@ export class PmsBulkOperationsService extends BaseService {
     const cycleObjectId = new Types.ObjectId(cycleId);
 
     // Load active quarter cycles under this annual cycle
-    const quarterCycles = await QuarterCycle.find({
+    const termCycles = await TermCycle.find({
       parentCycleId: cycleObjectId,
       isDeleted: false,
     }).lean();
 
-    const activeQuarterIds = quarterCycles.map((q: any) => q._id);
+    const activeQuarterIds = termCycles.map((q: any) => q._id);
 
     if (targetType === 'OBJECTIVES') {
-      // Find Quarter Assignments in DRAFT or REVISION_REQUIRED
-      const quarterAssignments = await QuarterAssignment.find({
-        cycleQuarterId: { $in: activeQuarterIds },
-        quarterState: { $in: ['OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'] },
+      // Find Term Assignments in DRAFT or REVISION_REQUIRED
+      const termAssignments = await TermAssignment.find({
+        cycleTermId: { $in: activeQuarterIds },
+        termState: { $in: ['OBJECTIVE_DRAFT', 'OBJECTIVE_REVISION_REQUIRED'] },
         isDeleted: false,
       })
         .populate('employeeId', 'name email employeeCode')
         .populate('assignedManagerId', 'name email employeeCode')
         .lean();
 
-      for (const qa of quarterAssignments) {
+      for (const qa of termAssignments) {
         results.push({
           assignmentId: qa._id.toString(),
           employeeId: (qa.employeeId as any)?._id?.toString() || qa.employeeId?.toString(),
@@ -612,21 +612,21 @@ export class PmsBulkOperationsService extends BaseService {
           employeeEmail: (qa.employeeId as any)?.email || '',
           managerName: (qa.assignedManagerId as any)?.name || '',
           status: 'PENDING_OBJECTIVE',
-          message: `Objectives are in ${qa.quarterState} state. Needs employee submission.`,
+          message: `Objectives are in ${qa.termState} state. Needs employee submission.`,
         });
       }
     } else if (targetType === 'REVIEWS') {
-      // Find Quarter Assignments where manager review is pending
-      const quarterAssignments = await QuarterAssignment.find({
-        cycleQuarterId: { $in: activeQuarterIds },
-        quarterState: { $in: ['MANAGER_REVIEW_OPEN'] },
+      // Find Term Assignments where manager review is pending
+      const termAssignments = await TermAssignment.find({
+        cycleTermId: { $in: activeQuarterIds },
+        termState: { $in: ['MANAGER_REVIEW_OPEN'] },
         isDeleted: false,
       })
         .populate('employeeId', 'name email employeeCode')
         .populate('assignedManagerId', 'name email employeeCode')
         .lean();
 
-      for (const qa of quarterAssignments) {
+      for (const qa of termAssignments) {
         results.push({
           assignmentId: qa._id.toString(),
           managerId: (qa.assignedManagerId as any)?._id?.toString() || qa.assignedManagerId?.toString(),
@@ -634,7 +634,7 @@ export class PmsBulkOperationsService extends BaseService {
           managerEmail: (qa.assignedManagerId as any)?.email || '',
           employeeName: (qa.employeeId as any)?.name || '',
           status: 'PENDING_REVIEW',
-          message: `Review is pending by manager in quarter state: ${qa.quarterState}`,
+          message: `Review is pending by manager in quarter state: ${qa.termState}`,
         });
       }
     }
@@ -685,7 +685,7 @@ export class PmsBulkOperationsService extends BaseService {
           recipientUserId: new Types.ObjectId(recipientUserId),
           channel: 'EMAIL',
           deliveryStatus: 'SUCCESS',
-          entityType: 'QUARTER_ASSIGNMENT',
+          entityType: 'TERM_ASSIGNMENT',
           entityId: new Types.ObjectId(record.assignmentId),
           cycleId: new Types.ObjectId(cycleId),
           sentAt: new Date(),

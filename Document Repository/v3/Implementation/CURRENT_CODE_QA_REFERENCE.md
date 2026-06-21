@@ -1,20 +1,28 @@
 # Current PMS Code Reference
 
-Last updated: 16 Jun 2026, 8:30 PM IST
+Last updated: 21 Jun 2026
 
 This document records the current PMS v3 implementation status only.
 
 ## Current Term Model
 
-The current code still uses some historical names:
+The current code uses assessment-term naming for PMS term-level records:
 
 ```text
-quarter_assignments
-quarterCode
-level: "QUARTER"
+term_assignments
+termAssignmentId
+assessmentTermCode
+TERM_ONLY
+termScope
+applicableTerms
 ```
 
-In the current implementation, these names mean assessment-term-level behavior.
+Template section level naming has been corrected:
+
+```text
+Backend template section level: "TERM"
+Frontend template section level: "term"
+```
 
 Supported assessment term types:
 
@@ -27,10 +35,10 @@ Yearly      -> Y1
 Important current rule:
 
 ```text
-level: "QUARTER" = assessment-term-level section
+level: "TERM" = assessment-term-level section
 ```
 
-It is not limited to only Q1-Q4 in behavior.
+It is not limited to only Q1-Q4 in behavior. It is used for Quarterly, Half-Yearly, and Yearly assessment terms.
 
 ## Cycle Launch And Assignments
 
@@ -40,28 +48,28 @@ For each selected employee:
 
 ```text
 1 annual_assignments record
-N quarter_assignments records
+N term_assignments records
 ```
 
 Assignment count:
 
 ```text
-Quarterly   -> 4 quarter_assignments
-Half-Yearly -> 2 quarter_assignments
-Yearly      -> 1 quarter_assignment
+Quarterly   -> 4 term_assignments
+Half-Yearly -> 2 term_assignments
+Yearly      -> 1 term_assignment
 ```
 
 `annual_assignments` stores the employee/cycle/template mapping and links to all term assignments.
 
-`quarter_assignments` stores the employee, manager, cycle, template version, term code, and workflow state. It does not store objective details inside the assignment row.
+`term_assignments` stores the employee, manager, cycle, template version, assessment term code, and workflow state. It does not store objective details inside the assignment row.
 
 Objective relation:
 
 ```text
-quarter_assignments._id
+term_assignments._id
         |
         v
-objectives.quarterAssignmentId
+objectives.termAssignmentId
 ```
 
 ## Predefined Objectives
@@ -312,30 +320,46 @@ Employee-created and manager-created objectives are shown only as context/eviden
 
 They are not directly rated and are not included in objective weightage calculations.
 
-## High Importance: Do Not Rename `level: "QUARTER"` Casually
+## Section Level Naming
 
-If we rename:
-
-```text
-level: "QUARTER"
-```
-
-to something like:
+Template section level naming is now explicit:
 
 ```text
-level: "TERM"
-level: "ASSESSMENT_TERM"
+Backend: "TERM" | "ANNUAL"
+Frontend: "term" | "annual"
 ```
 
-it becomes a bigger FE + BE change. It touches template creation, template validation, cycle launch, assignment seeding, objective display, achievement submission, manager review, scoring, and old data compatibility.
+The previous quarter-specific section-level naming was misleading because the same behavior is used for Quarterly, Half-Yearly, and Yearly assessment terms. Since the PMS v3 template data is not in production, no backward-compatibility migration for old template section level values is required.
 
-Places to change:
+Important rule:
+
+```text
+level: "TERM" means assessment-term-level section.
+level: "ANNUAL" means annual-level section.
+```
+
+The assessment-term naming cleanup uses these current model/API names:
+
+```text
+term_assignments
+term_cycles
+term_reviews
+term_review_values
+termAssignmentId
+assessmentTermCode
+TERM_ONLY
+termScope
+applicableTerms
+```
+
+No production compatibility layer is required for previous quarter-specific names because this PMS v3 data model is not live.
+
+Places affected by the section level rename:
 
 Constants/types:
 
 ```text
 Server/src/constants/pms.enums.ts
-Client/src/lib/types/pms.ts
 Client/src/lib/types/pmsTemplate.ts
 ```
 
@@ -375,42 +399,35 @@ Client/src/lib/components/pms/achievements/EmployeeAchievementWorkspace.svelte
 Manager review/scoring:
 
 ```text
-Server/src/services/quarterReview.service.ts
+Server/src/services/termReview.service.ts
 Server/src/services/pms-scoring.service.ts
-Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte
+Client/src/lib/components/pms/reviews/TermReviewWorkspace.svelte
 ```
 
 Existing data compatibility:
 
 ```text
-Existing DB template sections already have level: "QUARTER".
-Need either migration or compatibility helper.
+No production compatibility required for previous quarter-specific template section levels.
+Regenerate or clean local/dev template data if old draft versions still contain the old value.
 ```
 
-Example compatibility helper:
+Current helper rule:
 
 ```ts
 function isTermLevel(level: string) {
-  return level === "QUARTER" || level === "TERM" || level === "ASSESSMENT_TERM";
+  return level === "TERM";
 }
 ```
 
 Recommendation:
 
 ```text
-Do not rename now unless it is planned as a cleanup/migration task.
+Use "TERM" for template section level.
+Do not create new template sections with previous quarter-specific section levels.
+Do not use compatibility fallback for previous quarter-specific section levels unless production migration becomes necessary later.
 ```
 
-Safer current approach:
-
-```text
-Keep stored level: "QUARTER" for backward compatibility.
-Add helper naming in BE/FE: isAssessmentTermLevel(section.level).
-Internally treat QUARTER as term-level.
-Update labels/docs to say "Assessment Term" instead of "Quarter" where possible.
-```
-
-This gives correct behavior for Quarterly, Half-Yearly, and Yearly without breaking existing templates.
+This gives correct behavior for Quarterly, Half-Yearly, and Yearly with accurate template section naming.
 
 ## Current Files Involved
 
@@ -427,7 +444,7 @@ Server/src/services/employeeAchievementSubmission.service.ts
 Server/src/services/objective.service.ts
 Server/src/services/pms-scoring.service.ts
 Server/src/services/pms-template.service.ts
-Server/src/services/quarterReview.service.ts
+Server/src/services/termReview.service.ts
 Server/src/services/sla.service.ts
 ```
 
@@ -436,7 +453,7 @@ Frontend:
 ```text
 Client/src/lib/components/pms/achievements/EmployeeAchievementWorkspace.svelte
 Client/src/lib/components/pms/objectives/ObjectiveWorkspace.svelte
-Client/src/lib/components/pms/reviews/QuarterReviewWorkspace.svelte
+Client/src/lib/components/pms/reviews/TermReviewWorkspace.svelte
 Client/src/lib/components/pms/templates/*
 Client/src/lib/services/api/pmsObjectives.ts
 Client/src/lib/services/api/pmsTemplates.ts

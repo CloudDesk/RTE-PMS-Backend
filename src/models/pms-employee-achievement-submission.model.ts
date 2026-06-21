@@ -66,12 +66,12 @@ export interface IEmployeeAchievementValue {
 
 export interface IEmployeeAchievementSubmission extends Document {
   annualAssignmentId: Types.ObjectId;
-  quarterAssignmentId: Types.ObjectId;
+  termAssignmentId: Types.ObjectId;
   cycleId?: Types.ObjectId;
   employeeId: Types.ObjectId;
   managerId: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
-  quarterCode: AssessmentTermCodeType;
+  assessmentTermCode: AssessmentTermCodeType;
   achievementItems: IAchievementItem[];
   achievementValues: IEmployeeAchievementValue[];
   status: EmployeeAchievementSubmissionStatus;
@@ -170,10 +170,10 @@ const employeeAchievementSubmissionSchema = new Schema<IEmployeeAchievementSubmi
       ref: 'AnnualAssignment',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     cycleId: {
@@ -198,7 +198,7 @@ const employeeAchievementSubmissionSchema = new Schema<IEmployeeAchievementSubmi
       ref: 'PmsTemplateVersion',
       index: true,
     },
-    quarterCode: {
+    assessmentTermCode: {
       type: String,
       required: true,
       enum: Object.values(AssessmentTermCode),
@@ -233,11 +233,11 @@ const employeeAchievementSubmissionSchema = new Schema<IEmployeeAchievementSubmi
 );
 
 employeeAchievementSubmissionSchema.index(
-  { quarterAssignmentId: 1 },
-  { unique: true, name: 'idx_employee_achievement_submission_quarter_assignment' },
+  { termAssignmentId: 1 },
+  { unique: true, name: 'idx_employee_achievement_submission_term_assignment' },
 );
-employeeAchievementSubmissionSchema.index({ annualAssignmentId: 1, quarterCode: 1 });
-employeeAchievementSubmissionSchema.index({ employeeId: 1, cycleId: 1, quarterCode: 1 });
+employeeAchievementSubmissionSchema.index({ annualAssignmentId: 1, assessmentTermCode: 1 });
+employeeAchievementSubmissionSchema.index({ employeeId: 1, cycleId: 1, assessmentTermCode: 1 });
 employeeAchievementSubmissionSchema.index({ 'achievementItems.objectiveId': 1 });
 
 export const EmployeeAchievementSubmission = mongoose.model<IEmployeeAchievementSubmission>(

@@ -4,7 +4,7 @@ export interface IPmsDocument extends Document {
   employeeId: Types.ObjectId;
   cycleId?: Types.ObjectId;
   annualAssignmentId?: Types.ObjectId;
-  quarterAssignmentId?: Types.ObjectId;
+  termAssignmentId?: Types.ObjectId;
   documentType: string;
   documentName: string;
   documentDate?: Date;
@@ -38,9 +38,9 @@ const pmsDocumentSchema = new Schema<IPmsDocument>(
       ref: 'AnnualAssignment',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     documentType: {
@@ -92,6 +92,6 @@ const pmsDocumentSchema = new Schema<IPmsDocument>(
 );
 
 pmsDocumentSchema.index({ employeeId: 1, uploadedAt: -1 });
-pmsDocumentSchema.index({ quarterAssignmentId: 1, documentType: 1, isDeleted: 1 });
+pmsDocumentSchema.index({ termAssignmentId: 1, documentType: 1, isDeleted: 1 });
 
 export const PmsDocument = mongoose.model<IPmsDocument>('PmsDocument', pmsDocumentSchema);

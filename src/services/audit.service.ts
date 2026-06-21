@@ -3,8 +3,8 @@ import { AuditLog } from '../models/audit-log.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { Objective } from '../models/pms-objective.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
-import { QuarterReview } from '../models/pms-quarter-review.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
+import { TermReview } from '../models/pms-term-review.model';
 import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { User } from '../models/user.model';
 import type { IAuditLog } from '../models/audit-log.model';
@@ -89,23 +89,23 @@ export class AuditService {
   async getHistory(assignmentId: string): Promise<AuditHistoryEntry[]> {
     const assignmentObjectId = this.toObjectIdIfValid(assignmentId);
     const [
-      quarterAssignments,
-      quarterReviews,
+      termAssignments,
+      termReviews,
       objectives,
       annualDecision,
       visibilityConfiguration,
     ] = await Promise.all([
-      QuarterAssignment.find({
+      TermAssignment.find({
         annualAssignmentId: assignmentObjectId,
         isDeleted: false,
       })
         .select('_id')
         .lean(),
-      QuarterReview.find({
+      TermReview.find({
         annualAssignmentId: assignmentObjectId,
         isDeleted: false,
       })
-        .select('_id quarterAssignmentId')
+        .select('_id termAssignmentId')
         .lean(),
       Objective.find({
         annualAssignmentId: assignmentObjectId,
@@ -132,19 +132,19 @@ export class AuditService {
       { entityType: 'ANNUAL_ASSIGNMENT', entityId: assignmentObjectId },
     ];
 
-    const quarterAssignmentIds = quarterAssignments.map((item) => item._id);
-    if (quarterAssignmentIds.length > 0) {
+    const termAssignmentIds = termAssignments.map((item) => item._id);
+    if (termAssignmentIds.length > 0) {
       entityFilters.push({
-        entityType: 'QUARTER_ASSIGNMENT',
-        entityId: { $in: quarterAssignmentIds },
+        entityType: 'TERM_ASSIGNMENT',
+        entityId: { $in: termAssignmentIds },
       });
     }
 
-    const quarterReviewIds = quarterReviews.map((item) => item._id);
-    if (quarterReviewIds.length > 0) {
+    const termReviewIds = termReviews.map((item) => item._id);
+    if (termReviewIds.length > 0) {
       entityFilters.push({
         entityType: 'QUARTER_REVIEW',
-        entityId: { $in: quarterReviewIds },
+        entityId: { $in: termReviewIds },
       });
     }
 
@@ -176,10 +176,10 @@ export class AuditService {
 
     const correctionEntityFilters: Array<Record<string, unknown>> = [];
 
-    if (quarterAssignmentIds.length > 0) {
+    if (termAssignmentIds.length > 0) {
       correctionEntityFilters.push({
-        entityType: 'QUARTER_ASSIGNMENT',
-        entityId: { $in: quarterAssignmentIds },
+        entityType: 'TERM_ASSIGNMENT',
+        entityId: { $in: termAssignmentIds },
       });
     }
 
@@ -241,7 +241,7 @@ export class AuditService {
         approvedBy: layer.approvedBy,
         approvedAt: layer.approvedAt,
         workflowState:
-          (layer.correctedValue as Record<string, unknown> | undefined)?.quarterState ??
+          (layer.correctedValue as Record<string, unknown> | undefined)?.termState ??
           (layer.correctedValue as Record<string, unknown> | undefined)?.annualState ??
           (layer.correctedValue as Record<string, unknown> | undefined)?.decisionStatus,
       },

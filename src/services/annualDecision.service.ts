@@ -20,9 +20,9 @@ import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { VisibilityConfiguration } from '../models/pms-visibility-configuration.model';
 import { Objective } from '../models/pms-objective.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
-import { QuarterCycle } from '../models/pms-quarter-cycle.model';
-import { QuarterReview } from '../models/pms-quarter-review.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
+import { TermCycle } from '../models/pms-term-cycle.model';
+import { TermReview } from '../models/pms-term-review.model';
 import { auditService } from './audit.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import {
@@ -34,8 +34,8 @@ import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IAnnualDecision } from '../models/pms-annual-decision.model';
 import type { IObjective } from '../models/pms-objective.model';
-import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
-import type { IQuarterReview } from '../models/pms-quarter-review.model';
+import type { ITermAssignment } from '../models/pms-term-assignment.model';
+import type { ITermReview } from '../models/pms-term-review.model';
 import type { AppraisalOutcomeType as AppraisalOutcomeTypeType } from '../constants/pms.enums';
 import type { IAnnualDecisionValue } from '../models/pms-annual-decision-value.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
@@ -62,7 +62,7 @@ type AnnualDecisionGateAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE';
 
 interface AnnualDecisionReadiness {
   isAppraisalWindowOpen: boolean;
-  quarterProgress: {
+  termProgress: {
     total: number;
     completed: number;
   };
@@ -74,16 +74,16 @@ interface AnnualDecisionReadiness {
 export interface AnnualSummaryResult {
   annualAssignment: Record<string, unknown> & {
     isAppraisalWindowOpen: boolean;
-    quarterProgress: {
+    termProgress: {
       total: number;
       completed: number;
     };
     availableActions: AnnualDecisionAction[];
     lockedReason?: string;
   };
-  quarterAssignments: IQuarterAssignment[];
+  termAssignments: ITermAssignment[];
   objectives: IObjective[];
-  quarterReviews: IQuarterReview[];
+  termReviews: ITermReview[];
   annualDecisionValues: Array<Record<string, unknown>>;
   calculatedFinalScore?: number;
   finalScoreOverride: Record<string, unknown> | null;
@@ -119,7 +119,7 @@ export interface AnnualDecisionListItem {
   managerName: string;
   annualState: string;
   finalDecisionStatus: string;
-  quarterProgress: {
+  termProgress: {
     total: number;
     completed: number;
   };
@@ -222,8 +222,8 @@ export class AnnualDecisionService extends BaseService {
       return [];
     }
 
-    const [quarterAssignments, annualDecisions, cycles] = await Promise.all([
-      QuarterAssignment.find({
+    const [termAssignments, annualDecisions, cycles] = await Promise.all([
+      TermAssignment.find({
         annualAssignmentId: { $in: annualAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
@@ -237,12 +237,12 @@ export class AnnualDecisionService extends BaseService {
       }).lean(),
     ]);
 
-    const quarterAssignmentsByAnnualAssignmentId = new Map<string, typeof quarterAssignments>();
-    for (const quarterAssignment of quarterAssignments) {
-      const key = quarterAssignment.annualAssignmentId.toString();
-      const bucket = quarterAssignmentsByAnnualAssignmentId.get(key) ?? [];
-      bucket.push(quarterAssignment);
-      quarterAssignmentsByAnnualAssignmentId.set(key, bucket);
+    const termAssignmentsByAnnualAssignmentId = new Map<string, typeof termAssignments>();
+    for (const termAssignment of termAssignments) {
+      const key = termAssignment.annualAssignmentId.toString();
+      const bucket = termAssignmentsByAnnualAssignmentId.get(key) ?? [];
+      bucket.push(termAssignment);
+      termAssignmentsByAnnualAssignmentId.set(key, bucket);
     }
 
     const decisionByAnnualAssignmentId = new Map(
@@ -251,7 +251,7 @@ export class AnnualDecisionService extends BaseService {
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
 
     const listItems = await Promise.all(annualAssignments.map(async (annualAssignment) => {
-      const relatedQuarters = quarterAssignmentsByAnnualAssignmentId.get(annualAssignment._id.toString()) ?? [];
+      const relatedQuarters = termAssignmentsByAnnualAssignmentId.get(annualAssignment._id.toString()) ?? [];
       const decision = decisionByAnnualAssignmentId.get(annualAssignment._id.toString());
       const cycle = cycleMap.get(annualAssignment.cycleId.toString());
       const employeeSnapshot = annualAssignment.employeeSnapshot ?? {};
@@ -297,7 +297,7 @@ export class AnnualDecisionService extends BaseService {
         managerName: String(annualAssignment.managerSnapshot?.name ?? 'Manager'),
         annualState: annualAssignment.annualState,
         finalDecisionStatus,
-        quarterProgress: readiness.quarterProgress,
+        termProgress: readiness.termProgress,
         visibility: {
           employeeReviewVisible: annualAssignment.visibility.employeeReviewVisible,
           employeeGradeVisible: annualAssignment.visibility.employeeGradeVisible,
@@ -318,17 +318,17 @@ export class AnnualDecisionService extends BaseService {
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
     await this.assertDecisionReadAccess('annualDecision.summary', annualAssignment);
 
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
-      quarterCode: { $in: annualAssignment.applicableQuarters },
+      assessmentTermCode: { $in: annualAssignment.applicableTerms },
       isDeleted: false,
-    }).sort({ quarterCode: 1 });
+    }).sort({ assessmentTermCode: 1 });
 
-    const quarterAssignmentIds = quarterAssignments.map((quarterAssignment) => quarterAssignment._id);
+    const termAssignmentIds = termAssignments.map((termAssignment) => termAssignment._id);
 
-    const [objectives, quarterReviews, annualDecision, visibilityConfiguration, cycle] = await Promise.all([
-      Objective.find({ quarterAssignmentId: { $in: quarterAssignmentIds } }),
-      QuarterReview.find({ quarterAssignmentId: { $in: quarterAssignmentIds } }),
+    const [objectives, termReviews, annualDecision, visibilityConfiguration, cycle] = await Promise.all([
+      Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
+      TermReview.find({ termAssignmentId: { $in: termAssignmentIds } }),
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
@@ -340,7 +340,7 @@ export class AnnualDecisionService extends BaseService {
       AnnualDecisionStatus.DRAFT;
     const readiness = await this.resolveAnnualDecisionReadiness(
       annualAssignment,
-      quarterAssignments,
+      termAssignments,
       finalDecisionStatus,
       cycle ?? undefined,
     );
@@ -394,13 +394,13 @@ export class AnnualDecisionService extends BaseService {
         ...annualAssignment.toObject(),
         finalDecisionStatus,
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
-        quarterProgress: readiness.quarterProgress,
+        termProgress: readiness.termProgress,
         availableActions: readiness.availableActions,
         lockedReason: readiness.lockedReason,
       },
-      quarterAssignments,
+      termAssignments,
       objectives,
-      quarterReviews,
+      termReviews,
       annualDecisionValues: annualDecisionValues.map((value) => ({
         templateFieldId: value.templateFieldId,
         fieldKey: value.fieldKey,
@@ -661,16 +661,16 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Locked template version is required before reopening annual decision');
     }
 
-    const [quarterAssignments, quarterReviews, visibilityConfiguration] = await Promise.all([
-      QuarterAssignment.find({
+    const [termAssignments, termReviews, visibilityConfiguration] = await Promise.all([
+      TermAssignment.find({
         annualAssignmentId: annualAssignment._id,
-        quarterCode: { $in: annualAssignment.applicableQuarters },
+        assessmentTermCode: { $in: annualAssignment.applicableTerms },
         isDeleted: false,
       })
-        .sort({ quarterCode: 1 })
+        .sort({ assessmentTermCode: 1 })
         .lean(),
-      QuarterReview.find({
-        quarterAssignmentId: { $in: annualAssignment.quarterAssignmentIds },
+      TermReview.find({
+        termAssignmentId: { $in: annualAssignment.termAssignmentIds },
         isDeleted: false,
       }).lean(),
       VisibilityConfiguration.findOne({
@@ -679,18 +679,18 @@ export class AnnualDecisionService extends BaseService {
       }),
     ]);
 
-    const quarterReviewMap = new Map(
-      quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
+    const termReviewMap = new Map(
+      termReviews.map((item) => [item.termAssignmentId.toString(), item]),
     );
 
     const snapshotPayload = {
       annualSnapshot: annualAssignment.toObject(),
-      quarterSnapshots: Object.fromEntries(
-        quarterAssignments.map((quarterAssignment) => [
-          quarterAssignment.quarterCode,
+      termSnapshots: Object.fromEntries(
+        termAssignments.map((termAssignment) => [
+          termAssignment.assessmentTermCode,
           {
-            quarterAssignment,
-            quarterReview: quarterReviewMap.get(quarterAssignment._id.toString()) ?? null,
+            termAssignment,
+            termReview: termReviewMap.get(termAssignment._id.toString()) ?? null,
           },
         ]),
       ),
@@ -714,7 +714,7 @@ export class AnnualDecisionService extends BaseService {
       employeeId: annualAssignment.employeeId,
       templateVersionId: annualAssignment.templateVersionId,
       annualSnapshot: snapshotPayload.annualSnapshot,
-      quarterSnapshots: snapshotPayload.quarterSnapshots,
+      termSnapshots: snapshotPayload.termSnapshots,
       finalDecisionSnapshot: snapshotPayload.finalDecisionSnapshot,
       visibilitySnapshot: snapshotPayload.visibilitySnapshot,
       snapshotHash,
@@ -1011,14 +1011,14 @@ export class AnnualDecisionService extends BaseService {
     action: AnnualDecisionGateAction,
     finalDecisionStatus: string,
   ): Promise<void> {
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
-      quarterCode: { $in: annualAssignment.applicableQuarters },
+      assessmentTermCode: { $in: annualAssignment.applicableTerms },
       isDeleted: false,
-    }).select('quarterCode quarterState');
+    }).select('assessmentTermCode termState');
     const readiness = await this.resolveAnnualDecisionReadiness(
       annualAssignment,
-      quarterAssignments,
+      termAssignments,
       finalDecisionStatus,
     );
 
@@ -1031,21 +1031,21 @@ export class AnnualDecisionService extends BaseService {
   }
 
   private async resolveAnnualDecisionReadiness(
-    annualAssignment: Pick<IAnnualAssignment, '_id' | 'cycleId' | 'applicableQuarters' | 'annualState'>,
-    quarterAssignments: Array<Pick<IQuarterAssignment, 'quarterCode' | 'quarterState'>>,
+    annualAssignment: Pick<IAnnualAssignment, '_id' | 'cycleId' | 'applicableTerms' | 'annualState'>,
+    termAssignments: Array<Pick<ITermAssignment, 'assessmentTermCode' | 'termState'>>,
     finalDecisionStatus: string,
     cycleOverride?: IAnnualCycle | null,
   ): Promise<AnnualDecisionReadiness> {
-    const applicableTerms = annualAssignment.applicableQuarters ?? [];
+    const applicableTerms = annualAssignment.applicableTerms ?? [];
     const termByCode = new Map(
-      quarterAssignments.map((quarterAssignment) => [
-        quarterAssignment.quarterCode,
-        quarterAssignment,
+      termAssignments.map((termAssignment) => [
+        termAssignment.assessmentTermCode,
+        termAssignment,
       ]),
     );
     const completedTerms = applicableTerms.filter((termCode) => {
       const termAssignment = termByCode.get(termCode);
-      return termAssignment ? isTermFinalized(termAssignment.quarterState) : false;
+      return termAssignment ? isTermFinalized(termAssignment.termState) : false;
     }).length;
     const allTermsFinalized =
       applicableTerms.length > 0 &&
@@ -1064,7 +1064,7 @@ export class AnnualDecisionService extends BaseService {
 
     return {
       isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
-      quarterProgress: {
+      termProgress: {
         total: applicableTerms.length,
         completed: completedTerms,
       },
@@ -1241,27 +1241,27 @@ export class AnnualDecisionService extends BaseService {
   private async calculateAnnualFinalScore(
     annualAssignment: IAnnualAssignment,
   ): Promise<number> {
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
-      quarterCode: { $in: annualAssignment.applicableQuarters },
+      assessmentTermCode: { $in: annualAssignment.applicableTerms },
       isDeleted: false,
     });
 
-    const quarterScores: Record<string, number> = {};
-    for (const quarter of quarterAssignments) {
-      if (!isTermFinalized(quarter.quarterState)) {
+    const termScores: Record<string, number> = {};
+    for (const quarter of termAssignments) {
+      if (!isTermFinalized(quarter.termState)) {
         throw new Error('Annual final score is blocked until all applicable terms are finalized or closed');
       }
 
-      if (!Number.isFinite(Number(quarter.quarterScore))) {
-        throw new Error(`Annual final score requires a score for ${quarter.quarterCode}`);
+      if (!Number.isFinite(Number(quarter.termScore))) {
+        throw new Error(`Annual final score requires a score for ${quarter.assessmentTermCode}`);
       }
 
-      quarterScores[quarter.quarterCode] = Number(quarter.quarterScore);
+      termScores[quarter.assessmentTermCode] = Number(quarter.termScore);
     }
 
-    const missingQuarter = annualAssignment.applicableQuarters.find(
-      (quarterCode) => !Number.isFinite(quarterScores[quarterCode]),
+    const missingQuarter = annualAssignment.applicableTerms.find(
+      (assessmentTermCode) => !Number.isFinite(termScores[assessmentTermCode]),
     );
     if (missingQuarter) {
       throw new Error(`Annual final score requires a score for ${missingQuarter}`);
@@ -1269,7 +1269,7 @@ export class AnnualDecisionService extends BaseService {
 
     const annualScoringConfig = await this.resolveAnnualScoringConfig(annualAssignment);
     const score = this.scoringService.calculateAnnualRollup(
-      quarterScores,
+      termScores,
       annualScoringConfig,
     );
 
@@ -1683,16 +1683,16 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Annual assignment not found');
     }
 
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId,
-      quarterCode: { $in: annualAssignment.applicableQuarters },
+      assessmentTermCode: { $in: annualAssignment.applicableTerms },
     });
-    if (quarterAssignments.length === 0) {
+    if (termAssignments.length === 0) {
       throw new Error('No term assignments found for annual assignment');
     }
 
-    const incompleteTerm = quarterAssignments.find(
-      (quarterAssignment) => !isTermFinalized(quarterAssignment.quarterState),
+    const incompleteTerm = termAssignments.find(
+      (termAssignment) => !isTermFinalized(termAssignment.termState),
     );
 
     if (incompleteTerm) {
@@ -1804,25 +1804,25 @@ export class AnnualDecisionService extends BaseService {
   private async getAllQuartersCompletedAt(
     annualAssignment: IAnnualAssignment,
   ): Promise<Date | null> {
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
-      quarterCode: { $in: annualAssignment.applicableQuarters },
+      assessmentTermCode: { $in: annualAssignment.applicableTerms },
       isDeleted: false,
     });
 
-    if (quarterAssignments.length === 0) {
+    if (termAssignments.length === 0) {
       return null;
     }
 
     let completedAt = new Date(0);
-    for (const quarterAssignment of quarterAssignments) {
-      if (!isTermFinalized(quarterAssignment.quarterState)) {
+    for (const termAssignment of termAssignments) {
+      if (!isTermFinalized(termAssignment.termState)) {
         return null;
       }
 
       const transitionDate =
-        (quarterAssignment as IQuarterAssignment & { lastTransitionAt?: Date }).lastTransitionAt ??
-        quarterAssignment.updatedAt;
+        (termAssignment as ITermAssignment & { lastTransitionAt?: Date }).lastTransitionAt ??
+        termAssignment.updatedAt;
       if (transitionDate && transitionDate > completedAt) {
         completedAt = transitionDate;
       }
@@ -1855,23 +1855,23 @@ export class AnnualDecisionService extends BaseService {
     cycle: IAnnualCycle,
   ): Promise<Date | string | null> {
     const finalTermCode = this.getFinalizationTermCode(cycle);
-    const quarterCycle = await QuarterCycle.findOne({
+    const termCycle = await TermCycle.findOne({
       cycleId: cycle._id,
-      quarterCode: finalTermCode,
+      assessmentTermCode: finalTermCode,
       isDeleted: false,
     })
-      .select('quarterFinalizationWindow closureRules')
+      .select('termFinalizationWindow closureRules')
       .lean();
 
-    if (!quarterCycle) {
+    if (!termCycle) {
       return null;
     }
 
-    const closureRules = quarterCycle.closureRules as Record<string, unknown> | undefined;
+    const closureRules = termCycle.closureRules as Record<string, unknown> | undefined;
 
     return (
-      this.getWindowEndDate(quarterCycle.quarterFinalizationWindow) ??
-      this.getWindowEndDate(closureRules?.quarterFinalizationWindow) ??
+      this.getWindowEndDate(termCycle.termFinalizationWindow) ??
+      this.getWindowEndDate(closureRules?.termFinalizationWindow) ??
       this.getWindowEndDate(closureRules?.finalizationWindow) ??
       null
     );
@@ -2033,7 +2033,7 @@ export class AnnualDecisionService extends BaseService {
     return snapshots.map((snapshot) => ({
       ...snapshot,
       annualSnapshot: this.maskHistoryValue(snapshot.annualSnapshot, permissions),
-      quarterSnapshots: this.maskHistoryValue(snapshot.quarterSnapshots, permissions),
+      termSnapshots: this.maskHistoryValue(snapshot.termSnapshots, permissions),
       finalDecisionSnapshot: this.maskHistoryValue(snapshot.finalDecisionSnapshot, permissions),
       visibilitySnapshot: this.maskHistoryValue(snapshot.visibilitySnapshot, permissions),
       communicationSnapshot: this.maskHistoryValue(snapshot.communicationSnapshot, permissions),

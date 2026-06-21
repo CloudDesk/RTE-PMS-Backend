@@ -8,13 +8,13 @@ import {
   ObjectiveSource,
   ObjectiveStatus,
   PmsRole,
-  QuarterWorkflowState,
+  TermWorkflowState,
 } from '../constants/pms.enums';
 import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { Objective } from '../models/pms-objective.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
-import { QuarterCycle } from '../models/pms-quarter-cycle.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
+import { TermCycle } from '../models/pms-term-cycle.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
 import {
   AchievementItemType,
@@ -106,12 +106,12 @@ type AchievementObjectiveRecord = {
 type AchievementSubmissionRecord = {
   id: string;
   annualAssignmentId: string;
-  quarterAssignmentId: string;
+  termAssignmentId: string;
   cycleId?: string;
   employeeId: string;
   managerId: string;
   templateVersionId?: string;
-  quarterCode: AssessmentTermCodeType;
+  assessmentTermCode: AssessmentTermCodeType;
   status: string;
   achievementItems: Array<{
     type: 'OBJECTIVE' | 'ADDITIONAL';
@@ -152,10 +152,10 @@ type AchievementSubmissionRecord = {
 };
 
 type AchievementSubmissionDetail = {
-  quarterAssignmentId: string;
+  termAssignmentId: string;
   annualAssignmentId: string;
   cycleId?: string;
-  quarterCode: AssessmentTermCodeType;
+  assessmentTermCode: AssessmentTermCodeType;
   employeeId: string;
   managerId: string;
   templateVersionId?: string;
@@ -189,13 +189,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     super(context);
   }
 
-  async getSubmission(quarterAssignmentId: string): Promise<AchievementSubmissionDetail> {
-    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertViewAccess(quarterAssignment);
+  async getSubmission(termAssignmentId: string): Promise<AchievementSubmissionDetail> {
+    let termAssignment = await this.getTermAssignment(termAssignmentId);
+    await this.assertViewAccess(termAssignment);
 
-    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
-    const section = this.getAchievementSection(templateVersion, quarterAssignment.quarterCode);
+    const section = this.getAchievementSection(templateVersion, termAssignment.assessmentTermCode);
     const field = this.getAchievementField(section);
     const config = this.resolveTemplateConfig(templateVersion, section);
 
@@ -203,22 +203,22 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
 
-    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
+    termAssignment = await this.ensureAchievementStageOpen(termAssignment, config);
 
     const submission = await EmployeeAchievementSubmission.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     }).lean();
     const actor = this.requireActor();
-    const objectives = await this.getApprovedObjectives(quarterAssignment._id);
+    const objectives = await this.getApprovedObjectives(termAssignment._id);
 
     return {
-      quarterAssignmentId: quarterAssignment._id.toString(),
-      annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
-      cycleId: quarterAssignment.cycleId?.toString(),
-      quarterCode: quarterAssignment.quarterCode,
-      employeeId: quarterAssignment.employeeId.toString(),
-      managerId: quarterAssignment.assignedManagerId.toString(),
+      termAssignmentId: termAssignment._id.toString(),
+      annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+      cycleId: termAssignment.cycleId?.toString(),
+      assessmentTermCode: termAssignment.assessmentTermCode,
+      employeeId: termAssignment.employeeId.toString(),
+      managerId: termAssignment.assignedManagerId.toString(),
       templateVersionId: annualAssignment.templateVersionId?.toString(),
       reviewFlowMode: config.reviewFlowMode,
       employeeAchievementConfig: config,
@@ -231,21 +231,21 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       objectives,
       submission: submission ? this.mapSubmissionRecord(submission) : null,
       canEdit:
-        actor.actorId === quarterAssignment.employeeId.toString() &&
-        quarterAssignment.quarterState === QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
+        actor.actorId === termAssignment.employeeId.toString() &&
+        termAssignment.termState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
         (!submission || submission.status !== EmployeeAchievementSubmissionStatus.LOCKED),
     };
   }
 
   async saveDraft(
-    quarterAssignmentId: string,
+    termAssignmentId: string,
     input: SaveAchievementDraftInput,
   ): Promise<AchievementSubmissionRecord> {
-    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    let termAssignment = await this.getTermAssignment(termAssignmentId);
 
-    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
-    const section = this.getAchievementSection(templateVersion, quarterAssignment.quarterCode);
+    const section = this.getAchievementSection(templateVersion, termAssignment.assessmentTermCode);
     const field = this.getAchievementField(section);
     const config = this.resolveTemplateConfig(templateVersion, section);
 
@@ -253,11 +253,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
 
-    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
-    await this.assertEmployeeEditAccess(quarterAssignment);
+    termAssignment = await this.ensureAchievementStageOpen(termAssignment, config);
+    await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     });
 
@@ -266,7 +266,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Submitted employee achievement is locked and cannot be edited');
     }
 
-    const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
+    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
     const normalizedItems = this.normalizeAchievementItems(
       input.achievementItems ?? [],
       false,
@@ -312,13 +312,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           { new: true, runValidators: true },
         )
       : await EmployeeAchievementSubmission.create({
-          annualAssignmentId: quarterAssignment.annualAssignmentId,
-          quarterAssignmentId: quarterAssignment._id,
-          cycleId: quarterAssignment.cycleId,
-          employeeId: quarterAssignment.employeeId,
-          managerId: quarterAssignment.assignedManagerId,
+          annualAssignmentId: termAssignment.annualAssignmentId,
+          termAssignmentId: termAssignment._id,
+          cycleId: termAssignment.cycleId,
+          employeeId: termAssignment.employeeId,
+          managerId: termAssignment.assignedManagerId,
           templateVersionId: annualAssignment.templateVersionId,
-          quarterCode: quarterAssignment.quarterCode,
+          assessmentTermCode: termAssignment.assessmentTermCode,
           achievementItems: normalizedItems,
           achievementValues: normalizedValues,
           status: EmployeeAchievementSubmissionStatus.DRAFT,
@@ -346,14 +346,14 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   async submit(
-    quarterAssignmentId: string,
+    termAssignmentId: string,
     input: SubmitAchievementInput,
   ): Promise<AchievementSubmissionRecord> {
-    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    let termAssignment = await this.getTermAssignment(termAssignmentId);
 
-    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
-    const section = this.getAchievementSection(templateVersion, quarterAssignment.quarterCode);
+    const section = this.getAchievementSection(templateVersion, termAssignment.assessmentTermCode);
     const field = this.getAchievementField(section);
     const config = this.resolveTemplateConfig(templateVersion, section);
 
@@ -361,11 +361,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
 
-    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
-    await this.assertEmployeeEditAccess(quarterAssignment);
+    termAssignment = await this.ensureAchievementStageOpen(termAssignment, config);
+    await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     });
 
@@ -374,9 +374,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Achievement submission is already locked.');
     }
 
-    await this.assertSubmitWindowOpen(quarterAssignment, existingSubmission);
+    await this.assertSubmitWindowOpen(termAssignment, existingSubmission);
 
-    const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
+    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
     const submitItems = this.normalizeAchievementItems(
       input.achievementItems ?? existingSubmission?.achievementItems ?? [],
       true,
@@ -425,13 +425,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           { new: true, runValidators: true },
         )
       : await EmployeeAchievementSubmission.create({
-          annualAssignmentId: quarterAssignment.annualAssignmentId,
-          quarterAssignmentId: quarterAssignment._id,
-          cycleId: quarterAssignment.cycleId,
-          employeeId: quarterAssignment.employeeId,
-          managerId: quarterAssignment.assignedManagerId,
+          annualAssignmentId: termAssignment.annualAssignmentId,
+          termAssignmentId: termAssignment._id,
+          cycleId: termAssignment.cycleId,
+          employeeId: termAssignment.employeeId,
+          managerId: termAssignment.assignedManagerId,
           templateVersionId: annualAssignment.templateVersionId,
-          quarterCode: quarterAssignment.quarterCode,
+          assessmentTermCode: termAssignment.assessmentTermCode,
           achievementItems: submitItems,
           achievementValues: submitValues,
           status: EmployeeAchievementSubmissionStatus.LOCKED,
@@ -462,14 +462,14 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   async uploadAttachment(
-    quarterAssignmentId: string,
+    termAssignmentId: string,
     file: MultipartFile,
   ): Promise<UploadedAchievementAttachment> {
-    let quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
+    let termAssignment = await this.getTermAssignment(termAssignmentId);
 
-    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
-    const section = this.getAchievementSection(templateVersion, quarterAssignment.quarterCode);
+    const section = this.getAchievementSection(templateVersion, termAssignment.assessmentTermCode);
     this.getAchievementField(section);
     const config = this.resolveTemplateConfig(templateVersion, section);
 
@@ -477,11 +477,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
 
-    quarterAssignment = await this.ensureAchievementStageOpen(quarterAssignment, config);
-    await this.assertEmployeeEditAccess(quarterAssignment);
+    termAssignment = await this.ensureAchievementStageOpen(termAssignment, config);
+    await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     });
 
@@ -496,7 +496,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
     const attachment = await gcpFileStorageService.uploadMultipartFile({
       file,
-      employeeId: quarterAssignment.employeeId.toString(),
+      employeeId: termAssignment.employeeId.toString(),
       category: 'PMS',
       type: 'EmployeeAchievement',
       public: true,
@@ -505,10 +505,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     await this.audit(
       'PMS_EMPLOYEE_ACHIEVEMENT_ATTACHMENT_UPLOADED',
       'EMPLOYEE_ACHIEVEMENT_SUBMISSION',
-      existingSubmission?._id?.toString() || quarterAssignment._id.toString(),
+      existingSubmission?._id?.toString() || termAssignment._id.toString(),
       undefined,
       {
-        quarterAssignmentId: quarterAssignment._id.toString(),
+        termAssignmentId: termAssignment._id.toString(),
         fileName: attachment.fileName,
         fileUrl: attachment.fileUrl,
         documentId: attachment.documentId,
@@ -524,12 +524,12 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return {
       id: submission._id.toString(),
       annualAssignmentId: submission.annualAssignmentId.toString(),
-      quarterAssignmentId: submission.quarterAssignmentId.toString(),
+      termAssignmentId: submission.termAssignmentId.toString(),
       cycleId: submission.cycleId?.toString(),
       employeeId: submission.employeeId.toString(),
       managerId: submission.managerId.toString(),
       templateVersionId: submission.templateVersionId?.toString(),
-      quarterCode: submission.quarterCode,
+      assessmentTermCode: submission.assessmentTermCode,
       status: submission.status,
       achievementItems: (submission.achievementItems ?? []).map((item: Record<string, any>) => ({
         type: item.type === AchievementItemType.OBJECTIVE
@@ -714,8 +714,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     config: AchievementTemplateConfig,
     approvedObjectives: AchievementObjectiveRecord[] = [],
   ): void {
-    if (section.level !== 'QUARTER') {
-      throw new Error('Employee Achievement Submission section must be quarter-level');
+    if (!this.isTermLevelTemplateSection(section.level)) {
+      throw new Error('Employee Achievement Submission section must be assessment-term-level');
     }
 
     if (field.fieldType !== 'DATA_GRID') {
@@ -797,10 +797,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   private async getApprovedObjectives(
-    quarterAssignmentId: Types.ObjectId,
+    termAssignmentId: Types.ObjectId,
   ): Promise<AchievementObjectiveRecord[]> {
     const objectives = await Objective.find({
-      quarterAssignmentId,
+      termAssignmentId,
       status: ObjectiveStatus.OBJECTIVE_APPROVED,
       isDeleted: false,
     })
@@ -850,19 +850,19 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
   private getAchievementSection(
     templateVersion: { sections?: ITemplateSection[] } | null,
-    quarterCode: AssessmentTermCodeType,
+    assessmentTermCode: AssessmentTermCodeType,
   ): ITemplateSection {
     const section = (templateVersion?.sections ?? []).find(
       (item) => {
-        const quarterScope = [
-          ...(item.quarterScope ?? []),
+        const termScope = [
+          ...(item.termScope ?? []),
           ...(item.repeatFor ?? []),
         ];
 
         return (
           item.sectionKey === EmployeeAchievementSubmissionService.SECTION_KEY &&
-          item.level === 'QUARTER' &&
-          this.assessmentTermScopeMatches(quarterScope, quarterCode)
+          this.isTermLevelTemplateSection(item.level) &&
+          this.assessmentTermScopeMatches(termScope, assessmentTermCode)
         );
       },
     );
@@ -898,6 +898,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
   }
 
+  private isTermLevelTemplateSection(level?: unknown): boolean {
+    const normalized = String(level ?? '').trim().toUpperCase();
+    return normalized === 'TERM';
+  }
+
   private getAchievementField(section: ITemplateSection): ITemplateField {
     const field = (section.fields ?? []).find(
       (item) => item.fieldKey === EmployeeAchievementSubmissionService.FIELD_KEY,
@@ -910,7 +915,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return field;
   }
 
-  private async assertViewAccess(quarterAssignment: any): Promise<void> {
+  private async assertViewAccess(termAssignment: any): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
 
@@ -922,18 +927,18 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       return;
     }
 
-    if (actor.actorId === quarterAssignment.employeeId.toString()) {
+    if (actor.actorId === termAssignment.employeeId.toString()) {
       return;
     }
 
-    if (actor.actorId === quarterAssignment.assignedManagerId.toString()) {
+    if (actor.actorId === termAssignment.assignedManagerId.toString()) {
       return;
     }
 
     const delegation = await this.getReviewDelegation(
       actor.actorId,
-      quarterAssignment.assignedManagerId.toString(),
-      quarterAssignment.cycleId?.toString(),
+      termAssignment.assignedManagerId.toString(),
+      termAssignment.cycleId?.toString(),
     );
     if (delegation) {
       return;
@@ -942,14 +947,14 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     throw new Error('Access denied');
   }
 
-  private async assertEmployeeEditAccess(quarterAssignment: any): Promise<void> {
+  private async assertEmployeeEditAccess(termAssignment: any): Promise<void> {
     const actor = this.requireActor();
     const access = await accessService.canPerform({
       actor,
       action: 'achievementSubmission.edit',
       resource: {
-        employeeId: quarterAssignment.employeeId.toString(),
-        managerId: quarterAssignment.assignedManagerId.toString(),
+        employeeId: termAssignment.employeeId.toString(),
+        managerId: termAssignment.assignedManagerId.toString(),
       },
     });
 
@@ -957,35 +962,35 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Only the employee can edit employee achievement submission');
     }
 
-    if (actor.actorId !== quarterAssignment.employeeId.toString()) {
+    if (actor.actorId !== termAssignment.employeeId.toString()) {
       throw new Error('Employee can edit only own achievement submission');
     }
 
-    if (quarterAssignment.quarterState !== QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+    if (termAssignment.termState !== TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
       throw new Error('Employee Achievement Submission can be edited only during the Employee Achievement Submission stage.');
     }
   }
 
   private async ensureAchievementStageOpen(
-    quarterAssignment: any,
+    termAssignment: any,
     _config: AchievementTemplateConfig,
   ) {
-    return quarterAssignment;
+    return termAssignment;
   }
 
   private async assertSubmitWindowOpen(
-    quarterAssignment: any,
+    termAssignment: any,
     submission?: IEmployeeAchievementSubmission | null,
   ): Promise<void> {
-    if (!quarterAssignment.cycleQuarterId) {
+    if (!termAssignment.cycleTermId) {
       return;
     }
 
-    const quarterCycle = await QuarterCycle.findById(quarterAssignment.cycleQuarterId)
+    const termCycle = await TermCycle.findById(termAssignment.cycleTermId)
       .select('achievementSubmissionWindow')
       .lean();
 
-    const window = quarterCycle?.achievementSubmissionWindow;
+    const window = termCycle?.achievementSubmissionWindow;
     if (!window || window.enabled !== true) {
       return;
     }
@@ -1002,8 +1007,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       : undefined;
 
     if (startDate && now < startDate) {
-      await this.auditQuarterAssignmentBlockedAttempt(
-        quarterAssignment,
+      await this.auditTermAssignmentBlockedAttempt(
+        termAssignment,
         submission,
         'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_BEFORE_WINDOW',
         { startDate: startDate.toISOString(), currentDate: now.toISOString() },
@@ -1012,8 +1017,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }
 
     if (allowedEndDate && now > allowedEndDate) {
-      await this.auditQuarterAssignmentBlockedAttempt(
-        quarterAssignment,
+      await this.auditTermAssignmentBlockedAttempt(
+        termAssignment,
         submission,
         'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_AFTER_WINDOW',
         {
@@ -1026,17 +1031,17 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }
   }
 
-  private async getQuarterAssignment(quarterAssignmentId: string) {
-    if (!Types.ObjectId.isValid(quarterAssignmentId)) {
+  private async getTermAssignment(termAssignmentId: string) {
+    if (!Types.ObjectId.isValid(termAssignmentId)) {
       throw new Error('Invalid quarter assignment id');
     }
 
-    const quarterAssignment = await QuarterAssignment.findById(quarterAssignmentId);
-    if (!quarterAssignment || quarterAssignment.isDeleted) {
+    const termAssignment = await TermAssignment.findById(termAssignmentId);
+    if (!termAssignment || termAssignment.isDeleted) {
       throw new Error('Quarter assignment not found');
     }
 
-    return quarterAssignment;
+    return termAssignment;
   }
 
   private async getAnnualAssignment(annualAssignmentId: string) {
@@ -1129,8 +1134,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
   }
 
-  private async auditQuarterAssignmentBlockedAttempt(
-    quarterAssignment: any,
+  private async auditTermAssignmentBlockedAttempt(
+    termAssignment: any,
     submission: IEmployeeAchievementSubmission | null | undefined,
     action: string,
     details: Record<string, unknown>,
@@ -1141,11 +1146,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       actorId: actor.actorId,
       actorRole: actor.actorRole,
       action,
-      entityType: submission ? 'EMPLOYEE_ACHIEVEMENT_SUBMISSION' : 'QUARTER_ASSIGNMENT',
-      entityId: submission ? submission._id.toString() : quarterAssignment._id.toString(),
-      assignmentId: quarterAssignment.annualAssignmentId.toString(),
+      entityType: submission ? 'EMPLOYEE_ACHIEVEMENT_SUBMISSION' : 'TERM_ASSIGNMENT',
+      entityId: submission ? submission._id.toString() : termAssignment._id.toString(),
+      assignmentId: termAssignment.annualAssignmentId.toString(),
       newValue: {
-        quarterAssignmentId: quarterAssignment._id.toString(),
+        termAssignmentId: termAssignment._id.toString(),
         status: submission?.status,
         ...details,
       },

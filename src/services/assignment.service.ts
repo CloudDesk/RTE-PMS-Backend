@@ -14,7 +14,7 @@ import {
   getAssessmentTerms,
   getAssessmentTermLabel,
   getDefaultAssessmentTermType,
-  QuarterWorkflowState,
+  TermWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -23,8 +23,8 @@ import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AssignmentExceptionQueue } from '../models/pms-assignment-exception-queue.model';
 import { AuditLog } from '../models/audit-log.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
-import { QuarterCycle } from '../models/pms-quarter-cycle.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
+import { TermCycle } from '../models/pms-term-cycle.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { Reassignment } from '../models/pms-reassignment.model';
 import { Objective } from '../models/pms-objective.model';
@@ -36,14 +36,14 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { emailService } from './email.service';
-import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
+import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import { AssessmentTermCode } from '../constants/pms.enums';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
-import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
+import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type {
   ITemplatePredefinedObjective,
   ITemplateSection,
@@ -59,13 +59,13 @@ export interface AssignEmployeeInput {
   employeeId: string;
   managerId?: string;
   templateVersionId?: string;
-  applicableQuarters?: QuarterCode[];
+  applicableTerms?: QuarterCode[];
   assignmentReason?: string;
 }
 
 export interface AssignEmployeeResult {
   annualAssignment: IAnnualAssignment;
-  quarterAssignments: IQuarterAssignment[];
+  termAssignments: ITermAssignment[];
 }
 
 export interface AssignmentListQuery {
@@ -89,7 +89,7 @@ export interface BulkAssignmentRecordResult {
   status: 'CREATED' | 'SKIPPED' | 'FAILED' | 'EXCEPTION';
   message: string;
   annualAssignmentId?: string;
-  quarterAssignmentIds?: string[];
+  termAssignmentIds?: string[];
   exceptionId?: string;
 }
 
@@ -105,7 +105,7 @@ export interface BulkAssignResult {
 export interface ReassignManagerInput {
   managerId: string;
   reason: string;
-  applicableQuarters?: QuarterCode[];
+  applicableTerms?: QuarterCode[];
 }
 
 export interface CancelReassignmentInput {
@@ -213,11 +213,11 @@ export class AssignmentService extends BaseService {
     ]);
 
     const assignmentIds = items.map((item) => item._id);
-    const [quarterAssignments, reassignments] = await Promise.all([
-      QuarterAssignment.find({
+    const [termAssignments, reassignments] = await Promise.all([
+      TermAssignment.find({
         annualAssignmentId: { $in: assignmentIds },
         isDeleted: false,
-      }).sort({ quarterCode: 1 }).lean(),
+      }).sort({ assessmentTermCode: 1 }).lean(),
       Reassignment.find({
         annualAssignmentId: { $in: assignmentIds },
         isDeleted: false,
@@ -225,11 +225,11 @@ export class AssignmentService extends BaseService {
     ]);
 
     const quartersByAssignment = new Map<string, unknown[]>();
-    for (const quarterAssignment of quarterAssignments) {
-      const key = quarterAssignment.annualAssignmentId.toString();
+    for (const termAssignment of termAssignments) {
+      const key = termAssignment.annualAssignmentId.toString();
       quartersByAssignment.set(key, [
         ...(quartersByAssignment.get(key) ?? []),
-        quarterAssignment,
+        termAssignment,
       ]);
     }
 
@@ -273,7 +273,7 @@ export class AssignmentService extends BaseService {
 
       const mappedItem = {
         ...item,
-        quarterAssignments: quartersByAssignment.get(item._id.toString()) ?? [],
+        termAssignments: quartersByAssignment.get(item._id.toString()) ?? [],
         assignmentHistory: historyByAssignment.get(item._id.toString()) ?? [],
       };
 
@@ -311,7 +311,7 @@ export class AssignmentService extends BaseService {
     );
     const assessmentTermType = annualCycle.assessmentTermType ?? getDefaultAssessmentTermType();
     const allowedQuarters = getAssessmentTerms(assessmentTermType);
-    const applicableQuarters = this.normalizeApplicableQuarters(input.applicableQuarters, allowedQuarters);
+    const applicableTerms = this.normalizeApplicableTerms(input.applicableTerms, allowedQuarters);
     const { employeeSnapshot, managerSnapshot, orgSnapshot } = await this.buildAssignmentSnapshots(
       employeeObjectId,
       managerObjectId,
@@ -334,7 +334,7 @@ export class AssignmentService extends BaseService {
       templateVersionId: selectedTemplateVersionId,
       annualState: AnnualWorkflowState.DRAFT,
       finalDecisionStatus: AnnualDecisionStatus.DRAFT,
-      applicableQuarters,
+      applicableTerms,
       assignmentReason: input.assignmentReason ?? 'FULL_YEAR',
       employeeSnapshot,
       managerSnapshot,
@@ -342,42 +342,42 @@ export class AssignmentService extends BaseService {
       createdBy: this.actorIdObject(),
     });
 
-    const quarterCycles = await QuarterCycle.find({
+    const termCycles = await TermCycle.find({
       cycleId: annualCycle._id,
-      quarterCode: { $in: applicableQuarters },
+      assessmentTermCode: { $in: applicableTerms },
     }).lean();
-    const quarterCycleByCode = new Map(
-      quarterCycles.map((quarterCycle) => [quarterCycle.quarterCode, quarterCycle._id as Types.ObjectId]),
+    const termCycleByCode = new Map(
+      termCycles.map((termCycle) => [termCycle.assessmentTermCode, termCycle._id as Types.ObjectId]),
     );
-    const quarterCycleById = new Map(
-      quarterCycles.map((quarterCycle) => [quarterCycle._id.toString(), quarterCycle]),
+    const termCycleById = new Map(
+      termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]),
     );
 
-    const quarterAssignments = await QuarterAssignment.insertMany(
-      this.buildQuarterAssignments(
+    const termAssignments = await TermAssignment.insertMany(
+      this.buildTermAssignments(
         annualAssignment._id,
         annualCycle._id,
         employeeObjectId,
         managerObjectId,
         selectedTemplateVersionId,
         assessmentTermType,
-        applicableQuarters,
-        quarterCycleByCode,
+        applicableTerms,
+        termCycleByCode,
       ),
     );
 
-    annualAssignment.quarterAssignmentIds = quarterAssignments.map(
-      (quarterAssignment) => quarterAssignment._id,
+    annualAssignment.termAssignmentIds = termAssignments.map(
+      (termAssignment) => termAssignment._id,
     );
     await annualAssignment.save();
-    const seededQuarterAssignmentIds = await this.seedPredefinedObjectives(
+    const seededTermAssignmentIds = await this.seedPredefinedObjectives(
       annualAssignment,
-      quarterAssignments,
-      quarterCycleById,
+      termAssignments,
+      termCycleById,
     );
-    await this.openSeededQuarterAssignmentsForObjectiveSetting(
-      quarterAssignments,
-      seededQuarterAssignmentIds,
+    await this.openSeededTermAssignmentsForObjectiveSetting(
+      termAssignments,
+      seededTermAssignmentIds,
     );
 
     await this.lockTemplateVersion(selectedTemplateVersionId);
@@ -389,11 +389,11 @@ export class AssignmentService extends BaseService {
       undefined,
       {
         annualAssignment,
-        quarterAssignmentIds: annualAssignment.quarterAssignmentIds,
+        termAssignmentIds: annualAssignment.termAssignmentIds,
       },
     );
 
-    return { annualAssignment, quarterAssignments };
+    return { annualAssignment, termAssignments };
   }
 
   async bulkAssign(cycleId: string, input: BulkAssignInput): Promise<BulkAssignResult> {
@@ -453,7 +453,7 @@ export class AssignmentService extends BaseService {
           status: 'CREATED',
           message: 'Assignment created',
           annualAssignmentId: result.annualAssignment._id.toString(),
-          quarterAssignmentIds: result.quarterAssignments.map((quarter) => quarter._id.toString()),
+          termAssignmentIds: result.termAssignments.map((quarter) => quarter._id.toString()),
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Assignment failed';
@@ -482,24 +482,24 @@ export class AssignmentService extends BaseService {
 
   async getAssignment(assignmentId: string): Promise<{
     annualAssignment: IAnnualAssignment;
-    quarterAssignments: IQuarterAssignment[];
+    termAssignments: ITermAssignment[];
     assignmentHistory: unknown[];
   }> {
     const annualAssignment = await this.getAnnualAssignment(assignmentId);
     await this.assertAssignmentAccess('assignment.detail', annualAssignment);
 
-    const [quarterAssignments, assignmentHistory] = await Promise.all([
-      QuarterAssignment.find({
+    const [termAssignments, assignmentHistory] = await Promise.all([
+      TermAssignment.find({
         annualAssignmentId: annualAssignment._id,
         isDeleted: false,
-      }).sort({ quarterCode: 1 }),
+      }).sort({ assessmentTermCode: 1 }),
       Reassignment.find({
         annualAssignmentId: annualAssignment._id,
         isDeleted: false,
       }).sort({ effectiveFrom: -1 }),
     ]);
 
-    return { annualAssignment, quarterAssignments, assignmentHistory };
+    return { annualAssignment, termAssignments, assignmentHistory };
   }
 
   async listReassignments(
@@ -556,8 +556,8 @@ export class AssignmentService extends BaseService {
   ): Promise<{
     annualAssignment: IAnnualAssignment;
     reassignment: unknown;
-    updatedQuarterAssignments: IQuarterAssignment[];
-    preservedQuarterAssignments: IQuarterAssignment[];
+    updatedTermAssignments: ITermAssignment[];
+    preservedTermAssignments: ITermAssignment[];
   }> {
     await this.assertAdmin('assignment.reassignManager');
     if (!input.reason?.trim()) {
@@ -585,18 +585,18 @@ export class AssignmentService extends BaseService {
     }
 
     const previousAssignment = annualAssignment.toObject();
-    const applicableQuarters = input.applicableQuarters?.length
-      ? this.normalizeApplicableQuarters(input.applicableQuarters, annualAssignment.applicableQuarters)
-      : annualAssignment.applicableQuarters;
-    const quarters = await QuarterAssignment.find({
+    const applicableTerms = input.applicableTerms?.length
+      ? this.normalizeApplicableTerms(input.applicableTerms, annualAssignment.applicableTerms)
+      : annualAssignment.applicableTerms;
+    const quarters = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
-      quarterCode: { $in: applicableQuarters },
+      assessmentTermCode: { $in: applicableTerms },
       isDeleted: false,
     });
     const mutableQuarters = quarters.filter(
       (quarter) =>
-        quarter.quarterState !== QuarterWorkflowState.TERM_FINALIZED &&
-        quarter.quarterState !== QuarterWorkflowState.CLOSED_BY_ADMIN,
+        quarter.termState !== TermWorkflowState.TERM_FINALIZED &&
+        quarter.termState !== TermWorkflowState.CLOSED_BY_ADMIN,
     );
     const annualDecisionProcessing =
       ANNUAL_DECISION_PROCESSING_STATES.has(annualAssignment.annualState) ||
@@ -657,8 +657,8 @@ export class AssignmentService extends BaseService {
       {
         annualAssignment,
         reassignment,
-        updatedQuarterAssignmentIds: mutableQuarters.map((quarter) => quarter._id),
-        preservedQuarterAssignmentIds: quarters
+        updatedTermAssignmentIds: mutableQuarters.map((quarter) => quarter._id),
+        preservedTermAssignmentIds: quarters
           .filter((quarter) => !mutableQuarters.some((mutable) => mutable._id.equals(quarter._id)))
           .map((quarter) => quarter._id),
       },
@@ -675,8 +675,8 @@ export class AssignmentService extends BaseService {
     return {
       annualAssignment,
       reassignment,
-      updatedQuarterAssignments: mutableQuarters,
-      preservedQuarterAssignments: quarters.filter(
+      updatedTermAssignments: mutableQuarters,
+      preservedTermAssignments: quarters.filter(
         (quarter) => !mutableQuarters.some((mutable) => mutable._id.equals(quarter._id)),
       ),
     };
@@ -689,7 +689,7 @@ export class AssignmentService extends BaseService {
   ): Promise<{
     annualAssignment: IAnnualAssignment;
     reassignment: unknown;
-    updatedQuarterAssignments: IQuarterAssignment[];
+    updatedTermAssignments: ITermAssignment[];
   }> {
     await this.assertAdmin('assignment.reassignManager');
     if (!input.reason?.trim()) {
@@ -758,19 +758,19 @@ export class AssignmentService extends BaseService {
       throw new Error('Previous manager not found');
     }
 
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
       assignedManagerId: reassignment.toManagerId,
       isDeleted: false,
-      quarterState: {
+      termState: {
         $nin: [
-          QuarterWorkflowState.TERM_FINALIZED,
-          QuarterWorkflowState.CLOSED_BY_ADMIN,
+          TermWorkflowState.TERM_FINALIZED,
+          TermWorkflowState.CLOSED_BY_ADMIN,
         ],
       },
     });
 
-    for (const quarter of quarterAssignments) {
+    for (const quarter of termAssignments) {
       quarter.assignedManagerId = reassignment.fromManagerId;
       quarter.updatedBy = this.actorIdObject();
       quarter.version += 1;
@@ -809,7 +809,7 @@ export class AssignmentService extends BaseService {
       {
         annualAssignment,
         reassignment,
-        restoredQuarterAssignmentIds: quarterAssignments.map((quarter) => quarter._id),
+        restoredTermAssignmentIds: termAssignments.map((quarter) => quarter._id),
       },
       input.reason.trim(),
     );
@@ -825,13 +825,13 @@ export class AssignmentService extends BaseService {
     return {
       annualAssignment,
       reassignment,
-      updatedQuarterAssignments: quarterAssignments,
+      updatedTermAssignments: termAssignments,
     };
   }
 
   async closeAssignment(assignmentId: string, input: AssignmentStateInput): Promise<{
     annualAssignment: IAnnualAssignment;
-    quarterAssignments: IQuarterAssignment[];
+    termAssignments: ITermAssignment[];
   }> {
     await this.assertAdmin('assignment.close');
     if (!input.reason?.trim()) {
@@ -840,22 +840,22 @@ export class AssignmentService extends BaseService {
 
     const annualAssignment = await this.getAnnualAssignment(assignmentId);
     const previousValue = annualAssignment.toObject();
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
-      quarterState: { $ne: QuarterWorkflowState.TERM_FINALIZED },
+      termState: { $ne: TermWorkflowState.TERM_FINALIZED },
     });
 
-    for (const quarterAssignment of quarterAssignments) {
-      quarterAssignment.previousQuarterState = quarterAssignment.quarterState;
-      quarterAssignment.quarterState = QuarterWorkflowState.CLOSED_BY_ADMIN;
-      quarterAssignment.lastTransitionAt = new Date();
-      quarterAssignment.lastTransitionBy = this.actorIdObject();
-      quarterAssignment.lastTransitionRole = this.context.user?.role;
-      quarterAssignment.lastTransitionReason = input.reason.trim();
-      quarterAssignment.updatedBy = this.actorIdObject();
-      quarterAssignment.version += 1;
-      await quarterAssignment.save();
+    for (const termAssignment of termAssignments) {
+      termAssignment.previousTermState = termAssignment.termState;
+      termAssignment.termState = TermWorkflowState.CLOSED_BY_ADMIN;
+      termAssignment.lastTransitionAt = new Date();
+      termAssignment.lastTransitionBy = this.actorIdObject();
+      termAssignment.lastTransitionRole = this.context.user?.role;
+      termAssignment.lastTransitionReason = input.reason.trim();
+      termAssignment.updatedBy = this.actorIdObject();
+      termAssignment.version += 1;
+      await termAssignment.save();
     }
 
     annualAssignment.annualState = AnnualWorkflowState.CLOSED;
@@ -871,12 +871,12 @@ export class AssignmentService extends BaseService {
       { annualAssignment, reason: input.reason.trim() },
     );
 
-    return { annualAssignment, quarterAssignments };
+    return { annualAssignment, termAssignments };
   }
 
   async reopenAssignment(assignmentId: string, input: AssignmentStateInput): Promise<{
     annualAssignment: IAnnualAssignment;
-    quarterAssignments: IQuarterAssignment[];
+    termAssignments: ITermAssignment[];
   }> {
     await this.assertAdmin('assignment.reopen');
     if (!input.reason?.trim()) {
@@ -889,23 +889,23 @@ export class AssignmentService extends BaseService {
     }
 
     const previousValue = annualAssignment.toObject();
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
-      quarterState: QuarterWorkflowState.CLOSED_BY_ADMIN,
+      termState: TermWorkflowState.CLOSED_BY_ADMIN,
     });
 
-    for (const quarterAssignment of quarterAssignments) {
-      quarterAssignment.quarterState =
-        quarterAssignment.previousQuarterState ?? QuarterWorkflowState.REOPENED_BY_ADMIN;
-      quarterAssignment.previousQuarterState = QuarterWorkflowState.CLOSED_BY_ADMIN;
-      quarterAssignment.lastTransitionAt = new Date();
-      quarterAssignment.lastTransitionBy = this.actorIdObject();
-      quarterAssignment.lastTransitionRole = this.context.user?.role;
-      quarterAssignment.lastTransitionReason = input.reason.trim();
-      quarterAssignment.updatedBy = this.actorIdObject();
-      quarterAssignment.version += 1;
-      await quarterAssignment.save();
+    for (const termAssignment of termAssignments) {
+      termAssignment.termState =
+        termAssignment.previousTermState ?? TermWorkflowState.REOPENED_BY_ADMIN;
+      termAssignment.previousTermState = TermWorkflowState.CLOSED_BY_ADMIN;
+      termAssignment.lastTransitionAt = new Date();
+      termAssignment.lastTransitionBy = this.actorIdObject();
+      termAssignment.lastTransitionRole = this.context.user?.role;
+      termAssignment.lastTransitionReason = input.reason.trim();
+      termAssignment.updatedBy = this.actorIdObject();
+      termAssignment.version += 1;
+      await termAssignment.save();
     }
 
     annualAssignment.annualState = AnnualWorkflowState.IN_PROGRESS;
@@ -921,7 +921,7 @@ export class AssignmentService extends BaseService {
       { annualAssignment, reason: input.reason.trim() },
     );
 
-    return { annualAssignment, quarterAssignments };
+    return { annualAssignment, termAssignments };
   }
 
   async adminReopenAnnual(assignmentId: string, input: AssignmentStateInput): Promise<{
@@ -966,17 +966,17 @@ export class AssignmentService extends BaseService {
 
     const previousValue = annualAssignment.toObject();
     const actorId = this.actorIdObject();
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
     }).lean();
 
     const snapshotPayload = {
       annualSnapshot: annualAssignment.toObject(),
-      quarterSnapshots: Object.fromEntries(
-        quarterAssignments.map((quarterAssignment) => [
-          quarterAssignment.quarterCode,
-          quarterAssignment,
+      termSnapshots: Object.fromEntries(
+        termAssignments.map((termAssignment) => [
+          termAssignment.assessmentTermCode,
+          termAssignment,
         ]),
       ),
       finalDecisionSnapshot: {
@@ -1002,7 +1002,7 @@ export class AssignmentService extends BaseService {
       employeeId: annualAssignment.employeeId,
       templateVersionId: annualAssignment.templateVersionId,
       annualSnapshot: snapshotPayload.annualSnapshot,
-      quarterSnapshots: snapshotPayload.quarterSnapshots,
+      termSnapshots: snapshotPayload.termSnapshots,
       finalDecisionSnapshot: snapshotPayload.finalDecisionSnapshot,
       visibilitySnapshot: snapshotPayload.visibilitySnapshot,
       communicationSnapshot: snapshotPayload.communicationSnapshot,
@@ -1148,47 +1148,47 @@ export class AssignmentService extends BaseService {
     return exception;
   }
 
-  private buildQuarterAssignments(
+  private buildTermAssignments(
     annualAssignmentId: Types.ObjectId,
     cycleId: Types.ObjectId,
     employeeId: Types.ObjectId,
     managerId: Types.ObjectId,
     templateVersionId: Types.ObjectId,
     assessmentTermType: AssessmentTermTypeType,
-    applicableQuarters: QuarterCode[],
-    quarterCycleByCode: Map<QuarterCode, Types.ObjectId>,
+    applicableTerms: QuarterCode[],
+    termCycleByCode: Map<QuarterCode, Types.ObjectId>,
   ): Array<{
     annualAssignmentId: Types.ObjectId;
     cycleId: Types.ObjectId;
     employeeId: Types.ObjectId;
     assignedManagerId: Types.ObjectId;
     templateVersionId: Types.ObjectId;
-    cycleQuarterId: Types.ObjectId;
-    quarterCode: QuarterCode;
+    cycleTermId: Types.ObjectId;
+    assessmentTermCode: QuarterCode;
     assessmentTermType: AssessmentTermTypeType;
     termCode: QuarterCode;
     termLabel: string;
-    quarterState: QuarterWorkflowState;
+    termState: TermWorkflowState;
     createdBy?: Types.ObjectId;
   }> {
-    return applicableQuarters.map((quarterCode) => {
-      const cycleQuarterId = quarterCycleByCode.get(quarterCode);
-      if (!cycleQuarterId) {
-        throw new Error(`Quarter cycle not found for ${quarterCode}`);
+    return applicableTerms.map((assessmentTermCode) => {
+      const cycleTermId = termCycleByCode.get(assessmentTermCode);
+      if (!cycleTermId) {
+        throw new Error(`Assessment term cycle not found for ${assessmentTermCode}`);
       }
 
       return {
         annualAssignmentId,
         cycleId,
-        cycleQuarterId,
+        cycleTermId,
         employeeId,
         assignedManagerId: managerId,
         templateVersionId,
         assessmentTermType,
-        quarterCode,
-        termCode: quarterCode,
-        termLabel: getAssessmentTermLabel(quarterCode),
-        quarterState: QuarterWorkflowState.NOT_STARTED,
+        assessmentTermCode,
+        termCode: assessmentTermCode,
+        termLabel: getAssessmentTermLabel(assessmentTermCode),
+        termState: TermWorkflowState.NOT_STARTED,
         createdBy: this.actorIdObject(),
       };
     });
@@ -1196,8 +1196,8 @@ export class AssignmentService extends BaseService {
 
   private async seedPredefinedObjectives(
     annualAssignment: IAnnualAssignment,
-    quarterAssignments: IQuarterAssignment[],
-    quarterCycleById: Map<string, { objectiveApprovalWindow?: { endDate?: Date }; objectiveSettingWindow?: { endDate?: Date }; quarterFinalizationWindow?: { endDate?: Date } }>,
+    termAssignments: ITermAssignment[],
+    termCycleById: Map<string, { objectiveApprovalWindow?: { endDate?: Date }; objectiveSettingWindow?: { endDate?: Date }; termFinalizationWindow?: { endDate?: Date } }>,
   ): Promise<Set<string>> {
     const templateVersionId = annualAssignment.templateVersionId?.toString();
     if (!templateVersionId) {
@@ -1211,56 +1211,56 @@ export class AssignmentService extends BaseService {
 
     const actorId = this.actorIdObject();
     const objectivePayloads: Array<Record<string, unknown>> = [];
-    const seededQuarterAssignmentIds = new Set<string>();
+    const seededTermAssignmentIds = new Set<string>();
     const existingObjectives = await Objective.find({
-      quarterAssignmentId: { $in: quarterAssignments.map((quarterAssignment) => quarterAssignment._id) },
+      termAssignmentId: { $in: termAssignments.map((termAssignment) => termAssignment._id) },
       isDeleted: false,
     })
-      .select('quarterAssignmentId templateObjectiveKey objectiveNo')
+      .select('termAssignmentId templateObjectiveKey objectiveNo')
       .lean();
-    const existingKeysByQuarterAssignment = new Map<string, Set<string>>();
-    const nextObjectiveNoByQuarterAssignment = new Map<string, number>();
+    const existingKeysByTermAssignment = new Map<string, Set<string>>();
+    const nextObjectiveNoByTermAssignment = new Map<string, number>();
 
     for (const objective of existingObjectives) {
-      const quarterAssignmentId = objective.quarterAssignmentId.toString();
-      const existingKeys = existingKeysByQuarterAssignment.get(quarterAssignmentId) ?? new Set<string>();
+      const termAssignmentId = objective.termAssignmentId.toString();
+      const existingKeys = existingKeysByTermAssignment.get(termAssignmentId) ?? new Set<string>();
       if (typeof objective.templateObjectiveKey === 'string' && objective.templateObjectiveKey.trim()) {
         existingKeys.add(objective.templateObjectiveKey.trim());
       }
-      existingKeysByQuarterAssignment.set(quarterAssignmentId, existingKeys);
+      existingKeysByTermAssignment.set(termAssignmentId, existingKeys);
 
-      const currentMax = nextObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 1;
+      const currentMax = nextObjectiveNoByTermAssignment.get(termAssignmentId) ?? 1;
       const nextObjectiveNo = Math.max(currentMax, (objective.objectiveNo ?? 0) + 1);
-      nextObjectiveNoByQuarterAssignment.set(quarterAssignmentId, nextObjectiveNo);
+      nextObjectiveNoByTermAssignment.set(termAssignmentId, nextObjectiveNo);
     }
 
-    for (const quarterAssignment of quarterAssignments) {
-      const quarterCycle = quarterAssignment.cycleQuarterId
-        ? quarterCycleById.get(quarterAssignment.cycleQuarterId.toString())
+    for (const termAssignment of termAssignments) {
+      const termCycle = termAssignment.cycleTermId
+        ? termCycleById.get(termAssignment.cycleTermId.toString())
         : undefined;
       const defaultDueDate =
-        quarterCycle?.objectiveApprovalWindow?.endDate ||
-        quarterCycle?.objectiveSettingWindow?.endDate ||
-        quarterCycle?.quarterFinalizationWindow?.endDate ||
+        termCycle?.objectiveApprovalWindow?.endDate ||
+        termCycle?.objectiveSettingWindow?.endDate ||
+        termCycle?.termFinalizationWindow?.endDate ||
         undefined;
       const config = this.resolveTemplateObjectiveConfig(
         templateVersion.sections ?? [],
-        quarterAssignment.quarterCode,
+        termAssignment.assessmentTermCode,
       );
 
       if (!config || config.predefinedObjectives.length === 0) {
         continue;
       }
 
-      const quarterAssignmentId = quarterAssignment._id.toString();
-      const existingKeys = existingKeysByQuarterAssignment.get(quarterAssignmentId) ?? new Set<string>();
-      let nextObjectiveNo = nextObjectiveNoByQuarterAssignment.get(quarterAssignmentId) ?? 1;
+      const termAssignmentId = termAssignment._id.toString();
+      const existingKeys = existingKeysByTermAssignment.get(termAssignmentId) ?? new Set<string>();
+      let nextObjectiveNo = nextObjectiveNoByTermAssignment.get(termAssignmentId) ?? 1;
 
       for (const predefinedObjective of config.predefinedObjectives) {
         if (predefinedObjective.isActive === false) {
           continue;
         }
-        if (!this.matchesPredefinedObjectiveQuarter(quarterAssignment.quarterCode, predefinedObjective.applicableQuarters)) {
+        if (!this.matchesPredefinedObjectiveTerm(termAssignment.assessmentTermCode, predefinedObjective.applicableTerms)) {
           continue;
         }
 
@@ -1280,13 +1280,13 @@ export class AssignmentService extends BaseService {
             : defaultDueDate;
 
         objectivePayloads.push({
-          quarterAssignmentId: quarterAssignment._id,
-          annualAssignmentId: quarterAssignment.annualAssignmentId,
-          cycleId: quarterAssignment.cycleId,
+          termAssignmentId: termAssignment._id,
+          annualAssignmentId: termAssignment.annualAssignmentId,
+          cycleId: termAssignment.cycleId,
           templateVersionId: annualAssignment.templateVersionId,
-          quarterCode: quarterAssignment.quarterCode,
-          employeeId: quarterAssignment.employeeId,
-          assignedManagerId: quarterAssignment.assignedManagerId,
+          assessmentTermCode: termAssignment.assessmentTermCode,
+          employeeId: termAssignment.employeeId,
+          assignedManagerId: termAssignment.assignedManagerId,
           objectiveNo: nextObjectiveNo,
           source: ObjectiveSource.PREDEFINED,
           templateObjectiveKey,
@@ -1309,57 +1309,57 @@ export class AssignmentService extends BaseService {
 
         existingKeys.add(templateObjectiveKey);
         nextObjectiveNo += 1;
-        seededQuarterAssignmentIds.add(quarterAssignmentId);
+        seededTermAssignmentIds.add(termAssignmentId);
       }
 
-      existingKeysByQuarterAssignment.set(quarterAssignmentId, existingKeys);
-      nextObjectiveNoByQuarterAssignment.set(quarterAssignmentId, nextObjectiveNo);
+      existingKeysByTermAssignment.set(termAssignmentId, existingKeys);
+      nextObjectiveNoByTermAssignment.set(termAssignmentId, nextObjectiveNo);
     }
 
     if (objectivePayloads.length > 0) {
       await Objective.insertMany(objectivePayloads);
     }
 
-    return seededQuarterAssignmentIds;
+    return seededTermAssignmentIds;
   }
 
-  private async openSeededQuarterAssignmentsForObjectiveSetting(
-    quarterAssignments: IQuarterAssignment[],
-    seededQuarterAssignmentIds: Set<string>,
+  private async openSeededTermAssignmentsForObjectiveSetting(
+    termAssignments: ITermAssignment[],
+    seededTermAssignmentIds: Set<string>,
   ): Promise<void> {
-    if (seededQuarterAssignmentIds.size === 0) {
+    if (seededTermAssignmentIds.size === 0) {
       return;
     }
 
-    for (const quarterAssignment of quarterAssignments) {
-      const quarterAssignmentId = quarterAssignment._id.toString();
-      if (!seededQuarterAssignmentIds.has(quarterAssignmentId)) {
+    for (const termAssignment of termAssignments) {
+      const termAssignmentId = termAssignment._id.toString();
+      if (!seededTermAssignmentIds.has(termAssignmentId)) {
         continue;
       }
 
-      const targetState = QuarterWorkflowState.OBJECTIVE_SETTING_OPEN;
+      const targetState = TermWorkflowState.OBJECTIVE_SETTING_OPEN;
 
-      if (quarterAssignment.quarterState === targetState) {
+      if (termAssignment.termState === targetState) {
         continue;
       }
 
-      const previousState = quarterAssignment.quarterState;
-      const updatedQuarterAssignment = await transitionQuarterAssignmentState(
-        quarterAssignmentId,
+      const previousState = termAssignment.termState;
+      const updatedTermAssignment = await transitionTermAssignmentState(
+        termAssignmentId,
         targetState,
         this.requireActor(),
         'Seeded predefined objectives are approved; objective setting remains open for additional objectives',
       );
 
       await this.audit(
-        'PMS_QUARTER_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
-        'QUARTER_ASSIGNMENT',
-        quarterAssignment._id.toString(),
+        'PMS_TERM_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
+        'TERM_ASSIGNMENT',
+        termAssignment._id.toString(),
         {
-          quarterState: previousState,
+          termState: previousState,
         },
         {
-          quarterState: updatedQuarterAssignment.quarterState,
+          termState: updatedTermAssignment.termState,
         },
         'Seeded predefined objectives opened the objective-setting workflow at assignment launch',
       );
@@ -1368,18 +1368,18 @@ export class AssignmentService extends BaseService {
 
   private resolveTemplateObjectiveConfig(
     sections: ITemplateSection[],
-    quarterCode: QuarterCode,
+    assessmentTermCode: QuarterCode,
   ) {
     const objectiveSection = sections.find((section) => {
       if (section.sectionType !== PmsTemplateSectionType.OBJECTIVES) return false;
-      if (section.level !== 'QUARTER') return false;
+      if (!this.isTermLevelTemplateSection(section.level)) return false;
 
       const allowedQuarters = [
-        ...(section.quarterScope ?? []),
+        ...(section.termScope ?? []),
         ...(section.repeatFor ?? []),
       ];
 
-      return this.assessmentTermScopeMatches(allowedQuarters, quarterCode);
+      return this.assessmentTermScopeMatches(allowedQuarters, assessmentTermCode);
     });
 
     if (!objectiveSection?.objectiveConfig) {
@@ -1401,8 +1401,8 @@ export class AssignmentService extends BaseService {
           applyToAllQuarters: objective.applyToAllQuarters !== false,
           editable: objective.editable !== false,
           isActive: objective.isActive !== false,
-          applicableQuarters: this.normalizeScopedQuarters(
-            objective.quarterScope ?? objective.applicableQuarters ?? objective.repeatFor,
+          applicableTerms: this.normalizeScopedTerms(
+            objective.termScope ?? objective.applicableTerms ?? objective.repeatFor,
           ),
         }),
       ),
@@ -1432,7 +1432,7 @@ export class AssignmentService extends BaseService {
     return `${sectionKey}__${titleSlug}__${index + 1}`;
   }
 
-  private normalizeScopedQuarters(
+  private normalizeScopedTerms(
     quarters?: QuarterCode[],
   ): QuarterCode[] | undefined {
     if (!quarters?.length) {
@@ -1447,19 +1447,24 @@ export class AssignmentService extends BaseService {
     return Array.from(new Set(normalized));
   }
 
-  private matchesPredefinedObjectiveQuarter(
-    quarterCode: QuarterCode,
-    applicableQuarters?: QuarterCode[],
+  private matchesPredefinedObjectiveTerm(
+    assessmentTermCode: QuarterCode,
+    applicableTerms?: QuarterCode[],
   ): boolean {
-    if (typeof applicableQuarters === 'undefined') {
+    if (typeof applicableTerms === 'undefined') {
       return true;
     }
 
-    if (applicableQuarters.length === 0) {
+    if (applicableTerms.length === 0) {
       return false;
     }
 
-    return this.assessmentTermScopeMatches(applicableQuarters, quarterCode);
+    return this.assessmentTermScopeMatches(applicableTerms, assessmentTermCode);
+  }
+
+  private isTermLevelTemplateSection(level?: unknown): boolean {
+    const normalized = String(level ?? '').trim().toUpperCase();
+    return normalized === 'TERM';
   }
 
   private assessmentTermScopeMatches(
@@ -1571,7 +1576,7 @@ export class AssignmentService extends BaseService {
     return templateVersion._id as Types.ObjectId;
   }
 
-  private normalizeApplicableQuarters(
+  private normalizeApplicableTerms(
     quarters?: QuarterCode[],
     allowedQuarters: QuarterCode[] = Object.values(AssessmentTermCode) as QuarterCode[],
   ): QuarterCode[] {
@@ -1580,10 +1585,10 @@ export class AssignmentService extends BaseService {
 
     for (const quarter of normalized) {
       if (!allowedQuarters.includes(quarter)) {
-        throw new Error(`Invalid applicable quarter: ${quarter}`);
+        throw new Error(`Invalid applicable assessment term: ${quarter}`);
       }
       if (seen.has(quarter)) {
-        throw new Error(`Duplicate applicable quarter: ${quarter}`);
+        throw new Error(`Duplicate applicable assessment term: ${quarter}`);
       }
       seen.add(quarter);
     }

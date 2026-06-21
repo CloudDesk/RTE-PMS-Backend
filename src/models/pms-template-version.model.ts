@@ -38,8 +38,8 @@ export interface ITemplatePredefinedObjective {
   applyToAllQuarters?: boolean;
   editable?: boolean;
   isActive?: boolean;
-  quarterScope?: AssessmentTermCodeType[];
-  applicableQuarters?: AssessmentTermCodeType[];
+  termScope?: AssessmentTermCodeType[];
+  applicableTerms?: AssessmentTermCodeType[];
   repeatFor?: AssessmentTermCodeType[];
 }
 
@@ -191,11 +191,11 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
     applyToAllQuarters: { type: Boolean, default: true },
     editable: { type: Boolean, default: true },
     isActive: { type: Boolean, default: true },
-    quarterScope: {
+    termScope: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
-    applicableQuarters: {
+    applicableTerms: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
@@ -239,8 +239,8 @@ export interface ITemplateSection {
   repeatable?: boolean;
   displayOrder?: number;
   layout?: 'vertical' | 'grid' | 'table' | 'bordered_grid';
-  renderingScope?: 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
-  quarterScope?: AssessmentTermCodeType[];
+  renderingScope?: 'TERM_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
+  termScope?: AssessmentTermCodeType[];
   sectionScoringConfig?: {
     participatesInScoring?: boolean;
     weightage?: number;
@@ -457,10 +457,10 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     layout: { type: String, enum: ['vertical', 'grid', 'table', 'bordered_grid'], default: 'vertical' },
     renderingScope: {
       type: String,
-      enum: ['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'],
+      enum: ['TERM_ONLY', 'ANNUAL_ONLY', 'BOTH'],
       default: 'ANNUAL_ONLY',
     },
-    quarterScope: {
+    termScope: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },

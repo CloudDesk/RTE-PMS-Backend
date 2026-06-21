@@ -5,7 +5,7 @@ import {
   isTermFinalized,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
 import { auditService } from './audit.service';
 import type { WorkflowActorContext } from '../types/pms.types';
 
@@ -46,7 +46,7 @@ export async function rollupAnnualAssignmentIfAllTermsFinalized(
     };
   }
 
-  const applicableTerms = annualAssignment.applicableQuarters ?? [];
+  const applicableTerms = annualAssignment.applicableTerms ?? [];
   if (applicableTerms.length === 0) {
     return {
       allTermsFinalized: false,
@@ -56,19 +56,19 @@ export async function rollupAnnualAssignmentIfAllTermsFinalized(
     };
   }
 
-  const termAssignments = await QuarterAssignment.find({
+  const termAssignments = await TermAssignment.find({
     annualAssignmentId: annualAssignment._id,
-    quarterCode: { $in: applicableTerms },
+    assessmentTermCode: { $in: applicableTerms },
     isDeleted: false,
-  }).select('quarterCode quarterState');
+  }).select('assessmentTermCode termState');
 
   const termByCode = new Map(
-    termAssignments.map((assignment) => [assignment.quarterCode, assignment]),
+    termAssignments.map((assignment) => [assignment.assessmentTermCode, assignment]),
   );
 
   const completedTerms = applicableTerms.filter((termCode) => {
     const termAssignment = termByCode.get(termCode);
-    return termAssignment ? isTermFinalized(termAssignment.quarterState) : false;
+    return termAssignment ? isTermFinalized(termAssignment.termState) : false;
   }).length;
 
   const allTermsFinalized = completedTerms === applicableTerms.length;

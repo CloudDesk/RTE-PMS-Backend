@@ -9,7 +9,7 @@ import { CycleService } from '../services/cycle.service';
 import { AssignmentService } from '../services/assignment.service';
 import { ObjectiveService } from '../services/objective.service';
 import { EmployeeAchievementSubmissionService } from '../services/employeeAchievementSubmission.service';
-import { QuarterReviewService } from '../services/quarterReview.service';
+import { TermReviewService } from '../services/termReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
 import { PmsCommunicationService } from '../services/pmsCommunication.service';
 import { DelegationService } from '../services/delegation.service';
@@ -49,7 +49,7 @@ export class Container {
       assignmentService: new AssignmentService(context),
       objectiveService: new ObjectiveService(context),
       employeeAchievementSubmissionService: new EmployeeAchievementSubmissionService(context),
-      quarterReviewService: new QuarterReviewService(context),
+      termReviewService: new TermReviewService(context),
       annualDecisionService: new AnnualDecisionService(context),
       pmsCommunicationService: new PmsCommunicationService(context),
       delegationService: new DelegationService(context),

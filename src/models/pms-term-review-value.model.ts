@@ -1,8 +1,8 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 
-export interface IQuarterReviewValue extends Document {
-  quarterReviewId: Types.ObjectId;
-  quarterAssignmentId: Types.ObjectId;
+export interface ITermReviewValue extends Document {
+  termReviewId: Types.ObjectId;
+  termAssignmentId: Types.ObjectId;
   annualAssignmentId: Types.ObjectId;
   cycleId?: Types.ObjectId;
   employeeId: Types.ObjectId;
@@ -26,18 +26,18 @@ export interface IQuarterReviewValue extends Document {
   version: number;
 }
 
-const quarterReviewValueSchema = new Schema<IQuarterReviewValue>(
+const termReviewValueSchema = new Schema<ITermReviewValue>(
   {
-    quarterReviewId: {
+    termReviewId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterReview',
+      ref: 'TermReview',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     annualAssignmentId: {
@@ -80,22 +80,22 @@ const quarterReviewValueSchema = new Schema<IQuarterReviewValue>(
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'quarter_review_values',
+    collection: 'term_review_values',
     timestamps: true,
   },
 );
 
-quarterReviewValueSchema.index({
-  quarterReviewId: 1,
+termReviewValueSchema.index({
+  termReviewId: 1,
   fieldKey: 1,
   roleCode: 1,
   actorUserId: 1,
 });
-quarterReviewValueSchema.index({ quarterAssignmentId: 1, sectionKey: 1 });
-quarterReviewValueSchema.index({ cycleId: 1, employeeId: 1 });
-quarterReviewValueSchema.index({ fieldKey: 1, roleCode: 1 });
+termReviewValueSchema.index({ termAssignmentId: 1, sectionKey: 1 });
+termReviewValueSchema.index({ cycleId: 1, employeeId: 1 });
+termReviewValueSchema.index({ fieldKey: 1, roleCode: 1 });
 
-export const QuarterReviewValue = mongoose.model<IQuarterReviewValue>(
-  'QuarterReviewValue',
-  quarterReviewValueSchema,
+export const TermReviewValue = mongoose.model<ITermReviewValue>(
+  'TermReviewValue',
+  termReviewValueSchema,
 );

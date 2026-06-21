@@ -38,7 +38,7 @@ export interface IAnnualCycle extends Document {
   assessmentTermType: AssessmentTermTypeType;
   status: AnnualWorkflowStateType;
   templateVersionId?: Types.ObjectId;
-  quarterCycleIds: Types.ObjectId[];
+  termCycleIds: Types.ObjectId[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
   assignmentTemplateSuggestionConfig?: IAssignmentTemplateSuggestionConfig;
@@ -91,8 +91,8 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
       required: false,
       ref: 'PmsTemplateVersion',
     },
-    quarterCycleIds: {
-      type: [{ type: Schema.Types.ObjectId, ref: 'QuarterCycle' }],
+    termCycleIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: 'TermCycle' }],
       default: [],
     },
     appraisalWindowConfig: { type: Schema.Types.Mixed, default: {} },

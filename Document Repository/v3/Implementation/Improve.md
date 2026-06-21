@@ -249,12 +249,12 @@ Current model shape:
 ```txt
 employee_achievement_submissions
   annualAssignmentId
-  quarterAssignmentId
+  termAssignmentId
   cycleId
   employeeId
   managerId
   templateVersionId
-  quarterCode
+  assessmentTermCode
   achievementItems[]
     subject
     description
@@ -451,9 +451,9 @@ Reason for `objectiveSnapshot`:
 Recommended indexes:
 
 ```txt
-quarterAssignmentId
-annualAssignmentId + quarterCode
-employeeId + cycleId + quarterCode
+termAssignmentId
+annualAssignmentId + assessmentTermCode
+employeeId + cycleId + assessmentTermCode
 achievementItems.objectiveId
 ```
 

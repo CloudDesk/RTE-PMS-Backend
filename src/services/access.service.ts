@@ -297,7 +297,7 @@ export class AccessService {
    * Scope matching:
    *   - Delegation.scopeType === 'ALL'            → always matches
    *   - Delegation.scopeType === 'PMS_OBJECTIVES' → matches objective.* actions
-   *   - Delegation.scopeType === 'PMS_REVIEWS'    → matches quarterReview.* actions
+   *   - Delegation.scopeType === 'PMS_REVIEWS'    → matches termReview.* actions
    */
   private async checkDelegatedScope(
     actor: AccessActorContext,

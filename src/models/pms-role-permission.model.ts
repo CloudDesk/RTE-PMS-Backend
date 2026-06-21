@@ -15,7 +15,7 @@ export interface IPmsRolePermission extends Document {
 const pmsRolePermissionSchema = new Schema<IPmsRolePermission>(
   {
     role: { type: String, required: true },
-    resource: { type: String, required: true }, // e.g., 'objective', 'quarterReview', 'annualDecision', '*'
+    resource: { type: String, required: true }, // e.g., 'objective', 'termReview', 'annualDecision', '*'
     action: { type: String, required: true },   // e.g., 'create', 'read', 'update', 'delete', '*'
     scope: { 
       type: String, 

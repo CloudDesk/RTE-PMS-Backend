@@ -4,7 +4,7 @@ export interface IWorkflowEvent extends Document {
   entityType: string;
   entityId: Types.ObjectId | string;
   annualAssignmentId?: Types.ObjectId;
-  quarterAssignmentId?: Types.ObjectId;
+  termAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
   fromState: string;
   toState: string;
@@ -26,9 +26,9 @@ const workflowEventSchema = new Schema<IWorkflowEvent>(
       ref: 'AnnualAssignment',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     cycleId: {
@@ -54,7 +54,7 @@ const workflowEventSchema = new Schema<IWorkflowEvent>(
 
 workflowEventSchema.index({ entityType: 1, entityId: 1, createdAt: -1 });
 workflowEventSchema.index({ annualAssignmentId: 1, createdAt: -1 });
-workflowEventSchema.index({ quarterAssignmentId: 1, createdAt: -1 });
+workflowEventSchema.index({ termAssignmentId: 1, createdAt: -1 });
 
 export const WorkflowEvent = mongoose.model<IWorkflowEvent>(
   'WorkflowEvent',

@@ -1,9 +1,9 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { AssessmentTermCode, AssessmentTermType, QuarterWorkflowState } from '../constants/pms.enums';
+import { AssessmentTermCode, AssessmentTermType, TermWorkflowState } from '../constants/pms.enums';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
   AssessmentTermType as AssessmentTermTypeType,
-  QuarterWorkflowState as QuarterWorkflowStateType,
+  TermWorkflowState as TermWorkflowStateType,
 } from '../constants/pms.enums';
 
 interface IDateWindow {
@@ -19,9 +19,9 @@ interface IAchievementSubmissionWindow extends IDateWindow {
   escalationDaysAfterDue?: number;
 }
 
-export interface IQuarterCycle extends Document {
+export interface ITermCycle extends Document {
   cycleId: Types.ObjectId;
-  quarterCode: AssessmentTermCodeType;
+  assessmentTermCode: AssessmentTermCodeType;
   assessmentTermType?: AssessmentTermTypeType;
   termCode?: AssessmentTermCodeType;
   termLabel?: string;
@@ -31,8 +31,8 @@ export interface IQuarterCycle extends Document {
   objectiveApprovalWindow?: IDateWindow;
   achievementSubmissionWindow?: IAchievementSubmissionWindow;
   managerReviewWindow?: IDateWindow;
-  quarterFinalizationWindow?: IDateWindow;
-  status: QuarterWorkflowStateType;
+  termFinalizationWindow?: IDateWindow;
+  status: TermWorkflowStateType;
   slaConfig?: Record<string, unknown>;
   closureRules?: Record<string, unknown>;
   isDeleted: boolean;
@@ -64,7 +64,7 @@ const achievementSubmissionWindowSchema = new Schema<IAchievementSubmissionWindo
   { _id: false },
 );
 
-const quarterCycleSchema = new Schema<IQuarterCycle>(
+const termCycleSchema = new Schema<ITermCycle>(
   {
     cycleId: {
       type: Schema.Types.ObjectId,
@@ -72,7 +72,7 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
       ref: 'AnnualCycle',
       index: true,
     },
-    quarterCode: {
+    assessmentTermCode: {
       type: String,
       required: true,
       enum: Object.values(AssessmentTermCode),
@@ -92,14 +92,14 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
     objectiveApprovalWindow: dateWindowSchema,
     achievementSubmissionWindow: achievementSubmissionWindowSchema,
     managerReviewWindow: dateWindowSchema,
-    quarterFinalizationWindow: dateWindowSchema,
+    termFinalizationWindow: dateWindowSchema,
     slaConfig: { type: Schema.Types.Mixed, default: {} },
     closureRules: { type: Schema.Types.Mixed, default: {} },
     status: {
       type: String,
       required: true,
-      enum: Object.values(QuarterWorkflowState),
-      default: QuarterWorkflowState.NOT_STARTED,
+      enum: Object.values(TermWorkflowState),
+      default: TermWorkflowState.NOT_STARTED,
       index: true,
     },
     isDeleted: { type: Boolean, default: false, index: true },
@@ -108,18 +108,18 @@ const quarterCycleSchema = new Schema<IQuarterCycle>(
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'quarter_cycles',
+    collection: 'term_cycles',
     timestamps: true,
   },
 );
 
-quarterCycleSchema.index(
-  { cycleId: 1, quarterCode: 1 },
-  { unique: true, name: 'idx_annual_cycle_quarter' },
+termCycleSchema.index(
+  { cycleId: 1, assessmentTermCode: 1 },
+  { unique: true, name: 'idx_annual_cycle_term' },
 );
-quarterCycleSchema.index({ startDate: 1, endDate: 1 });
+termCycleSchema.index({ startDate: 1, endDate: 1 });
 
-export const QuarterCycle = mongoose.model<IQuarterCycle>(
-  'QuarterCycle',
-  quarterCycleSchema,
+export const TermCycle = mongoose.model<ITermCycle>(
+  'TermCycle',
+  termCycleSchema,
 );

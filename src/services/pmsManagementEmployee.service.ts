@@ -142,20 +142,20 @@ export class PmsManagementEmployeeService extends BaseService {
       };
     });
 
-    const quarterAssignments = cycles.flatMap((cycle) =>
-      (cycle.summary?.quarterAssignments ?? []).map((quarterAssignment: any) => ({
-        id: quarterAssignment._id?.toString?.() ?? String(quarterAssignment._id),
-        quarterAssignment,
+    const termAssignments = cycles.flatMap((cycle) =>
+      (cycle.summary?.termAssignments ?? []).map((termAssignment: any) => ({
+        id: termAssignment._id?.toString?.() ?? String(termAssignment._id),
+        termAssignment,
       })),
     );
 
     const achievementResults = await Promise.allSettled(
-      quarterAssignments.map((item) =>
+      termAssignments.map((item) =>
         this.achievementSubmissionService.getSubmission(item.id),
       ),
     );
 
-    const achievementsByQuarterAssignment = quarterAssignments.reduce(
+    const achievementsByTermAssignment = termAssignments.reduce(
       (acc, item, index) => {
         const result = achievementResults[index];
         if (result.status === 'fulfilled') {
@@ -165,7 +165,7 @@ export class PmsManagementEmployeeService extends BaseService {
       },
       {} as Record<string, unknown>,
     );
-    const achievementErrorsByQuarterAssignment = quarterAssignments.reduce(
+    const achievementErrorsByTermAssignment = termAssignments.reduce(
       (acc, item, index) => {
         const result = achievementResults[index];
         if (result.status === 'rejected') {
@@ -182,8 +182,8 @@ export class PmsManagementEmployeeService extends BaseService {
     return {
       employee,
       cycles,
-      achievementsByQuarterAssignment,
-      achievementErrorsByQuarterAssignment,
+      achievementsByTermAssignment,
+      achievementErrorsByTermAssignment,
     };
   }
 

@@ -22,13 +22,13 @@ export interface IAnnualAssignment extends Document {
   assignedManagerId: Types.ObjectId;
   cycleId: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
-  quarterAssignmentIds: Types.ObjectId[];
+  termAssignmentIds: Types.ObjectId[];
   annualState: AnnualWorkflowStateType;
   finalDecisionStatus?: AnnualDecisionStatusType;
   isGradeApplied?: boolean;
   isMeritApplied?: boolean;
   appraisalOutcomeType?: string;
-  applicableQuarters: QuarterCode[];
+  applicableTerms: QuarterCode[];
   assignmentReason: string;
   visibility: IVisibilityCache;
   employeeSnapshot?: Record<string, unknown>;
@@ -81,8 +81,8 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
       ref: 'PmsTemplateVersion',
       index: true,
     },
-    quarterAssignmentIds: {
-      type: [{ type: Schema.Types.ObjectId, ref: 'QuarterAssignment' }],
+    termAssignmentIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: 'TermAssignment' }],
       default: [],
     },
     annualState: {
@@ -100,7 +100,7 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
     isGradeApplied: Boolean,
     isMeritApplied: Boolean,
     appraisalOutcomeType: String,
-    applicableQuarters: {
+    applicableTerms: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: ['Q1', 'Q2', 'Q3', 'Q4'],
     },

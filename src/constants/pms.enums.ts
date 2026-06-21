@@ -76,7 +76,7 @@ export function getAssessmentTermLabel(code?: AssessmentTermCode | string): stri
     : String(code ?? '');
 }
 
-export const QuarterWorkflowState = {
+export const TermWorkflowState = {
   NOT_STARTED: 'NOT_STARTED',
   OBJECTIVE_SETTING_OPEN: 'OBJECTIVE_SETTING_OPEN',
   OBJECTIVE_DRAFT: 'OBJECTIVE_DRAFT',
@@ -91,16 +91,16 @@ export const QuarterWorkflowState = {
   CLOSED_BY_ADMIN: 'CLOSED_BY_ADMIN',
 } as const;
 
-export type QuarterWorkflowState =
-  (typeof QuarterWorkflowState)[keyof typeof QuarterWorkflowState];
+export type TermWorkflowState =
+  (typeof TermWorkflowState)[keyof typeof TermWorkflowState];
 
 export const FINALIZED_TERM_STATES = [
-  QuarterWorkflowState.TERM_FINALIZED,
-  QuarterWorkflowState.CLOSED_BY_ADMIN,
+  TermWorkflowState.TERM_FINALIZED,
+  TermWorkflowState.CLOSED_BY_ADMIN,
 ] as const;
 
 export function isTermFinalized(
-  state?: QuarterWorkflowState | string | null,
+  state?: TermWorkflowState | string | null,
 ): boolean {
   return FINALIZED_TERM_STATES.includes(state as (typeof FINALIZED_TERM_STATES)[number]);
 }
@@ -143,20 +143,20 @@ export const AnnualDecisionStatus = {
 export type AnnualDecisionStatus =
   (typeof AnnualDecisionStatus)[keyof typeof AnnualDecisionStatus];
 
-export const QuarterReviewStatus = {
+export const TermReviewStatus = {
   MANAGER_REVIEW_OPEN: 'MANAGER_REVIEW_OPEN',
   MANAGER_REVIEW_SUBMITTED: 'MANAGER_REVIEW_SUBMITTED',
   FINALIZED: 'FINALIZED',
 } as const;
 
-export type QuarterReviewStatus =
-  (typeof QuarterReviewStatus)[keyof typeof QuarterReviewStatus];
+export type TermReviewStatus =
+  (typeof TermReviewStatus)[keyof typeof TermReviewStatus];
 
 export const ObjectiveStatus = {
-  OBJECTIVE_DRAFT: QuarterWorkflowState.OBJECTIVE_DRAFT,
-  OBJECTIVE_SUBMITTED: QuarterWorkflowState.OBJECTIVE_SUBMITTED,
-  OBJECTIVE_REVISION_REQUIRED: QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
-  OBJECTIVE_APPROVED: QuarterWorkflowState.OBJECTIVE_APPROVED,
+  OBJECTIVE_DRAFT: TermWorkflowState.OBJECTIVE_DRAFT,
+  OBJECTIVE_SUBMITTED: TermWorkflowState.OBJECTIVE_SUBMITTED,
+  OBJECTIVE_REVISION_REQUIRED: TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+  OBJECTIVE_APPROVED: TermWorkflowState.OBJECTIVE_APPROVED,
 } as const;
 
 export type ObjectiveStatus =
@@ -192,7 +192,7 @@ export type PmsTemplateStatus =
 
 export const PmsTemplateSectionLevel = {
   ANNUAL: 'ANNUAL',
-  QUARTER: 'QUARTER',
+  TERM: 'TERM',
 } as const;
 
 export type PmsTemplateSectionLevel =
@@ -276,7 +276,7 @@ export const SemanticRole = {
 export type SemanticRole = (typeof SemanticRole)[keyof typeof SemanticRole];
 
 export const WorkflowEntityType = {
-  QUARTER_ASSIGNMENT: 'QUARTER_ASSIGNMENT',
+  TERM_ASSIGNMENT: 'TERM_ASSIGNMENT',
   ANNUAL_CYCLE: 'ANNUAL_CYCLE',
   ANNUAL_ASSIGNMENT: 'ANNUAL_ASSIGNMENT',
 } as const;
@@ -354,10 +354,10 @@ export const PmsAuditAction = {
 
 export type PmsAuditAction = (typeof PmsAuditAction)[keyof typeof PmsAuditAction];
 
-const quarterWorkflowStates = Object.values(QuarterWorkflowState) as string[];
+const termWorkflowStates = Object.values(TermWorkflowState) as string[];
 const annualWorkflowStates = Object.values(AnnualWorkflowState) as string[];
 const annualDecisionStatuses = Object.values(AnnualDecisionStatus) as string[];
-const quarterReviewStatuses = Object.values(QuarterReviewStatus) as string[];
+const termReviewStatuses = Object.values(TermReviewStatus) as string[];
 const objectiveStatuses = Object.values(ObjectiveStatus) as string[];
 
 export function normalizePmsRole(value: string): string {
@@ -372,10 +372,10 @@ export function isPmsRole(value: string): boolean {
   return typeof value === 'string'; // Dynamic roles mean any string could be a role
 }
 
-export function isQuarterWorkflowState(
+export function isTermWorkflowState(
   value: string,
-): value is QuarterWorkflowState {
-  return quarterWorkflowStates.includes(value);
+): value is TermWorkflowState {
+  return termWorkflowStates.includes(value);
 }
 
 export function isAnnualWorkflowState(
@@ -390,10 +390,10 @@ export function isAnnualDecisionStatus(
   return annualDecisionStatuses.includes(value);
 }
 
-export function isQuarterReviewStatus(
+export function isTermReviewStatus(
   value: string,
-): value is QuarterReviewStatus {
-  return quarterReviewStatuses.includes(value);
+): value is TermReviewStatus {
+  return termReviewStatuses.includes(value);
 }
 
 export function isObjectiveStatus(value: string): value is ObjectiveStatus {

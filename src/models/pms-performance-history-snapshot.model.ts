@@ -6,7 +6,7 @@ export interface IPerformanceHistorySnapshot extends Document {
   employeeId: Types.ObjectId;
   templateVersionId: Types.ObjectId;
   annualSnapshot?: unknown;
-  quarterSnapshots?: Record<string, unknown>;
+  termSnapshots?: Record<string, unknown>;
   finalDecisionSnapshot?: unknown;
   visibilitySnapshot?: unknown;
   communicationSnapshot?: unknown;
@@ -46,7 +46,7 @@ const performanceHistorySnapshotSchema = new Schema<IPerformanceHistorySnapshot>
       index: true,
     },
     annualSnapshot: Schema.Types.Mixed,
-    quarterSnapshots: {
+    termSnapshots: {
       type: Schema.Types.Mixed,
       default: {},
     },

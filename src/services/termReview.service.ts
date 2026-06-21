@@ -10,17 +10,17 @@ import {
   PmsTemplateFieldType,
   PmsTemplateSectionLevel,
   PmsTemplateSectionType,
-  QuarterReviewStatus,
-  QuarterWorkflowState,
+  TermReviewStatus,
+  TermWorkflowState,
 } from '../constants/pms.enums';
 import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { Objective } from '../models/pms-objective.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
-import { QuarterCycle } from '../models/pms-quarter-cycle.model';
-import { QuarterReview } from '../models/pms-quarter-review.model';
-import { QuarterReviewValue } from '../models/pms-quarter-review-value.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
+import { TermCycle } from '../models/pms-term-cycle.model';
+import { TermReview } from '../models/pms-term-review.model';
+import { TermReviewValue } from '../models/pms-term-review-value.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
@@ -28,20 +28,20 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { PmsScoringService } from './pms-scoring.service';
-import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
+import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
-import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
-import type { IQuarterReview } from '../models/pms-quarter-review.model';
+import type { ITermAssignment } from '../models/pms-term-assignment.model';
+import type { ITermReview } from '../models/pms-term-review.model';
 import type { ITemplateField, ITemplateSection } from '../models/pms-template-version.model';
 
-interface QuarterReviewRatingInput {
+interface TermReviewRatingInput {
   objectiveId?: string;
   rating?: number;
   comments?: string;
 }
 
-interface QuarterReviewAttachmentInput {
+interface TermReviewAttachmentInput {
   fileName?: string;
   fileUrl?: string;
   documentId?: string;
@@ -49,7 +49,7 @@ interface QuarterReviewAttachmentInput {
   uploadedAt?: Date | string;
 }
 
-interface QuarterReviewValueInput {
+interface TermReviewValueInput {
   templateFieldId?: string;
   fieldKey: string;
   sectionKey: string;
@@ -63,40 +63,40 @@ interface QuarterReviewValueInput {
   valueStatus?: string;
 }
 
-interface QuarterReviewBaseInput {
-  ratings?: QuarterReviewRatingInput[];
+interface TermReviewBaseInput {
+  ratings?: TermReviewRatingInput[];
   comments?: string;
   score?: number;
   overallRating?: string;
   recommendation?: string;
   achievements?: string;
   developmentObservations?: string;
-  attachments?: QuarterReviewAttachmentInput[];
-  reviewValues?: QuarterReviewValueInput[];
+  attachments?: TermReviewAttachmentInput[];
+  reviewValues?: TermReviewValueInput[];
 }
 
-export interface SaveQuarterReviewDraftInput extends QuarterReviewBaseInput {}
+export interface SaveTermReviewDraftInput extends TermReviewBaseInput {}
 
-export interface SubmitQuarterReviewInput extends QuarterReviewBaseInput {
-  ratings: QuarterReviewRatingInput[];
+export interface SubmitTermReviewInput extends TermReviewBaseInput {
+  ratings: TermReviewRatingInput[];
   comments: string;
   score: number;
 }
 
-export interface SubmitQuarterReviewResult {
-  quarterReview: IQuarterReview;
-  quarterAssignment: IQuarterAssignment;
+export interface SubmitTermReviewResult {
+  termReview: ITermReview;
+  termAssignment: ITermAssignment;
 }
 
-export interface FinalizeQuarterAssignmentResult {
-  quarterAssignment: IQuarterAssignment;
+export interface FinalizeTermAssignmentResult {
+  termAssignment: ITermAssignment;
 }
 
-export interface ReopenQuarterAssignmentInput {
+export interface ReopenTermAssignmentInput {
   reason: string;
 }
 
-export type QuarterReviewWorkspaceMode = 'manager' | 'employee' | 'admin';
+export type TermReviewWorkspaceMode = 'manager' | 'employee' | 'admin';
 
 type ApprovedObjectiveRecord = {
   id: string;
@@ -108,9 +108,9 @@ type ApprovedObjectiveRecord = {
   weightage?: number;
 };
 
-type QuarterReviewRecord = {
+type TermReviewRecord = {
   id: string;
-  quarterAssignmentId: string;
+  termAssignmentId: string;
   annualAssignmentId: string;
   cycleId: string;
   employeeId: string;
@@ -163,10 +163,10 @@ type AchievementSubmissionWindowRecord = Partial<QuarterWindowRecord> & {
   escalationDaysAfterDue?: number;
 };
 
-export type QuarterReviewAssignmentRecord = {
+export type TermReviewAssignmentRecord = {
   id: string;
   annualAssignmentId: string;
-  quarterAssignmentId: string;
+  termAssignmentId: string;
   cycleId: string;
   cycleName: string;
   cycleCode?: string;
@@ -174,8 +174,8 @@ export type QuarterReviewAssignmentRecord = {
   assessmentTermType?: string;
   termCode?: AssessmentTermCodeType;
   termLabel?: string;
-  quarterState: string;
-  quarterWindows?: {
+  termState: string;
+  termWindows?: {
     objectiveSetting?: QuarterWindowRecord;
     objectiveApproval?: QuarterWindowRecord;
     achievementSubmission?: AchievementSubmissionWindowRecord;
@@ -203,7 +203,7 @@ export type QuarterReviewAssignmentRecord = {
     overallScoreMax: number | null;
   };
   approvedObjectives: ApprovedObjectiveRecord[];
-  quarterReview: QuarterReviewRecord | null;
+  termReview: TermReviewRecord | null;
   backendConnected: boolean;
 };
 
@@ -214,7 +214,7 @@ type ReviewScoringRule = {
   allowedScores?: number[];
 };
 
-type QuarterReviewScoringFieldConfig = {
+type TermReviewScoringFieldConfig = {
   fieldKey: string;
   sectionKey: string;
   fieldType: string;
@@ -230,31 +230,31 @@ type QuarterReviewScoringFieldConfig = {
   scoringConfig?: any;
 };
 
-type QuarterReviewSectionConfig = {
+type TermReviewSectionConfig = {
   sectionKey: string;
   sectionType?: string;
   weightage: number;
   aggregationMethod: 'WEIGHTED_AVERAGE' | 'SIMPLE_AVERAGE' | 'SUM' | 'MAX_FIELD';
   maxSectionScore: number | null;
-  scoringFields: QuarterReviewScoringFieldConfig[];
+  scoringFields: TermReviewScoringFieldConfig[];
   objectiveBuckets?: any[];
 };
 
-type QuarterReviewConfig = {
+type TermReviewConfig = {
   objectiveRatingRule: ReviewScoringRule | null;
   overallScoreMax: number | null;
   scoringPolicy?: any;
-  sections: QuarterReviewSectionConfig[];
+  sections: TermReviewSectionConfig[];
 };
 
-export class QuarterReviewService extends BaseService {
+export class TermReviewService extends BaseService {
   private readonly scoringService = new PmsScoringService();
 
   constructor(context: RequestContext) {
     super(context);
   }
 
-  async listAssignments(mode: QuarterReviewWorkspaceMode): Promise<QuarterReviewAssignmentRecord[]> {
+  async listAssignments(mode: TermReviewWorkspaceMode): Promise<TermReviewAssignmentRecord[]> {
     const actor = this.requireActor();
     const actorRole = normalizePmsRole(actor.actorRole);
     const filter: Record<string, unknown> = { isDeleted: false };
@@ -285,24 +285,24 @@ export class QuarterReviewService extends BaseService {
       filter.$or = managerClauses;
     }
 
-    const quarterAssignments = await QuarterAssignment.find(filter)
-      .sort({ updatedAt: -1, quarterCode: 1 });
+    const termAssignments = await TermAssignment.find(filter)
+      .sort({ updatedAt: -1, assessmentTermCode: 1 });
 
-    if (quarterAssignments.length === 0) {
+    if (termAssignments.length === 0) {
       return [];
     }
 
-    await this.advanceQuarterAssignmentsToManagerReviewIfEligible(quarterAssignments);
+    await this.advanceTermAssignmentsToManagerReviewIfEligible(termAssignments);
 
-    const annualAssignmentIds = quarterAssignments.map((item) => item.annualAssignmentId);
-    const cycleIds = quarterAssignments
+    const annualAssignmentIds = termAssignments.map((item) => item.annualAssignmentId);
+    const cycleIds = termAssignments
       .map((item) => item.cycleId)
       .filter((value): value is Types.ObjectId => Boolean(value));
-    const quarterCycleIds = quarterAssignments
-      .map((item) => item.cycleQuarterId)
+    const termCycleIds = termAssignments
+      .map((item) => item.cycleTermId)
       .filter((value): value is Types.ObjectId => Boolean(value));
 
-    const [annualAssignments, cycles, quarterCycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
+    const [annualAssignments, cycles, termCycles, approvedObjectives, termReviews, termReviewValues] = await Promise.all([
       AnnualAssignment.find({
         _id: { $in: annualAssignmentIds },
         isDeleted: false,
@@ -311,23 +311,23 @@ export class QuarterReviewService extends BaseService {
         _id: { $in: cycleIds },
         isDeleted: false,
       }).lean(),
-      QuarterCycle.find({
-        _id: { $in: quarterCycleIds },
+      TermCycle.find({
+        _id: { $in: termCycleIds },
         isDeleted: false,
       }).lean(),
       Objective.find({
-        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+        termAssignmentId: { $in: termAssignments.map((item) => item._id) },
         isDeleted: false,
         status: ObjectiveStatus.OBJECTIVE_APPROVED,
       })
         .sort({ objectiveNo: 1, createdAt: 1 })
         .lean(),
-      QuarterReview.find({
-        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+      TermReview.find({
+        termAssignmentId: { $in: termAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
-      QuarterReviewValue.find({
-        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+      TermReviewValue.find({
+        termAssignmentId: { $in: termAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
     ]);
@@ -336,15 +336,15 @@ export class QuarterReviewService extends BaseService {
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
-    const quarterCycleMap = new Map(quarterCycles.map((item) => [item._id.toString(), item]));
-    const objectivesByQuarterAssignmentId = new Map<string, typeof approvedObjectives>();
-    const quarterReviewByQuarterAssignmentId = new Map(
-      quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
+    const termCycleMap = new Map(termCycles.map((item) => [item._id.toString(), item]));
+    const objectivesByTermAssignmentId = new Map<string, typeof approvedObjectives>();
+    const termReviewByTermAssignmentId = new Map(
+      termReviews.map((item) => [item.termAssignmentId.toString(), item]),
     );
-    const reviewValuesByReviewId = new Map<string, typeof quarterReviewValues>();
-    for (const val of quarterReviewValues) {
-      if (val.quarterReviewId) {
-        const key = val.quarterReviewId.toString();
+    const reviewValuesByReviewId = new Map<string, typeof termReviewValues>();
+    for (const val of termReviewValues) {
+      if (val.termReviewId) {
+        const key = val.termReviewId.toString();
         const bucket = reviewValuesByReviewId.get(key) ?? [];
         bucket.push(val);
         reviewValuesByReviewId.set(key, bucket);
@@ -352,25 +352,25 @@ export class QuarterReviewService extends BaseService {
     }
 
     for (const objective of approvedObjectives) {
-      const key = objective.quarterAssignmentId.toString();
-      const bucket = objectivesByQuarterAssignmentId.get(key) ?? [];
+      const key = objective.termAssignmentId.toString();
+      const bucket = objectivesByTermAssignmentId.get(key) ?? [];
       bucket.push(objective);
-      objectivesByQuarterAssignmentId.set(key, bucket);
+      objectivesByTermAssignmentId.set(key, bucket);
     }
 
-    return await Promise.all(quarterAssignments.map(async (quarterAssignment) => {
-      const annualAssignment = annualAssignmentMap.get(quarterAssignment.annualAssignmentId.toString());
-      const cycle = quarterAssignment.cycleId
-        ? cycleMap.get(quarterAssignment.cycleId.toString())
+    return await Promise.all(termAssignments.map(async (termAssignment) => {
+      const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
+      const cycle = termAssignment.cycleId
+        ? cycleMap.get(termAssignment.cycleId.toString())
         : undefined;
-      const quarterCycle = quarterAssignment.cycleQuarterId
-        ? quarterCycleMap.get(quarterAssignment.cycleQuarterId.toString())
+      const termCycle = termAssignment.cycleTermId
+        ? termCycleMap.get(termAssignment.cycleTermId.toString())
         : undefined;
-      const review = quarterReviewByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? null;
-      const objectives = objectivesByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? [];
+      const review = termReviewByTermAssignmentId.get(termAssignment._id.toString()) ?? null;
+      const objectives = objectivesByTermAssignmentId.get(termAssignment._id.toString()) ?? [];
       const reviewConfig = annualAssignment
-        ? await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode)
-        : this.defaultQuarterReviewConfig();
+        ? await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode)
+        : this.defaultTermReviewConfig();
 
       const actorRole = normalizePmsRole(this.requireActor().actorRole);
       let isReviewVisible = true;
@@ -394,26 +394,26 @@ export class QuarterReviewService extends BaseService {
       );
 
       return {
-        id: quarterAssignment._id.toString(),
-        annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
-        quarterAssignmentId: quarterAssignment._id.toString(),
-        cycleId: quarterAssignment.cycleId?.toString() ?? '',
+        id: termAssignment._id.toString(),
+        annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+        termAssignmentId: termAssignment._id.toString(),
+        cycleId: termAssignment.cycleId?.toString() ?? '',
         cycleName: String(
           cycle?.name ??
           cycle?.code ??
           annualAssignment?.orgSnapshot?.cycleCode ??
           annualAssignment?.orgSnapshot?.cycleName ??
-          quarterAssignment.cycleId?.toString() ??
+          termAssignment.cycleId?.toString() ??
           'Cycle',
         ),
         cycleCode: cycle?.code,
-        quarter: quarterAssignment.quarterCode,
-        assessmentTermType: quarterAssignment.assessmentTermType,
-        termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
-        termLabel: quarterAssignment.termLabel ?? quarterAssignment.termCode ?? quarterAssignment.quarterCode,
-        quarterState: quarterAssignment.quarterState,
-        quarterWindows: this.mapQuarterWindows(quarterCycle),
-        employeeId: quarterAssignment.employeeId.toString(),
+        quarter: termAssignment.assessmentTermCode,
+        assessmentTermType: termAssignment.assessmentTermType,
+        termCode: termAssignment.termCode ?? termAssignment.assessmentTermCode,
+        termLabel: termAssignment.termLabel ?? termAssignment.termCode ?? termAssignment.assessmentTermCode,
+        termState: termAssignment.termState,
+        termWindows: this.mapTermWindows(termCycle),
+        employeeId: termAssignment.employeeId.toString(),
         employeeName: String(employeeSnapshot.name ?? 'Employee'),
         employeeCode,
         employeeNo: employeeCode,
@@ -421,7 +421,7 @@ export class QuarterReviewService extends BaseService {
         employeeDesignation,
         department: employeeDepartment,
         departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
-        managerId: quarterAssignment.assignedManagerId.toString(),
+        managerId: termAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
@@ -440,8 +440,8 @@ export class QuarterReviewService extends BaseService {
           successCriteria: objective.successCriteria ?? '',
           weightage: objective.weightage,
         })),
-        quarterReview: review
-          ? this.mapQuarterReviewRecord(
+        termReview: review
+          ? this.mapTermReviewRecord(
               review,
               isReviewVisible,
               reviewValuesByReviewId.get(review._id.toString()) ?? [],
@@ -452,33 +452,33 @@ export class QuarterReviewService extends BaseService {
     }));
   }
 
-  async getAssignment(quarterAssignmentId: string): Promise<QuarterReviewAssignmentRecord> {
-    const [record] = await this.listAssignmentsForQuarterIds([quarterAssignmentId]);
+  async getAssignment(termAssignmentId: string): Promise<TermReviewAssignmentRecord> {
+    const [record] = await this.listAssignmentsForQuarterIds([termAssignmentId]);
     if (!record) {
       throw new Error('Quarter assignment not found');
     }
     return record;
   }
 
-  async saveQuarterReviewDraft(
-    quarterAssignmentId: string,
-    input: SaveQuarterReviewDraftInput,
-  ): Promise<SubmitQuarterReviewResult> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertManagerAccess('quarterReview.draft', quarterAssignment);
-    await this.assertReviewWindow(quarterAssignment);
+  async saveTermReviewDraft(
+    termAssignmentId: string,
+    input: SaveTermReviewDraftInput,
+  ): Promise<SubmitTermReviewResult> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    await this.assertManagerAccess('termReview.draft', termAssignment);
+    await this.assertReviewWindow(termAssignment);
 
-    if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
+    if (termAssignment.termState !== TermWorkflowState.MANAGER_REVIEW_OPEN) {
       throw new Error('Quarter review draft can be saved only when manager review is open');
     }
 
-    const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
+    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
     if (approvedObjectives.length === 0) {
       throw new Error('Quarter review requires approved objectives before manager review can start');
     }
-    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
-    const reviewConfig = await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode);
-    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig, approvedObjectives);
+    const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
+    const reviewConfig = await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode);
+    const scoringResolution = this.resolveTermReviewScoring(input, reviewConfig, approvedObjectives);
 
     this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
     
@@ -489,8 +489,8 @@ export class QuarterReviewService extends BaseService {
       }
     }
 
-    const existingReview = await QuarterReview.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+    const existingReview = await TermReview.findOne({
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     });
 
@@ -503,32 +503,32 @@ export class QuarterReviewService extends BaseService {
     let actingDelegateUserId: Types.ObjectId | undefined;
     let originalOwnerUserId: Types.ObjectId | undefined;
 
-    if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
+    if (actor.actorId !== termAssignment.assignedManagerId.toString()) {
       const delegation = await this.getReviewDelegation(
         actor.actorId,
-        quarterAssignment.assignedManagerId.toString(),
-        quarterAssignment.cycleId?.toString(),
+        termAssignment.assignedManagerId.toString(),
+        termAssignment.cycleId?.toString(),
       );
 
       if (delegation) {
         actingDelegateUserId = actorObjectId;
-        originalOwnerUserId = quarterAssignment.assignedManagerId;
+        originalOwnerUserId = termAssignment.assignedManagerId;
       }
     }
 
     const reviewPayload = {
-      quarterAssignmentId: quarterAssignment._id,
-      annualAssignmentId: quarterAssignment.annualAssignmentId,
-      cycleId: quarterAssignment.cycleId,
-      employeeId: quarterAssignment.employeeId,
-      managerId: quarterAssignment.assignedManagerId,
-      reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_OPEN,
+      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      cycleId: termAssignment.cycleId,
+      employeeId: termAssignment.employeeId,
+      managerId: termAssignment.assignedManagerId,
+      reviewStatus: TermReviewStatus.MANAGER_REVIEW_OPEN,
       ratings: this.normalizeRatings(input.ratings ?? []),
       comments: input.comments?.trim(),
       score: scoringResolution.overallScore,
       overallScore: scoringResolution.overallScore,
       overallRating: input.overallRating?.trim(),
-      finalQuarterRemarks: input.comments?.trim(),
+      finalTermRemarks: input.comments?.trim(),
       recommendation: input.recommendation?.trim(),
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
@@ -540,8 +540,8 @@ export class QuarterReviewService extends BaseService {
       createdBy: existingReview?.createdBy ?? this.actorIdObject(),
     };
 
-    const quarterReview = existingReview
-      ? await QuarterReview.findByIdAndUpdate(
+    const termReview = existingReview
+      ? await TermReview.findByIdAndUpdate(
         existingReview._id,
         {
           $set: reviewPayload,
@@ -549,15 +549,15 @@ export class QuarterReviewService extends BaseService {
         },
         { new: true, runValidators: true },
       )
-      : await QuarterReview.create(reviewPayload);
+      : await TermReview.create(reviewPayload);
 
-    if (!quarterReview) {
+    if (!termReview) {
       throw new Error('Unable to save quarter review draft');
     }
 
-    await this.persistQuarterReviewValues(
-      quarterReview,
-      quarterAssignment,
+    await this.persistTermReviewValues(
+      termReview,
+      termAssignment,
       {
         ...input,
         score: scoringResolution.overallScore,
@@ -565,33 +565,33 @@ export class QuarterReviewService extends BaseService {
       },
       false,
     );
-    await this.syncQuarterAssignmentReviewSummary(quarterAssignment, quarterReview);
+    await this.syncTermAssignmentReviewSummary(termAssignment, termReview);
 
     await this.audit(
       'PMS_QUARTER_REVIEW_DRAFT_SAVED',
       'QUARTER_REVIEW',
-      quarterReview._id.toString(),
+      termReview._id.toString(),
       existingReview?.toObject(),
-      quarterReview.toObject(),
+      termReview.toObject(),
     );
 
     return {
-      quarterReview,
-      quarterAssignment: await this.getQuarterAssignment(quarterAssignmentId),
+      termReview,
+      termAssignment: await this.getTermAssignment(termAssignmentId),
     };
   }
 
-  async submitQuarterReview(
-    quarterAssignmentId: string,
-    input: SubmitQuarterReviewInput,
-  ): Promise<SubmitQuarterReviewResult> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertManagerAccess('quarterReview.submit', quarterAssignment);
-    await this.assertReviewWindow(quarterAssignment);
+  async submitTermReview(
+    termAssignmentId: string,
+    input: SubmitTermReviewInput,
+  ): Promise<SubmitTermReviewResult> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    await this.assertManagerAccess('termReview.submit', termAssignment);
+    await this.assertReviewWindow(termAssignment);
 
-    if (quarterAssignment.quarterState === QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED) {
-      const submittedReview = await QuarterReview.findOne({
-        quarterAssignmentId: quarterAssignment._id,
+    if (termAssignment.termState === TermWorkflowState.MANAGER_REVIEW_SUBMITTED) {
+      const submittedReview = await TermReview.findOne({
+        termAssignmentId: termAssignment._id,
         isDeleted: false,
       });
 
@@ -599,26 +599,26 @@ export class QuarterReviewService extends BaseService {
         throw new Error('Submitted quarter review is required before quarter finalization');
       }
 
-      const finalizedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
-        quarterAssignment,
+      const finalizedTermAssignment = await this.finalizeSubmittedTermReview(
+        termAssignment,
         submittedReview,
         'PMS_TERM_AUTO_FINALIZED_AFTER_MANAGER_REVIEW_SUBMISSION',
       );
 
       return {
-        quarterReview: submittedReview,
-        quarterAssignment: finalizedQuarterAssignment,
+        termReview: submittedReview,
+        termAssignment: finalizedTermAssignment,
       };
     }
 
-    if (quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_OPEN) {
+    if (termAssignment.termState !== TermWorkflowState.MANAGER_REVIEW_OPEN) {
       throw new Error('Quarter review can be submitted only when manager review is open');
     }
 
-    const approvedObjectives = await this.getApprovedObjectives(quarterAssignment._id);
-    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
-    const reviewConfig = await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode);
-    const scoringResolution = this.resolveQuarterReviewScoring(input, reviewConfig, approvedObjectives);
+    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
+    const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
+    const reviewConfig = await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode);
+    const scoringResolution = this.resolveTermReviewScoring(input, reviewConfig, approvedObjectives);
     this.validateReviewInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
 
     if (annualAssignment.templateVersionId) {
@@ -628,8 +628,8 @@ export class QuarterReviewService extends BaseService {
       }
     }
 
-    const existingReview = await QuarterReview.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+    const existingReview = await TermReview.findOne({
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     });
 
@@ -642,33 +642,33 @@ export class QuarterReviewService extends BaseService {
     let actingDelegateUserId: Types.ObjectId | undefined;
     let originalOwnerUserId: Types.ObjectId | undefined;
 
-    if (actor.actorId !== quarterAssignment.assignedManagerId.toString()) {
+    if (actor.actorId !== termAssignment.assignedManagerId.toString()) {
       const delegation = await this.getReviewDelegation(
         actor.actorId,
-        quarterAssignment.assignedManagerId.toString(),
-        quarterAssignment.cycleId?.toString(),
+        termAssignment.assignedManagerId.toString(),
+        termAssignment.cycleId?.toString(),
       );
 
       if (delegation) {
         actingDelegateUserId = actorObjectId;
-        originalOwnerUserId = quarterAssignment.assignedManagerId;
+        originalOwnerUserId = termAssignment.assignedManagerId;
       }
     }
 
     const submissionTimestamp = new Date();
     const reviewPayload = {
-      quarterAssignmentId: quarterAssignment._id,
-      annualAssignmentId: quarterAssignment.annualAssignmentId,
-      cycleId: quarterAssignment.cycleId,
-      employeeId: quarterAssignment.employeeId,
-      managerId: quarterAssignment.assignedManagerId,
-      reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
+      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      cycleId: termAssignment.cycleId,
+      employeeId: termAssignment.employeeId,
+      managerId: termAssignment.assignedManagerId,
+      reviewStatus: TermReviewStatus.MANAGER_REVIEW_SUBMITTED,
       ratings: this.normalizeRatings(input.ratings),
       comments: input.comments.trim(),
       score: scoringResolution.overallScore,
       overallScore: scoringResolution.overallScore,
       overallRating: input.overallRating?.trim(),
-      finalQuarterRemarks: input.comments.trim(),
+      finalTermRemarks: input.comments.trim(),
       recommendation: input.recommendation?.trim(),
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
@@ -682,8 +682,8 @@ export class QuarterReviewService extends BaseService {
       createdBy: existingReview?.createdBy ?? this.actorIdObject(),
     };
 
-    const quarterReview = existingReview
-      ? await QuarterReview.findByIdAndUpdate(
+    const termReview = existingReview
+      ? await TermReview.findByIdAndUpdate(
         existingReview._id,
         {
           $set: reviewPayload,
@@ -691,15 +691,15 @@ export class QuarterReviewService extends BaseService {
         },
         { new: true, runValidators: true },
       )
-      : await QuarterReview.create(reviewPayload);
+      : await TermReview.create(reviewPayload);
 
-    if (!quarterReview) {
+    if (!termReview) {
       throw new Error('Unable to submit quarter review');
     }
 
-    await this.persistQuarterReviewValues(
-      quarterReview,
-      quarterAssignment,
+    await this.persistTermReviewValues(
+      termReview,
+      termAssignment,
       {
         ...input,
         score: scoringResolution.overallScore,
@@ -708,96 +708,96 @@ export class QuarterReviewService extends BaseService {
       true,
     );
 
-    const submittedQuarterAssignment = await transitionQuarterAssignmentState(
-      quarterAssignment._id.toString(),
-      QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
+    const submittedTermAssignment = await transitionTermAssignmentState(
+      termAssignment._id.toString(),
+      TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
       this.requireActor(),
     );
 
     await this.audit(
       'PMS_TERM_REVIEW_SUBMITTED',
       'QUARTER_REVIEW',
-      quarterReview._id.toString(),
+      termReview._id.toString(),
       existingReview?.toObject(),
-      quarterReview.toObject(),
+      termReview.toObject(),
     );
 
-    const finalizedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
-      submittedQuarterAssignment,
-      quarterReview,
+    const finalizedTermAssignment = await this.finalizeSubmittedTermReview(
+      submittedTermAssignment,
+      termReview,
       'PMS_TERM_AUTO_FINALIZED_AFTER_MANAGER_REVIEW_SUBMISSION',
     );
 
     return {
-      quarterReview,
-      quarterAssignment: finalizedQuarterAssignment,
+      termReview,
+      termAssignment: finalizedTermAssignment,
     };
   }
 
-  async finalizeQuarterAssignment(
-    quarterAssignmentId: string,
-  ): Promise<FinalizeQuarterAssignmentResult> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertAdmin('quarterAssignment.finalize');
+  async finalizeTermAssignment(
+    termAssignmentId: string,
+  ): Promise<FinalizeTermAssignmentResult> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    await this.assertAdmin('termAssignment.finalize');
 
     if (
-      quarterAssignment.quarterState !== QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED &&
-      quarterAssignment.quarterState !== QuarterWorkflowState.REOPENED_BY_ADMIN
+      termAssignment.termState !== TermWorkflowState.MANAGER_REVIEW_SUBMITTED &&
+      termAssignment.termState !== TermWorkflowState.REOPENED_BY_ADMIN
     ) {
       throw new Error('Term can be finalized only after manager review submission or admin reopen');
     }
 
-    const quarterReview = await QuarterReview.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+    const termReview = await TermReview.findOne({
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     });
 
-    if (!quarterReview?.submittedAt) {
+    if (!termReview?.submittedAt) {
       throw new Error('Submitted quarter review is required before quarter finalization');
     }
 
-    const updatedQuarterAssignment = await this.finalizeSubmittedQuarterReview(
-      quarterAssignment,
-      quarterReview,
+    const updatedTermAssignment = await this.finalizeSubmittedTermReview(
+      termAssignment,
+      termReview,
       'PMS_TERM_FINALIZED',
     );
 
-    return { quarterAssignment: updatedQuarterAssignment };
+    return { termAssignment: updatedTermAssignment };
   }
 
-  async reopenQuarterAssignment(
-    quarterAssignmentId: string,
-    input: ReopenQuarterAssignmentInput,
-  ): Promise<FinalizeQuarterAssignmentResult> {
-    const quarterAssignment = await this.getQuarterAssignment(quarterAssignmentId);
-    await this.assertAdmin('quarterAssignment.reopen');
+  async reopenTermAssignment(
+    termAssignmentId: string,
+    input: ReopenTermAssignmentInput,
+  ): Promise<FinalizeTermAssignmentResult> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    await this.assertAdmin('termAssignment.reopen');
 
     if (!input.reason?.trim()) {
       throw new Error('Reopen reason is required');
     }
 
-    if (quarterAssignment.quarterState !== QuarterWorkflowState.TERM_FINALIZED) {
+    if (termAssignment.termState !== TermWorkflowState.TERM_FINALIZED) {
       throw new Error('Only finalized terms can be reopened');
     }
 
-    const finalizedReviewBeforeReopen = await QuarterReview.findOne({
-      quarterAssignmentId: quarterAssignment._id,
+    const finalizedReviewBeforeReopen = await TermReview.findOne({
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     }).lean();
 
-    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
-      quarterAssignment._id.toString(),
-      QuarterWorkflowState.REOPENED_BY_ADMIN,
+    const updatedTermAssignment = await transitionTermAssignmentState(
+      termAssignment._id.toString(),
+      TermWorkflowState.REOPENED_BY_ADMIN,
       this.requireActor(),
       input.reason,
     );
 
-    await QuarterReview.findOneAndUpdate(
-      { quarterAssignmentId: quarterAssignment._id, isDeleted: false },
+    await TermReview.findOneAndUpdate(
+      { termAssignmentId: termAssignment._id, isDeleted: false },
       {
         $set: {
           finalizedAt: undefined,
-          reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
+          reviewStatus: TermReviewStatus.MANAGER_REVIEW_SUBMITTED,
           updatedBy: this.actorIdObject(),
         },
         $inc: { version: 1 },
@@ -806,27 +806,27 @@ export class QuarterReviewService extends BaseService {
     );
 
     await this.createQuarterReopenCorrectionLayer(
-      quarterAssignment,
+      termAssignment,
       finalizedReviewBeforeReopen,
       input.reason,
     );
 
     await this.audit(
       'PMS_TERM_REOPENED',
-      'QUARTER_ASSIGNMENT',
-      updatedQuarterAssignment._id.toString(),
-      { quarterState: quarterAssignment.quarterState },
-      { quarterState: updatedQuarterAssignment.quarterState },
+      'TERM_ASSIGNMENT',
+      updatedTermAssignment._id.toString(),
+      { termState: termAssignment.termState },
+      { termState: updatedTermAssignment.termState },
       input.reason,
     );
 
-    return { quarterAssignment: updatedQuarterAssignment };
+    return { termAssignment: updatedTermAssignment };
   }
 
   private async listAssignmentsForQuarterIds(
-    quarterAssignmentIds: string[],
-  ): Promise<QuarterReviewAssignmentRecord[]> {
-    const normalizedIds = quarterAssignmentIds
+    termAssignmentIds: string[],
+  ): Promise<TermReviewAssignmentRecord[]> {
+    const normalizedIds = termAssignmentIds
       .filter((value) => Types.ObjectId.isValid(value))
       .map((value) => new Types.ObjectId(value));
 
@@ -834,31 +834,31 @@ export class QuarterReviewService extends BaseService {
       return [];
     }
 
-    const quarterAssignments = await QuarterAssignment.find({
+    const termAssignments = await TermAssignment.find({
       _id: { $in: normalizedIds },
       isDeleted: false,
     });
 
-    if (quarterAssignments.length === 0) {
+    if (termAssignments.length === 0) {
       return [];
     }
 
-    await this.advanceQuarterAssignmentsToManagerReviewIfEligible(quarterAssignments);
+    await this.advanceTermAssignmentsToManagerReviewIfEligible(termAssignments);
 
     const actor = this.requireActor();
-    for (const quarterAssignment of quarterAssignments) {
-      await this.assertQuarterAssignmentViewAccess(actor.actorRole, quarterAssignment);
+    for (const termAssignment of termAssignments) {
+      await this.assertTermAssignmentViewAccess(actor.actorRole, termAssignment);
     }
 
-    const annualAssignmentIds = quarterAssignments.map((item) => item.annualAssignmentId);
-    const cycleIds = quarterAssignments
+    const annualAssignmentIds = termAssignments.map((item) => item.annualAssignmentId);
+    const cycleIds = termAssignments
       .map((item) => item.cycleId)
       .filter((value): value is Types.ObjectId => Boolean(value));
-    const quarterCycleIds = quarterAssignments
-      .map((item) => item.cycleQuarterId)
+    const termCycleIds = termAssignments
+      .map((item) => item.cycleTermId)
       .filter((value): value is Types.ObjectId => Boolean(value));
 
-    const [annualAssignments, cycles, quarterCycles, approvedObjectives, quarterReviews, quarterReviewValues] = await Promise.all([
+    const [annualAssignments, cycles, termCycles, approvedObjectives, termReviews, termReviewValues] = await Promise.all([
       AnnualAssignment.find({
         _id: { $in: annualAssignmentIds },
         isDeleted: false,
@@ -867,23 +867,23 @@ export class QuarterReviewService extends BaseService {
         _id: { $in: cycleIds },
         isDeleted: false,
       }).lean(),
-      QuarterCycle.find({
-        _id: { $in: quarterCycleIds },
+      TermCycle.find({
+        _id: { $in: termCycleIds },
         isDeleted: false,
       }).lean(),
       Objective.find({
-        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+        termAssignmentId: { $in: termAssignments.map((item) => item._id) },
         isDeleted: false,
         status: ObjectiveStatus.OBJECTIVE_APPROVED,
       })
         .sort({ objectiveNo: 1, createdAt: 1 })
         .lean(),
-      QuarterReview.find({
-        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+      TermReview.find({
+        termAssignmentId: { $in: termAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
-      QuarterReviewValue.find({
-        quarterAssignmentId: { $in: quarterAssignments.map((item) => item._id) },
+      TermReviewValue.find({
+        termAssignmentId: { $in: termAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
     ]);
@@ -892,10 +892,10 @@ export class QuarterReviewService extends BaseService {
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
-    const quarterCycleMap = new Map(quarterCycles.map((item) => [item._id.toString(), item]));
-    const objectivesByQuarterAssignmentId = new Map<string, typeof approvedObjectives>();
-    const quarterReviewByQuarterAssignmentId = new Map(
-      quarterReviews.map((item) => [item.quarterAssignmentId.toString(), item]),
+    const termCycleMap = new Map(termCycles.map((item) => [item._id.toString(), item]));
+    const objectivesByTermAssignmentId = new Map<string, typeof approvedObjectives>();
+    const termReviewByTermAssignmentId = new Map(
+      termReviews.map((item) => [item.termAssignmentId.toString(), item]),
     );
 
     const templateVersionIds = annualAssignments
@@ -919,10 +919,10 @@ export class QuarterReviewService extends BaseService {
       }
       confidentialFieldsByTemplateId.set(tv._id.toString(), confidentialSet);
     }
-    const reviewValuesByReviewId = new Map<string, typeof quarterReviewValues>();
-    for (const val of quarterReviewValues) {
-      if (val.quarterReviewId) {
-        const key = val.quarterReviewId.toString();
+    const reviewValuesByReviewId = new Map<string, typeof termReviewValues>();
+    for (const val of termReviewValues) {
+      if (val.termReviewId) {
+        const key = val.termReviewId.toString();
         const bucket = reviewValuesByReviewId.get(key) ?? [];
         bucket.push(val);
         reviewValuesByReviewId.set(key, bucket);
@@ -930,25 +930,25 @@ export class QuarterReviewService extends BaseService {
     }
 
     for (const objective of approvedObjectives) {
-      const key = objective.quarterAssignmentId.toString();
-      const bucket = objectivesByQuarterAssignmentId.get(key) ?? [];
+      const key = objective.termAssignmentId.toString();
+      const bucket = objectivesByTermAssignmentId.get(key) ?? [];
       bucket.push(objective);
-      objectivesByQuarterAssignmentId.set(key, bucket);
+      objectivesByTermAssignmentId.set(key, bucket);
     }
 
-    return await Promise.all(quarterAssignments.map(async (quarterAssignment) => {
-      const annualAssignment = annualAssignmentMap.get(quarterAssignment.annualAssignmentId.toString());
-      const cycle = quarterAssignment.cycleId
-        ? cycleMap.get(quarterAssignment.cycleId.toString())
+    return await Promise.all(termAssignments.map(async (termAssignment) => {
+      const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
+      const cycle = termAssignment.cycleId
+        ? cycleMap.get(termAssignment.cycleId.toString())
         : undefined;
-      const quarterCycle = quarterAssignment.cycleQuarterId
-        ? quarterCycleMap.get(quarterAssignment.cycleQuarterId.toString())
+      const termCycle = termAssignment.cycleTermId
+        ? termCycleMap.get(termAssignment.cycleTermId.toString())
         : undefined;
-      const review = quarterReviewByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? null;
-      const objectives = objectivesByQuarterAssignmentId.get(quarterAssignment._id.toString()) ?? [];
+      const review = termReviewByTermAssignmentId.get(termAssignment._id.toString()) ?? null;
+      const objectives = objectivesByTermAssignmentId.get(termAssignment._id.toString()) ?? [];
       const reviewConfig = annualAssignment
-        ? await this.getQuarterReviewConfig(annualAssignment, quarterAssignment.quarterCode)
-        : this.defaultQuarterReviewConfig();
+        ? await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode)
+        : this.defaultTermReviewConfig();
 
       const actorRole = normalizePmsRole(this.requireActor().actorRole);
       let isReviewVisible = true;
@@ -980,26 +980,26 @@ export class QuarterReviewService extends BaseService {
       );
 
       return {
-        id: quarterAssignment._id.toString(),
-        annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
-        quarterAssignmentId: quarterAssignment._id.toString(),
-        cycleId: quarterAssignment.cycleId?.toString() ?? '',
+        id: termAssignment._id.toString(),
+        annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+        termAssignmentId: termAssignment._id.toString(),
+        cycleId: termAssignment.cycleId?.toString() ?? '',
         cycleName: String(
           cycle?.name ??
           cycle?.code ??
           annualAssignment?.orgSnapshot?.cycleCode ??
           annualAssignment?.orgSnapshot?.cycleName ??
-          quarterAssignment.cycleId?.toString() ??
+          termAssignment.cycleId?.toString() ??
           'Cycle',
         ),
         cycleCode: cycle?.code,
-        quarter: quarterAssignment.quarterCode,
-        assessmentTermType: quarterAssignment.assessmentTermType,
-        termCode: quarterAssignment.termCode ?? quarterAssignment.quarterCode,
-        termLabel: quarterAssignment.termLabel ?? quarterAssignment.termCode ?? quarterAssignment.quarterCode,
-        quarterState: quarterAssignment.quarterState,
-        quarterWindows: this.mapQuarterWindows(quarterCycle),
-        employeeId: quarterAssignment.employeeId.toString(),
+        quarter: termAssignment.assessmentTermCode,
+        assessmentTermType: termAssignment.assessmentTermType,
+        termCode: termAssignment.termCode ?? termAssignment.assessmentTermCode,
+        termLabel: termAssignment.termLabel ?? termAssignment.termCode ?? termAssignment.assessmentTermCode,
+        termState: termAssignment.termState,
+        termWindows: this.mapTermWindows(termCycle),
+        employeeId: termAssignment.employeeId.toString(),
         employeeName: String(employeeSnapshot.name ?? 'Employee'),
         employeeCode,
         employeeNo: employeeCode,
@@ -1007,7 +1007,7 @@ export class QuarterReviewService extends BaseService {
         employeeDesignation,
         department: employeeDepartment,
         departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
-        managerId: quarterAssignment.assignedManagerId.toString(),
+        managerId: termAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
@@ -1026,8 +1026,8 @@ export class QuarterReviewService extends BaseService {
           successCriteria: objective.successCriteria ?? '',
           weightage: objective.weightage,
         })),
-        quarterReview: review
-          ? this.mapQuarterReviewRecord(
+        termReview: review
+          ? this.mapTermReviewRecord(
               review,
               isReviewVisible,
               filteredReviewValues,
@@ -1038,11 +1038,11 @@ export class QuarterReviewService extends BaseService {
     }));
   }
 
-  private mapQuarterReviewRecord(review: Record<string, any>, isReviewVisible = true, reviewValues: any[] = []): QuarterReviewRecord {
+  private mapTermReviewRecord(review: Record<string, any>, isReviewVisible = true, reviewValues: any[] = []): TermReviewRecord {
     if (!isReviewVisible) {
       return {
         id: review._id.toString(),
-        quarterAssignmentId: review.quarterAssignmentId.toString(),
+        termAssignmentId: review.termAssignmentId.toString(),
         annualAssignmentId: review.annualAssignmentId?.toString?.() ?? '',
         cycleId: review.cycleId?.toString?.() ?? '',
         employeeId: review.employeeId.toString(),
@@ -1065,7 +1065,7 @@ export class QuarterReviewService extends BaseService {
 
     return {
       id: review._id.toString(),
-      quarterAssignmentId: review.quarterAssignmentId.toString(),
+      termAssignmentId: review.termAssignmentId.toString(),
       annualAssignmentId: review.annualAssignmentId?.toString?.() ?? '',
       cycleId: review.cycleId?.toString?.() ?? '',
       employeeId: review.employeeId.toString(),
@@ -1108,8 +1108,8 @@ export class QuarterReviewService extends BaseService {
     };
   }
 
-  private mapQuarterWindows(quarterCycle?: Record<string, any>) {
-    if (!quarterCycle) return undefined;
+  private mapTermWindows(termCycle?: Record<string, any>) {
+    if (!termCycle) return undefined;
 
     const mapWindow = (window?: { startDate?: Date; endDate?: Date }) => {
       if (!window?.startDate || !window?.endDate) return undefined;
@@ -1119,35 +1119,35 @@ export class QuarterReviewService extends BaseService {
       };
     };
 
-    const achievementSubmissionWindow = quarterCycle.achievementSubmissionWindow
+    const achievementSubmissionWindow = termCycle.achievementSubmissionWindow
       ? {
-          enabled: quarterCycle.achievementSubmissionWindow.enabled === true,
-          startDate: quarterCycle.achievementSubmissionWindow.startDate
-            ? new Date(quarterCycle.achievementSubmissionWindow.startDate).toISOString()
+          enabled: termCycle.achievementSubmissionWindow.enabled === true,
+          startDate: termCycle.achievementSubmissionWindow.startDate
+            ? new Date(termCycle.achievementSubmissionWindow.startDate).toISOString()
             : undefined,
-          endDate: quarterCycle.achievementSubmissionWindow.endDate
-            ? new Date(quarterCycle.achievementSubmissionWindow.endDate).toISOString()
+          endDate: termCycle.achievementSubmissionWindow.endDate
+            ? new Date(termCycle.achievementSubmissionWindow.endDate).toISOString()
             : undefined,
-          dueDate: quarterCycle.achievementSubmissionWindow.dueDate
-            ? new Date(quarterCycle.achievementSubmissionWindow.dueDate).toISOString()
+          dueDate: termCycle.achievementSubmissionWindow.dueDate
+            ? new Date(termCycle.achievementSubmissionWindow.dueDate).toISOString()
             : undefined,
-          graceDays: quarterCycle.achievementSubmissionWindow.graceDays,
-          reminderDaysBefore: quarterCycle.achievementSubmissionWindow.reminderDaysBefore,
-          escalationDaysAfterDue: quarterCycle.achievementSubmissionWindow.escalationDaysAfterDue,
+          graceDays: termCycle.achievementSubmissionWindow.graceDays,
+          reminderDaysBefore: termCycle.achievementSubmissionWindow.reminderDaysBefore,
+          escalationDaysAfterDue: termCycle.achievementSubmissionWindow.escalationDaysAfterDue,
         }
       : undefined;
 
     return {
-      objectiveSetting: mapWindow(quarterCycle.objectiveSettingWindow),
-      objectiveApproval: mapWindow(quarterCycle.objectiveApprovalWindow),
+      objectiveSetting: mapWindow(termCycle.objectiveSettingWindow),
+      objectiveApproval: mapWindow(termCycle.objectiveApprovalWindow),
       achievementSubmission: achievementSubmissionWindow,
-      managerReview: mapWindow(quarterCycle.managerReviewWindow),
-      quarterFinalization: mapWindow(quarterCycle.quarterFinalizationWindow),
+      managerReview: mapWindow(termCycle.managerReviewWindow),
+      quarterFinalization: mapWindow(termCycle.termFinalizationWindow),
     };
   }
 
   private validateReviewValuesAgainstTemplate(
-    reviewValues: QuarterReviewValueInput[],
+    reviewValues: TermReviewValueInput[],
     templateVersion: any,
     isSubmit = false
   ): void {
@@ -1191,9 +1191,9 @@ export class QuarterReviewService extends BaseService {
   }
 
   private validateDraftInput(
-    input: SaveQuarterReviewDraftInput,
+    input: SaveTermReviewDraftInput,
     approvedObjectives: Array<Record<string, any>>,
-    reviewConfig: QuarterReviewConfig,
+    reviewConfig: TermReviewConfig,
     resolvedScore?: number,
   ): void {
     if (input.score !== undefined && Number.isNaN(Number(input.score))) {
@@ -1218,9 +1218,9 @@ export class QuarterReviewService extends BaseService {
   }
 
   private validateReviewInput(
-    input: SubmitQuarterReviewInput,
+    input: SubmitTermReviewInput,
     approvedObjectives: Array<Record<string, any>>,
-    reviewConfig: QuarterReviewConfig,
+    reviewConfig: TermReviewConfig,
     resolvedScore?: number,
   ): void {
     const rateableObjectives = this.getRateableObjectives(approvedObjectives);
@@ -1252,17 +1252,17 @@ export class QuarterReviewService extends BaseService {
     this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
   }
 
-  private requiresObjectiveRatings(reviewConfig: QuarterReviewConfig): boolean {
+  private requiresObjectiveRatings(reviewConfig: TermReviewConfig): boolean {
     return reviewConfig.objectiveRatingRule !== null;
   }
 
-  private resolveQuarterReviewScoring(
-    input: QuarterReviewBaseInput,
-    reviewConfig: QuarterReviewConfig,
+  private resolveTermReviewScoring(
+    input: TermReviewBaseInput,
+    reviewConfig: TermReviewConfig,
     approvedObjectives: any[],
   ): {
     overallScore: number | undefined;
-    reviewValues: QuarterReviewValueInput[];
+    reviewValues: TermReviewValueInput[];
     scoreSnapshot: any;
   } {
     const mergedReviewValues = this.mergeComputedReviewValues(
@@ -1297,10 +1297,10 @@ export class QuarterReviewService extends BaseService {
   }
 
   private validateRatingsAgainstObjectives(
-    ratings: QuarterReviewRatingInput[],
+    ratings: TermReviewRatingInput[],
     approvedObjectives: Array<Record<string, any>>,
     requireAllObjectives: boolean,
-    reviewConfig: QuarterReviewConfig,
+    reviewConfig: TermReviewConfig,
   ): void {
     const approvedObjectiveIds = new Set(
       approvedObjectives.map((objective) => objective._id.toString()),
@@ -1344,7 +1344,7 @@ export class QuarterReviewService extends BaseService {
 
   private validateObjectiveRatingAgainstTemplate(
     rating: number,
-    reviewConfig: QuarterReviewConfig,
+    reviewConfig: TermReviewConfig,
   ): void {
     const rule = reviewConfig.objectiveRatingRule;
     if (!rule) return;
@@ -1364,7 +1364,7 @@ export class QuarterReviewService extends BaseService {
 
   private validateOverallScoreAgainstTemplate(
     score: number | undefined,
-    reviewConfig: QuarterReviewConfig,
+    reviewConfig: TermReviewConfig,
   ): void {
     if (score === undefined || score === null) {
       return;
@@ -1377,7 +1377,7 @@ export class QuarterReviewService extends BaseService {
     }
   }
 
-  private normalizeRatings(ratings: QuarterReviewRatingInput[]) {
+  private normalizeRatings(ratings: TermReviewRatingInput[]) {
     return ratings.map((rating) => ({
       objectiveId: rating.objectiveId && Types.ObjectId.isValid(rating.objectiveId)
         ? new Types.ObjectId(rating.objectiveId)
@@ -1389,7 +1389,7 @@ export class QuarterReviewService extends BaseService {
     }));
   }
 
-  private normalizeAttachments(attachments: QuarterReviewAttachmentInput[]) {
+  private normalizeAttachments(attachments: TermReviewAttachmentInput[]) {
     return attachments.map((attachment) => ({
       fileName: attachment.fileName,
       fileUrl: attachment.fileUrl,
@@ -1401,23 +1401,23 @@ export class QuarterReviewService extends BaseService {
     }));
   }
 
-  private async persistQuarterReviewValues(
-    quarterReview: IQuarterReview,
-    quarterAssignment: IQuarterAssignment,
-    input: QuarterReviewBaseInput,
+  private async persistTermReviewValues(
+    termReview: ITermReview,
+    termAssignment: ITermAssignment,
+    input: TermReviewBaseInput,
     isSubmitted: boolean,
   ): Promise<void> {
     const actor = this.requireActor();
     const actorUserId = new Types.ObjectId(actor.actorId);
     const effectiveAt = isSubmitted
-      ? (quarterReview.submittedAt ?? new Date())
+      ? (termReview.submittedAt ?? new Date())
       : new Date();
     const baseValue = {
-      quarterReviewId: quarterReview._id,
-      quarterAssignmentId: quarterAssignment._id,
-      annualAssignmentId: quarterAssignment.annualAssignmentId,
-      cycleId: quarterAssignment.cycleId,
-      employeeId: quarterAssignment.employeeId,
+      termReviewId: termReview._id,
+      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      cycleId: termAssignment.cycleId,
+      employeeId: termAssignment.employeeId,
       roleCode: 'MANAGER',
       actorUserId,
       workflowStage: 'MANAGER_REVIEW',
@@ -1486,14 +1486,14 @@ export class QuarterReviewService extends BaseService {
       ),
     ];
 
-    await QuarterReviewValue.deleteMany({ quarterReviewId: quarterReview._id });
+    await TermReviewValue.deleteMany({ termReviewId: termReview._id });
     if (valuesToCreate.length > 0) {
-      await QuarterReviewValue.insertMany(valuesToCreate);
+      await TermReviewValue.insertMany(valuesToCreate);
     }
   }
 
   private normalizeRatingValues(
-    ratings: QuarterReviewRatingInput[],
+    ratings: TermReviewRatingInput[],
     baseValue: Record<string, unknown>,
   ) {
     return ratings.map((rating, index) => ({
@@ -1514,7 +1514,7 @@ export class QuarterReviewService extends BaseService {
   }
 
   private normalizeExplicitReviewValues(
-    reviewValues: QuarterReviewValueInput[],
+    reviewValues: TermReviewValueInput[],
     defaultActorUserId: Types.ObjectId,
     effectiveAt: Date,
     baseValue: Record<string, unknown>,
@@ -1540,15 +1540,15 @@ export class QuarterReviewService extends BaseService {
   }
 
   private buildComputedReviewValues(
-    input: QuarterReviewBaseInput,
-    reviewConfig: QuarterReviewConfig,
-  ): QuarterReviewValueInput[] {
+    input: TermReviewBaseInput,
+    reviewConfig: TermReviewConfig,
+  ): TermReviewValueInput[] {
     if (reviewConfig.sections.length === 0) {
       return [];
     }
 
     const numericValueContext = this.buildReviewNumericContext(input);
-    const computedValues: QuarterReviewValueInput[] = [];
+    const computedValues: TermReviewValueInput[] = [];
 
     for (const section of reviewConfig.sections) {
       for (const field of section.scoringFields) {
@@ -1589,7 +1589,7 @@ export class QuarterReviewService extends BaseService {
     return computedValues;
   }
 
-  private buildReviewNumericContext(input: QuarterReviewBaseInput): Record<string, number> {
+  private buildReviewNumericContext(input: TermReviewBaseInput): Record<string, number> {
     const context: Record<string, number> = {};
 
     for (const value of input.reviewValues ?? []) {
@@ -1645,10 +1645,10 @@ export class QuarterReviewService extends BaseService {
   }
 
   private mergeComputedReviewValues(
-    reviewValues: QuarterReviewValueInput[],
-    computedReviewValues: QuarterReviewValueInput[],
-  ): QuarterReviewValueInput[] {
-    const merged = new Map<string, QuarterReviewValueInput>();
+    reviewValues: TermReviewValueInput[],
+    computedReviewValues: TermReviewValueInput[],
+  ): TermReviewValueInput[] {
+    const merged = new Map<string, TermReviewValueInput>();
 
     for (const value of reviewValues) {
       merged.set(`${value.sectionKey}::${value.fieldKey}`, value);
@@ -1741,10 +1741,10 @@ export class QuarterReviewService extends BaseService {
   }
 
   calculateSectionScores(
-    reviewValues: QuarterReviewValueInput[],
-    reviewConfig: QuarterReviewConfig,
+    reviewValues: TermReviewValueInput[],
+    reviewConfig: TermReviewConfig,
     approvedObjectives: any[],
-    ratings: QuarterReviewRatingInput[],
+    ratings: TermReviewRatingInput[],
   ): {
     sectionScores: Array<{ sectionKey: string; score: number; weightage: number }>;
     sectionsSnapshot: any[];
@@ -2061,7 +2061,7 @@ export class QuarterReviewService extends BaseService {
 
   calculateOverallScore(
     sectionScores: Array<{ sectionKey: string; score: number; weightage: number }>,
-    reviewConfig: QuarterReviewConfig,
+    reviewConfig: TermReviewConfig,
   ): number | undefined {
     if (sectionScores.length === 0) {
       return undefined;
@@ -2079,44 +2079,44 @@ export class QuarterReviewService extends BaseService {
     return rawScore;
   }
 
-  private async syncQuarterAssignmentReviewSummary(
-    quarterAssignment: IQuarterAssignment,
-    quarterReview: IQuarterReview,
+  private async syncTermAssignmentReviewSummary(
+    termAssignment: ITermAssignment,
+    termReview: ITermReview,
   ): Promise<void> {
-    quarterAssignment.quarterScore = quarterReview.score;
-    quarterAssignment.quarterRating = quarterReview.overallRating;
-    quarterAssignment.quarterSummary = {
-      comments: quarterReview.comments,
-      achievements: quarterReview.achievements,
-      developmentObservations: quarterReview.developmentObservations,
-      recommendation: quarterReview.recommendation,
-      submittedAt: quarterReview.submittedAt,
-      finalizedAt: quarterReview.finalizedAt,
-      reviewStatus: quarterReview.reviewStatus,
-      quarterReviewId: quarterReview._id,
+    termAssignment.termScore = termReview.score;
+    termAssignment.termRating = termReview.overallRating;
+    termAssignment.termSummary = {
+      comments: termReview.comments,
+      achievements: termReview.achievements,
+      developmentObservations: termReview.developmentObservations,
+      recommendation: termReview.recommendation,
+      submittedAt: termReview.submittedAt,
+      finalizedAt: termReview.finalizedAt,
+      reviewStatus: termReview.reviewStatus,
+      termReviewId: termReview._id,
     };
-    quarterAssignment.updatedBy = this.actorIdObject();
-    quarterAssignment.version += 1;
-    await quarterAssignment.save();
+    termAssignment.updatedBy = this.actorIdObject();
+    termAssignment.version += 1;
+    await termAssignment.save();
   }
 
-  private async finalizeSubmittedQuarterReview(
-    quarterAssignment: IQuarterAssignment,
-    quarterReview: IQuarterReview,
+  private async finalizeSubmittedTermReview(
+    termAssignment: ITermAssignment,
+    termReview: ITermReview,
     auditAction: string,
-  ): Promise<IQuarterAssignment> {
-    const updatedQuarterAssignment = await transitionQuarterAssignmentState(
-      quarterAssignment._id.toString(),
-      QuarterWorkflowState.TERM_FINALIZED,
+  ): Promise<ITermAssignment> {
+    const updatedTermAssignment = await transitionTermAssignmentState(
+      termAssignment._id.toString(),
+      TermWorkflowState.TERM_FINALIZED,
       this.requireActor(),
     );
 
-    const finalizedReview = await QuarterReview.findOneAndUpdate(
-      { quarterAssignmentId: quarterAssignment._id, isDeleted: false },
+    const finalizedReview = await TermReview.findOneAndUpdate(
+      { termAssignmentId: termAssignment._id, isDeleted: false },
       {
         $set: {
           finalizedAt: new Date(),
-          reviewStatus: QuarterReviewStatus.FINALIZED,
+          reviewStatus: TermReviewStatus.FINALIZED,
           updatedBy: this.actorIdObject(),
         },
         $inc: { version: 1 },
@@ -2125,43 +2125,43 @@ export class QuarterReviewService extends BaseService {
     );
 
     if (finalizedReview) {
-      await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, finalizedReview);
-      await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, finalizedReview);
+      await this.syncTermAssignmentReviewSummary(updatedTermAssignment, finalizedReview);
+      await this.createQuarterFinalizationSnapshot(updatedTermAssignment, finalizedReview);
     } else {
-      await this.syncQuarterAssignmentReviewSummary(updatedQuarterAssignment, quarterReview);
-      await this.createQuarterFinalizationSnapshot(updatedQuarterAssignment, quarterReview);
+      await this.syncTermAssignmentReviewSummary(updatedTermAssignment, termReview);
+      await this.createQuarterFinalizationSnapshot(updatedTermAssignment, termReview);
     }
 
     await this.audit(
       auditAction,
-      'QUARTER_ASSIGNMENT',
-      updatedQuarterAssignment._id.toString(),
-      { quarterState: quarterAssignment.quarterState },
-      { quarterState: updatedQuarterAssignment.quarterState },
+      'TERM_ASSIGNMENT',
+      updatedTermAssignment._id.toString(),
+      { termState: termAssignment.termState },
+      { termState: updatedTermAssignment.termState },
     );
 
-    return updatedQuarterAssignment;
+    return updatedTermAssignment;
   }
 
   private async createQuarterFinalizationSnapshot(
-    quarterAssignment: IQuarterAssignment,
-    quarterReview: IQuarterReview,
+    termAssignment: ITermAssignment,
+    termReview: ITermReview,
   ): Promise<void> {
-    const annualAssignment = await AnnualAssignment.findById(quarterAssignment.annualAssignmentId).lean();
-    if (!annualAssignment?.templateVersionId || !quarterAssignment.cycleId) {
+    const annualAssignment = await AnnualAssignment.findById(termAssignment.annualAssignmentId).lean();
+    if (!annualAssignment?.templateVersionId || !termAssignment.cycleId) {
       return;
     }
 
     const [approvedObjectives, reviewValues] = await Promise.all([
       Objective.find({
-        quarterAssignmentId: quarterAssignment._id,
+        termAssignmentId: termAssignment._id,
         isDeleted: false,
         status: ObjectiveStatus.OBJECTIVE_APPROVED,
       })
         .sort({ objectiveNo: 1, createdAt: 1 })
         .lean(),
-      QuarterReviewValue.find({
-        quarterReviewId: quarterReview._id,
+      TermReviewValue.find({
+        termReviewId: termReview._id,
         isDeleted: false,
       })
         .sort({ createdAt: 1 })
@@ -2170,13 +2170,13 @@ export class QuarterReviewService extends BaseService {
 
     const snapshotPayload = {
       annualAssignmentId: annualAssignment._id.toString(),
-      cycleId: annualAssignment.cycleId?.toString?.() ?? quarterAssignment.cycleId.toString(),
+      cycleId: annualAssignment.cycleId?.toString?.() ?? termAssignment.cycleId.toString(),
       employeeId: annualAssignment.employeeId.toString(),
       templateVersionId: annualAssignment.templateVersionId.toString(),
-      quarterSnapshots: {
-        [quarterAssignment.quarterCode]: {
-          quarterAssignment: quarterAssignment.toObject(),
-          quarterReview: quarterReview.toObject(),
+      termSnapshots: {
+        [termAssignment.assessmentTermCode]: {
+          termAssignment: termAssignment.toObject(),
+          termReview: termReview.toObject(),
           approvedObjectives,
           reviewValues,
         },
@@ -2192,7 +2192,7 @@ export class QuarterReviewService extends BaseService {
       cycleId: annualAssignment.cycleId,
       employeeId: annualAssignment.employeeId,
       templateVersionId: annualAssignment.templateVersionId,
-      quarterSnapshots: snapshotPayload.quarterSnapshots,
+      termSnapshots: snapshotPayload.termSnapshots,
       snapshotHash,
       createdBy: this.actorIdObject(),
       updatedBy: this.actorIdObject(),
@@ -2200,25 +2200,25 @@ export class QuarterReviewService extends BaseService {
   }
 
   private async createQuarterReopenCorrectionLayer(
-    quarterAssignment: IQuarterAssignment,
-    quarterReview: Record<string, any> | null,
+    termAssignment: ITermAssignment,
+    termReview: Record<string, any> | null,
     reason: string,
   ): Promise<void> {
     await CorrectionLayer.create({
-      entityType: 'QUARTER_ASSIGNMENT',
-      entityId: quarterAssignment._id,
+      entityType: 'TERM_ASSIGNMENT',
+      entityId: termAssignment._id,
       fieldKey: 'REOPEN_QUARTER',
       originalValue: {
-        quarterState: quarterAssignment.quarterState,
-        quarterScore: quarterAssignment.quarterScore,
-        quarterRating: quarterAssignment.quarterRating,
-        quarterSummary: quarterAssignment.quarterSummary,
-        reviewStatus: quarterReview?.reviewStatus,
-        finalizedAt: quarterReview?.finalizedAt,
+        termState: termAssignment.termState,
+        termScore: termAssignment.termScore,
+        termRating: termAssignment.termRating,
+        termSummary: termAssignment.termSummary,
+        reviewStatus: termReview?.reviewStatus,
+        finalizedAt: termReview?.finalizedAt,
       },
       correctedValue: {
-        quarterState: QuarterWorkflowState.REOPENED_BY_ADMIN,
-        reviewStatus: QuarterReviewStatus.MANAGER_REVIEW_SUBMITTED,
+        termState: TermWorkflowState.REOPENED_BY_ADMIN,
+        reviewStatus: TermReviewStatus.MANAGER_REVIEW_SUBMITTED,
       },
       correctionReason: reason,
       correctedBy: this.actorIdObject(),
@@ -2228,9 +2228,9 @@ export class QuarterReviewService extends BaseService {
     });
   }
 
-  private async getApprovedObjectives(quarterAssignmentId: Types.ObjectId) {
+  private async getApprovedObjectives(termAssignmentId: Types.ObjectId) {
     return Objective.find({
-      quarterAssignmentId,
+      termAssignmentId,
       isDeleted: false,
       status: ObjectiveStatus.OBJECTIVE_APPROVED,
     })
@@ -2238,13 +2238,13 @@ export class QuarterReviewService extends BaseService {
       .lean();
   }
 
-  private async getQuarterReviewConfig(
+  private async getTermReviewConfig(
     annualAssignment: IAnnualAssignment | Record<string, any>,
-    quarterCode: AssessmentTermCodeType,
-  ): Promise<QuarterReviewConfig> {
+    assessmentTermCode: AssessmentTermCodeType,
+  ): Promise<TermReviewConfig> {
     const templateVersionId = annualAssignment.templateVersionId?.toString?.();
     if (!templateVersionId) {
-      return this.defaultQuarterReviewConfig();
+      return this.defaultTermReviewConfig();
     }
 
     const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
@@ -2252,15 +2252,15 @@ export class QuarterReviewService extends BaseService {
       .lean();
 
     if (!templateVersion) {
-      return this.defaultQuarterReviewConfig();
+      return this.defaultTermReviewConfig();
     }
 
     const applicableSections = (templateVersion.sections ?? []).filter((section) =>
-      this.isQuarterReviewSectionInScope(section, quarterCode),
+      this.isTermReviewSectionInScope(section, assessmentTermCode),
     );
 
     if (applicableSections.length === 0) {
-      return this.defaultQuarterReviewConfig();
+      return this.defaultTermReviewConfig();
     }
 
     const objectiveScoringFields = applicableSections
@@ -2312,7 +2312,7 @@ export class QuarterReviewService extends BaseService {
         sectionType: section.sectionType,
         weightage: Number(section.sectionScoringConfig?.weightage ?? 0),
         aggregationMethod: (
-          section.sectionScoringConfig?.aggregationMethod as QuarterReviewSectionConfig['aggregationMethod']
+          section.sectionScoringConfig?.aggregationMethod as TermReviewSectionConfig['aggregationMethod']
         ) ?? 'WEIGHTED_AVERAGE',
         maxSectionScore: Number.isFinite(Number(section.sectionScoringConfig?.maxSectionScore))
           ? Number(section.sectionScoringConfig?.maxSectionScore)
@@ -2357,7 +2357,7 @@ export class QuarterReviewService extends BaseService {
     };
   }
 
-  private defaultQuarterReviewConfig(): QuarterReviewConfig {
+  private defaultTermReviewConfig(): TermReviewConfig {
     return {
       objectiveRatingRule: null,
       overallScoreMax: null,
@@ -2366,9 +2366,9 @@ export class QuarterReviewService extends BaseService {
     };
   }
 
-  private isQuarterReviewSectionInScope(
+  private isTermReviewSectionInScope(
     section: ITemplateSection,
-    quarterCode: AssessmentTermCodeType,
+    assessmentTermCode: AssessmentTermCodeType,
   ): boolean {
     const allowedTypes: string[] = [
       PmsTemplateSectionType.QUARTER_REVIEW,
@@ -2379,22 +2379,27 @@ export class QuarterReviewService extends BaseService {
       return false;
     }
 
-    if (section.level !== PmsTemplateSectionLevel.QUARTER) {
+    if (!this.isTermLevelTemplateSection(section.level)) {
       return false;
     }
 
     const allowedQuarters = [
-      ...(section.quarterScope ?? []),
+      ...(section.termScope ?? []),
       ...(section.repeatFor ?? []),
     ];
 
-    return allowedQuarters.length === 0 || allowedQuarters.includes(quarterCode);
+    return allowedQuarters.length === 0 || allowedQuarters.includes(assessmentTermCode);
+  }
+
+  private isTermLevelTemplateSection(level?: unknown): boolean {
+    const normalized = String(level ?? '').trim().toUpperCase();
+    return normalized === PmsTemplateSectionLevel.TERM;
   }
 
   private isManagerEditableReviewField(field: ITemplateField): boolean {
     const behavior = (field.behaviors ?? []).find(
       (item) =>
-        item.workflowState === QuarterWorkflowState.MANAGER_REVIEW_OPEN &&
+        item.workflowState === TermWorkflowState.MANAGER_REVIEW_OPEN &&
         item.role === PmsRole.MANAGER &&
         item.visibility === 'VISIBLE' &&
         item.editability === 'EDITABLE',
@@ -2438,14 +2443,14 @@ export class QuarterReviewService extends BaseService {
     };
   }
 
-  private async assertManagerAccess(action: string, quarterAssignment: IQuarterAssignment): Promise<void> {
+  private async assertManagerAccess(action: string, termAssignment: ITermAssignment): Promise<void> {
     const actor = this.requireActor();
     const access = await accessService.canPerform({
       actor,
       action,
       resource: {
-        employeeId: quarterAssignment.employeeId.toString(),
-        managerId: quarterAssignment.assignedManagerId.toString(),
+        employeeId: termAssignment.employeeId.toString(),
+        managerId: termAssignment.assignedManagerId.toString(),
       },
     });
 
@@ -2456,8 +2461,8 @@ export class QuarterReviewService extends BaseService {
     // Check delegation
     const delegation = await this.getReviewDelegation(
       actor.actorId,
-      quarterAssignment.assignedManagerId.toString(),
-      quarterAssignment.cycleId?.toString(),
+      termAssignment.assignedManagerId.toString(),
+      termAssignment.cycleId?.toString(),
     );
 
     if (delegation) {
@@ -2467,9 +2472,9 @@ export class QuarterReviewService extends BaseService {
     throw new Error(access.message ?? 'Only the assigned manager can manage quarter review');
   }
 
-  private async assertQuarterAssignmentViewAccess(
+  private async assertTermAssignmentViewAccess(
     actorRole: string,
-    quarterAssignment: Pick<IQuarterAssignment, 'employeeId' | 'assignedManagerId' | 'cycleId'>,
+    termAssignment: Pick<ITermAssignment, 'employeeId' | 'assignedManagerId' | 'cycleId'>,
   ): Promise<void> {
     const mappedRole = normalizePmsRole(actorRole);
     if (mappedRole === PmsRole.ADMIN) {
@@ -2479,7 +2484,7 @@ export class QuarterReviewService extends BaseService {
     if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT) {
       const actor = this.requireActor();
       const subordinateIds = await getSubordinateUserIds(actor.actorId);
-      const isSubordinate = subordinateIds.some(subId => subId.toString() === quarterAssignment.employeeId.toString());
+      const isSubordinate = subordinateIds.some(subId => subId.toString() === termAssignment.employeeId.toString());
       if (isSubordinate) {
         return;
       }
@@ -2489,10 +2494,10 @@ export class QuarterReviewService extends BaseService {
     const actor = this.requireActor();
     const access = await accessService.canPerform({
       actor,
-      action: 'quarterReview.view',
+      action: 'termReview.view',
       resource: {
-        employeeId: quarterAssignment.employeeId.toString(),
-        managerId: quarterAssignment.assignedManagerId.toString(),
+        employeeId: termAssignment.employeeId.toString(),
+        managerId: termAssignment.assignedManagerId.toString(),
       },
     });
 
@@ -2503,8 +2508,8 @@ export class QuarterReviewService extends BaseService {
     // Check delegation
     const delegation = await this.getReviewDelegation(
       actor.actorId,
-      quarterAssignment.assignedManagerId.toString(),
-      quarterAssignment.cycleId?.toString(),
+      termAssignment.assignedManagerId.toString(),
+      termAssignment.cycleId?.toString(),
     );
 
     if (delegation) {
@@ -2526,17 +2531,17 @@ export class QuarterReviewService extends BaseService {
     }
   }
 
-  private async getQuarterAssignment(quarterAssignmentId: string): Promise<IQuarterAssignment> {
-    if (!Types.ObjectId.isValid(quarterAssignmentId)) {
+  private async getTermAssignment(termAssignmentId: string): Promise<ITermAssignment> {
+    if (!Types.ObjectId.isValid(termAssignmentId)) {
       throw new Error('Invalid quarter assignment id');
     }
 
-    const quarterAssignment = await QuarterAssignment.findById(quarterAssignmentId);
-    if (!quarterAssignment || quarterAssignment.isDeleted) {
+    const termAssignment = await TermAssignment.findById(termAssignmentId);
+    if (!termAssignment || termAssignment.isDeleted) {
       throw new Error('Quarter assignment not found');
     }
 
-    return this.advanceQuarterAssignmentToManagerReviewIfEligible(quarterAssignment);
+    return this.advanceTermAssignmentToManagerReviewIfEligible(termAssignment);
   }
 
   private async getAnnualAssignment(annualAssignmentId: string): Promise<IAnnualAssignment> {
@@ -2552,22 +2557,22 @@ export class QuarterReviewService extends BaseService {
     return annualAssignment;
   }
 
-  private async assertReviewWindow(quarterAssignment: IQuarterAssignment): Promise<void> {
-    if (!quarterAssignment.cycleQuarterId) {
+  private async assertReviewWindow(termAssignment: ITermAssignment): Promise<void> {
+    if (!termAssignment.cycleTermId) {
       return;
     }
 
-    const quarterCycle = await QuarterCycle.findById(quarterAssignment.cycleQuarterId)
+    const termCycle = await TermCycle.findById(termAssignment.cycleTermId)
       .select('managerReviewWindow')
       .lean();
 
-    if (!quarterCycle?.managerReviewWindow?.startDate || !quarterCycle.managerReviewWindow?.endDate) {
+    if (!termCycle?.managerReviewWindow?.startDate || !termCycle.managerReviewWindow?.endDate) {
       return;
     }
 
     const now = this.getCurrentDate();
-    const start = new Date(quarterCycle.managerReviewWindow.startDate);
-    const end = new Date(quarterCycle.managerReviewWindow.endDate);
+    const start = new Date(termCycle.managerReviewWindow.startDate);
+    const end = new Date(termCycle.managerReviewWindow.endDate);
 
     if (now < start || now > end) {
       throw new Error('Manager review window is closed for this quarter');
@@ -2591,18 +2596,18 @@ export class QuarterReviewService extends BaseService {
     return this.context.pmsCurrentDate ?? new Date();
   }
 
-  private async advanceQuarterAssignmentsToManagerReviewIfEligible(
-    quarterAssignments: IQuarterAssignment[],
+  private async advanceTermAssignmentsToManagerReviewIfEligible(
+    termAssignments: ITermAssignment[],
   ): Promise<void> {
-    for (const quarterAssignment of quarterAssignments) {
-      await this.advanceQuarterAssignmentToManagerReviewIfEligible(quarterAssignment);
+    for (const termAssignment of termAssignments) {
+      await this.advanceTermAssignmentToManagerReviewIfEligible(termAssignment);
     }
   }
 
-  private async advanceQuarterAssignmentToManagerReviewIfEligible(
-    quarterAssignment: IQuarterAssignment,
-  ): Promise<IQuarterAssignment> {
-    return quarterAssignment;
+  private async advanceTermAssignmentToManagerReviewIfEligible(
+    termAssignment: ITermAssignment,
+  ): Promise<ITermAssignment> {
+    return termAssignment;
   }
 
   private actorIdObject(): Types.ObjectId | undefined {
@@ -2645,9 +2650,9 @@ export class QuarterReviewService extends BaseService {
     let metadata: Record<string, unknown> | undefined = undefined;
 
     if (entityType === 'QUARTER_REVIEW') {
-      const review = await QuarterReview.findById(entityId).select('quarterAssignmentId').lean();
+      const review = await TermReview.findById(entityId).select('termAssignmentId').lean();
       if (review) {
-        const assignment = await QuarterAssignment.findById(review.quarterAssignmentId).select('assignedManagerId').lean();
+        const assignment = await TermAssignment.findById(review.termAssignmentId).select('assignedManagerId').lean();
         if (assignment && actor.actorId !== assignment.assignedManagerId?.toString()) {
           const delegation = await this.getReviewDelegation(
             actor.actorId,
@@ -2679,27 +2684,27 @@ export class QuarterReviewService extends BaseService {
       return entityId;
     }
 
-    if (entityType === 'QUARTER_ASSIGNMENT') {
-      const quarterAssignment = await QuarterAssignment.findById(entityId)
+    if (entityType === 'TERM_ASSIGNMENT') {
+      const termAssignment = await TermAssignment.findById(entityId)
         .select('annualAssignmentId')
         .lean();
-      return quarterAssignment?.annualAssignmentId?.toString();
+      return termAssignment?.annualAssignmentId?.toString();
     }
 
     if (entityType === 'QUARTER_REVIEW') {
-      const quarterReview = await QuarterReview.findById(entityId)
-        .select('annualAssignmentId quarterAssignmentId')
+      const termReview = await TermReview.findById(entityId)
+        .select('annualAssignmentId termAssignmentId')
         .lean();
 
-      if (quarterReview?.annualAssignmentId) {
-        return quarterReview.annualAssignmentId.toString();
+      if (termReview?.annualAssignmentId) {
+        return termReview.annualAssignmentId.toString();
       }
 
-      if (quarterReview?.quarterAssignmentId) {
-        const quarterAssignment = await QuarterAssignment.findById(quarterReview.quarterAssignmentId)
+      if (termReview?.termAssignmentId) {
+        const termAssignment = await TermAssignment.findById(termReview.termAssignmentId)
           .select('annualAssignmentId')
           .lean();
-        return quarterAssignment?.annualAssignmentId?.toString();
+        return termAssignment?.annualAssignmentId?.toString();
       }
     }
 
