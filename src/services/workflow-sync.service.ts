@@ -4,13 +4,18 @@ import { accessService } from './access.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   ObjectiveStatus,
+  PmsTemplateSectionLevel,
+  PmsTemplateSectionType,
   PmsRole,
   TermWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
+import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { EmployeeAchievementSubmission, EmployeeAchievementSubmissionStatus } from '../models/pms-employee-achievement-submission.model';
 import { Objective } from '../models/pms-objective.model';
+import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import type { ITemplateSection } from '../models/pms-template-version.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
@@ -25,6 +30,7 @@ type SyncSkipReason =
   | 'NOT_ELIGIBLE'
   | 'ALREADY_ADVANCED'
   | 'OBJECTIVE_SETTING_OPEN'
+  | 'OBJECTIVE_SCORING_NOT_READY'
   | 'TRANSITION_NOT_ALLOWED'
   | 'FAILED';
 
@@ -48,6 +54,11 @@ interface WorkflowSyncCandidate {
 interface ObjectiveSettingCloseCheck {
   canClose: boolean;
   reason: string;
+}
+
+interface ObjectiveScoringReadiness {
+  ready: boolean;
+  reason?: string;
 }
 
 export interface WorkflowSyncInput {
@@ -82,6 +93,7 @@ export interface WorkflowSyncResult {
   skippedNotEligible: number;
   skippedAlreadyAdvanced: number;
   skippedObjectiveSettingOpen: number;
+  skippedObjectiveScoringNotReady: number;
   skippedTransitionNotAllowed: number;
   failed: number;
   dryRun: boolean;
@@ -143,6 +155,7 @@ export class WorkflowSyncService extends BaseService {
       skippedNotEligible: 0,
       skippedAlreadyAdvanced: 0,
       skippedObjectiveSettingOpen: 0,
+      skippedObjectiveScoringNotReady: 0,
       skippedTransitionNotAllowed: 0,
       failed: 0,
       dryRun: input.dryRun === true,
@@ -166,6 +179,8 @@ export class WorkflowSyncService extends BaseService {
         result.failed += 1;
       } else if (item.skipReason === 'OBJECTIVE_SETTING_OPEN') {
         result.skippedObjectiveSettingOpen += 1;
+      } else if (item.skipReason === 'OBJECTIVE_SCORING_NOT_READY') {
+        result.skippedObjectiveScoringNotReady += 1;
       } else if (item.skipReason === 'ALREADY_ADVANCED') {
         result.skippedAlreadyAdvanced += 1;
       } else if (item.skipReason === 'TRANSITION_NOT_ALLOWED') {
@@ -212,6 +227,18 @@ export class WorkflowSyncService extends BaseService {
         skipReason: 'ALREADY_ADVANCED',
         message: `Current state ${termAssignment.termState} is already at or beyond ${candidate.targetState}.`,
       };
+    }
+
+    if (candidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      const readiness = await this.validateObjectiveScoringReadyForAchievementOpen(termAssignment);
+      if (!readiness.ready) {
+        return {
+          ...baseItem,
+          status: 'SKIPPED',
+          skipReason: 'OBJECTIVE_SCORING_NOT_READY',
+          message: readiness.reason,
+        };
+      }
     }
 
     const transitionValidation = workflowService.validateTransition({
@@ -351,6 +378,18 @@ export class WorkflowSyncService extends BaseService {
           status: 'SKIPPED',
           skipReason: 'TRANSITION_NOT_ALLOWED',
           message: nextValidation.message,
+        };
+      }
+    }
+
+    if (finalCandidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      const readiness = await this.validateObjectiveScoringReadyForAchievementOpen(termAssignment);
+      if (!readiness.ready) {
+        return {
+          ...baseItem,
+          status: 'SKIPPED',
+          skipReason: 'OBJECTIVE_SCORING_NOT_READY',
+          message: readiness.reason,
         };
       }
     }
@@ -590,6 +629,112 @@ export class WorkflowSyncService extends BaseService {
       canClose: true,
       reason: 'All objectives are approved.',
     };
+  }
+
+  private async validateObjectiveScoringReadyForAchievementOpen(
+    termAssignment: ITermAssignment,
+  ): Promise<ObjectiveScoringReadiness> {
+    const objectiveSectionWeightage = await this.getObjectiveScoringWeightage(termAssignment);
+
+    if (objectiveSectionWeightage <= 0) {
+      return { ready: true };
+    }
+
+    const approvedObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+      status: ObjectiveStatus.OBJECTIVE_APPROVED,
+    })
+      .select('title weightage')
+      .lean();
+
+    if (approvedObjectives.length === 0) {
+      return {
+        ready: false,
+        reason:
+          `Performance Objectives has ${this.formatWeightage(objectiveSectionWeightage)}% scoring weightage, ` +
+          'but no approved objectives exist. Add/approve objectives or change the scoring split before opening achievement submission.',
+      };
+    }
+
+    const approvedObjectiveWeightage = approvedObjectives.reduce(
+      (total, objective) => total + Number(objective.weightage ?? 0),
+      0,
+    );
+
+    if (Math.abs(approvedObjectiveWeightage - 100) > 0.01) {
+      return {
+        ready: false,
+        reason:
+          'Approved objective weightage must total 100% before achievement submission opens. ' +
+          `Current approved objective total is ${this.formatWeightage(approvedObjectiveWeightage)}%.`,
+      };
+    }
+
+    return { ready: true };
+  }
+
+  private async getObjectiveScoringWeightage(termAssignment: ITermAssignment): Promise<number> {
+    const templateVersionId = await this.resolveTemplateVersionId(termAssignment);
+    if (!templateVersionId) {
+      return 0;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
+      .select('sections')
+      .lean();
+
+    if (!templateVersion) {
+      return 0;
+    }
+
+    return (templateVersion.sections ?? [])
+      .filter((section) => this.isObjectiveScoringSectionInTermScope(section, termAssignment.assessmentTermCode))
+      .reduce((total, section) => total + Number(section.sectionScoringConfig?.weightage ?? 0), 0);
+  }
+
+  private async resolveTemplateVersionId(termAssignment: ITermAssignment): Promise<Types.ObjectId | undefined> {
+    if (termAssignment.templateVersionId) {
+      return termAssignment.templateVersionId;
+    }
+
+    const annualAssignment = await AnnualAssignment.findById(termAssignment.annualAssignmentId)
+      .select('templateVersionId')
+      .lean();
+
+    return annualAssignment?.templateVersionId;
+  }
+
+  private isObjectiveScoringSectionInTermScope(
+    section: ITemplateSection,
+    assessmentTermCode: AssessmentTermCodeType,
+  ): boolean {
+    if (section.sectionType !== PmsTemplateSectionType.OBJECTIVES) {
+      return false;
+    }
+
+    if (!this.isTermLevelTemplateSection(section.level)) {
+      return false;
+    }
+
+    if (section.sectionScoringConfig?.participatesInScoring !== true) {
+      return false;
+    }
+
+    const allowedTerms = [
+      ...(section.termScope ?? []),
+      ...(section.repeatFor ?? []),
+    ];
+
+    return allowedTerms.length === 0 || allowedTerms.includes(assessmentTermCode);
+  }
+
+  private isTermLevelTemplateSection(level?: unknown): boolean {
+    return String(level ?? '').trim().toUpperCase() === PmsTemplateSectionLevel.TERM;
+  }
+
+  private formatWeightage(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
   }
 
   private resolveApprovedStateCandidate(
