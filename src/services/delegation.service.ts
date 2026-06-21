@@ -2,15 +2,17 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import { Delegation } from '../models/pms-delegation.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
 import { User } from '../models/user.model';
 import { auditService } from './audit.service';
 import { emailService } from './email.service';
-import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
+import { normalizePmsRole, PmsRole, TermWorkflowState } from '../constants/pms.enums';
 
 export interface CreateDelegationInput {
   delegatorUserId: string;
   delegateUserId: string;
   scopeType: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
+  annualAssignmentId?: string;
   cycleId?: string;
   validFrom: Date | string;
   validTo: Date | string;
@@ -68,6 +70,14 @@ export class DelegationService extends BaseService {
 
     if (fromDate > toDate) {
       throw new Error('validFrom date cannot be after validTo date.');
+    }
+
+    if (input.annualAssignmentId) {
+      await this.assertAssignmentHasDelegableWork({
+        annualAssignmentId: input.annualAssignmentId,
+        delegatorUserId: delegatorId,
+        scopeType: input.scopeType ?? 'ALL',
+      });
     }
 
     await this.assertNoOverlappingDelegation({
@@ -279,6 +289,62 @@ export class DelegationService extends BaseService {
     }
 
     throw new Error('A conflicting active delegation already exists for this delegator within the selected scope, cycle, and date range.');
+  }
+
+  private async assertAssignmentHasDelegableWork(input: {
+    annualAssignmentId: string;
+    delegatorUserId: string;
+    scopeType: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
+  }): Promise<void> {
+    const termAssignments = await TermAssignment.find({
+      annualAssignmentId: this.toObjectId(input.annualAssignmentId, 'annualAssignmentId'),
+      assignedManagerId: this.toObjectId(input.delegatorUserId, 'delegatorUserId'),
+      isDeleted: false,
+    }).select('termState').lean();
+
+    if (termAssignments.length === 0) {
+      throw new Error('Delegation is not allowed because the selected assignment no longer belongs to this manager.');
+    }
+
+    const objectiveActionableStates = new Set<string>([
+      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+      TermWorkflowState.OBJECTIVE_DRAFT,
+      TermWorkflowState.OBJECTIVE_SUBMITTED,
+      TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+      TermWorkflowState.REOPENED_BY_ADMIN,
+    ]);
+    const reviewActionableStates = new Set<string>([
+      TermWorkflowState.OBJECTIVE_APPROVED,
+      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
+      TermWorkflowState.REOPENED_BY_ADMIN,
+    ]);
+
+    const hasObjectiveWork = termAssignments.some((term) =>
+      objectiveActionableStates.has(term.termState),
+    );
+    const hasReviewWork = termAssignments.some((term) =>
+      reviewActionableStates.has(term.termState),
+    );
+    const hasObjectiveSettingOpen = termAssignments.some(
+      (term) => term.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+    );
+
+    if (input.scopeType === 'PMS_OBJECTIVES' && !hasObjectiveWork) {
+      throw new Error('Objective delegation is not allowed because all objective actions are already approved, finalized, or closed for this assignment.');
+    }
+
+    if (input.scopeType === 'PMS_REVIEWS' && !hasReviewWork) {
+      if (hasObjectiveSettingOpen) {
+        throw new Error('Review delegation is not allowed because objective setting is still open for this assignment. Choose Objectives Only, or delegate reviews after objective setting is closed.');
+      }
+
+      throw new Error('Review delegation is not allowed because all review actions are already submitted, finalized, or closed for this assignment.');
+    }
+
+    if (input.scopeType === 'ALL' && !hasObjectiveWork && !hasReviewWork) {
+      throw new Error('Delegation is not allowed because there are no pending PMS actions for this assignment.');
+    }
   }
 
   /**
