@@ -177,6 +177,14 @@ type ObjectiveConfig = {
   mode: 'PREDEFINED' | 'DYNAMIC' | 'HYBRID';
   allowEmployeeCreated: boolean;
   allowManagerCreated: boolean;
+  objectiveScoringPolicy: {
+    predefinedObjectivesScoreable: boolean;
+    managerCreatedScoreable: boolean;
+    employeeCreatedScoreable: boolean;
+    requireManagerApprovalForEmployeeScore: boolean;
+    requireWeightageBeforeAchievement: boolean;
+    allowManagerOverallForRemainingWeightage: boolean;
+  };
   predefinedObjectives: Array<{
     key: string;
     title: string;
@@ -611,11 +619,11 @@ export class ObjectiveService extends BaseService {
 
     await this.assertAssignmentAccess('objective.create', quarterAssignment);
     await this.assertObjectiveWindow(quarterAssignment, 'setting');
-    this.validateContextObjectivePayload(input as unknown as Record<string, unknown>, source);
+    this.validateContextObjectivePayload(input as unknown as Record<string, unknown>, source, objectiveConfig);
     this.validateObjectiveInput(input);
     this.validateContextObjectiveRequiredFields(input, source);
     this.validateCreateAgainstConfig(source, objectiveConfig);
-    if (source === ObjectiveSource.PREDEFINED) {
+    if (this.objectiveSourceIsScoreable(source, objectiveConfig)) {
       await this.validateQuarterObjectiveRules(
         quarterAssignment,
         input.weightage,
@@ -677,7 +685,7 @@ export class ObjectiveService extends BaseService {
       targetMetric: source === ObjectiveSource.PREDEFINED ? input.targetMetric?.trim() : undefined,
       targetValue: source === ObjectiveSource.PREDEFINED ? input.targetValue?.trim() : undefined,
       targetDate: source === ObjectiveSource.PREDEFINED && input.targetDate ? new Date(input.targetDate) : undefined,
-      weightage: source === ObjectiveSource.PREDEFINED ? input.weightage : undefined,
+      weightage: this.objectiveSourceIsScoreable(source, objectiveConfig) ? input.weightage : undefined,
       successCriteria: source === ObjectiveSource.PREDEFINED ? input.successCriteria?.trim() : undefined,
       status: source === ObjectiveSource.MANAGER_CREATED
         ? ObjectiveStatus.OBJECTIVE_APPROVED
@@ -733,9 +741,8 @@ export class ObjectiveService extends BaseService {
       throw new Error('At least one objective is required');
     }
     if ((input.weightageAdjustments ?? []).length > 0 || (input.objectiveWeightageOverrides ?? []).length > 0) {
-      throw new Error('Manager-created objectives are context-only and cannot carry weightage adjustments');
+      throw new Error('Bulk weightage adjustments are not supported; set weightage on each scoreable manager objective');
     }
-
     const actor = this.requireActor();
     const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
     const created: BulkCreateManagerObjectiveResult['created'] = [];
@@ -797,12 +804,23 @@ export class ObjectiveService extends BaseService {
             this.validateContextObjectivePayload(
               objectiveInput as unknown as Record<string, unknown>,
               source,
+              objectiveConfig,
             );
             this.validateObjectiveInput({
               ...objectiveInput,
               quarterAssignmentId,
             });
             this.validateContextObjectiveRequiredFields(objectiveInput, source);
+            if (this.objectiveSourceIsScoreable(source, objectiveConfig)) {
+              await this.validateQuarterObjectiveRules(
+                quarterAssignment,
+                objectiveInput.weightage,
+                undefined,
+                source,
+                objectiveConfig,
+                false,
+              );
+            }
 
             const objective = await Objective.create({
               quarterAssignmentId: quarterAssignment._id,
@@ -820,7 +838,9 @@ export class ObjectiveService extends BaseService {
               targetMetric: undefined,
               targetValue: undefined,
               targetDate: undefined,
-              weightage: undefined,
+              weightage: this.objectiveSourceIsScoreable(source, objectiveConfig)
+                ? objectiveInput.weightage
+                : undefined,
               successCriteria: undefined,
               status: ObjectiveStatus.OBJECTIVE_APPROVED,
               attachments: this.normalizeAttachments(objectiveInput.attachments ?? []),
@@ -934,6 +954,13 @@ export class ObjectiveService extends BaseService {
       );
     }
 
+    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
+    await this.validateObjectiveWeightageBeforeClose(
+      quarterAssignment,
+      objectiveConfig,
+    );
+
     const reason =
       input.reason?.trim() ||
       'Predefined objectives are approved. No additional objectives will be accepted after moving forward.';
@@ -1005,6 +1032,7 @@ export class ObjectiveService extends BaseService {
     this.validateContextObjectivePayload(
       input as unknown as Record<string, unknown>,
       objective.source as ObjectiveSourceType,
+      objectiveConfig,
     );
     this.validateObjectiveInput({
       quarterAssignmentId: objective.quarterAssignmentId.toString(),
@@ -1031,7 +1059,9 @@ export class ObjectiveService extends BaseService {
     await this.validateUpdateAgainstConfig(
       objective,
       objectiveConfig,
-      objective.source === ObjectiveSource.PREDEFINED ? input.weightage ?? objective.weightage : undefined,
+      this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)
+        ? input.weightage ?? objective.weightage
+        : undefined,
     );
 
     let actingDelegateUserId: Types.ObjectId | undefined;
@@ -1080,6 +1110,7 @@ export class ObjectiveService extends BaseService {
         ? new Date(input.targetDate)
         : undefined;
     objective.weightage = objective.source !== ObjectiveSource.PREDEFINED
+      && !this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)
       ? objective.weightage
       : input.weightage === undefined
       ? objective.weightage
@@ -1753,8 +1784,20 @@ export class ObjectiveService extends BaseService {
       mode: 'DYNAMIC',
       allowEmployeeCreated: true,
       allowManagerCreated: true,
+      objectiveScoringPolicy: this.defaultObjectiveScoringPolicy(),
       predefinedObjectives: [],
       objectiveBuckets: this.defaultObjectiveBuckets(),
+    };
+  }
+
+  private defaultObjectiveScoringPolicy(): ObjectiveConfig['objectiveScoringPolicy'] {
+    return {
+      predefinedObjectivesScoreable: true,
+      managerCreatedScoreable: false,
+      employeeCreatedScoreable: false,
+      requireManagerApprovalForEmployeeScore: true,
+      requireWeightageBeforeAchievement: true,
+      allowManagerOverallForRemainingWeightage: true,
     };
   }
 
@@ -1765,7 +1808,7 @@ export class ObjectiveService extends BaseService {
         label: 'Template Predefined Objectives',
         source: 'TEMPLATE_PREDEFINED',
         owner: 'SYSTEM',
-        bucketWeightage: 20,
+        bucketWeightage: 100,
         rowWeightMode: 'FIXED_BY_TEMPLATE',
         editableBy: ['ADMIN'],
         requiresManagerApproval: false,
@@ -1776,7 +1819,7 @@ export class ObjectiveService extends BaseService {
         label: 'Employee Objectives',
         source: 'EMPLOYEE_DYNAMIC',
         owner: 'EMPLOYEE',
-        bucketWeightage: 50,
+        bucketWeightage: 0,
         rowWeightMode: 'OWNER_ENTERED',
         editableBy: ['EMPLOYEE'],
         requiresManagerApproval: true,
@@ -1787,7 +1830,7 @@ export class ObjectiveService extends BaseService {
         label: 'Manager Objectives',
         source: 'MANAGER_DYNAMIC',
         owner: 'MANAGER',
-        bucketWeightage: 30,
+        bucketWeightage: 0,
         rowWeightMode: 'OWNER_ENTERED',
         editableBy: ['MANAGER'],
         requiresManagerApproval: false,
@@ -1820,6 +1863,20 @@ export class ObjectiveService extends BaseService {
       mode: objectiveSection.objectiveConfig.mode ?? 'DYNAMIC',
       allowEmployeeCreated: objectiveSection.objectiveConfig.allowEmployeeCreated !== false,
       allowManagerCreated: objectiveSection.objectiveConfig.allowManagerCreated !== false,
+      objectiveScoringPolicy: {
+        predefinedObjectivesScoreable:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.predefinedObjectivesScoreable !== false,
+        managerCreatedScoreable:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.managerCreatedScoreable === true,
+        employeeCreatedScoreable:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.employeeCreatedScoreable === true,
+        requireManagerApprovalForEmployeeScore:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.requireManagerApprovalForEmployeeScore !== false,
+        requireWeightageBeforeAchievement:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.requireWeightageBeforeAchievement !== false,
+        allowManagerOverallForRemainingWeightage:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.allowManagerOverallForRemainingWeightage !== false,
+      },
       objectiveBuckets: objectiveSection.objectiveBuckets?.length
         ? objectiveSection.objectiveBuckets
         : this.defaultObjectiveBuckets(),
@@ -2203,6 +2260,7 @@ export class ObjectiveService extends BaseService {
   private validateContextObjectivePayload(
     input: Record<string, unknown>,
     source: ObjectiveSourceType,
+    objectiveConfig?: ObjectiveConfig,
   ): void {
     if (
       source !== ObjectiveSource.EMPLOYEE_CREATED &&
@@ -2211,8 +2269,12 @@ export class ObjectiveService extends BaseService {
       return;
     }
 
+    const scoreable = objectiveConfig
+      ? this.objectiveSourceIsScoreable(source, objectiveConfig)
+      : false;
+
     const blockedFields = [
-      'weightage',
+      ...(scoreable ? [] : ['weightage']),
       'rating',
       'score',
       'weightedScore',
@@ -2241,6 +2303,22 @@ export class ObjectiveService extends BaseService {
         'Employee-created and manager-created objectives cannot participate in scoring',
       );
     }
+  }
+
+  private objectiveSourceIsScoreable(
+    source: ObjectiveSourceType,
+    objectiveConfig: ObjectiveConfig,
+  ): boolean {
+    if (source === ObjectiveSource.PREDEFINED) {
+      return objectiveConfig.objectiveScoringPolicy.predefinedObjectivesScoreable;
+    }
+    if (source === ObjectiveSource.MANAGER_CREATED) {
+      return objectiveConfig.objectiveScoringPolicy.managerCreatedScoreable;
+    }
+    if (source === ObjectiveSource.EMPLOYEE_CREATED) {
+      return objectiveConfig.objectiveScoringPolicy.employeeCreatedScoreable;
+    }
+    return false;
   }
 
   private normalizeObjectivePriority(priority?: string): 'LOW' | 'MEDIUM' | 'HIGH' | undefined {
@@ -2410,6 +2488,12 @@ export class ObjectiveService extends BaseService {
         editingObjectiveId,
         requireExactBucketTotal,
       );
+      await this.validateOverallScoreableObjectiveWeightage(
+        quarterAssignment,
+        objectiveConfig,
+        newWeightage,
+        editingObjectiveId,
+      );
       return;
     }
 
@@ -2425,6 +2509,68 @@ export class ObjectiveService extends BaseService {
 
     if (currentWeightage + newWeightage > 100) {
       throw new Error('Total objective weightage for the quarter cannot exceed 100');
+    }
+  }
+
+  private async validateObjectiveWeightageBeforeClose(
+    quarterAssignment: IQuarterAssignment,
+    objectiveConfig: ObjectiveConfig,
+  ): Promise<void> {
+    if (!objectiveConfig.objectiveScoringPolicy.requireWeightageBeforeAchievement) {
+      return;
+    }
+
+    const objectives = await Objective.find({
+      quarterAssignmentId: quarterAssignment._id,
+      isDeleted: false,
+      status: ObjectiveStatus.OBJECTIVE_APPROVED,
+    })
+      .select('source weightage title')
+      .lean();
+
+    const scoreableObjectives = objectives.filter((objective) =>
+      this.objectiveSourceIsScoreable(
+        objective.source as ObjectiveSourceType,
+        objectiveConfig,
+      ),
+    );
+    const totalWeightage = scoreableObjectives.reduce(
+      (sum, objective) => sum + Number(objective.weightage ?? 0),
+      0,
+    );
+
+    if (Math.abs(totalWeightage - 100) > 0.001) {
+      throw new Error(
+        `Scoreable objective weightage must total 100% before achievement opens. Current total is ${totalWeightage}%.`,
+      );
+    }
+  }
+
+  private async validateOverallScoreableObjectiveWeightage(
+    quarterAssignment: IQuarterAssignment,
+    objectiveConfig: ObjectiveConfig,
+    newWeightage: number,
+    editingObjectiveId?: string,
+  ): Promise<void> {
+    const objectives = await Objective.find({
+      quarterAssignmentId: quarterAssignment._id,
+      isDeleted: false,
+      ...(editingObjectiveId ? { _id: { $ne: new Types.ObjectId(editingObjectiveId) } } : {}),
+    })
+      .select('source weightage')
+      .lean();
+
+    const currentWeightage = objectives.reduce((sum, objective) => {
+      return this.objectiveSourceIsScoreable(
+        objective.source as ObjectiveSourceType,
+        objectiveConfig,
+      )
+        ? sum + Number(objective.weightage ?? 0)
+        : sum;
+    }, 0);
+
+    if (currentWeightage + Number(newWeightage ?? 0) > 100) {
+      throw new Error('Total scoreable objective weightage for the quarter cannot exceed 100');
     }
   }
 

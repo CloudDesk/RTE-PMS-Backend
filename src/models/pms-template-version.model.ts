@@ -48,6 +48,14 @@ export interface ITemplateObjectiveConfig {
   allowEmployeeCreated?: boolean;
   allowManagerCreated?: boolean;
   managerCreatedAutoApprove?: boolean;
+  objectiveScoringPolicy?: {
+    predefinedObjectivesScoreable?: boolean;
+    managerCreatedScoreable?: boolean;
+    employeeCreatedScoreable?: boolean;
+    requireManagerApprovalForEmployeeScore?: boolean;
+    requireWeightageBeforeAchievement?: boolean;
+    allowManagerOverallForRemainingWeightage?: boolean;
+  };
   predefinedObjectives?: ITemplatePredefinedObjective[];
 }
 
@@ -209,6 +217,14 @@ const objectiveConfigSchema = new Schema<ITemplateObjectiveConfig>(
     allowEmployeeCreated: { type: Boolean, default: true },
     allowManagerCreated: { type: Boolean, default: true },
     managerCreatedAutoApprove: { type: Boolean, default: true },
+    objectiveScoringPolicy: {
+      predefinedObjectivesScoreable: { type: Boolean, default: true },
+      managerCreatedScoreable: { type: Boolean, default: false },
+      employeeCreatedScoreable: { type: Boolean, default: false },
+      requireManagerApprovalForEmployeeScore: { type: Boolean, default: true },
+      requireWeightageBeforeAchievement: { type: Boolean, default: true },
+      allowManagerOverallForRemainingWeightage: { type: Boolean, default: true },
+    },
     predefinedObjectives: { type: [predefinedObjectiveSchema], default: [] },
   },
   { _id: false },
