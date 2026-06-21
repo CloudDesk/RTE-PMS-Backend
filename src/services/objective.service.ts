@@ -145,6 +145,10 @@ export interface ReturnObjectiveInput {
   reason: string;
 }
 
+export interface ApproveObjectiveInput {
+  weightage?: number;
+}
+
 export interface AddObjectiveCommentInput {
   commentText: string;
   commentType?: string;
@@ -1330,14 +1334,38 @@ export class ObjectiveService extends BaseService {
     return objective;
   }
 
-  async approveObjective(objectiveId: string): Promise<IObjective> {
+  async approveObjective(
+    objectiveId: string,
+    input: ApproveObjectiveInput = {},
+  ): Promise<IObjective> {
     const objective = await this.getObjective(objectiveId);
     const quarterAssignment = await this.getQuarterAssignment(objective.quarterAssignmentId.toString());
+    const annualAssignment = await this.getAnnualAssignment(quarterAssignment.annualAssignmentId.toString());
+    const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, quarterAssignment);
     await this.assertObjectiveAccess('objective.approve', objective, false);
     await this.assertObjectiveWindow(quarterAssignment, 'approval');
 
     if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
       throw new Error('Only submitted objectives can be approved');
+    }
+
+    if (input.weightage !== undefined && !this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+      throw new Error('This objective type cannot carry score weightage for this assignment');
+    }
+
+    if (input.weightage !== undefined) {
+      this.validateObjectiveInput({
+        title: objective.title,
+        weightage: input.weightage,
+      });
+      await this.validateQuarterObjectiveRules(
+        quarterAssignment,
+        input.weightage,
+        objective._id.toString(),
+        objective.source as ObjectiveSourceType,
+        objectiveConfig,
+        false,
+      );
     }
 
     const actor = this.requireActor();
@@ -1360,6 +1388,9 @@ export class ObjectiveService extends BaseService {
 
     const previousState = objective.status;
     objective.status = ObjectiveStatus.OBJECTIVE_APPROVED;
+    if (input.weightage !== undefined) {
+      objective.weightage = input.weightage;
+    }
     objective.approvedAt = new Date();
     objective.approvedBy = actorObjectId;
     objective.updatedBy = actorObjectId;

@@ -179,7 +179,10 @@ export const objectiveRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const objective = await request.container!.objectiveService.approveObjective(id);
+        const objective = await request.container!.objectiveService.approveObjective(
+          id,
+          request.body as { weightage?: number },
+        );
         return reply.send(successResponse('Objective approved successfully', objective));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
