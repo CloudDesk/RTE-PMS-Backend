@@ -783,7 +783,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       allowManagerReviewWithoutAchievement:
         employeeAchievementConfig.allowManagerReviewWithoutAchievement !== undefined
           ? Boolean(employeeAchievementConfig.allowManagerReviewWithoutAchievement)
-          : true,
+          : false,
       managerCanEditEmployeeAchievement: false,
       objectiveLinkedAchievementRequired:
         employeeAchievementConfig.objectiveLinkedAchievementRequired !== undefined
