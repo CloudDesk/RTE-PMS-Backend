@@ -18,14 +18,18 @@ This version replaces the legacy employee-driven PMS workflow with a:
 * Objective-based review architecture
 * Dynamic role and permission engine
 * Confidential annual appraisal governance model
-* Quarterly child-cycle evaluation structure
+* Assessment-term child-cycle evaluation structure supporting quarterly, half-yearly, and yearly terms
 * Controlled communication and visibility framework
+* Configurable objective scoring and weightage policy
+* Objective-linked employee achievement submission
+* Manager-initiated confirmation review flow for intern, fresher, and probation employees
 
 The PMS module covers:
 
 * Template and form configuration
-* Quarterly objective lifecycle
-* Quarterly manager review workflow
+* Assessment-term objective lifecycle
+* Manager review workflow
+* Employee achievement submission against approved objectives
 * Annual appraisal decision governance
 * Grade and merit management
 * Dynamic visibility publishing
@@ -42,8 +46,9 @@ The PMS module covers:
 
 | Module | Functional Scope |
 |---|---|
-| Objective Management | Quarterly objective creation, submission, approval, revision, and locking |
-| Quarterly Manager Review | Quarterly manager evaluation, comments, recommendations, and review submission |
+| Objective Management | Assessment-term objective creation, submission, approval, revision, scoring policy, and locking |
+| Employee Achievement Submission | Employee achievement capture against approved objectives, with separate additional achievements where required |
+| Manager Review | Manager evaluation, objective rating, comments, recommendations, and review submission |
 | Annual Appraisal Decision | Grade/merit governance, appraisal outcome derivation, freeze and reopen |
 | Communication Dispatch | Outcome-based backend-managed communication preparation, preview, dispatch, resend, and audit |
 | Dynamic Access Engine | Runtime role resolution, hierarchy authorization, field/section permissions |
@@ -52,6 +57,7 @@ The PMS module covers:
 | SLA & Escalation | SLA tracking, reminder generation, escalation notification handling |
 | Delegation & Reassignment | Temporary delegation and future ownership reassignment |
 | Dashboard & Reporting | Dashboard visibility, monitoring, exports, and reporting |
+| Manager-Initiated Confirmation Review | Manager-created simple review templates and assignment/review flow for intern, fresher, and probation employees |
 
 
 # 2A. Template Builder and Runtime Rendering Architecture
@@ -150,6 +156,112 @@ Invalid template configurations shall be rejected before activation.
 
 ---
 
+## 2A.5A Template Builder Enhancements
+
+### FR-TMP-05A: Starter Template Coverage
+
+The system shall provide a common manufacturer-oriented starter template that can be used as a clean base for PMS appraisal configuration.
+
+The starter template shall include:
+
+* employee information fields
+* performance objective section
+* employee achievement submission section
+* traits and competencies section
+* manager review / assessment section
+* training identification and development inputs where applicable
+* employee response and acknowledgement section
+* annual decision fields where required by the annual workflow
+
+The starter template shall remain simple and editable. It shall not copy paper forms blindly; it shall map only the business-useful sections needed for appraisal execution.
+
+### FR-TMP-05B: Predefined Objective Configuration
+
+Template owners shall be able to configure predefined objectives inside the Performance Objectives section.
+
+Each predefined objective shall support:
+
+* display title
+* system/API key
+* weightage percentage
+* description
+* KPI or measurement guidance
+* target value guidance
+* due date
+* success criteria
+* attachment allowed flag
+* visible/active flag
+* editable-during-setup flag
+* applicable assessment terms
+
+Predefined objective rows shall become employee objectives during objective setting or cycle assignment initialization, according to the assigned assessment term.
+
+At least one active predefined objective must remain when predefined objective mode is used.
+
+### FR-TMP-05C: Predefined Objective Applicable Terms
+
+The Template Builder shall allow each predefined objective to define where it applies across all supported assessment term types:
+
+* Quarterly: Q1, Q2, Q3, Q4
+* Half-yearly: H1, H2
+* Yearly: Y1
+
+The UI shall provide:
+
+* an "All terms" option that applies the objective to all Q/H/Y terms
+* grouped term selection when "All terms" is unchecked
+* all grouped terms selected by default when entering custom mode
+* at least one selected term per group in custom mode
+* strict backend matching so Q terms do not implicitly create H/Y objectives unless H/Y terms are explicitly selected
+
+### FR-TMP-05D: Configurable Scoring Rules
+
+Template scoring shall support two simple modes:
+
+* Manual final result entry by manager
+* Automatic calculation using configured weights
+
+When automatic scoring is enabled:
+
+* score sections must total 100%
+* objective scoring may be configured through predefined objective weightage
+* traits and competencies may be configured through field or section scoring
+* text/comment-only fields shall not be scoreable
+* activation shall block invalid scoring totals
+
+Manager review weight shall not be a separate mandatory scoring bucket unless explicitly configured as a score section.
+
+### FR-TMP-05E: Permission Setup Simplification
+
+Template permission setup shall present a simple table-style role and workflow behavior configuration for business users.
+
+The permission setup shall support:
+
+* role visibility
+* role editability
+* workflow timing
+* mandatory behavior
+* confidential field protection
+* advanced workflow timing only where needed
+
+The UI shall avoid duplicate permission concepts and should present the simplest working configuration path by default.
+
+### FR-TMP-05F: Activation Checklist Enhancements
+
+Template activation shall validate:
+
+* active sections and fields
+* scoring totals
+* predefined objective weightage by applicable assessment term
+* predefined objective applicable term coverage
+* permission completeness
+* communication behavior readiness
+* template version integrity
+
+Activation warnings shall use real assessment term labels such as Q1, Q2, H1, H2, and Y1.
+
+---
+
 ## 2A.6 Runtime Governance
 
 ### FR-TMP-06: Runtime Governance Enforcement
@@ -204,13 +316,13 @@ Each employee-created objective shall support:
 
 * Employee-created objectives shall be treated as quarterly planning, work expectation, achievement context, and supporting evidence only.
 
-* Employee-created objectives shall not carry scoring weightage, rating, marks, weighted score, target value, or target date.
+* Employee-created objectives shall not carry scoring weightage, rating, marks, weighted score, target value, or target date by default.
 
-* Employee-created objectives shall not directly participate in marks, weighted score, quarter score, or final score calculation.
+* Employee-created objectives shall not directly participate in marks, weighted score, term score, or final score calculation unless the assigned template explicitly enables scoreable employee-created objectives and the manager assigns approved weightage during approval.
 
 * Employee-created objectives shall not require separate target date capture because the objective is linked to the applicable quarter or assessment term. The objective period shall be derived from the configured quarter or assessment term dates.
 
-* Employee-created objectives shall require manager approval before they become part of the approved quarter objective plan. Once approved, they shall be available to the manager during quarterly review as review context only.
+* Employee-created objectives shall require manager approval before they become part of the approved term objective plan. Once approved, they shall be available to the manager during review as context and, where enabled by template policy, as scoreable review items.
 
 
 ### FR-EMP-03: Objective Submission
@@ -250,9 +362,11 @@ Each manager-created objective shall support:
 
 - Manager-created objectives shall be treated as manager-defined quarterly expectations, planning inputs, achievement context, and supporting evidence only.
 
-- Manager-created objectives shall not carry scoring weightage, rating, marks, weighted score, target value, or target date.
+- Manager-created objectives shall not carry scoring weightage by default.
 
-- Manager-created objectives shall not directly participate in marks, weighted score, quarter score, or final score calculation.
+- Manager-created objectives may participate in scoring only when the assigned template explicitly allows scoreable manager-created objectives and the manager/admin assigns approved weightage before objective setting closes or before achievement submission opens.
+
+- If manager-created objective scoring is not enabled, manager-created objectives shall remain review context only and shall not directly participate in marks, weighted score, term score, or final score calculation.
 
 - Manager-created objectives shall not require separate target date capture because the objective is linked to the applicable quarter or assessment term. The objective period shall be derived from the configured quarter or assessment term dates.
 
@@ -270,17 +384,18 @@ The system shall allow managers to:
 
 * access approved objective review context
 * review employee-created and manager-created objectives
+* rate approved scoreable objectives where the template scoring policy requires objective scoring
 * enter quarterly evaluation result
 * enter manager comments
 * capture achievements
 * capture development observations
 * capture recommendations
 
-Approved objectives shall be used as review context only.
+Approved objectives shall be used as review context unless the assigned template defines objective scoring.
 
-Manager rating, score, and weighted marks shall be entered only against template-configured scoring sections and scoring fields.
+Manager rating, score, and weighted marks shall be entered only against template-configured scoring sections, scoring fields, and approved scoreable objectives.
 
-Employee-created objectives and manager-created objectives shall not independently contribute to quarter score calculation.
+Employee-created objectives and manager-created objectives shall not independently contribute to score calculation unless the template objective scoring policy explicitly enables scoring and valid approved weightage exists.
 
 ### FR-MGR-06: Quarterly Review Submission
 
@@ -298,6 +413,28 @@ Managers shall only access employees within:
 ### FR-MGR-08: Manager-Created Objective Auto Approval
 
 Objectives created directly by managers shall automatically transition to OBJECTIVE_APPROVED without requiring employee approval. Manager-created objectives bypass employee submission and approval workflow stages and shall persist source = MANAGER_CREATED.
+
+### FR-MGR-09: Manager-Initiated Confirmation Reviews
+
+The system shall support a manager-initiated confirmation review workspace for intern, fresher, probation, or similar employee categories where a full admin-launched PMS cycle is not required.
+
+The manager confirmation review flow shall support:
+
+* manager-owned review template creation
+* team/private template scope
+* simple default confirmation fields
+* editable picklist options with minimum 2 and maximum 5 options
+* comments fields
+* attachment-capable fields where configured
+* assignment of review to eligible team employees
+* manager review entry and submission
+* annual/final decision flow reuse after manager review submission
+
+Manager-created confirmation templates shall be marked as Manager Template.
+
+Admin users may audit manager templates later, but the admin PMS template list shall default to admin-created templates and shall not show manager-created templates unless explicitly filtered.
+
+Confirmation reviews shall not require objective setting, objective approval, or employee achievement submission unless the assigned template explicitly introduces those sections.
 
 ---
 
@@ -324,6 +461,8 @@ The system shall allow HR/Admin users to:
 * Configure visibility rules
 * Configure appraisal windows
 
+Cycle code shall be system-generated from the cycle name using API-safe uppercase underscore formatting. The create-cycle UI shall not require HR/Admin users to manually enter a cycle code.
+
 ### FR-HR-03: Assignment Management
 
 The system shall allow HR/Admin users to:
@@ -334,6 +473,16 @@ The system shall allow HR/Admin users to:
 * Reassign managers
 * Force-close assignments
 * Reopen finalized records
+
+During launch, HR/Admin users shall select applicable assessment terms for each employee assignment.
+
+At least one assessment term must remain selected per assignment row.
+
+For quarterly cycles, assignment term choices shall support Q1, Q2, Q3, and Q4.
+
+For half-yearly cycles, assignment term choices shall support H1 and H2.
+
+For yearly cycles, assignment term choices shall support Y1.
 
 ### FR-HR-04: Dynamic Role Configuration
 
@@ -418,17 +567,30 @@ Director users shall not edit objectives, manager reviews, annual decisions, vis
 
 # 4. Annual and Quarterly Cycle Architecture
 
+The current implementation uses assessment-term terminology internally while preserving quarterly business labels where existing screens or records require them.
+
+Supported assessment term types are:
+
+* Quarterly: Q1, Q2, Q3, Q4
+* Half-yearly: H1, H2
+* Yearly: Y1
+
+Where this document refers to quarter content, the same rule applies to the applicable assessment term content for half-yearly and yearly cycles.
+
 ## 4.1 Parent-Child Cycle Model
 
 ### FR-CYC-01: Annual Parent Cycle
 
-The system shall support an annual parent cycle containing:
+The system shall support an annual parent cycle containing applicable assessment term records. For quarterly cycles, the terms are:
 
 * Q1
 * Q2
 * Q3
 * Q4
-  child quarter records.
+
+For half-yearly cycles, the terms are H1 and H2.
+
+For yearly cycles, the term is Y1.
 
 ### FR-CYC-02: Quarter Independence
 
@@ -688,7 +850,9 @@ DRAFT
 | Annual Assignment Screen | Create annual assignments and review quarter content mapping |
 | Objective Entry Screen | Create, edit, submit, and revise objectives |
 | Objective Approval Screen | Manager approval and revision handling |
+| Employee Achievement Screen | Submit achievements against approved objectives and add separate additional achievements |
 | Quarterly Review Screen | Quarterly evaluation entry and submission |
+| Manager Confirmation Reviews Screen | Manager-created confirmation templates, eligible employee assignment, and active confirmation reviews |
 | Annual Appraisal Screen | Grade/merit decision capture and freeze |
 | Visibility Governance Screen | Publish employee/manager visibility |
 | Communication Dispatch Screen | Preview, send, and resend backend-prepared appraisal communication |
@@ -714,6 +878,23 @@ DRAFT
 * POST `/pms/annual-assignments/{id}/quarters/{quarterCode}/review/submit`
 * POST `/pms/annual-assignments/{id}/quarters/{quarterCode}/finalize`
 * POST `/pms/annual-assignments/{id}/quarters/{quarterCode}/reopen`
+
+## 8.2A Employee Achievement APIs
+
+* GET `/pms/achievement-submissions/{termAssignmentId}`
+* PUT `/pms/achievement-submissions/{termAssignmentId}/draft`
+* POST `/pms/achievement-submissions/{termAssignmentId}/submit`
+* POST `/pms/achievement-submissions/{termAssignmentId}/attachments`
+* GET `/pms/achievement-submissions/attachments/download`
+
+## 8.2B Manager-Initiated Confirmation Review APIs
+
+* GET `/pms/manager-initiated-reviews/employees`
+* GET `/pms/manager-initiated-reviews/templates`
+* POST `/pms/manager-initiated-reviews/templates`
+* GET `/pms/manager-initiated-reviews/templates/{templateId}`
+* PUT `/pms/manager-initiated-reviews/templates/{templateId}`
+* POST `/pms/manager-initiated-reviews/launch`
 
 ## 8.3 Annual Appraisal APIs
 
@@ -798,7 +979,9 @@ Employees and managers shall create quarterly objectives during the applicable o
 
 Objectives shall capture planning, work expectation, expected outcome, comments, and optional supporting evidence.
 
-Objectives shall not capture weightage, rating, score, weighted score, target value, or target date
+Dynamic employee-created and manager-created objectives shall not capture scoring weightage, rating, score, weighted score, target value, or target date by default.
+
+Template-defined predefined objectives may carry template-controlled weightage, target guidance, KPI guidance, success criteria, and applicable assessment-term configuration.
 
 
 ### FR-OBJ-02: Objective Editability
@@ -825,7 +1008,9 @@ Managers may:
 
 Objective approval shall make the objective part of the approved quarter objective plan.
 
-Objective approval shall not make the objective a scoring item.
+Objective approval shall not make a dynamic objective a scoring item unless the assigned template explicitly allows scoreable dynamic objectives and valid objective weightage is assigned before the configured cutoff.
+
+Template-defined predefined objectives may become scoreable approved objectives based on template scoring configuration.
 
 
 ### FR-OBJ-05: Objective Revision Comment
@@ -836,22 +1021,26 @@ Returning objectives requires mandatory manager comments.
 
 Approved objectives become read-only unless reopened by HR/Admin.
 
-### FR-OBJ-07: Objective Non-Scoring Validation
+### FR-OBJ-07: Objective Scoring Governance Validation
 
-The system shall validate that employee-created and manager-created objectives do not carry independent scoring weightage, rating, marks, weighted score, target value, target date, or scoring participation.
+The system shall validate that employee-created and manager-created objectives do not carry independent scoring weightage, rating, marks, weighted score, target value, target date, or scoring participation unless the assigned template policy explicitly allows it.
 
-If an objective create or update payload contains weightage, rating, score, weightedScore, targetValue, targetDate, or scoringParticipation = true, the system shall reject the payload with a validation error.
+If an objective create or update payload contains unauthorized weightage, rating, score, weightedScore, targetValue, targetDate, or scoringParticipation = true, the system shall reject the payload with a validation error.
+
+If employee-created objective scoring is enabled, manager approval shall be mandatory and manager/admin shall assign valid weightage during approval before the objective can contribute to scoring.
 
 ### FR-OBJ-08: Template-Based Objective Rendering
 The system shall render objective creation fields from the locked template version assigned to the Annual Assignment.
 
-Only non-scoring objective fields shall be rendered in objective entry screens.
+Only template-approved objective fields shall be rendered in objective entry screens.
+
+Predefined objective rows shall be rendered as objective references and may include template-controlled scoring weightage.
 
 ### FR-OBJ-09: Objective Field Governance
 
 Objective fields, required rules, attachment controls, visibility, and editability shall be governed by the assigned template metadata.
 
-Objective field governance shall not allow objective-level weightage, rating, score, weighted score, target value, target date, or scoring participation.
+Objective field governance shall not allow objective-level scoring metadata unless allowed by the template objective scoring policy.
 
 ### FR-OBJ-10: Quarter Content Objective Storage
 
@@ -868,6 +1057,24 @@ Manager-created objectives shall be stored under the relevant quarter content se
 ### FR-OBJ-13: Employee Visibility of Manager-Created Objectives
 
 Employees shall be able to view manager-created approved objectives unless visibility configuration restricts access.
+
+### FR-OBJ-14: Predefined Objective Seeding
+
+When a cycle or assignment is launched, the system shall create predefined objectives from the locked template version for each applicable assessment term.
+
+Predefined objectives shall be created only for matching assessment terms configured on the objective:
+
+* Q1, Q2, Q3, Q4 for quarterly cycles
+* H1, H2 for half-yearly cycles
+* Y1 for yearly cycles
+
+Selected assessment terms shall be matched strictly. Selecting all quarterly terms shall not automatically apply the objective to half-yearly or yearly terms.
+
+### FR-OBJ-15: Predefined Objective Weightage
+
+Predefined scoreable objectives shall total 100% for each applicable assessment term when objective scoring is enabled and weightage is required before achievement opens.
+
+If no approved objectives exist and the objective scoring section has weightage, the system shall require an admin/template-owner decision before achievement submission opens. The recommended simple behavior is to reallocate objective weightage to the remaining scoreable section or block progression until scoring is corrected.
 
 ## 10.2 Attachment and Evidence Management
 
@@ -908,6 +1115,48 @@ Attachment references shall be stored against the related objective or review wi
 
 ---
 
+# 10A. Employee Achievement Submission
+
+## 10A.1 Achievement Entry
+
+### FR-ACH-01: Objective-Linked Achievement Submission
+
+The system shall allow employees to submit achievements against approved objectives during the achievement submission window.
+
+Each objective-linked achievement shall store:
+
+* assignment reference
+* assessment term assignment reference
+* objectiveId
+* achievement summary
+* optional proof attachments
+* submitted by
+* submitted at
+
+Objective-linked achievements shall be displayed under the matching approved objective during manager review using objectiveId mapping.
+
+### FR-ACH-02: Additional Achievement Submission
+
+The system shall allow employees to submit additional achievements that are not linked to an approved objective.
+
+Additional achievements shall remain separate from objective-linked achievements in manager review.
+
+The achievement page shall not create a default additional achievement row automatically. Additional achievement rows shall appear only when the employee explicitly adds one.
+
+### FR-ACH-03: Achievement Evidence
+
+Employees may upload proof files against objective-linked achievements or additional achievements subject to configured file rules.
+
+Evidence shall support manager review but shall not independently change score unless the manager rates the related scoreable objective or scoring field.
+
+### FR-ACH-04: Achievement Window Enforcement
+
+Achievement submission shall be allowed only during the configured achievement submission window and for active applicable assessment terms.
+
+The system shall block achievement submission where the assignment, term, or objective state does not permit submission.
+
+---
+
 # 11. Quarterly Manager Review
 
 ## 11.1 Review Entry
@@ -916,7 +1165,9 @@ Attachment references shall be stored against the related objective or review wi
 
 Managers shall access approved objectives, objective attachments, employee details, quarter context, and historical quarter context where permitted.
 
-Approved objectives shall be displayed as review context only.
+Approved objectives shall be displayed as review context and, where configured as scoreable, as rating inputs.
+
+Employee achievements shall be displayed under the matching approved objective using objectiveId mapping. Additional achievements shall be displayed separately.
 
 ### FR-MQR-02: Quarterly Rating Entry
 
@@ -931,6 +1182,8 @@ Managers shall enter:
 
 Ratings, scores, and weighted marks shall be entered only against template-configured scoring sections and scoring fields where scoring participation is enabled.
 
+Where the template defines scoreable predefined objectives, managers shall rate those objectives during review. Submitted employee achievements and proof files shall be visible as evidence for the related objective.
+
 ### FR-MQR-03: Manager Review Validation
 
 Submission requires all mandatory review fields.
@@ -942,7 +1195,7 @@ The system shall validate that submitted scoring field ids belong to the locked 
 Manager review submission transitions:
 MANAGER_REVIEW_OPEN → MANAGER_REVIEW_SUBMITTED
 
-Quarter score shall be calculated only from template-configured scoring sections and scoring fields.
+Term score shall be calculated only from template-configured scoring sections, scoring fields, and approved scoreable objectives.
 
 ### FR-MQR-05: Quarter Finalization
 
@@ -954,11 +1207,11 @@ HR/Admin users may reopen finalized quarter records with mandatory audit capture
 
 ### FR-MQR-07: Template-Based Scoring Rule
 
-Official quarter score calculation shall be based only on the locked PMS template scoring sections and scoring fields.
+Official term score calculation shall be based only on the locked PMS template scoring sections, scoring fields, and approved scoreable objectives.
 
-Employee-created objectives, manager-created objectives, objective attachments, manager review attachments, comments, achievements, development observations, and supporting evidence shall be used as review context only.
+Non-scoreable dynamic objectives, objective attachments, manager review attachments, comments, achievements, development observations, and supporting evidence shall be used as review context only.
 
-The system shall not allow dynamic objectives created after cycle launch to add scoring weightage, increase total scoring weightage, or cause the quarter scoring total to exceed the configured template total.
+The system shall not allow dynamic objectives created after cycle launch to add scoring weightage, increase total scoring weightage, or cause the term scoring total to exceed the configured template total unless explicitly allowed by template policy and approved before the configured cutoff.
 
 ---
 
@@ -1392,9 +1645,9 @@ Required fields shall be enforced on submission.
 
 ### FR-VAL-02: Template Scoring Weightage Validation
 
-Configured scoring weightages shall validate correctly at template scoring section and template scoring field level only.
+Configured scoring weightages shall validate correctly at template scoring section, scoring field, and predefined objective level where objective scoring is enabled.
 
-Employee-created objectives and manager-created objectives shall not have weightage and shall not participate in scoring weightage validation.
+Employee-created objectives and manager-created objectives shall not have weightage by default and shall not participate in scoring weightage validation unless the template objective scoring policy explicitly enables it and valid approved weightage is assigned.
 
 ### FR-VAL-03: Quarter Dependency Validation
 
@@ -1419,15 +1672,15 @@ Hidden fields must remain inaccessible at UI and API levels.
 
 Only valid workflow transitions shall be permitted.
 
-### FR-VAL-08: Objective Non-Scoring Payload Validation
+### FR-VAL-08: Objective Scoring Payload Validation
 
-The system shall reject any employee-created or manager-created objective payload that includes weightage, rating, score, weightedScore, targetValue, targetDate, or scoringParticipation = true.
+The system shall reject any employee-created or manager-created objective payload that includes unauthorized weightage, rating, score, weightedScore, targetValue, targetDate, or scoringParticipation = true.
 
 ### FR-VAL-09: Quarter Score Calculation Validation
 
-The system shall calculate quarter score only from template-configured scoring sections and scoring fields where scoring participation is enabled.
+The system shall calculate term score only from template-configured scoring sections, scoring fields, and approved scoreable objectives where scoring participation is enabled.
 
-Objectives, comments, achievements, and attachments shall not be included in score calculation.
+Non-scoreable objectives, comments, additional achievements, and attachments shall not be included in score calculation.
 
 ---
 
@@ -1445,10 +1698,11 @@ Objectives, comments, achievements, and attachments shall not be included in sco
 | Reopen without reason | Reject reopen request |
 | Invalid permission configuration | Reject permission publish |
 | Missing outcome content mapping | Prevent communication generation |
-| Objective payload contains scoring fields |	Reject objective create or update request |
-Objective payload contains target date or target value |Reject objective create or update request |
-Invalid template scoring weightage	| Prevent template activation or scoring configuration save |
-Invalid quarter review scoring field |	Reject quarter review submission |
+| Objective payload contains unauthorized scoring fields | Reject objective create or update request |
+| Objective payload contains unauthorized target date or target value | Reject objective create or update request |
+| Invalid template scoring weightage | Prevent template activation or scoring configuration save |
+| Invalid objective applicable term selection | Prevent template activation |
+| Invalid term review scoring field | Reject manager review submission |
 
 ---
 
@@ -1456,8 +1710,9 @@ Invalid quarter review scoring field |	Reject quarter review submission |
 
 | Module | Dependency |
 |---|---|
-| Objective Management | Annual Assignment quarter content + locked template non-scoring objective fields |
-| Quarterly Review | Approved Objectives as review context + locked template scoring fields |
+| Objective Management | Annual Assignment term content + locked template objective configuration |
+| Employee Achievement Submission | Approved objectives + term assignment + employee proof attachments |
+| Manager Review | Approved objectives + employee achievements + locked template scoring fields + scoreable predefined objectives |
 | Annual Appraisal Decision | Finalized or Closed quarter content |
 | Visibility Governance | Annual Finalization |
 | Communication Dispatch | Visibility Enablement + Backend-Managed Static Communication Rules |
@@ -1510,9 +1765,9 @@ The following features are explicitly out of scope for PMS v2:
 | Auto-Approval          | Manager-created objectives bypass approval         |
 | Reopen Governance      | Mandatory reason required                          |
 | Correction Governance  | Original values preserved permanently              |
-| Objective Non-Scoring Rule	| Employee-created and manager-created objectives are planning, context, and evidence records only |
-Template Scoring Ownership	 | Official score calculation is controlled only by locked template scoring sections and fields |
-Scoring Total Protection	| Dynamic objectives shall not increase total scoring weightage or cause scoring total to exceed the configured template total |
+| Objective Scoring Policy | Employee-created and manager-created objectives are planning, context, and evidence records by default; they become scoreable only when explicitly enabled by template policy and approved weightage exists |
+| Template Scoring Ownership | Official score calculation is controlled only by locked template scoring sections, fields, and approved scoreable objectives |
+| Scoring Total Protection | Dynamic objectives shall not increase total scoring weightage or cause scoring total to exceed the configured template total unless explicitly allowed and validated by template policy |
 
 ---
 
@@ -1577,10 +1832,10 @@ Historical Snapshot Preservation
 | Appraisal NIL outcome | Allow NIL workflow without grade/merit publication |
 | Partial hierarchy access | Restrict unauthorized employee visibility |
 | Frozen decision modification | Require formal reopen workflow |
-| Employee objective contains weightage | 	Reject objective create or update request | 
-| Manager objective contains target value or target date |	Reject objective create or update request |
-Quarter score exceeds template scoring total |	Reject scoring configuration or review submission |
-Objective evidence uploaded after finalization |	Reject unless reopened through HR/Admin correction workflow |
+| Employee objective contains unauthorized weightage | Reject objective create or update request |
+| Manager objective contains unauthorized target value or target date | Reject objective create or update request |
+| Term score exceeds template scoring total | Reject scoring configuration or review submission |
+| Objective evidence uploaded after finalization | Reject unless reopened through HR/Admin correction workflow |
 
 ---
 
