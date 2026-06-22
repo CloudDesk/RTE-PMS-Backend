@@ -2,7 +2,7 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IObjectiveValue extends Document {
   objectiveId: Types.ObjectId;
-  quarterAssignmentId: Types.ObjectId;
+  termAssignmentId: Types.ObjectId;
   annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
   employeeId: Types.ObjectId;
@@ -34,10 +34,10 @@ const objectiveValueSchema = new Schema<IObjectiveValue>(
       ref: 'Objective',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     annualAssignmentId: {
@@ -90,7 +90,7 @@ objectiveValueSchema.index({
   roleCode: 1,
   actorUserId: 1,
 });
-objectiveValueSchema.index({ quarterAssignmentId: 1, sectionKey: 1 });
+objectiveValueSchema.index({ termAssignmentId: 1, sectionKey: 1 });
 objectiveValueSchema.index({ cycleId: 1, employeeId: 1 });
 objectiveValueSchema.index({ fieldKey: 1, roleCode: 1 });
 

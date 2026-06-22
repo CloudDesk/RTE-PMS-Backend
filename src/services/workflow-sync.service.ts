@@ -1,30 +1,36 @@
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { accessService } from './access.service';
-import { transitionQuarterAssignmentState } from './quarter-assignment-workflow.service';
+import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   ObjectiveStatus,
+  PmsTemplateSectionLevel,
+  PmsTemplateSectionType,
   PmsRole,
-  QuarterWorkflowState,
+  TermWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
+import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { EmployeeAchievementSubmission, EmployeeAchievementSubmissionStatus } from '../models/pms-employee-achievement-submission.model';
 import { Objective } from '../models/pms-objective.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
-import type { IQuarterAssignment } from '../models/pms-quarter-assignment.model';
-import { QuarterCycle } from '../models/pms-quarter-cycle.model';
-import type { IQuarterCycle } from '../models/pms-quarter-cycle.model';
+import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import type { ITemplateSection } from '../models/pms-template-version.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
+import type { ITermAssignment } from '../models/pms-term-assignment.model';
+import { TermCycle } from '../models/pms-term-cycle.model';
+import type { ITermCycle } from '../models/pms-term-cycle.model';
 import { workflowService } from './workflow.service';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
-  QuarterWorkflowState as QuarterWorkflowStateType,
+  TermWorkflowState as TermWorkflowStateType,
 } from '../constants/pms.enums';
 
 type SyncSkipReason =
   | 'NOT_ELIGIBLE'
   | 'ALREADY_ADVANCED'
   | 'OBJECTIVE_SETTING_OPEN'
+  | 'OBJECTIVE_SCORING_NOT_READY'
   | 'TRANSITION_NOT_ALLOWED'
   | 'FAILED';
 
@@ -36,7 +42,7 @@ interface DateWindowLike {
 }
 
 interface WorkflowSyncCandidate {
-  targetState?: QuarterWorkflowStateType;
+  targetState?: TermWorkflowStateType;
   windowName?: string;
   windowStart?: Date;
   windowEnd?: Date;
@@ -50,6 +56,11 @@ interface ObjectiveSettingCloseCheck {
   reason: string;
 }
 
+interface ObjectiveScoringReadiness {
+  ready: boolean;
+  reason?: string;
+}
+
 export interface WorkflowSyncInput {
   cycleId?: string;
   assessmentTermCode?: AssessmentTermCodeType;
@@ -59,13 +70,13 @@ export interface WorkflowSyncInput {
 }
 
 export interface WorkflowSyncResultItem {
-  quarterAssignmentId: string;
+  termAssignmentId: string;
   annualAssignmentId?: string;
   employeeId?: string;
   managerId?: string;
   assessmentTermCode: string;
-  fromState: QuarterWorkflowStateType;
-  toState?: QuarterWorkflowStateType;
+  fromState: TermWorkflowStateType;
+  toState?: TermWorkflowStateType;
   action?: string;
   windowName?: string;
   windowStart?: string;
@@ -82,6 +93,7 @@ export interface WorkflowSyncResult {
   skippedNotEligible: number;
   skippedAlreadyAdvanced: number;
   skippedObjectiveSettingOpen: number;
+  skippedObjectiveScoringNotReady: number;
   skippedTransitionNotAllowed: number;
   failed: number;
   dryRun: boolean;
@@ -90,18 +102,18 @@ export interface WorkflowSyncResult {
   results: WorkflowSyncResultItem[];
 }
 
-const FORWARD_STATE_ORDER: QuarterWorkflowStateType[] = [
-  QuarterWorkflowState.NOT_STARTED,
-  QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
-  QuarterWorkflowState.OBJECTIVE_DRAFT,
-  QuarterWorkflowState.OBJECTIVE_SUBMITTED,
-  QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
-  QuarterWorkflowState.OBJECTIVE_APPROVED,
-  QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-  QuarterWorkflowState.MANAGER_REVIEW_OPEN,
-  QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
-  QuarterWorkflowState.TERM_FINALIZED,
-  QuarterWorkflowState.CLOSED_BY_ADMIN,
+const FORWARD_STATE_ORDER: TermWorkflowStateType[] = [
+  TermWorkflowState.NOT_STARTED,
+  TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+  TermWorkflowState.OBJECTIVE_DRAFT,
+  TermWorkflowState.OBJECTIVE_SUBMITTED,
+  TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+  TermWorkflowState.OBJECTIVE_APPROVED,
+  TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+  TermWorkflowState.MANAGER_REVIEW_OPEN,
+  TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+  TermWorkflowState.TERM_FINALIZED,
+  TermWorkflowState.CLOSED_BY_ADMIN,
 ];
 
 export class WorkflowSyncService extends BaseService {
@@ -125,24 +137,25 @@ export class WorkflowSyncService extends BaseService {
       isDeleted: false,
     };
     if (input.assessmentTermCode) {
-      filter.quarterCode = input.assessmentTermCode;
+      filter.assessmentTermCode = input.assessmentTermCode;
     }
 
-    const [quarterAssignments, quarterCycles] = await Promise.all([
-      QuarterAssignment.find(filter).sort({ employeeId: 1, quarterCode: 1 }),
-      QuarterCycle.find({ cycleId: cycleObjectId, isDeleted: false }),
+    const [termAssignments, termCycles] = await Promise.all([
+      TermAssignment.find(filter).sort({ employeeId: 1, assessmentTermCode: 1 }),
+      TermCycle.find({ cycleId: cycleObjectId, isDeleted: false }),
     ]);
 
-    const quarterCycleMap = new Map(
-      quarterCycles.map((quarterCycle) => [quarterCycle.quarterCode, quarterCycle]),
+    const termCycleMap = new Map(
+      termCycles.map((termCycle) => [termCycle.assessmentTermCode, termCycle]),
     );
 
     const result: WorkflowSyncResult = {
-      totalChecked: quarterAssignments.length,
+      totalChecked: termAssignments.length,
       totalUpdated: 0,
       skippedNotEligible: 0,
       skippedAlreadyAdvanced: 0,
       skippedObjectiveSettingOpen: 0,
+      skippedObjectiveScoringNotReady: 0,
       skippedTransitionNotAllowed: 0,
       failed: 0,
       dryRun: input.dryRun === true,
@@ -151,11 +164,11 @@ export class WorkflowSyncService extends BaseService {
       results: [],
     };
 
-    for (const quarterAssignment of quarterAssignments) {
-      const quarterCycle = quarterCycleMap.get(quarterAssignment.quarterCode);
-      const item = await this.processQuarterAssignment(
-        quarterAssignment,
-        quarterCycle,
+    for (const termAssignment of termAssignments) {
+      const termCycle = termCycleMap.get(termAssignment.assessmentTermCode);
+      const item = await this.processTermAssignment(
+        termAssignment,
+        termCycle,
         input,
       );
       result.results.push(item);
@@ -166,6 +179,8 @@ export class WorkflowSyncService extends BaseService {
         result.failed += 1;
       } else if (item.skipReason === 'OBJECTIVE_SETTING_OPEN') {
         result.skippedObjectiveSettingOpen += 1;
+      } else if (item.skipReason === 'OBJECTIVE_SCORING_NOT_READY') {
+        result.skippedObjectiveScoringNotReady += 1;
       } else if (item.skipReason === 'ALREADY_ADVANCED') {
         result.skippedAlreadyAdvanced += 1;
       } else if (item.skipReason === 'TRANSITION_NOT_ALLOWED') {
@@ -178,23 +193,23 @@ export class WorkflowSyncService extends BaseService {
     return result;
   }
 
-  private async processQuarterAssignment(
-    quarterAssignment: IQuarterAssignment,
-    quarterCycle: IQuarterCycle | undefined,
+  private async processTermAssignment(
+    termAssignment: ITermAssignment,
+    termCycle: ITermCycle | undefined,
     input: WorkflowSyncInput,
   ): Promise<WorkflowSyncResultItem> {
-    if (quarterAssignment.quarterState === QuarterWorkflowState.OBJECTIVE_SETTING_OPEN) {
+    if (termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
       return this.processObjectiveSettingOpenAssignment(
-        quarterAssignment,
-        quarterCycle,
+        termAssignment,
+        termCycle,
         input,
       );
     }
 
-    const candidate = await this.resolveCandidate(quarterAssignment, quarterCycle, {
+    const candidate = await this.resolveCandidate(termAssignment, termCycle, {
       ignoreWindowDates: input.ignoreWindowDates === true,
     });
-    const baseItem = this.buildBaseResultItem(quarterAssignment, candidate);
+    const baseItem = this.buildBaseResultItem(termAssignment, candidate);
 
     if (!candidate.targetState) {
       return {
@@ -205,19 +220,31 @@ export class WorkflowSyncService extends BaseService {
       };
     }
 
-    if (!this.isForwardMove(quarterAssignment.quarterState, candidate.targetState)) {
+    if (!this.isForwardMove(termAssignment.termState, candidate.targetState)) {
       return {
         ...baseItem,
         status: 'SKIPPED',
         skipReason: 'ALREADY_ADVANCED',
-        message: `Current state ${quarterAssignment.quarterState} is already at or beyond ${candidate.targetState}.`,
+        message: `Current state ${termAssignment.termState} is already at or beyond ${candidate.targetState}.`,
       };
     }
 
+    if (candidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      const readiness = await this.validateObjectiveScoringReadyForAchievementOpen(termAssignment);
+      if (!readiness.ready) {
+        return {
+          ...baseItem,
+          status: 'SKIPPED',
+          skipReason: 'OBJECTIVE_SCORING_NOT_READY',
+          message: readiness.reason,
+        };
+      }
+    }
+
     const transitionValidation = workflowService.validateTransition({
-      entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
-      entityId: quarterAssignment._id.toString(),
-      currentState: quarterAssignment.quarterState,
+      entityType: WorkflowEntityType.TERM_ASSIGNMENT,
+      entityId: termAssignment._id.toString(),
+      currentState: termAssignment.termState,
       nextState: candidate.targetState,
       actorId: this.requireActor().actorId,
       actorRole: this.requireActor().actorRole,
@@ -242,8 +269,8 @@ export class WorkflowSyncService extends BaseService {
     }
 
     try {
-      await transitionQuarterAssignmentState(
-        quarterAssignment._id.toString(),
+      await transitionTermAssignmentState(
+        termAssignment._id.toString(),
         candidate.targetState,
         this.requireActor(),
         input.reason?.trim() || candidate.reason,
@@ -273,18 +300,18 @@ export class WorkflowSyncService extends BaseService {
   }
 
   private async processObjectiveSettingOpenAssignment(
-    quarterAssignment: IQuarterAssignment,
-    quarterCycle: IQuarterCycle | undefined,
+    termAssignment: ITermAssignment,
+    termCycle: ITermCycle | undefined,
     input: WorkflowSyncInput,
   ): Promise<WorkflowSyncResultItem> {
-    const closeCheck = await this.canAutoCloseObjectiveSetting(quarterAssignment);
+    const closeCheck = await this.canAutoCloseObjectiveSetting(termAssignment);
     if (!closeCheck.canClose) {
       const candidate: WorkflowSyncCandidate = {
         skipReason: 'OBJECTIVE_SETTING_OPEN',
         reason: closeCheck.reason,
       };
       return {
-        ...this.buildBaseResultItem(quarterAssignment, candidate),
+        ...this.buildBaseResultItem(termAssignment, candidate),
         status: 'SKIPPED',
         skipReason: 'OBJECTIVE_SETTING_OPEN',
         message: closeCheck.reason,
@@ -292,7 +319,7 @@ export class WorkflowSyncService extends BaseService {
     }
 
     const approvedCandidate = await this.resolveApprovedStateCandidate(
-      quarterCycle,
+      termCycle,
       { ignoreWindowDates: input.ignoreWindowDates === true },
     );
     const finalCandidate: WorkflowSyncCandidate = approvedCandidate.targetState
@@ -301,21 +328,21 @@ export class WorkflowSyncService extends BaseService {
           reason: `All objectives are approved; objective setting auto-closed during workflow sync. ${approvedCandidate.reason}`,
         }
       : {
-          targetState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+          targetState: TermWorkflowState.OBJECTIVE_APPROVED,
           reason: `All objectives are approved; objective setting auto-closed during workflow sync. ${approvedCandidate.reason}`,
           windowOverrideApplied: false,
         };
-    const baseItem = this.buildBaseResultItem(quarterAssignment, finalCandidate);
+    const baseItem = this.buildBaseResultItem(termAssignment, finalCandidate);
     const actor = this.requireActor();
     const closeReason =
       input.reason?.trim() ||
       'All objectives are approved; objective setting auto-closed during workflow sync.';
 
     const closeValidation = workflowService.validateTransition({
-      entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
-      entityId: quarterAssignment._id.toString(),
-      currentState: QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
-      nextState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+      entityType: WorkflowEntityType.TERM_ASSIGNMENT,
+      entityId: termAssignment._id.toString(),
+      currentState: TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+      nextState: TermWorkflowState.OBJECTIVE_APPROVED,
       actorId: actor.actorId,
       actorRole: actor.actorRole,
       reason: closeReason,
@@ -324,7 +351,7 @@ export class WorkflowSyncService extends BaseService {
     if (!closeValidation.allowed) {
       return {
         ...baseItem,
-        toState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+        toState: TermWorkflowState.OBJECTIVE_APPROVED,
         status: 'SKIPPED',
         skipReason: 'TRANSITION_NOT_ALLOWED',
         message: closeValidation.message,
@@ -333,12 +360,12 @@ export class WorkflowSyncService extends BaseService {
 
     if (
       finalCandidate.targetState &&
-      finalCandidate.targetState !== QuarterWorkflowState.OBJECTIVE_APPROVED
+      finalCandidate.targetState !== TermWorkflowState.OBJECTIVE_APPROVED
     ) {
       const nextValidation = workflowService.validateTransition({
-        entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
-        entityId: quarterAssignment._id.toString(),
-        currentState: QuarterWorkflowState.OBJECTIVE_APPROVED,
+        entityType: WorkflowEntityType.TERM_ASSIGNMENT,
+        entityId: termAssignment._id.toString(),
+        currentState: TermWorkflowState.OBJECTIVE_APPROVED,
         nextState: finalCandidate.targetState,
         actorId: actor.actorId,
         actorRole: actor.actorRole,
@@ -355,6 +382,18 @@ export class WorkflowSyncService extends BaseService {
       }
     }
 
+    if (finalCandidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      const readiness = await this.validateObjectiveScoringReadyForAchievementOpen(termAssignment);
+      if (!readiness.ready) {
+        return {
+          ...baseItem,
+          status: 'SKIPPED',
+          skipReason: 'OBJECTIVE_SCORING_NOT_READY',
+          message: readiness.reason,
+        };
+      }
+    }
+
     if (input.dryRun === true) {
       return {
         ...baseItem,
@@ -364,9 +403,9 @@ export class WorkflowSyncService extends BaseService {
     }
 
     try {
-      await transitionQuarterAssignmentState(
-        quarterAssignment._id.toString(),
-        QuarterWorkflowState.OBJECTIVE_APPROVED,
+      await transitionTermAssignmentState(
+        termAssignment._id.toString(),
+        TermWorkflowState.OBJECTIVE_APPROVED,
         actor,
         closeReason,
         'ADMIN_WORKFLOW_SYNC_AUTO_CLOSE',
@@ -376,7 +415,7 @@ export class WorkflowSyncService extends BaseService {
         },
       );
 
-      const autoClosedAssignment = await QuarterAssignment.findById(quarterAssignment._id);
+      const autoClosedAssignment = await TermAssignment.findById(termAssignment._id);
       if (autoClosedAssignment) {
         autoClosedAssignment.objectiveSettingClosedBy = this.toObjectId(actor.actorId, 'actorId');
         autoClosedAssignment.objectiveSettingClosedAt = new Date();
@@ -389,10 +428,10 @@ export class WorkflowSyncService extends BaseService {
 
       if (
         finalCandidate.targetState &&
-        finalCandidate.targetState !== QuarterWorkflowState.OBJECTIVE_APPROVED
+        finalCandidate.targetState !== TermWorkflowState.OBJECTIVE_APPROVED
       ) {
-        await transitionQuarterAssignmentState(
-          quarterAssignment._id.toString(),
+        await transitionTermAssignmentState(
+          termAssignment._id.toString(),
           finalCandidate.targetState,
           actor,
           input.reason?.trim() || finalCandidate.reason,
@@ -424,30 +463,30 @@ export class WorkflowSyncService extends BaseService {
   }
 
   private async resolveCandidate(
-    quarterAssignment: IQuarterAssignment,
-    quarterCycle?: IQuarterCycle,
+    termAssignment: ITermAssignment,
+    termCycle?: ITermCycle,
     options: { ignoreWindowDates?: boolean } = {},
   ): Promise<WorkflowSyncCandidate> {
-    const state = quarterAssignment.quarterState;
+    const state = termAssignment.termState;
     const now = this.getCurrentDate();
     const ignoreWindowDates = options.ignoreWindowDates === true;
 
-    if (!quarterCycle) {
+    if (!termCycle) {
       return {
         skipReason: 'NOT_ELIGIBLE',
         reason: 'Assessment term window configuration was not found.',
       };
     }
 
-    if (state === QuarterWorkflowState.OBJECTIVE_SETTING_OPEN) {
+    if (state === TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
       return {
         skipReason: 'OBJECTIVE_SETTING_OPEN',
         reason: 'Objective setting is still open and must be closed explicitly by Manager/Admin.',
       };
     }
 
-    if (state === QuarterWorkflowState.NOT_STARTED) {
-      const window = quarterCycle.objectiveSettingWindow;
+    if (state === TermWorkflowState.NOT_STARTED) {
+      const window = termCycle.objectiveSettingWindow;
       if (!ignoreWindowDates && !this.isWindowActive(now, window)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
@@ -455,7 +494,7 @@ export class WorkflowSyncService extends BaseService {
         };
       }
       return this.transitionCandidate(
-        QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
+        TermWorkflowState.OBJECTIVE_SETTING_OPEN,
         'Objective Setting Window',
         window,
         ignoreWindowDates
@@ -465,13 +504,13 @@ export class WorkflowSyncService extends BaseService {
       );
     }
 
-    if (state === QuarterWorkflowState.OBJECTIVE_APPROVED) {
-      return this.resolveApprovedStateCandidate(quarterCycle, { ignoreWindowDates });
+    if (state === TermWorkflowState.OBJECTIVE_APPROVED) {
+      return this.resolveApprovedStateCandidate(termCycle, { ignoreWindowDates });
     }
 
-    if (state === QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+    if (state === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
       const submission = await EmployeeAchievementSubmission.findOne({
-        quarterAssignmentId: quarterAssignment._id,
+        termAssignmentId: termAssignment._id,
         isDeleted: false,
       }).lean();
 
@@ -486,7 +525,7 @@ export class WorkflowSyncService extends BaseService {
         };
       }
 
-      const managerReviewWindow = quarterCycle.managerReviewWindow;
+      const managerReviewWindow = termCycle.managerReviewWindow;
       if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
@@ -495,7 +534,7 @@ export class WorkflowSyncService extends BaseService {
       }
 
       return this.transitionCandidate(
-        QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+        TermWorkflowState.MANAGER_REVIEW_OPEN,
         'Manager Review Window',
         managerReviewWindow,
         ignoreWindowDates
@@ -505,8 +544,8 @@ export class WorkflowSyncService extends BaseService {
       );
     }
 
-    if (state === QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED) {
-      const finalizationWindow = quarterCycle.quarterFinalizationWindow;
+    if (state === TermWorkflowState.MANAGER_REVIEW_SUBMITTED) {
+      const finalizationWindow = termCycle.termFinalizationWindow;
       if (!ignoreWindowDates && !this.hasWindowStarted(now, finalizationWindow)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
@@ -515,7 +554,7 @@ export class WorkflowSyncService extends BaseService {
       }
 
       return this.transitionCandidate(
-        QuarterWorkflowState.TERM_FINALIZED,
+        TermWorkflowState.TERM_FINALIZED,
         'Finalization Window',
         finalizationWindow,
         ignoreWindowDates
@@ -526,9 +565,9 @@ export class WorkflowSyncService extends BaseService {
     }
 
     if (
-      state === QuarterWorkflowState.MANAGER_REVIEW_OPEN ||
-      state === QuarterWorkflowState.TERM_FINALIZED ||
-      state === QuarterWorkflowState.CLOSED_BY_ADMIN
+      state === TermWorkflowState.MANAGER_REVIEW_OPEN ||
+      state === TermWorkflowState.TERM_FINALIZED ||
+      state === TermWorkflowState.CLOSED_BY_ADMIN
     ) {
       return {
         skipReason: 'ALREADY_ADVANCED',
@@ -543,7 +582,7 @@ export class WorkflowSyncService extends BaseService {
   }
 
   private transitionCandidate(
-    targetState: QuarterWorkflowStateType,
+    targetState: TermWorkflowStateType,
     windowName: string,
     window: DateWindowLike | undefined,
     reason: string,
@@ -560,10 +599,10 @@ export class WorkflowSyncService extends BaseService {
   }
 
   private async canAutoCloseObjectiveSetting(
-    quarterAssignment: IQuarterAssignment,
+    termAssignment: ITermAssignment,
   ): Promise<ObjectiveSettingCloseCheck> {
     const objectives = await Objective.find({
-      quarterAssignmentId: quarterAssignment._id,
+      termAssignmentId: termAssignment._id,
       isDeleted: false,
     })
       .select('title status')
@@ -592,21 +631,127 @@ export class WorkflowSyncService extends BaseService {
     };
   }
 
+  private async validateObjectiveScoringReadyForAchievementOpen(
+    termAssignment: ITermAssignment,
+  ): Promise<ObjectiveScoringReadiness> {
+    const objectiveSectionWeightage = await this.getObjectiveScoringWeightage(termAssignment);
+
+    if (objectiveSectionWeightage <= 0) {
+      return { ready: true };
+    }
+
+    const approvedObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+      status: ObjectiveStatus.OBJECTIVE_APPROVED,
+    })
+      .select('title weightage')
+      .lean();
+
+    if (approvedObjectives.length === 0) {
+      return {
+        ready: false,
+        reason:
+          `Performance Objectives has ${this.formatWeightage(objectiveSectionWeightage)}% scoring weightage, ` +
+          'but no approved objectives exist. Add/approve objectives or change the scoring split before opening achievement submission.',
+      };
+    }
+
+    const approvedObjectiveWeightage = approvedObjectives.reduce(
+      (total, objective) => total + Number(objective.weightage ?? 0),
+      0,
+    );
+
+    if (Math.abs(approvedObjectiveWeightage - 100) > 0.01) {
+      return {
+        ready: false,
+        reason:
+          'Approved objective weightage must total 100% before achievement submission opens. ' +
+          `Current approved objective total is ${this.formatWeightage(approvedObjectiveWeightage)}%.`,
+      };
+    }
+
+    return { ready: true };
+  }
+
+  private async getObjectiveScoringWeightage(termAssignment: ITermAssignment): Promise<number> {
+    const templateVersionId = await this.resolveTemplateVersionId(termAssignment);
+    if (!templateVersionId) {
+      return 0;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
+      .select('sections')
+      .lean();
+
+    if (!templateVersion) {
+      return 0;
+    }
+
+    return (templateVersion.sections ?? [])
+      .filter((section) => this.isObjectiveScoringSectionInTermScope(section, termAssignment.assessmentTermCode))
+      .reduce((total, section) => total + Number(section.sectionScoringConfig?.weightage ?? 0), 0);
+  }
+
+  private async resolveTemplateVersionId(termAssignment: ITermAssignment): Promise<Types.ObjectId | undefined> {
+    if (termAssignment.templateVersionId) {
+      return termAssignment.templateVersionId;
+    }
+
+    const annualAssignment = await AnnualAssignment.findById(termAssignment.annualAssignmentId)
+      .select('templateVersionId')
+      .lean();
+
+    return annualAssignment?.templateVersionId;
+  }
+
+  private isObjectiveScoringSectionInTermScope(
+    section: ITemplateSection,
+    assessmentTermCode: AssessmentTermCodeType,
+  ): boolean {
+    if (section.sectionType !== PmsTemplateSectionType.OBJECTIVES) {
+      return false;
+    }
+
+    if (!this.isTermLevelTemplateSection(section.level)) {
+      return false;
+    }
+
+    if (section.sectionScoringConfig?.participatesInScoring !== true) {
+      return false;
+    }
+
+    const allowedTerms = [
+      ...(section.termScope ?? []),
+      ...(section.repeatFor ?? []),
+    ];
+
+    return allowedTerms.length === 0 || allowedTerms.includes(assessmentTermCode);
+  }
+
+  private isTermLevelTemplateSection(level?: unknown): boolean {
+    return String(level ?? '').trim().toUpperCase() === PmsTemplateSectionLevel.TERM;
+  }
+
+  private formatWeightage(value: number): string {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+
   private resolveApprovedStateCandidate(
-    quarterCycle: IQuarterCycle | undefined,
+    termCycle: ITermCycle | undefined,
     options: { ignoreWindowDates?: boolean } = {},
   ): WorkflowSyncCandidate {
     const now = this.getCurrentDate();
     const ignoreWindowDates = options.ignoreWindowDates === true;
 
-    if (!quarterCycle) {
+    if (!termCycle) {
       return {
         skipReason: 'NOT_ELIGIBLE',
         reason: 'Assessment term window configuration was not found.',
       };
     }
 
-    const achievementWindow = quarterCycle.achievementSubmissionWindow;
+    const achievementWindow = termCycle.achievementSubmissionWindow;
     if (achievementWindow?.enabled === true) {
       if (!ignoreWindowDates && !this.hasWindowStarted(now, achievementWindow)) {
         return {
@@ -615,7 +760,7 @@ export class WorkflowSyncService extends BaseService {
         };
       }
       return this.transitionCandidate(
-        QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
         'Employee Achievement Submission Window',
         achievementWindow,
         ignoreWindowDates
@@ -625,7 +770,7 @@ export class WorkflowSyncService extends BaseService {
       );
     }
 
-    const managerReviewWindow = quarterCycle.managerReviewWindow;
+    const managerReviewWindow = termCycle.managerReviewWindow;
     if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
       return {
         skipReason: 'NOT_ELIGIBLE',
@@ -633,7 +778,7 @@ export class WorkflowSyncService extends BaseService {
       };
     }
     return this.transitionCandidate(
-      QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
       'Manager Review Window',
       managerReviewWindow,
       ignoreWindowDates
@@ -644,16 +789,16 @@ export class WorkflowSyncService extends BaseService {
   }
 
   private buildBaseResultItem(
-    quarterAssignment: IQuarterAssignment,
+    termAssignment: ITermAssignment,
     candidate: WorkflowSyncCandidate,
   ): WorkflowSyncResultItem {
     return {
-      quarterAssignmentId: quarterAssignment._id.toString(),
-      annualAssignmentId: quarterAssignment.annualAssignmentId?.toString(),
-      employeeId: quarterAssignment.employeeId?.toString(),
-      managerId: quarterAssignment.assignedManagerId?.toString(),
-      assessmentTermCode: quarterAssignment.quarterCode,
-      fromState: quarterAssignment.quarterState,
+      termAssignmentId: termAssignment._id.toString(),
+      annualAssignmentId: termAssignment.annualAssignmentId?.toString(),
+      employeeId: termAssignment.employeeId?.toString(),
+      managerId: termAssignment.assignedManagerId?.toString(),
+      assessmentTermCode: termAssignment.assessmentTermCode,
+      fromState: termAssignment.termState,
       toState: candidate.targetState,
       action: candidate.targetState ? 'ADMIN_WORKFLOW_SYNC' : undefined,
       windowName: candidate.windowName,
@@ -681,8 +826,8 @@ export class WorkflowSyncService extends BaseService {
   }
 
   private isForwardMove(
-    currentState: QuarterWorkflowStateType,
-    targetState: QuarterWorkflowStateType,
+    currentState: TermWorkflowStateType,
+    targetState: TermWorkflowStateType,
   ): boolean {
     const currentIndex = FORWARD_STATE_ORDER.indexOf(currentState);
     const targetIndex = FORWARD_STATE_ORDER.indexOf(targetState);

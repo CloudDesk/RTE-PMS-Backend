@@ -8,14 +8,16 @@ import { CycleService } from '../services/cycle.service';
 import { AssignmentService } from '../services/assignment.service';
 import { ObjectiveService } from '../services/objective.service';
 import { EmployeeAchievementSubmissionService } from '../services/employeeAchievementSubmission.service';
-import { QuarterReviewService } from '../services/quarterReview.service';
+import { TermReviewService } from '../services/termReview.service';
 import { AnnualDecisionService } from '../services/annualDecision.service';
 import { PmsCommunicationService } from '../services/pmsCommunication.service';
 import { DelegationService } from '../services/delegation.service';
 import { PmsDashboardService } from '../services/pmsDashboard.service';
+import { PmsManagementEmployeeService } from '../services/pmsManagementEmployee.service';
 import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service';
 import { WorkflowSyncService } from '../services/workflow-sync.service';
 import { PmsDocumentService } from '../services/pms-document.service';
+import { ManagerInitiatedReviewService } from '../services/managerInitiatedReview.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -28,12 +30,14 @@ export interface ServiceContainer {
   assignmentService: AssignmentService;
   objectiveService: ObjectiveService;
   employeeAchievementSubmissionService: EmployeeAchievementSubmissionService;
-  quarterReviewService: QuarterReviewService;
+  termReviewService: TermReviewService;
   annualDecisionService: AnnualDecisionService;
   pmsCommunicationService: PmsCommunicationService;
   delegationService: DelegationService;
   pmsDashboardService: PmsDashboardService;
+  pmsManagementEmployeeService: PmsManagementEmployeeService;
   pmsBulkOperationsService: PmsBulkOperationsService;
   workflowSyncService: WorkflowSyncService;
   pmsDocumentService: PmsDocumentService;
+  managerInitiatedReviewService: ManagerInitiatedReviewService;
 }

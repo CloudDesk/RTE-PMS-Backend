@@ -2,14 +2,17 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import { Delegation } from '../models/pms-delegation.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
 import { User } from '../models/user.model';
 import { auditService } from './audit.service';
-import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
+import { emailService } from './email.service';
+import { normalizePmsRole, PmsRole, TermWorkflowState } from '../constants/pms.enums';
 
 export interface CreateDelegationInput {
   delegatorUserId: string;
   delegateUserId: string;
   scopeType: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
+  annualAssignmentId?: string;
   cycleId?: string;
   validFrom: Date | string;
   validTo: Date | string;
@@ -69,6 +72,14 @@ export class DelegationService extends BaseService {
       throw new Error('validFrom date cannot be after validTo date.');
     }
 
+    if (input.annualAssignmentId) {
+      await this.assertAssignmentHasDelegableWork({
+        annualAssignmentId: input.annualAssignmentId,
+        delegatorUserId: delegatorId,
+        scopeType: input.scopeType ?? 'ALL',
+      });
+    }
+
     await this.assertNoOverlappingDelegation({
       delegatorUserId: delegatorId,
       delegateUserId: delegateId,
@@ -97,6 +108,15 @@ export class DelegationService extends BaseService {
       undefined,
       delegation.toObject(),
     );
+
+    void this.sendDelegationCreatedEmails({
+      delegator,
+      delegate,
+      scopeType: delegation.scopeType,
+      validFrom: delegation.validFrom,
+      validTo: delegation.validTo,
+      reason: delegation.reason,
+    });
 
     return delegation;
   }
@@ -202,6 +222,20 @@ export class DelegationService extends BaseService {
       delegation.toObject(),
     );
 
+    const [delegator, delegate] = await Promise.all([
+      User.findById(delegation.delegatorUserId).lean(),
+      User.findById(delegation.delegateUserId).lean(),
+    ]);
+
+    void this.sendDelegationRevokedEmails({
+      delegator,
+      delegate,
+      scopeType: delegation.scopeType,
+      validFrom: delegation.validFrom,
+      validTo: delegation.validTo,
+      reason,
+    });
+
     return delegation;
   }
 
@@ -255,6 +289,62 @@ export class DelegationService extends BaseService {
     }
 
     throw new Error('A conflicting active delegation already exists for this delegator within the selected scope, cycle, and date range.');
+  }
+
+  private async assertAssignmentHasDelegableWork(input: {
+    annualAssignmentId: string;
+    delegatorUserId: string;
+    scopeType: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
+  }): Promise<void> {
+    const termAssignments = await TermAssignment.find({
+      annualAssignmentId: this.toObjectId(input.annualAssignmentId, 'annualAssignmentId'),
+      assignedManagerId: this.toObjectId(input.delegatorUserId, 'delegatorUserId'),
+      isDeleted: false,
+    }).select('termState').lean();
+
+    if (termAssignments.length === 0) {
+      throw new Error('Delegation is not allowed because the selected assignment no longer belongs to this manager.');
+    }
+
+    const objectiveActionableStates = new Set<string>([
+      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+      TermWorkflowState.OBJECTIVE_DRAFT,
+      TermWorkflowState.OBJECTIVE_SUBMITTED,
+      TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+      TermWorkflowState.REOPENED_BY_ADMIN,
+    ]);
+    const reviewActionableStates = new Set<string>([
+      TermWorkflowState.OBJECTIVE_APPROVED,
+      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
+      TermWorkflowState.REOPENED_BY_ADMIN,
+    ]);
+
+    const hasObjectiveWork = termAssignments.some((term) =>
+      objectiveActionableStates.has(term.termState),
+    );
+    const hasReviewWork = termAssignments.some((term) =>
+      reviewActionableStates.has(term.termState),
+    );
+    const hasObjectiveSettingOpen = termAssignments.some(
+      (term) => term.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+    );
+
+    if (input.scopeType === 'PMS_OBJECTIVES' && !hasObjectiveWork) {
+      throw new Error('Objective delegation is not allowed because all objective actions are already approved, finalized, or closed for this assignment.');
+    }
+
+    if (input.scopeType === 'PMS_REVIEWS' && !hasReviewWork) {
+      if (hasObjectiveSettingOpen) {
+        throw new Error('Review delegation is not allowed because objective setting is still open for this assignment. Choose Objectives Only, or delegate reviews after objective setting is closed.');
+      }
+
+      throw new Error('Review delegation is not allowed because all review actions are already submitted, finalized, or closed for this assignment.');
+    }
+
+    if (input.scopeType === 'ALL' && !hasObjectiveWork && !hasReviewWork) {
+      throw new Error('Delegation is not allowed because there are no pending PMS actions for this assignment.');
+    }
   }
 
   /**
@@ -403,5 +493,98 @@ export class DelegationService extends BaseService {
       previousValue,
       newValue,
     });
+  }
+
+  private async sendDelegationCreatedEmails(input: {
+    delegator: any;
+    delegate: any;
+    scopeType: string;
+    validFrom: Date;
+    validTo: Date;
+    reason?: string;
+  }): Promise<void> {
+    const delegatorName = this.userName(input.delegator, 'Original manager');
+    const delegateName = this.userName(input.delegate, 'Delegate manager');
+    const scope = this.formatScope(input.scopeType);
+    const window = `${this.formatDate(input.validFrom)} to ${this.formatDate(input.validTo)}`;
+    const reason = input.reason || 'Not provided';
+
+    await this.sendBestEffortEmail(
+      input.delegate?.email,
+      'PMS Delegation Assigned',
+      `Hello ${delegateName},\n\n${delegatorName} has delegated ${scope} PMS access to you for ${window}.\n\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegateName)},</p><p>${this.escapeHtml(delegatorName)} has delegated <strong>${this.escapeHtml(scope)}</strong> PMS access to you for <strong>${window}</strong>.</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+
+    await this.sendBestEffortEmail(
+      input.delegator?.email,
+      'PMS Delegation Created',
+      `Hello ${delegatorName},\n\nYour ${scope} PMS access has been delegated to ${delegateName} for ${window}.\n\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegatorName)},</p><p>Your <strong>${this.escapeHtml(scope)}</strong> PMS access has been delegated to <strong>${this.escapeHtml(delegateName)}</strong> for <strong>${window}</strong>.</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+  }
+
+  private async sendDelegationRevokedEmails(input: {
+    delegator: any;
+    delegate: any;
+    scopeType: string;
+    validFrom: Date;
+    validTo: Date;
+    reason?: string;
+  }): Promise<void> {
+    const delegatorName = this.userName(input.delegator, 'Original manager');
+    const delegateName = this.userName(input.delegate, 'Delegate manager');
+    const scope = this.formatScope(input.scopeType);
+    const window = `${this.formatDate(input.validFrom)} to ${this.formatDate(input.validTo)}`;
+    const reason = input.reason || 'Not provided';
+
+    await this.sendBestEffortEmail(
+      input.delegate?.email,
+      'PMS Delegation Cancelled',
+      `Hello ${delegateName},\n\nYour delegated ${scope} PMS access from ${delegatorName} has been cancelled.\n\nOriginal window: ${window}\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegateName)},</p><p>Your delegated <strong>${this.escapeHtml(scope)}</strong> PMS access from <strong>${this.escapeHtml(delegatorName)}</strong> has been cancelled.</p><p><strong>Original window:</strong> ${window}</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+
+    await this.sendBestEffortEmail(
+      input.delegator?.email,
+      'PMS Delegation Cancelled',
+      `Hello ${delegatorName},\n\nYour delegation to ${delegateName} has been cancelled.\n\nScope: ${scope}\nOriginal window: ${window}\nReason: ${reason}`,
+      `<p>Hello ${this.escapeHtml(delegatorName)},</p><p>Your delegation to <strong>${this.escapeHtml(delegateName)}</strong> has been cancelled.</p><p><strong>Scope:</strong> ${this.escapeHtml(scope)}</p><p><strong>Original window:</strong> ${window}</p><p><strong>Reason:</strong> ${this.escapeHtml(reason)}</p>`,
+    );
+  }
+
+  private async sendBestEffortEmail(
+    to: string | undefined,
+    subject: string,
+    text: string,
+    html: string,
+  ): Promise<void> {
+    if (!to) return;
+    try {
+      await emailService.sendEmail({ body: { to, subject, text, html } });
+    } catch (error) {
+      console.warn('PMS delegation email notification failed:', error);
+    }
+  }
+
+  private userName(user: any, fallback: string): string {
+    return user?.name || user?.employeeCode || user?.email || fallback;
+  }
+
+  private formatScope(scopeType: string): string {
+    return scopeType.replace(/^PMS_/, '').replace(/_/g, ' ').toLowerCase();
+  }
+
+  private formatDate(value: Date): string {
+    return value.toLocaleDateString('en-GB');
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }

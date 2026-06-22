@@ -7,6 +7,7 @@ import type {
   AssignmentListQuery,
   AssignmentStateInput,
   BulkAssignInput,
+  CancelReassignmentInput,
   ReassignManagerInput,
   ResolveExceptionInput,
 } from '../services/assignment.service';
@@ -125,6 +126,28 @@ export const assignmentRoutes: RouteHandler = async (
           request.body as ReassignManagerInput,
         );
         return reply.send(successResponse('PMS assignment manager reassigned successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:cycleId/assignments/:assignmentId/reassignments/:reassignmentId/cancel',
+    { onRequest: [authenticate], schema: { tags: ['PMS Assignment Management'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId, reassignmentId } = request.params as {
+          cycleId: string;
+          assignmentId: string;
+          reassignmentId: string;
+        };
+        const result = await request.container!.assignmentService.cancelReassignment(
+          assignmentId,
+          reassignmentId,
+          request.body as CancelReassignmentInput,
+        );
+        return reply.send(successResponse('PMS reassignment cancelled successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

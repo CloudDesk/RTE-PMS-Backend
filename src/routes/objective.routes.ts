@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { authenticate } from '../middleware/auth';
 import { Objective } from '../models/pms-objective.model';
 import { PmsDocument } from '../models/pms-document.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import { parseMultipartForm } from '../utilis/parseMultiPartForm';
@@ -97,16 +97,16 @@ export const objectiveRoutes: RouteHandler = async (
   );
 
   fastify.post(
-    '/assignments/:quarterAssignmentId/close-objective-setting',
+    '/assignments/:termAssignmentId/close-objective-setting',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
     async (request, reply) => {
       try {
-        const { quarterAssignmentId } = request.params as { quarterAssignmentId: string };
-        const quarterAssignment = await request.container!.objectiveService.closeObjectiveSetting(
-          quarterAssignmentId,
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
+        const termAssignment = await request.container!.objectiveService.closeObjectiveSetting(
+          termAssignmentId,
           request.body as CloseObjectiveSettingInput,
         );
-        return reply.send(successResponse('Objective setting closed successfully', quarterAssignment));
+        return reply.send(successResponse('Objective setting closed successfully', termAssignment));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -179,7 +179,10 @@ export const objectiveRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const objective = await request.container!.objectiveService.approveObjective(id);
+        const objective = await request.container!.objectiveService.approveObjective(
+          id,
+          request.body as { weightage?: number },
+        );
         return reply.send(successResponse('Objective approved successfully', objective));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
@@ -293,17 +296,17 @@ async function resolveObjectivePayloadWithAttachments(
       throw new Error('Objective attachments must be less than 1 MB per file.');
     }
 
-    const quarterAssignment = await resolveQuarterAssignmentForObjectivePayload(payload, objectiveId);
-    const termLabel = quarterAssignment.termLabel || quarterAssignment.termCode || quarterAssignment.quarterCode;
+    const termAssignment = await resolveTermAssignmentForObjectivePayload(payload, objectiveId);
+    const termLabel = termAssignment.termLabel || termAssignment.termCode || termAssignment.assessmentTermCode;
     const documentName = `${String(payload.title || 'PMS Objective').trim() || 'PMS Objective'} - ${termLabel}`;
 
     const uploadedAttachments = [];
     for (const file of files) {
       const uploaded = await request.container!.pmsDocumentService.uploadDocument({
-        employeeId: quarterAssignment.employeeId.toString(),
-        cycleId: quarterAssignment.cycleId?.toString(),
-        annualAssignmentId: quarterAssignment.annualAssignmentId.toString(),
-        quarterAssignmentId: quarterAssignment._id.toString(),
+        employeeId: termAssignment.employeeId.toString(),
+        cycleId: termAssignment.cycleId?.toString(),
+        annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+        termAssignmentId: termAssignment._id.toString(),
         documentType: 'ObjectiveAttachment',
         documentName,
         documentDate: new Date(),
@@ -343,29 +346,29 @@ async function resolveObjectivePayloadWithAttachments(
   }
 }
 
-async function resolveQuarterAssignmentForObjectivePayload(
+async function resolveTermAssignmentForObjectivePayload(
   payload: Record<string, unknown>,
   objectiveId?: string,
 ) {
-  let quarterAssignmentId = typeof payload.quarterAssignmentId === 'string'
-    ? payload.quarterAssignmentId
+  let termAssignmentId = typeof payload.termAssignmentId === 'string'
+    ? payload.termAssignmentId
     : '';
 
-  if (!quarterAssignmentId && objectiveId) {
-    const objective = await Objective.findById(objectiveId).select('quarterAssignmentId').lean();
-    quarterAssignmentId = objective?.quarterAssignmentId?.toString?.() || '';
+  if (!termAssignmentId && objectiveId) {
+    const objective = await Objective.findById(objectiveId).select('termAssignmentId').lean();
+    termAssignmentId = objective?.termAssignmentId?.toString?.() || '';
   }
 
-  if (!quarterAssignmentId || !Types.ObjectId.isValid(quarterAssignmentId)) {
-    throw new Error('Valid quarterAssignmentId is required for objective attachments');
+  if (!termAssignmentId || !Types.ObjectId.isValid(termAssignmentId)) {
+    throw new Error('Valid termAssignmentId is required for objective attachments');
   }
 
-  const quarterAssignment = await QuarterAssignment.findById(quarterAssignmentId).lean();
-  if (!quarterAssignment || quarterAssignment.isDeleted) {
+  const termAssignment = await TermAssignment.findById(termAssignmentId).lean();
+  if (!termAssignment || termAssignment.isDeleted) {
     throw new Error('Quarter assignment not found for objective attachments');
   }
 
-  return quarterAssignment;
+  return termAssignment;
 }
 
 function sendRouteError(reply: FastifyReply, error: unknown) {

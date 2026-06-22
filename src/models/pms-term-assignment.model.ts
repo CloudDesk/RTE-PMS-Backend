@@ -1,24 +1,24 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { AssessmentTermCode, AssessmentTermType, QuarterWorkflowState } from '../constants/pms.enums';
+import { AssessmentTermCode, AssessmentTermType, TermWorkflowState } from '../constants/pms.enums';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
   AssessmentTermType as AssessmentTermTypeType,
-  QuarterWorkflowState as QuarterWorkflowStateType,
+  TermWorkflowState as TermWorkflowStateType,
 } from '../constants/pms.enums';
 
-export interface IQuarterAssignment extends Document {
+export interface ITermAssignment extends Document {
   annualAssignmentId: Types.ObjectId;
   cycleId?: Types.ObjectId;
-  cycleQuarterId?: Types.ObjectId;
+  cycleTermId?: Types.ObjectId;
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
-  quarterCode: AssessmentTermCodeType;
+  assessmentTermCode: AssessmentTermCodeType;
   assessmentTermType?: AssessmentTermTypeType;
   termCode?: AssessmentTermCodeType;
   termLabel?: string;
-  quarterState: QuarterWorkflowStateType;
-  previousQuarterState?: QuarterWorkflowStateType;
+  termState: TermWorkflowStateType;
+  previousTermState?: TermWorkflowStateType;
   lastTransitionAt?: Date;
   lastTransitionBy?: Types.ObjectId;
   lastTransitionRole?: string;
@@ -27,9 +27,9 @@ export interface IQuarterAssignment extends Document {
   objectiveSettingClosedAt?: Date;
   objectiveSettingCloseReason?: string;
   objectiveSettingCloseSource?: string;
-  quarterScore?: number;
-  quarterRating?: string;
-  quarterSummary?: Record<string, unknown>;
+  termScore?: number;
+  termRating?: string;
+  termSummary?: Record<string, unknown>;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -38,7 +38,7 @@ export interface IQuarterAssignment extends Document {
   updatedAt: Date;
 }
 
-const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
+const termAssignmentSchema = new Schema<ITermAssignment>(
   {
     annualAssignmentId: {
       type: Schema.Types.ObjectId,
@@ -51,9 +51,9 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
       ref: 'AnnualCycle',
       index: true,
     },
-    cycleQuarterId: {
+    cycleTermId: {
       type: Schema.Types.ObjectId,
-      ref: 'QuarterCycle',
+      ref: 'TermCycle',
       index: true,
     },
     employeeId: {
@@ -74,7 +74,7 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
       index: true,
       ref: 'PmsTemplateVersion',
     },
-    quarterCode: {
+    assessmentTermCode: {
       type: String,
       required: true,
       enum: Object.values(AssessmentTermCode),
@@ -88,15 +88,15 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
       enum: Object.values(AssessmentTermCode),
     },
     termLabel: { type: String, trim: true },
-    quarterState: {
+    termState: {
       type: String,
       required: true,
-      enum: Object.values(QuarterWorkflowState),
-      default: QuarterWorkflowState.NOT_STARTED,
+      enum: Object.values(TermWorkflowState),
+      default: TermWorkflowState.NOT_STARTED,
     },
-    previousQuarterState: {
+    previousTermState: {
       type: String,
-      enum: Object.values(QuarterWorkflowState),
+      enum: Object.values(TermWorkflowState),
     },
     lastTransitionAt: Date,
     lastTransitionBy: {
@@ -112,29 +112,29 @@ const quarterAssignmentSchema = new Schema<IQuarterAssignment>(
     objectiveSettingClosedAt: Date,
     objectiveSettingCloseReason: String,
     objectiveSettingCloseSource: { type: String, trim: true },
-    quarterScore: { type: Number, min: 0 },
-    quarterRating: String,
-    quarterSummary: { type: Schema.Types.Mixed, default: {} },
+    termScore: { type: Number, min: 0 },
+    termRating: String,
+    termSummary: { type: Schema.Types.Mixed, default: {} },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     version: { type: Number, default: 1 },
   },
   {
-    collection: 'quarter_assignments',
+    collection: 'term_assignments',
     timestamps: true,
   },
 );
 
-quarterAssignmentSchema.index(
-  { annualAssignmentId: 1, quarterCode: 1 },
-  { unique: true, name: 'idx_annual_assignment_quarter' },
+termAssignmentSchema.index(
+  { annualAssignmentId: 1, assessmentTermCode: 1 },
+  { unique: true, name: 'idx_annual_assignment_term' },
 );
-quarterAssignmentSchema.index({ cycleQuarterId: 1, quarterState: 1 });
-quarterAssignmentSchema.index({ assignedManagerId: 1, quarterState: 1 });
-quarterAssignmentSchema.index({ employeeId: 1, cycleId: 1, quarterCode: 1 });
+termAssignmentSchema.index({ cycleTermId: 1, termState: 1 });
+termAssignmentSchema.index({ assignedManagerId: 1, termState: 1 });
+termAssignmentSchema.index({ employeeId: 1, cycleId: 1, assessmentTermCode: 1 });
 
-export const QuarterAssignment = mongoose.model<IQuarterAssignment>(
-  'QuarterAssignment',
-  quarterAssignmentSchema,
+export const TermAssignment = mongoose.model<ITermAssignment>(
+  'TermAssignment',
+  termAssignmentSchema,
 );

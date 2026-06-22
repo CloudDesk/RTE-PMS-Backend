@@ -19,7 +19,7 @@ export interface UploadPmsDocumentInput {
   description?: string;
   cycleId?: string;
   annualAssignmentId?: string;
-  quarterAssignmentId?: string;
+  termAssignmentId?: string;
   file: MultipartFile;
 }
 
@@ -67,8 +67,8 @@ export class PmsDocumentService extends BaseService {
         annualAssignmentId: input.annualAssignmentId && Types.ObjectId.isValid(input.annualAssignmentId)
           ? new Types.ObjectId(input.annualAssignmentId)
           : undefined,
-        quarterAssignmentId: input.quarterAssignmentId && Types.ObjectId.isValid(input.quarterAssignmentId)
-          ? new Types.ObjectId(input.quarterAssignmentId)
+        termAssignmentId: input.termAssignmentId && Types.ObjectId.isValid(input.termAssignmentId)
+          ? new Types.ObjectId(input.termAssignmentId)
           : undefined,
         documentType,
         documentName: input.documentName,

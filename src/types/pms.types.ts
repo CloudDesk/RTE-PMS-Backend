@@ -4,16 +4,16 @@ import type {
   ObjectiveStatus as ObjectiveStatusEnum,
   PmsErrorCode,
   PmsRole,
-  QuarterReviewStatus as QuarterReviewStatusEnum,
-  QuarterWorkflowState as QuarterWorkflowStateEnum,
+  TermReviewStatus as TermReviewStatusEnum,
+  TermWorkflowState as TermWorkflowStateEnum,
   WorkflowEntityType,
 } from '../constants/pms.enums';
 
-export type QuarterWorkflowState = QuarterWorkflowStateEnum;
+export type TermWorkflowState = TermWorkflowStateEnum;
 export type AnnualWorkflowState = AnnualWorkflowStateEnum;
 export type AnnualDecisionStatus = AnnualDecisionStatusEnum;
 export type ObjectiveStatus = ObjectiveStatusEnum;
-export type QuarterReviewStatus = QuarterReviewStatusEnum;
+export type TermReviewStatus = TermReviewStatusEnum;
 
 export interface WorkflowTransitionInput {
   entityType: WorkflowEntityType;
@@ -40,8 +40,8 @@ export interface WorkflowValidationResult {
 export interface WorkflowTransitionResult {
   entityType: WorkflowEntityType;
   entityId: string;
-  previousState: QuarterWorkflowState | AnnualWorkflowState;
-  currentState: QuarterWorkflowState | AnnualWorkflowState;
+  previousState: TermWorkflowState | AnnualWorkflowState;
+  currentState: TermWorkflowState | AnnualWorkflowState;
   actorId: string;
   actorRole: string;
   reason?: string;

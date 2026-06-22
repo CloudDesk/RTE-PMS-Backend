@@ -7,7 +7,7 @@ export interface ISlaEvent extends Document {
   entityType: string;
   entityId: Types.ObjectId;
   cycleId?: Types.ObjectId;
-  quarterCode?: AssessmentTermCodeType;
+  assessmentTermCode?: AssessmentTermCodeType;
   ownerUserId: Types.ObjectId;
   dueAt: Date;
   status: string;
@@ -47,7 +47,7 @@ const slaEventSchema = new Schema<ISlaEvent>(
       ref: 'AnnualCycle',
       index: true,
     },
-    quarterCode: {
+    assessmentTermCode: {
       type: String,
       enum: Object.values(AssessmentTermCode),
       index: true,
@@ -90,7 +90,7 @@ const slaEventSchema = new Schema<ISlaEvent>(
 
 slaEventSchema.index({ ownerUserId: 1, status: 1, dueAt: 1 });
 slaEventSchema.index({ entityType: 1, entityId: 1 });
-slaEventSchema.index({ cycleId: 1, quarterCode: 1, status: 1 });
+slaEventSchema.index({ cycleId: 1, assessmentTermCode: 1, status: 1 });
 
 export const SlaEvent = mongoose.model<ISlaEvent>(
   'SlaEvent',

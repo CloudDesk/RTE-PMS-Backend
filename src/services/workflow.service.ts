@@ -1,14 +1,14 @@
 import {
   AnnualWorkflowState,
-  QuarterWorkflowState,
+  TermWorkflowState,
   WorkflowEntityType,
   isAnnualWorkflowState,
-  isQuarterWorkflowState,
+  isTermWorkflowState,
 } from '../constants/pms.enums';
-import { annualTransitions, quarterTransitions } from '../constants/workflow.config';
+import { annualTransitions, termTransitions } from '../constants/workflow.config';
 import type {
   AnnualWorkflowState as AnnualWorkflowStateType,
-  QuarterWorkflowState as QuarterWorkflowStateType,
+  TermWorkflowState as TermWorkflowStateType,
   WorkflowTransitionInput,
   WorkflowTransitionResult,
   WorkflowValidationResult,
@@ -27,8 +27,8 @@ export class WorkflowTransitionError extends Error {
 export class WorkflowService {
   getAllowedNextStates(
     currentState: string,
-    entityType: WorkflowEntityType = WorkflowEntityType.QUARTER_ASSIGNMENT,
-  ): readonly (QuarterWorkflowStateType | AnnualWorkflowStateType)[] {
+    entityType: WorkflowEntityType = WorkflowEntityType.TERM_ASSIGNMENT,
+  ): readonly (TermWorkflowStateType | AnnualWorkflowStateType)[] {
     if (
       entityType === WorkflowEntityType.ANNUAL_CYCLE ||
       entityType === WorkflowEntityType.ANNUAL_ASSIGNMENT
@@ -40,16 +40,16 @@ export class WorkflowService {
       return annualTransitions[currentState];
     }
 
-    if (!isQuarterWorkflowState(currentState)) {
+    if (!isTermWorkflowState(currentState)) {
       return [];
     }
 
-    return quarterTransitions[currentState];
+    return termTransitions[currentState];
   }
 
   validateTransition(input: WorkflowTransitionInput): WorkflowValidationResult {
     if (
-      input.entityType !== WorkflowEntityType.QUARTER_ASSIGNMENT &&
+      input.entityType !== WorkflowEntityType.TERM_ASSIGNMENT &&
       input.entityType !== WorkflowEntityType.ANNUAL_CYCLE &&
       input.entityType !== WorkflowEntityType.ANNUAL_ASSIGNMENT
     ) {
@@ -87,7 +87,7 @@ export class WorkflowService {
     const allowedNextStates = this.getAllowedNextStates(input.currentState, input.entityType);
     if (
       !allowedNextStates.includes(
-        input.nextState as QuarterWorkflowStateType | AnnualWorkflowStateType,
+        input.nextState as TermWorkflowStateType | AnnualWorkflowStateType,
       )
     ) {
       return {
@@ -112,8 +112,8 @@ export class WorkflowService {
     return {
       entityType: input.entityType,
       entityId: input.entityId,
-      previousState: input.currentState as QuarterWorkflowStateType | AnnualWorkflowStateType,
-      currentState: input.nextState as QuarterWorkflowStateType | AnnualWorkflowStateType,
+      previousState: input.currentState as TermWorkflowStateType | AnnualWorkflowStateType,
+      currentState: input.nextState as TermWorkflowStateType | AnnualWorkflowStateType,
       actorId: input.actorId,
       actorRole: input.actorRole,
       reason: input.reason,
@@ -133,7 +133,7 @@ export class WorkflowService {
       return isAnnualWorkflowState(state);
     }
 
-    return isQuarterWorkflowState(state);
+    return isTermWorkflowState(state);
   }
 
   private requiresReason(nextState: string, entityType: WorkflowEntityType): boolean {
@@ -149,12 +149,12 @@ export class WorkflowService {
       return isAnnualWorkflowState(nextState) && reasonRequiredStates.includes(nextState);
     }
 
-    const reasonRequiredStates: readonly QuarterWorkflowStateType[] = [
-      QuarterWorkflowState.REOPENED_BY_ADMIN,
-      QuarterWorkflowState.CLOSED_BY_ADMIN,
+    const reasonRequiredStates: readonly TermWorkflowStateType[] = [
+      TermWorkflowState.REOPENED_BY_ADMIN,
+      TermWorkflowState.CLOSED_BY_ADMIN,
     ];
 
-    return isQuarterWorkflowState(nextState) && reasonRequiredStates.includes(nextState);
+    return isTermWorkflowState(nextState) && reasonRequiredStates.includes(nextState);
   }
 }
 
@@ -164,14 +164,14 @@ export const workflowService = new WorkflowService();
 Example usage from another service:
 
 const transition = workflowService.transition({
-  entityType: WorkflowEntityType.QUARTER_ASSIGNMENT,
-  entityId: quarterAssignment._id.toString(),
-  currentState: quarterAssignment.quarterState,
-  nextState: QuarterWorkflowState.OBJECTIVE_SUBMITTED,
+  entityType: WorkflowEntityType.TERM_ASSIGNMENT,
+  entityId: termAssignment._id.toString(),
+  currentState: termAssignment.termState,
+  nextState: TermWorkflowState.OBJECTIVE_SUBMITTED,
   actorId: context.user._id.toString(),
   actorRole: context.user.role,
 });
 
-quarterAssignment.quarterState = transition.currentState;
-await quarterAssignment.save();
+termAssignment.termState = transition.currentState;
+await termAssignment.save();
 */

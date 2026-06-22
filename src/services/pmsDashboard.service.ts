@@ -3,9 +3,9 @@ import { BaseService } from './base.service';
 import {
   AnnualAssignment,
   AnnualDecision,
-  QuarterAssignment,
+  TermAssignment,
   Objective,
-  QuarterReview,
+  TermReview,
   SlaEvent,
   CommunicationDispatch,
   AuditLog,
@@ -44,13 +44,13 @@ export class PmsDashboardService extends BaseService {
       };
     }
 
-    // Load linked Quarter Assignments
-    const quarterAssignments = await QuarterAssignment.find({
+    // Load linked Term Assignments
+    const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
     })
-      .populate('cycleQuarterId', 'name quarterCode assessmentTermType termCode termLabel')
-      .sort({ quarterCode: 1 })
+      .populate('cycleTermId', 'name assessmentTermCode assessmentTermType termCode termLabel')
+      .sort({ assessmentTermCode: 1 })
       .lean();
 
     const annualDecision = await AnnualDecision.findOne({
@@ -73,18 +73,18 @@ export class PmsDashboardService extends BaseService {
     };
 
     // Load Quarter Reviews and apply visibility rules
-    const quarterReviewsRaw = await QuarterReview.find({
+    const termReviewsRaw = await TermReview.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
     }).lean();
 
     const employeeReviewVisible = annualAssignment.visibility?.employeeReviewVisible === true;
-    const quarterReviews = quarterReviewsRaw.map((rev) => {
+    const termReviews = termReviewsRaw.map((rev) => {
       if (!employeeReviewVisible) {
         // Redact comments, ratings and scores if employee review visibility is disabled
         return {
           _id: rev._id,
-          quarterAssignmentId: rev.quarterAssignmentId,
+          termAssignmentId: rev.termAssignmentId,
           reviewStatus: rev.reviewStatus,
           message: 'Review remarks and ratings are currently hidden by administration.',
         };
@@ -133,9 +133,9 @@ export class PmsDashboardService extends BaseService {
     return {
       hasAssignment: true,
       annualAssignment: maskedAnnualAssignment,
-      quarterAssignments,
+      termAssignments,
       objectiveStats,
-      quarterReviews,
+      termReviews,
       reassignmentHistory,
       visibilityConfig: maskContext,
     };
@@ -160,12 +160,12 @@ export class PmsDashboardService extends BaseService {
         },
         { $group: { _id: '$annualAssignmentId', count: { $sum: 1 } } },
       ]),
-      QuarterAssignment.aggregate([
+      TermAssignment.aggregate([
         {
           $match: {
             annualAssignmentId: { $in: annualAssignmentIds },
             isDeleted: false,
-            quarterState: { $ne: 'NOT_STARTED' },
+            termState: { $ne: 'NOT_STARTED' },
           },
         },
         { $group: { _id: '$annualAssignmentId', count: { $sum: 1 } } },
@@ -204,22 +204,22 @@ export class PmsDashboardService extends BaseService {
     const assignedAnnuals = await AnnualAssignment.find(query).select('_id employeeId cycleId').lean();
     const employeeIds = assignedAnnuals.map((a) => a.employeeId);
     const annualAssignmentIds = assignedAnnuals.map((a) => a._id);
-    const managerQuarterAssignmentQuery = {
+    const managerTermAssignmentQuery = {
       assignedManagerId: managerObjectId,
       ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       isDeleted: false,
     };
 
-    const managerQuarterAssignments = await QuarterAssignment.find(managerQuarterAssignmentQuery)
-      .select('_id annualAssignmentId employeeId assignedManagerId cycleId quarterCode assessmentTermType termCode termLabel quarterState updatedAt')
+    const managerTermAssignments = await TermAssignment.find(managerTermAssignmentQuery)
+      .select('_id annualAssignmentId employeeId assignedManagerId cycleId assessmentTermCode assessmentTermType termCode termLabel termState updatedAt')
       .populate('employeeId', 'name email employeeCode')
-      .sort({ updatedAt: -1, quarterCode: 1 })
+      .sort({ updatedAt: -1, assessmentTermCode: 1 })
       .lean();
-    const managerQuarterAssignmentIds = managerQuarterAssignments.map((item) => item._id);
+    const managerTermAssignmentIds = managerTermAssignments.map((item) => item._id);
 
     // 1. Objectives Approval Queue (submitted objectives linked to manager-owned quarter assignments)
     const pendingObjectives = await Objective.find({
-      quarterAssignmentId: { $in: managerQuarterAssignmentIds },
+      termAssignmentId: { $in: managerTermAssignmentIds },
       assignedManagerId: managerObjectId,
       status: 'OBJECTIVE_SUBMITTED',
       isDeleted: false,
@@ -229,9 +229,9 @@ export class PmsDashboardService extends BaseService {
       .lean();
 
     // 2. Quarter Review Queue
-    const quarterReviewQueue = await QuarterAssignment.find({
+    const termReviewQueue = await TermAssignment.find({
       assignedManagerId: managerObjectId,
-      quarterState: { $in: ['MANAGER_REVIEW_OPEN'] },
+      termState: { $in: ['MANAGER_REVIEW_OPEN'] },
       ...(cycleObjectId ? { cycleId: cycleObjectId } : {}),
       isDeleted: false,
     })
@@ -248,11 +248,11 @@ export class PmsDashboardService extends BaseService {
     }).lean();
 
     // 4. Finalized Quarters under this manager
-    const [totalQuarterAssignmentsCount, finalizedQuartersCount] = await Promise.all([
-      QuarterAssignment.countDocuments(managerQuarterAssignmentQuery),
-      QuarterAssignment.countDocuments({
-        ...managerQuarterAssignmentQuery,
-        quarterState: 'TERM_FINALIZED',
+    const [totalTermAssignmentsCount, finalizedQuartersCount] = await Promise.all([
+      TermAssignment.countDocuments(managerTermAssignmentQuery),
+      TermAssignment.countDocuments({
+        ...managerTermAssignmentQuery,
+        termState: 'TERM_FINALIZED',
       }),
     ]);
 
@@ -303,17 +303,17 @@ export class PmsDashboardService extends BaseService {
     return {
       teamStats: {
         totalDirectReports: employeeIds.length,
-        totalQuarterAssignmentsCount,
+        totalTermAssignmentsCount,
         finalizedQuartersCount,
         pendingApprovalsCount: pendingObjectives.length,
-        pendingReviewsCount: quarterReviewQueue.length,
+        pendingReviewsCount: termReviewQueue.length,
         overdueItemsCount: overdueSlas.length,
         activeDelegationsIn,
         activeDelegationsOut,
       },
       queues: {
         pendingObjectives,
-        quarterReviewQueue,
+        termReviewQueue,
         overdueSlas,
         recentReassignments,
       },
@@ -347,11 +347,11 @@ export class PmsDashboardService extends BaseService {
     ]);
 
     // 2. Quarter Completion Progress
-    const quarterProgress = await QuarterAssignment.aggregate([
+    const termProgress = await TermAssignment.aggregate([
       { $match: qaQuery },
       {
         $group: {
-          _id: '$quarterState',
+          _id: '$termState',
           count: { $sum: 1 },
         },
       },
@@ -367,8 +367,8 @@ export class PmsDashboardService extends BaseService {
 
     // 4. Appraisal Readiness (Quarters finalized vs total quarters)
     const [totalQuarters, finalizedQuarters] = await Promise.all([
-      QuarterAssignment.countDocuments(qaQuery),
-      QuarterAssignment.countDocuments({ ...qaQuery, quarterState: 'TERM_FINALIZED' }),
+      TermAssignment.countDocuments(qaQuery),
+      TermAssignment.countDocuments({ ...qaQuery, termState: 'TERM_FINALIZED' }),
     ]);
 
     const appraisalReadiness = {
@@ -462,7 +462,7 @@ export class PmsDashboardService extends BaseService {
 
     return {
       annualProgress,
-      quarterProgress,
+      termProgress,
       slaBreachesCount,
       appraisalReadiness,
       communicationStatus,

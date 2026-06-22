@@ -2,7 +2,6 @@ import { FastifyInstance } from 'fastify';
 import mongoose, { Types } from 'mongoose';
 import {
   AnnualWorkflowState,
-  QuarterWorkflowState,
   isTermFinalized,
 } from '../constants/pms.enums';
 
@@ -21,6 +20,7 @@ interface RelatedDataJob {
 }
 
 interface RelatedDataContext {
+  cleanupSchema: 'term' | 'legacy_quarter';
   template: {
     id: string;
     name?: string;
@@ -29,24 +29,27 @@ interface RelatedDataContext {
   references: {
     templateVersionIds: string[];
     annualAssignmentIds: string[];
-    quarterAssignmentIds: string[];
+    termAssignmentIds: string[];
     relatedCycleIds: string[];
     directlyDeletedCycleIds: string[];
     objectiveIds: string[];
-    quarterReviewIds: string[];
+    termReviewIds: string[];
     annualDecisionIds: string[];
   };
   jobs: RelatedDataJob[];
 }
 
-interface TermFlowCleanupResult {
-  collection: string;
-  field: string;
-  from: string;
-  to: string;
-  matchedCount: number;
-  modifiedCount: number;
-  status: 'updated' | 'dry_run' | 'not_found';
+interface RuntimeDataNaming {
+  cleanupSchema: 'term' | 'legacy_quarter';
+  annualAssignmentTermIdsField: 'termAssignmentIds' | 'quarterAssignmentIds';
+  assignmentCollection: 'term_assignments' | 'quarter_assignments';
+  assignmentIdField: 'termAssignmentId' | 'quarterAssignmentId';
+  assignmentCycleIdField: 'cycleTermId' | 'cycleQuarterId';
+  assignmentCodeField: 'assessmentTermCode' | 'quarterCode';
+  cycleCollection: 'term_cycles' | 'quarter_cycles';
+  cycleIdsField: 'termCycleIds' | 'quarterCycleIds';
+  reviewCollection: 'term_reviews' | 'quarter_reviews';
+  reviewValueCollection: 'term_review_values' | 'quarter_review_values';
 }
 
 class RouteError extends Error {
@@ -88,54 +91,6 @@ const idIn = (ids: Types.ObjectId[]) => ({ $in: ids });
 
 const normalizeJson = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
-const termFlowEnumReplacements = [
-  {
-    collection: 'quarter_assignments',
-    fields: ['quarterState', 'previousQuarterState'],
-    replacements: {
-      QUARTER_FINALIZED: QuarterWorkflowState.TERM_FINALIZED,
-    },
-  },
-  {
-    collection: 'quarter_cycles',
-    fields: ['status'],
-    replacements: {
-      QUARTER_FINALIZED: QuarterWorkflowState.TERM_FINALIZED,
-    },
-  },
-  {
-    collection: 'annual_assignments',
-    fields: ['annualState'],
-    replacements: {
-      ALL_QUARTERS_FINALIZED: AnnualWorkflowState.ALL_TERMS_FINALIZED,
-    },
-  },
-  {
-    collection: 'annual_cycles',
-    fields: ['status'],
-    replacements: {
-      ALL_QUARTERS_FINALIZED: AnnualWorkflowState.ALL_TERMS_FINALIZED,
-    },
-  },
-  {
-    collection: 'workflow_events',
-    fields: ['fromState', 'toState'],
-    replacements: {
-      QUARTER_FINALIZED: QuarterWorkflowState.TERM_FINALIZED,
-      ALL_QUARTERS_FINALIZED: AnnualWorkflowState.ALL_TERMS_FINALIZED,
-    },
-  },
-  {
-    collection: 'audit_logs',
-    fields: ['action'],
-    replacements: {
-      PMS_QUARTER_FINALIZED: 'PMS_TERM_FINALIZED',
-      PMS_ANNUAL_ASSIGNMENT_ALL_QUARTERS_FINALIZED:
-        'PMS_ANNUAL_ASSIGNMENT_ALL_TERMS_FINALIZED',
-    },
-  },
-] as const;
-
 const annualDecisionReadyOrLaterStates = new Set<string>([
   AnnualWorkflowState.ALL_TERMS_FINALIZED,
   AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
@@ -146,6 +101,32 @@ const annualDecisionReadyOrLaterStates = new Set<string>([
   AnnualWorkflowState.COMMUNICATION_SENT,
   AnnualWorkflowState.CLOSED,
 ]);
+
+const termRuntimeDataNaming: RuntimeDataNaming = {
+  cleanupSchema: 'term',
+  annualAssignmentTermIdsField: 'termAssignmentIds',
+  assignmentCollection: 'term_assignments',
+  assignmentIdField: 'termAssignmentId',
+  assignmentCycleIdField: 'cycleTermId',
+  assignmentCodeField: 'assessmentTermCode',
+  cycleCollection: 'term_cycles',
+  cycleIdsField: 'termCycleIds',
+  reviewCollection: 'term_reviews',
+  reviewValueCollection: 'term_review_values',
+};
+
+const legacyQuarterRuntimeDataNaming: RuntimeDataNaming = {
+  cleanupSchema: 'legacy_quarter',
+  annualAssignmentTermIdsField: 'quarterAssignmentIds',
+  assignmentCollection: 'quarter_assignments',
+  assignmentIdField: 'quarterAssignmentId',
+  assignmentCycleIdField: 'cycleQuarterId',
+  assignmentCodeField: 'quarterCode',
+  cycleCollection: 'quarter_cycles',
+  cycleIdsField: 'quarterCycleIds',
+  reviewCollection: 'quarter_reviews',
+  reviewValueCollection: 'quarter_review_values',
+};
 
 export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
   const getDb = () => {
@@ -172,7 +153,15 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
     }));
   };
 
-  const buildTemplateRelatedDataContext = async (templateId: string): Promise<RelatedDataContext> => {
+  const useLegacyQuarterData = (input: Record<string, unknown>) =>
+    input.legacyQuarterData === true ||
+    input.legacyQuarterData === 'true' ||
+    input.cleanupSchema === 'legacy_quarter';
+
+  const buildTemplateRelatedDataContext = async (
+    templateId: string,
+    naming: RuntimeDataNaming,
+  ): Promise<RelatedDataContext> => {
     if (!Types.ObjectId.isValid(templateId)) {
       throw new RouteError(400, 'Valid templateId is required.');
     }
@@ -208,52 +197,69 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
       .collection('annual_assignments')
       .find(
         { templateVersionId: idIn(templateVersionIds) },
-        { projection: { _id: 1, cycleId: 1, quarterAssignmentIds: 1 } },
+        {
+          projection: {
+            _id: 1,
+            cycleId: 1,
+            [naming.annualAssignmentTermIdsField]: 1,
+          },
+        },
       )
       .toArray();
 
     const annualAssignmentIds = uniqueObjectIds(annualAssignments.map((assignment) => assignment._id));
     const annualAssignmentCycleIds = uniqueObjectIds(annualAssignments.map((assignment) => assignment.cycleId));
 
-    const quarterAssignmentFilters = [
+    const termAssignmentFilters = [
       { templateVersionId: idIn(templateVersionIds) },
       ...(hasIds(annualAssignmentIds) ? [{ annualAssignmentId: idIn(annualAssignmentIds) }] : []),
     ];
 
-    const quarterAssignments = await db
-      .collection('quarter_assignments')
+    const termAssignments = await db
+      .collection(naming.assignmentCollection)
       .find(
-        { $or: quarterAssignmentFilters },
-        { projection: { _id: 1, cycleId: 1, cycleQuarterId: 1, annualAssignmentId: 1 } },
+        { $or: termAssignmentFilters },
+        {
+          projection: {
+            _id: 1,
+            cycleId: 1,
+            [naming.assignmentCycleIdField]: 1,
+            annualAssignmentId: 1,
+          },
+        },
       )
       .toArray();
 
-    const quarterAssignmentIds = uniqueObjectIds([
-      ...quarterAssignments.map((assignment) => assignment._id),
-      ...annualAssignments.flatMap((assignment) => assignment.quarterAssignmentIds || []),
+    const termAssignmentIds = uniqueObjectIds([
+      ...termAssignments.map((assignment) => assignment._id),
+      ...annualAssignments.flatMap(
+        (assignment) => assignment[naming.annualAssignmentTermIdsField] || [],
+      ),
     ]);
-    const quarterCycleIds = uniqueObjectIds(quarterAssignments.map((assignment) => assignment.cycleQuarterId));
-    const quarterAssignmentCycleIds = uniqueObjectIds(quarterAssignments.map((assignment) => assignment.cycleId));
-    const relatedCycleIds = uniqueObjectIds([...annualAssignmentCycleIds, ...quarterAssignmentCycleIds]);
+    const termCycleIds = uniqueObjectIds(
+      termAssignments.map((assignment) => assignment[naming.assignmentCycleIdField]),
+    );
+    const termAssignmentCycleIds = uniqueObjectIds(termAssignments.map((assignment) => assignment.cycleId));
+    const relatedCycleIds = uniqueObjectIds([...annualAssignmentCycleIds, ...termAssignmentCycleIds]);
 
     const directCycles = await db
       .collection('annual_cycles')
       .find(
         { templateVersionId: idIn(templateVersionIds) },
-        { projection: { _id: 1, quarterCycleIds: 1 } },
+        { projection: { _id: 1, [naming.cycleIdsField]: 1 } },
       )
       .toArray();
 
     const directCycleIds = uniqueObjectIds(directCycles.map((cycle) => cycle._id));
-    const directQuarterCycleIds = uniqueObjectIds([
-      ...quarterCycleIds,
-      ...directCycles.flatMap((cycle) => cycle.quarterCycleIds || []),
+    const directTermCycleIds = uniqueObjectIds([
+      ...termCycleIds,
+      ...directCycles.flatMap((cycle) => cycle[naming.cycleIdsField] || []),
     ]);
 
     const objectiveFilters = [
       { templateVersionId: idIn(templateVersionIds) },
       ...(hasIds(annualAssignmentIds) ? [{ annualAssignmentId: idIn(annualAssignmentIds) }] : []),
-      ...(hasIds(quarterAssignmentIds) ? [{ quarterAssignmentId: idIn(quarterAssignmentIds) }] : []),
+      ...(hasIds(termAssignmentIds) ? [{ [naming.assignmentIdField]: idIn(termAssignmentIds) }] : []),
     ];
 
     const objectives = await db
@@ -262,13 +268,13 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
       .toArray();
     const objectiveIds = uniqueObjectIds(objectives.map((objective) => objective._id));
 
-    const quarterReviews = hasIds(quarterAssignmentIds)
+    const termReviews = hasIds(termAssignmentIds)
       ? await db
-          .collection('quarter_reviews')
+          .collection(naming.reviewCollection)
           .find(
             {
               $or: [
-                { quarterAssignmentId: idIn(quarterAssignmentIds) },
+                { [naming.assignmentIdField]: idIn(termAssignmentIds) },
                 ...(hasIds(annualAssignmentIds) ? [{ annualAssignmentId: idIn(annualAssignmentIds) }] : []),
               ],
             },
@@ -276,7 +282,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
           )
           .toArray()
       : [];
-    const quarterReviewIds = uniqueObjectIds(quarterReviews.map((review) => review._id));
+    const termReviewIds = uniqueObjectIds(termReviews.map((review) => review._id));
 
     const annualDecisions = hasIds(annualAssignmentIds)
       ? await db
@@ -288,9 +294,9 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
 
     const entityIds = uniqueObjectIds([
       ...annualAssignmentIds,
-      ...quarterAssignmentIds,
+      ...termAssignmentIds,
       ...objectiveIds,
-      ...quarterReviewIds,
+      ...termReviewIds,
       ...annualDecisionIds,
     ]);
 
@@ -305,13 +311,13 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
             { collection: 'objective_comments', filter: { objectiveId: idIn(objectiveIds) } },
           ]
         : []),
-      ...(hasIds(quarterAssignmentIds)
+      ...(hasIds(termAssignmentIds)
         ? [
-            { collection: 'objective_values', filter: { quarterAssignmentId: idIn(quarterAssignmentIds) } },
-            { collection: 'employee_achievement_submissions', filter: { quarterAssignmentId: idIn(quarterAssignmentIds) } },
-            { collection: 'quarter_review_values', filter: { quarterAssignmentId: idIn(quarterAssignmentIds) } },
-            { collection: 'quarter_reviews', filter: { quarterAssignmentId: idIn(quarterAssignmentIds) } },
-            { collection: 'pms_documents', filter: { quarterAssignmentId: idIn(quarterAssignmentIds) } },
+            { collection: 'objective_values', filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
+            { collection: 'employee_achievement_submissions', filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
+            { collection: naming.reviewValueCollection, filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
+            { collection: naming.reviewCollection, filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
+            { collection: 'pms_documents', filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
           ]
         : []),
       ...(hasIds(annualAssignmentIds)
@@ -320,7 +326,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
             { collection: 'objective_comments', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'objective_evidence', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'employee_achievement_submissions', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
-            { collection: 'quarter_review_values', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
+            { collection: naming.reviewValueCollection, filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'annual_decision_values', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'annual_decisions', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'visibility_configurations', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
@@ -341,7 +347,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
                 $or: [
                   { entityId: idIn(entityIds) },
                   ...(hasIds(annualAssignmentIds) ? [{ annualAssignmentId: idIn(annualAssignmentIds) }] : []),
-                  ...(hasIds(quarterAssignmentIds) ? [{ quarterAssignmentId: idIn(quarterAssignmentIds) }] : []),
+                  ...(hasIds(termAssignmentIds) ? [{ [naming.assignmentIdField]: idIn(termAssignmentIds) }] : []),
                 ],
               },
             },
@@ -367,16 +373,16 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
             { collection: 'notification_events', filter: { cycleId: idIn(directCycleIds) } },
             { collection: 'assignment_exception_queue', filter: { cycleId: idIn(directCycleIds) } },
             { collection: 'delegations', filter: { cycleId: idIn(directCycleIds) } },
-            { collection: 'quarter_cycles', filter: { cycleId: idIn(directCycleIds) } },
+            { collection: naming.cycleCollection, filter: { cycleId: idIn(directCycleIds) } },
             { collection: 'annual_cycles', filter: { _id: idIn(directCycleIds) } },
           ]
         : []),
-      ...(hasIds(directQuarterCycleIds)
-        ? [{ collection: 'quarter_cycles', filter: { _id: idIn(directQuarterCycleIds) } }]
+      ...(hasIds(directTermCycleIds)
+        ? [{ collection: naming.cycleCollection, filter: { _id: idIn(directTermCycleIds) } }]
         : []),
       { collection: 'objectives', filter: { $or: objectiveFilters } },
-      ...(hasIds(quarterAssignmentIds)
-        ? [{ collection: 'quarter_assignments', filter: { _id: idIn(quarterAssignmentIds) } }]
+      ...(hasIds(termAssignmentIds)
+        ? [{ collection: naming.assignmentCollection, filter: { _id: idIn(termAssignmentIds) } }]
         : []),
       ...(hasIds(annualAssignmentIds)
         ? [{ collection: 'annual_assignments', filter: { _id: idIn(annualAssignmentIds) } }]
@@ -385,6 +391,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
     ];
 
     return {
+      cleanupSchema: naming.cleanupSchema,
       template: {
         id: template._id.toString(),
         name: template.name,
@@ -393,11 +400,11 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
       references: {
         templateVersionIds: toStringIds(templateVersionIds),
         annualAssignmentIds: toStringIds(annualAssignmentIds),
-        quarterAssignmentIds: toStringIds(quarterAssignmentIds),
+        termAssignmentIds: toStringIds(termAssignmentIds),
         relatedCycleIds: toStringIds(relatedCycleIds),
         directlyDeletedCycleIds: toStringIds(directCycleIds),
         objectiveIds: toStringIds(objectiveIds),
-        quarterReviewIds: toStringIds(quarterReviewIds),
+        termReviewIds: toStringIds(termReviewIds),
         annualDecisionIds: toStringIds(annualDecisionIds),
       },
       jobs: mergeJobs(cleanupJobs),
@@ -492,133 +499,10 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
     return uniqueObjectIds(versions.map((version) => version._id));
   };
 
-  const buildTermFlowScope = async (input: {
-    cycleId?: unknown;
-    annualAssignmentId?: unknown;
-    quarterAssignmentId?: unknown;
-    templateId?: unknown;
-  }) => {
-    const cycleId = optionalObjectId(input.cycleId, 'cycleId');
-    const annualAssignmentId = optionalObjectId(
-      input.annualAssignmentId,
-      'annualAssignmentId',
-    );
-    const quarterAssignmentId = optionalObjectId(
-      input.quarterAssignmentId,
-      'quarterAssignmentId',
-    );
-    const templateVersionIds = await resolveTemplateVersionScope(input.templateId);
-
-    return {
-      cycleId,
-      annualAssignmentId,
-      quarterAssignmentId,
-      templateVersionIds,
-    };
-  };
-
-  const buildCollectionScopeFilter = (
-    collectionName: string,
-    scope: Awaited<ReturnType<typeof buildTermFlowScope>>,
-  ) => {
-    const filter: Record<string, unknown> = {};
-
-    if (scope.cycleId) {
-      if (collectionName === 'annual_cycles') {
-        filter._id = scope.cycleId;
-      } else {
-        filter.cycleId = scope.cycleId;
-      }
-    }
-
-    if (scope.annualAssignmentId) {
-      if (collectionName === 'annual_assignments') {
-        filter._id = scope.annualAssignmentId;
-      } else {
-        filter.annualAssignmentId = scope.annualAssignmentId;
-      }
-    }
-
-    if (scope.quarterAssignmentId) {
-      if (collectionName === 'quarter_assignments') {
-        filter._id = scope.quarterAssignmentId;
-      } else {
-        filter.quarterAssignmentId = scope.quarterAssignmentId;
-      }
-    }
-
-    if (scope.templateVersionIds) {
-      filter.templateVersionId = idIn(scope.templateVersionIds);
-    }
-
-    return filter;
-  };
-
-  const runTermFlowEnumCleanup = async (
-    scope: Awaited<ReturnType<typeof buildTermFlowScope>>,
-    dryRun: boolean,
-  ) => {
-    const db = getDb();
-    const results: TermFlowCleanupResult[] = [];
-
-    for (const config of termFlowEnumReplacements) {
-      const exists = await db.listCollections({ name: config.collection }).hasNext();
-
-      if (!exists) {
-        for (const field of config.fields) {
-          for (const [from, to] of Object.entries(config.replacements)) {
-            results.push({
-              collection: config.collection,
-              field,
-              from,
-              to,
-              matchedCount: 0,
-              modifiedCount: 0,
-              status: 'not_found',
-            });
-          }
-        }
-        continue;
-      }
-
-      const collection = db.collection(config.collection);
-
-      for (const field of config.fields) {
-        for (const [from, to] of Object.entries(config.replacements)) {
-          const filter = {
-            ...buildCollectionScopeFilter(config.collection, scope),
-            [field]: from,
-          };
-          const matchedCount = await collection.countDocuments(filter);
-          let modifiedCount = 0;
-
-          if (!dryRun && matchedCount > 0) {
-            const updateResult = await collection.updateMany(filter, {
-              $set: { [field]: to },
-            });
-            modifiedCount = updateResult.modifiedCount || 0;
-          }
-
-          results.push({
-            collection: config.collection,
-            field,
-            from,
-            to,
-            matchedCount,
-            modifiedCount,
-            status: dryRun ? 'dry_run' : 'updated',
-          });
-        }
-      }
-    }
-
-    return results;
-  };
-
   const buildAnnualAssignmentVerificationFilter = async (input: {
     cycleId?: unknown;
     annualAssignmentId?: unknown;
-    quarterAssignmentId?: unknown;
+    termAssignmentId?: unknown;
     templateId?: unknown;
   }) => {
     const db = getDb();
@@ -627,41 +511,41 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
       input.annualAssignmentId,
       'annualAssignmentId',
     );
-    const quarterAssignmentId = optionalObjectId(
-      input.quarterAssignmentId,
-      'quarterAssignmentId',
+    const termAssignmentId = optionalObjectId(
+      input.termAssignmentId,
+      'termAssignmentId',
     );
     const templateVersionIds = await resolveTemplateVersionScope(input.templateId);
     const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
 
     if (cycleId) filter.cycleId = cycleId;
     if (annualAssignmentId) filter._id = annualAssignmentId;
-    if (quarterAssignmentId) {
-      const quarterAssignment = await db
-        .collection('quarter_assignments')
+    if (termAssignmentId) {
+      const termAssignment = await db
+        .collection('term_assignments')
         .findOne(
-          { _id: quarterAssignmentId },
+          { _id: termAssignmentId },
           { projection: { annualAssignmentId: 1 } },
         );
 
-      if (!quarterAssignment?.annualAssignmentId) {
+      if (!termAssignment?.annualAssignmentId) {
         throw new RouteError(
           404,
-          `Quarter assignment "${quarterAssignmentId.toString()}" was not found.`,
+          `Term assignment "${termAssignmentId.toString()}" was not found.`,
         );
       }
 
       if (
         annualAssignmentId &&
-        quarterAssignment.annualAssignmentId.toString() !== annualAssignmentId.toString()
+        termAssignment.annualAssignmentId.toString() !== annualAssignmentId.toString()
       ) {
         throw new RouteError(
           400,
-          'annualAssignmentId does not match the provided quarterAssignmentId.',
+          'annualAssignmentId does not match the provided termAssignmentId.',
         );
       }
 
-      filter._id = quarterAssignment.annualAssignmentId;
+      filter._id = termAssignment.annualAssignmentId;
     }
     if (templateVersionIds) {
       filter.templateVersionId = idIn(templateVersionIds);
@@ -673,7 +557,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
   const verifyTermFlowAssignments = async (input: {
     cycleId?: unknown;
     annualAssignmentId?: unknown;
-    quarterAssignmentId?: unknown;
+    termAssignmentId?: unknown;
     templateId?: unknown;
     limit?: unknown;
   }) => {
@@ -694,26 +578,26 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
 
     for (const annualAssignment of annualAssignments) {
       const annualAssignmentId = annualAssignment._id as Types.ObjectId;
-      const applicableTerms = Array.isArray(annualAssignment.applicableQuarters)
-        ? annualAssignment.applicableQuarters.filter(Boolean)
+      const applicableTerms = Array.isArray(annualAssignment.applicableTerms)
+        ? annualAssignment.applicableTerms.filter(Boolean)
         : [];
-      const quarterAssignments = await db
-        .collection('quarter_assignments')
+      const termAssignments = await db
+        .collection('term_assignments')
         .find({
           annualAssignmentId,
           isDeleted: { $ne: true },
           ...(applicableTerms.length > 0
-            ? { quarterCode: { $in: applicableTerms } }
+            ? { assessmentTermCode: { $in: applicableTerms } }
             : {}),
         })
-        .sort({ quarterCode: 1 })
+        .sort({ assessmentTermCode: 1 })
         .toArray();
 
-      const termRecords = quarterAssignments.map((assignment) => ({
-        quarterAssignmentId: assignment._id?.toString(),
-        termCode: assignment.termCode || assignment.quarterCode,
-        state: assignment.quarterState,
-        finalized: isTermFinalized(assignment.quarterState),
+      const termRecords = termAssignments.map((assignment) => ({
+        termAssignmentId: assignment._id?.toString(),
+        termCode: assignment.termCode || assignment.assessmentTermCode,
+        state: assignment.termState,
+        finalized: isTermFinalized(assignment.termState),
         managerId: assignment.assignedManagerId?.toString(),
         updatedAt: assignment.updatedAt,
       }));
@@ -773,13 +657,6 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
     return assignments;
   };
 
-  const countLegacyTermFlowEnums = async (
-    scope: Awaited<ReturnType<typeof buildTermFlowScope>>,
-  ) => {
-    const results = await runTermFlowEnumCleanup(scope, true);
-    return results.filter((result) => result.matchedCount > 0);
-  };
-
   const sendRouteError = (reply: any, error: any) => {
     if (error instanceof RouteError) {
       return reply.code(error.statusCode).send({
@@ -798,7 +675,11 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
   const readTemplateRelatedData = async (request: any, reply: any) => {
     try {
       const { templateId } = request.params as { templateId: string };
-      const context = await buildTemplateRelatedDataContext(templateId);
+      const query = (request.query || {}) as Record<string, unknown>;
+      const naming = useLegacyQuarterData(query)
+        ? legacyQuarterRuntimeDataNaming
+        : termRuntimeDataNaming;
+      const context = await buildTemplateRelatedDataContext(templateId, naming);
       const collections = [];
 
       for (const job of context.jobs) {
@@ -811,6 +692,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
         success: true,
         mode: 'read',
         message: `${totalMatched} related records found.`,
+        cleanupSchema: context.cleanupSchema,
         template: context.template,
         references: context.references,
         summary: {
@@ -837,9 +719,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
   const verifyTermFlow = async (request: any, reply: any) => {
     try {
       const input = parseTermFlowRequestInput(request);
-      const scope = await buildTermFlowScope(input);
       const assignments = await verifyTermFlowAssignments(input);
-      const legacyEnums = await countLegacyTermFlowEnums(scope);
       const assignmentsWithIssues = assignments.filter(
         (assignment) => assignment.issues.length > 0,
       );
@@ -848,18 +728,13 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
         success: true,
         mode: 'term_flow_verification',
         message:
-          assignmentsWithIssues.length === 0 && legacyEnums.length === 0
+          assignmentsWithIssues.length === 0
             ? 'Term flow verification passed.'
             : 'Term flow verification completed with items to review.',
         summary: {
           assignmentsChecked: assignments.length,
           assignmentsWithIssues: assignmentsWithIssues.length,
-          legacyEnumMatches: legacyEnums.reduce(
-            (sum, result) => sum + result.matchedCount,
-            0,
-          ),
         },
-        legacyEnums,
         assignments,
       });
     } catch (error: any) {
@@ -868,38 +743,8 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
     }
   };
 
-  const cleanupTermFlowEnums = async (request: any, reply: any) => {
-    try {
-      const input = parseTermFlowRequestInput(request);
-      const dryRun = input.dryRun !== false && input.dryRun !== 'false';
-      const scope = await buildTermFlowScope(input);
-      const results = await runTermFlowEnumCleanup(scope, dryRun);
-      const totalMatched = results.reduce((sum, result) => sum + result.matchedCount, 0);
-      const totalModified = results.reduce((sum, result) => sum + result.modifiedCount, 0);
-
-      return reply.send({
-        success: true,
-        mode: dryRun ? 'dry_run' : 'update',
-        message: dryRun
-          ? `Dry run completed. ${totalMatched} legacy enum values matched.`
-          : `Term-flow enum cleanup completed. ${totalModified} values updated.`,
-        summary: {
-          checks: results.length,
-          matchedValues: totalMatched,
-          modifiedValues: totalModified,
-        },
-        results,
-      });
-    } catch (error: any) {
-      request.log.error({ error }, 'Failed to cleanup PMS term flow enum data');
-      return sendRouteError(reply, error);
-    }
-  };
-
   fastify.get('/term-flow/verify', verifyTermFlow);
   fastify.post('/term-flow/verify', verifyTermFlow);
-  fastify.get('/term-flow/enum-cleanup', cleanupTermFlowEnums);
-  fastify.post('/term-flow/enum-cleanup', cleanupTermFlowEnums);
 
   fastify.get('/templates/:templateId', readTemplateRelatedData);
   fastify.get('/templates/:templateId/related-data', readTemplateRelatedData);
@@ -908,9 +753,12 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
     try {
       const { templateId } = request.params as { templateId: string };
       const query = request.query as { dryRun?: string | boolean };
+      const naming = useLegacyQuarterData(query as Record<string, unknown>)
+        ? legacyQuarterRuntimeDataNaming
+        : termRuntimeDataNaming;
       const mode: CleanupMode =
         query.dryRun === true || query.dryRun === 'true' ? 'dry_run' : 'delete';
-      const context = await buildTemplateRelatedDataContext(templateId);
+      const context = await buildTemplateRelatedDataContext(templateId, naming);
 
       const results: CleanupResult[] = [];
 
@@ -924,6 +772,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
       return reply.send({
         success: true,
         mode,
+        cleanupSchema: context.cleanupSchema,
         message:
           mode === 'dry_run'
             ? `Dry run completed. ${totalMatched} related records matched.`

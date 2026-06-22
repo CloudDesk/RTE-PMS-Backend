@@ -1,127 +1,127 @@
-import { AnnualWorkflowState, QuarterWorkflowState } from './pms.enums';
+import { AnnualWorkflowState, TermWorkflowState } from './pms.enums';
 import type {
   AnnualWorkflowState as AnnualWorkflowStateType,
-  QuarterWorkflowState as QuarterWorkflowStateType,
+  TermWorkflowState as TermWorkflowStateType,
 } from './pms.enums';
 
-const activeClosableQuarterStates: readonly QuarterWorkflowStateType[] = [
-  QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
-  QuarterWorkflowState.OBJECTIVE_DRAFT,
-  QuarterWorkflowState.OBJECTIVE_SUBMITTED,
-  QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
-  QuarterWorkflowState.OBJECTIVE_APPROVED,
-  QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-  QuarterWorkflowState.MANAGER_REVIEW_OPEN,
-  QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
-  QuarterWorkflowState.REOPENED_BY_ADMIN,
+const activeClosableTermStates: readonly TermWorkflowStateType[] = [
+  TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+  TermWorkflowState.OBJECTIVE_DRAFT,
+  TermWorkflowState.OBJECTIVE_SUBMITTED,
+  TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+  TermWorkflowState.OBJECTIVE_APPROVED,
+  TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+  TermWorkflowState.MANAGER_REVIEW_OPEN,
+  TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+  TermWorkflowState.REOPENED_BY_ADMIN,
 ] as const;
 
-const quarterTransitionsBase = {
-  [QuarterWorkflowState.NOT_STARTED]: [
-    QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
+const termTransitionsBase = {
+  [TermWorkflowState.NOT_STARTED]: [
+    TermWorkflowState.OBJECTIVE_SETTING_OPEN,
   ],
-  [QuarterWorkflowState.OBJECTIVE_SETTING_OPEN]: [
-    QuarterWorkflowState.OBJECTIVE_DRAFT,
-    QuarterWorkflowState.OBJECTIVE_SUBMITTED,
-    QuarterWorkflowState.OBJECTIVE_APPROVED,
+  [TermWorkflowState.OBJECTIVE_SETTING_OPEN]: [
+    TermWorkflowState.OBJECTIVE_DRAFT,
+    TermWorkflowState.OBJECTIVE_SUBMITTED,
+    TermWorkflowState.OBJECTIVE_APPROVED,
   ],
-  [QuarterWorkflowState.OBJECTIVE_DRAFT]: [
-    QuarterWorkflowState.OBJECTIVE_SUBMITTED,
+  [TermWorkflowState.OBJECTIVE_DRAFT]: [
+    TermWorkflowState.OBJECTIVE_SUBMITTED,
   ],
-  [QuarterWorkflowState.OBJECTIVE_SUBMITTED]: [
-    QuarterWorkflowState.OBJECTIVE_APPROVED,
-    QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+  [TermWorkflowState.OBJECTIVE_SUBMITTED]: [
+    TermWorkflowState.OBJECTIVE_APPROVED,
+    TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
   ],
-  [QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED]: [
-    QuarterWorkflowState.OBJECTIVE_SUBMITTED,
+  [TermWorkflowState.OBJECTIVE_REVISION_REQUIRED]: [
+    TermWorkflowState.OBJECTIVE_SUBMITTED,
   ],
-  [QuarterWorkflowState.OBJECTIVE_APPROVED]: [
-    QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-    QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+  [TermWorkflowState.OBJECTIVE_APPROVED]: [
+    TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+    TermWorkflowState.MANAGER_REVIEW_OPEN,
   ],
-  [QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: [
-    QuarterWorkflowState.MANAGER_REVIEW_OPEN,
+  [TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: [
+    TermWorkflowState.MANAGER_REVIEW_OPEN,
   ],
-  [QuarterWorkflowState.MANAGER_REVIEW_OPEN]: [
-    QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
+  [TermWorkflowState.MANAGER_REVIEW_OPEN]: [
+    TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
   ],
-  [QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED]: [
-    QuarterWorkflowState.TERM_FINALIZED,
+  [TermWorkflowState.MANAGER_REVIEW_SUBMITTED]: [
+    TermWorkflowState.TERM_FINALIZED,
   ],
-  [QuarterWorkflowState.TERM_FINALIZED]: [
-    QuarterWorkflowState.REOPENED_BY_ADMIN,
+  [TermWorkflowState.TERM_FINALIZED]: [
+    TermWorkflowState.REOPENED_BY_ADMIN,
   ],
-  [QuarterWorkflowState.REOPENED_BY_ADMIN]: [
-    QuarterWorkflowState.TERM_FINALIZED,
+  [TermWorkflowState.REOPENED_BY_ADMIN]: [
+    TermWorkflowState.TERM_FINALIZED,
   ],
-  [QuarterWorkflowState.CLOSED_BY_ADMIN]: [],
+  [TermWorkflowState.CLOSED_BY_ADMIN]: [],
 } as const satisfies Record<
-  QuarterWorkflowStateType,
-  readonly QuarterWorkflowStateType[]
+  TermWorkflowStateType,
+  readonly TermWorkflowStateType[]
 >;
 
 function withAdminClose(
-  state: QuarterWorkflowStateType,
-  nextStates: readonly QuarterWorkflowStateType[],
-): readonly QuarterWorkflowStateType[] {
-  if (!activeClosableQuarterStates.includes(state)) {
+  state: TermWorkflowStateType,
+  nextStates: readonly TermWorkflowStateType[],
+): readonly TermWorkflowStateType[] {
+  if (!activeClosableTermStates.includes(state)) {
     return nextStates;
   }
 
-  return [...nextStates, QuarterWorkflowState.CLOSED_BY_ADMIN];
+  return [...nextStates, TermWorkflowState.CLOSED_BY_ADMIN];
 }
 
-export const quarterTransitions: Record<
-  QuarterWorkflowStateType,
-  readonly QuarterWorkflowStateType[]
+export const termTransitions: Record<
+  TermWorkflowStateType,
+  readonly TermWorkflowStateType[]
 > = {
-  [QuarterWorkflowState.NOT_STARTED]: withAdminClose(
-    QuarterWorkflowState.NOT_STARTED,
-    quarterTransitionsBase[QuarterWorkflowState.NOT_STARTED],
+  [TermWorkflowState.NOT_STARTED]: withAdminClose(
+    TermWorkflowState.NOT_STARTED,
+    termTransitionsBase[TermWorkflowState.NOT_STARTED],
   ),
-  [QuarterWorkflowState.OBJECTIVE_SETTING_OPEN]: withAdminClose(
-    QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
-    quarterTransitionsBase[QuarterWorkflowState.OBJECTIVE_SETTING_OPEN],
+  [TermWorkflowState.OBJECTIVE_SETTING_OPEN]: withAdminClose(
+    TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+    termTransitionsBase[TermWorkflowState.OBJECTIVE_SETTING_OPEN],
   ),
-  [QuarterWorkflowState.OBJECTIVE_DRAFT]: withAdminClose(
-    QuarterWorkflowState.OBJECTIVE_DRAFT,
-    quarterTransitionsBase[QuarterWorkflowState.OBJECTIVE_DRAFT],
+  [TermWorkflowState.OBJECTIVE_DRAFT]: withAdminClose(
+    TermWorkflowState.OBJECTIVE_DRAFT,
+    termTransitionsBase[TermWorkflowState.OBJECTIVE_DRAFT],
   ),
-  [QuarterWorkflowState.OBJECTIVE_SUBMITTED]: withAdminClose(
-    QuarterWorkflowState.OBJECTIVE_SUBMITTED,
-    quarterTransitionsBase[QuarterWorkflowState.OBJECTIVE_SUBMITTED],
+  [TermWorkflowState.OBJECTIVE_SUBMITTED]: withAdminClose(
+    TermWorkflowState.OBJECTIVE_SUBMITTED,
+    termTransitionsBase[TermWorkflowState.OBJECTIVE_SUBMITTED],
   ),
-  [QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED]: withAdminClose(
-    QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
-    quarterTransitionsBase[QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED],
+  [TermWorkflowState.OBJECTIVE_REVISION_REQUIRED]: withAdminClose(
+    TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+    termTransitionsBase[TermWorkflowState.OBJECTIVE_REVISION_REQUIRED],
   ),
-  [QuarterWorkflowState.OBJECTIVE_APPROVED]: withAdminClose(
-    QuarterWorkflowState.OBJECTIVE_APPROVED,
-    quarterTransitionsBase[QuarterWorkflowState.OBJECTIVE_APPROVED],
+  [TermWorkflowState.OBJECTIVE_APPROVED]: withAdminClose(
+    TermWorkflowState.OBJECTIVE_APPROVED,
+    termTransitionsBase[TermWorkflowState.OBJECTIVE_APPROVED],
   ),
-  [QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: withAdminClose(
-    QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-    quarterTransitionsBase[QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN],
+  [TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: withAdminClose(
+    TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+    termTransitionsBase[TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN],
   ),
-  [QuarterWorkflowState.MANAGER_REVIEW_OPEN]: withAdminClose(
-    QuarterWorkflowState.MANAGER_REVIEW_OPEN,
-    quarterTransitionsBase[QuarterWorkflowState.MANAGER_REVIEW_OPEN],
+  [TermWorkflowState.MANAGER_REVIEW_OPEN]: withAdminClose(
+    TermWorkflowState.MANAGER_REVIEW_OPEN,
+    termTransitionsBase[TermWorkflowState.MANAGER_REVIEW_OPEN],
   ),
-  [QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED]: withAdminClose(
-    QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED,
-    quarterTransitionsBase[QuarterWorkflowState.MANAGER_REVIEW_SUBMITTED],
+  [TermWorkflowState.MANAGER_REVIEW_SUBMITTED]: withAdminClose(
+    TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+    termTransitionsBase[TermWorkflowState.MANAGER_REVIEW_SUBMITTED],
   ),
-  [QuarterWorkflowState.TERM_FINALIZED]: withAdminClose(
-    QuarterWorkflowState.TERM_FINALIZED,
-    quarterTransitionsBase[QuarterWorkflowState.TERM_FINALIZED],
+  [TermWorkflowState.TERM_FINALIZED]: withAdminClose(
+    TermWorkflowState.TERM_FINALIZED,
+    termTransitionsBase[TermWorkflowState.TERM_FINALIZED],
   ),
-  [QuarterWorkflowState.REOPENED_BY_ADMIN]: withAdminClose(
-    QuarterWorkflowState.REOPENED_BY_ADMIN,
-    quarterTransitionsBase[QuarterWorkflowState.REOPENED_BY_ADMIN],
+  [TermWorkflowState.REOPENED_BY_ADMIN]: withAdminClose(
+    TermWorkflowState.REOPENED_BY_ADMIN,
+    termTransitionsBase[TermWorkflowState.REOPENED_BY_ADMIN],
   ),
-  [QuarterWorkflowState.CLOSED_BY_ADMIN]: withAdminClose(
-    QuarterWorkflowState.CLOSED_BY_ADMIN,
-    quarterTransitionsBase[QuarterWorkflowState.CLOSED_BY_ADMIN],
+  [TermWorkflowState.CLOSED_BY_ADMIN]: withAdminClose(
+    TermWorkflowState.CLOSED_BY_ADMIN,
+    termTransitionsBase[TermWorkflowState.CLOSED_BY_ADMIN],
   ),
 };
 

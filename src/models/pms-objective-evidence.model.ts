@@ -4,10 +4,10 @@ import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/
 
 export interface IObjectiveEvidence extends Document {
   objectiveId: Types.ObjectId;
-  quarterAssignmentId: Types.ObjectId;
+  termAssignmentId: Types.ObjectId;
   annualAssignmentId: Types.ObjectId;
   cycleId: Types.ObjectId;
-  quarterCode: AssessmentTermCodeType;
+  assessmentTermCode: AssessmentTermCodeType;
   employeeId: Types.ObjectId;
   evidenceType: string;
   title: string;
@@ -32,10 +32,10 @@ const objectiveEvidenceSchema = new Schema<IObjectiveEvidence>(
       ref: 'Objective',
       index: true,
     },
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
       index: true,
     },
     annualAssignmentId: {
@@ -50,7 +50,7 @@ const objectiveEvidenceSchema = new Schema<IObjectiveEvidence>(
       ref: 'AnnualCycle',
       index: true,
     },
-    quarterCode: {
+    assessmentTermCode: {
       type: String,
       required: true,
       enum: Object.values(AssessmentTermCode),
@@ -89,7 +89,7 @@ const objectiveEvidenceSchema = new Schema<IObjectiveEvidence>(
 );
 
 objectiveEvidenceSchema.index({ objectiveId: 1 });
-objectiveEvidenceSchema.index({ quarterAssignmentId: 1, createdAt: -1 });
+objectiveEvidenceSchema.index({ termAssignmentId: 1, createdAt: -1 });
 objectiveEvidenceSchema.index({ cycleId: 1, employeeId: 1 });
 
 export const ObjectiveEvidence = mongoose.model<IObjectiveEvidence>(

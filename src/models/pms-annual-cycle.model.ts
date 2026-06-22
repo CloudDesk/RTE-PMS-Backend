@@ -38,10 +38,14 @@ export interface IAnnualCycle extends Document {
   assessmentTermType: AssessmentTermTypeType;
   status: AnnualWorkflowStateType;
   templateVersionId?: Types.ObjectId;
-  quarterCycleIds: Types.ObjectId[];
+  termCycleIds: Types.ObjectId[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
   assignmentTemplateSuggestionConfig?: IAssignmentTemplateSuggestionConfig;
+  launchSource?: 'ADMIN_CYCLE' | 'MANAGER_INITIATED';
+  launchedByRole?: 'ADMIN' | 'MANAGER';
+  launchedByUserId?: Types.ObjectId;
+  managerInitiatedReview?: Record<string, unknown>;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -91,13 +95,29 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
       required: false,
       ref: 'PmsTemplateVersion',
     },
-    quarterCycleIds: {
-      type: [{ type: Schema.Types.ObjectId, ref: 'QuarterCycle' }],
+    termCycleIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: 'TermCycle' }],
       default: [],
     },
     appraisalWindowConfig: { type: Schema.Types.Mixed, default: {} },
     communicationRuleConfig: { type: Schema.Types.Mixed, default: {} },
     assignmentTemplateSuggestionConfig: { type: Schema.Types.Mixed, default: {} },
+    launchSource: {
+      type: String,
+      enum: ['ADMIN_CYCLE', 'MANAGER_INITIATED'],
+      default: 'ADMIN_CYCLE',
+      index: true,
+    },
+    launchedByRole: {
+      type: String,
+      enum: ['ADMIN', 'MANAGER'],
+    },
+    launchedByUserId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    managerInitiatedReview: { type: Schema.Types.Mixed, default: {} },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -115,6 +135,7 @@ annualCycleSchema.index({ code: 1 }, { unique: true, name: 'idx_annual_cycle_cod
 annualCycleSchema.index({ appraisalYear: 1 });
 annualCycleSchema.index({ status: 1 });
 annualCycleSchema.index({ templateVersionId: 1 });
+annualCycleSchema.index({ launchSource: 1, launchedByUserId: 1, createdAt: -1 });
 
 export const AnnualCycle = mongoose.model<IAnnualCycle>(
   'AnnualCycle',

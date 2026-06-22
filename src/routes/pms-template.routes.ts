@@ -201,10 +201,16 @@ export const pmsTemplateRoutes: RouteHandler = async (
         const { sections, metadata, annualScoringConfig } = request.body as {
           sections: TemplateSection[];
           metadata?: Record<string, unknown>;
+          templateOwnership?: Record<string, unknown>;
+          launchPolicy?: Record<string, unknown>;
+          flowPolicy?: Record<string, unknown>;
           annualScoringConfig?: Record<string, unknown>;
         };
         const version = await request.container!.pmsTemplateService.configureSections(versionId, sections, {
           metadata,
+          templateOwnership: (request.body as { templateOwnership?: Record<string, unknown> }).templateOwnership,
+          launchPolicy: (request.body as { launchPolicy?: Record<string, unknown> }).launchPolicy,
+          flowPolicy: (request.body as { flowPolicy?: Record<string, unknown> }).flowPolicy,
           annualScoringConfig,
         });
         return reply.send(successResponse('PMS template sections configured successfully', version));

@@ -7,7 +7,7 @@ import type {
   CreateCycleInput,
   CycleListQuery,
   UpdateCycleInput,
-  QuarterCycleInput,
+  TermCycleInput,
 } from '../services/cycle.service';
 import type { WorkflowSyncInput } from '../services/workflow-sync.service';
 
@@ -95,7 +95,7 @@ export const cycleRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const body = request.body as { quarters?: QuarterCycleInput[] } | QuarterCycleInput[];
+        const body = request.body as { quarters?: TermCycleInput[] } | TermCycleInput[];
         const quarters = Array.isArray(body) ? body : body.quarters;
         const result = await request.container!.cycleService.updateWindows(
           id,

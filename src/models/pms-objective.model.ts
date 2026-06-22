@@ -15,11 +15,11 @@ interface IPmsAttachment {
 }
 
 export interface IObjective extends Document {
-  quarterAssignmentId: Types.ObjectId;
+  termAssignmentId: Types.ObjectId;
   annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
-  quarterCode?: AssessmentTermCodeType;
+  assessmentTermCode?: AssessmentTermCodeType;
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
   objectiveNo?: number;
@@ -67,10 +67,10 @@ const attachmentSchema = new Schema<IPmsAttachment>(
 
 const objectiveSchema = new Schema<IObjective>(
   {
-    quarterAssignmentId: {
+    termAssignmentId: {
       type: Schema.Types.ObjectId,
       required: true,
-      ref: 'QuarterAssignment',
+      ref: 'TermAssignment',
     },
     annualAssignmentId: {
       type: Schema.Types.ObjectId,
@@ -87,7 +87,7 @@ const objectiveSchema = new Schema<IObjective>(
       ref: 'PmsTemplateVersion',
       index: true,
     },
-    quarterCode: {
+    assessmentTermCode: {
       type: String,
       enum: Object.values(AssessmentTermCode),
       index: true,
@@ -184,14 +184,14 @@ const objectiveSchema = new Schema<IObjective>(
 );
 
 objectiveSchema.index(
-  { quarterAssignmentId: 1 },
-  { name: 'idx_objective_quarter_assignment' },
+  { termAssignmentId: 1 },
+  { name: 'idx_objective_term_assignment' },
 );
-objectiveSchema.index({ annualAssignmentId: 1, quarterCode: 1 });
+objectiveSchema.index({ annualAssignmentId: 1, assessmentTermCode: 1 });
 objectiveSchema.index({ employeeId: 1, cycleId: 1 });
 objectiveSchema.index({ assignedManagerId: 1, status: 1 });
 objectiveSchema.index({ status: 1 });
-objectiveSchema.index({ quarterAssignmentId: 1, templateObjectiveKey: 1 });
-objectiveSchema.index({ quarterAssignmentId: 1, templateObjectiveKey: 1, isDeleted: 1 });
+objectiveSchema.index({ termAssignmentId: 1, templateObjectiveKey: 1 });
+objectiveSchema.index({ termAssignmentId: 1, templateObjectiveKey: 1, isDeleted: 1 });
 
 export const Objective = mongoose.model<IObjective>('Objective', objectiveSchema);

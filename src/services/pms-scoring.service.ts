@@ -519,16 +519,16 @@ export class PmsScoringService {
   }
 
   calculateAnnualRollup(
-    quarterScores: Record<string, number | undefined | null>,
+    termScores: Record<string, number | undefined | null>,
     annualScoringConfig?: {
       aggregationMethod?: 'WEIGHTED_AVERAGE' | 'SIMPLE_AVERAGE';
-      quarterWeights?: Record<string, number>;
+      termWeights?: Record<string, number>;
       excludedQuarters?: string[];
       scoringPolicy?: PmsScoringPolicy;
     },
   ): number | undefined {
     const excluded = new Set(annualScoringConfig?.excludedQuarters ?? []);
-    const entries = Object.entries(quarterScores)
+    const entries = Object.entries(termScores)
       .filter(([quarter, score]) => !excluded.has(quarter) && Number.isFinite(Number(score)))
       .map(([quarter, score]) => ({ quarter, score: Number(score) }));
 
@@ -539,12 +539,12 @@ export class PmsScoringService {
       ? entries.reduce((sum, item) => sum + Number(item.score), 0) / entries.length
       : (() => {
           const totalWeight = entries.reduce(
-            (sum, item) => sum + Number(annualScoringConfig?.quarterWeights?.[item.quarter] ?? 0),
+            (sum, item) => sum + Number(annualScoringConfig?.termWeights?.[item.quarter] ?? 0),
             0,
           );
           return totalWeight > 0
             ? entries.reduce(
-                (sum, item) => sum + (Number(item.score) * Number(annualScoringConfig?.quarterWeights?.[item.quarter] ?? 0)),
+                (sum, item) => sum + (Number(item.score) * Number(annualScoringConfig?.termWeights?.[item.quarter] ?? 0)),
                 0,
               ) / totalWeight
             : entries.reduce((sum, item) => sum + Number(item.score), 0) / entries.length;

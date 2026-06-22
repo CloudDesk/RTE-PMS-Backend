@@ -48,13 +48,13 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   );
 
   fastify.get(
-    '/:quarterAssignmentId',
+    '/:termAssignmentId',
     { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
     async (request, reply) => {
       try {
-        const { quarterAssignmentId } = request.params as { quarterAssignmentId: string };
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
         const submission = await request.container!.employeeAchievementSubmissionService.getSubmission(
-          quarterAssignmentId,
+          termAssignmentId,
         );
         return reply.send(
           successResponse('Employee achievement submission fetched successfully', submission),
@@ -66,13 +66,13 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   );
 
   fastify.put(
-    '/:quarterAssignmentId/draft',
+    '/:termAssignmentId/draft',
     { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
     async (request, reply) => {
       try {
-        const { quarterAssignmentId } = request.params as { quarterAssignmentId: string };
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
         const submission = await request.container!.employeeAchievementSubmissionService.saveDraft(
-          quarterAssignmentId,
+          termAssignmentId,
           request.body as SaveAchievementDraftInput,
         );
         return reply.send(
@@ -85,13 +85,13 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   );
 
   fastify.post(
-    '/:quarterAssignmentId/submit',
+    '/:termAssignmentId/submit',
     { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
     async (request, reply) => {
       try {
-        const { quarterAssignmentId } = request.params as { quarterAssignmentId: string };
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
         const submission = await request.container!.employeeAchievementSubmissionService.submit(
-          quarterAssignmentId,
+          termAssignmentId,
           request.body as SubmitAchievementInput,
         );
         return reply.send(
@@ -104,11 +104,11 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   );
 
   fastify.post(
-    '/:quarterAssignmentId/attachments',
+    '/:termAssignmentId/attachments',
     { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
     async (request, reply) => {
       try {
-        const { quarterAssignmentId } = request.params as { quarterAssignmentId: string };
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
         const { files } = await parseMultipartForm(request);
 
         if (!files || files.length === 0) {
@@ -116,7 +116,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         }
 
         const attachment = await request.container!.employeeAchievementSubmissionService.uploadAttachment(
-          quarterAssignmentId,
+          termAssignmentId,
           files[0],
         );
         return reply.send(

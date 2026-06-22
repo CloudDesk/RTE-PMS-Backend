@@ -3,13 +3,13 @@ import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
-  ReopenQuarterAssignmentInput,
-  SaveQuarterReviewDraftInput,
-  SubmitQuarterReviewInput,
-  QuarterReviewWorkspaceMode,
-} from '../services/quarterReview.service';
+  ReopenTermAssignmentInput,
+  SaveTermReviewDraftInput,
+  SubmitTermReviewInput,
+  TermReviewWorkspaceMode,
+} from '../services/termReview.service';
 
-export const quarterReviewRoutes: RouteHandler = async (
+export const termReviewRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
   fastify.get(
@@ -17,8 +17,8 @@ export const quarterReviewRoutes: RouteHandler = async (
     { onRequest: [authenticate], schema: { tags: ['PMS Manager Quarterly Review'] } },
     async (request, reply) => {
       try {
-        const { mode = 'manager' } = request.query as { mode?: QuarterReviewWorkspaceMode };
-        const result = await request.container!.quarterReviewService.listAssignments(mode);
+        const { mode = 'manager' } = request.query as { mode?: TermReviewWorkspaceMode };
+        const result = await request.container!.termReviewService.listAssignments(mode);
         return reply.send(successResponse('Quarter review assignments fetched successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
@@ -32,7 +32,7 @@ export const quarterReviewRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const result = await request.container!.quarterReviewService.getAssignment(id);
+        const result = await request.container!.termReviewService.getAssignment(id);
         return reply.send(successResponse('Quarter review assignment fetched successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
@@ -46,9 +46,9 @@ export const quarterReviewRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const result = await request.container!.quarterReviewService.saveQuarterReviewDraft(
+        const result = await request.container!.termReviewService.saveTermReviewDraft(
           id,
-          request.body as SaveQuarterReviewDraftInput,
+          request.body as SaveTermReviewDraftInput,
         );
         return reply.send(successResponse('Quarter review draft saved successfully', result));
       } catch (error: unknown) {
@@ -63,9 +63,9 @@ export const quarterReviewRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const result = await request.container!.quarterReviewService.submitQuarterReview(
+        const result = await request.container!.termReviewService.submitTermReview(
           id,
-          request.body as SubmitQuarterReviewInput,
+          request.body as SubmitTermReviewInput,
         );
         return reply.send(successResponse('Quarter review submitted successfully', result));
       } catch (error: unknown) {
@@ -80,7 +80,7 @@ export const quarterReviewRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const result = await request.container!.quarterReviewService.finalizeQuarterAssignment(id);
+        const result = await request.container!.termReviewService.finalizeTermAssignment(id);
         return reply.send(successResponse('Quarter review finalized successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
@@ -94,9 +94,9 @@ export const quarterReviewRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const result = await request.container!.quarterReviewService.reopenQuarterAssignment(
+        const result = await request.container!.termReviewService.reopenTermAssignment(
           id,
-          request.body as ReopenQuarterAssignmentInput,
+          request.body as ReopenTermAssignmentInput,
         );
         return reply.send(successResponse('Quarter review reopened successfully', result));
       } catch (error: unknown) {

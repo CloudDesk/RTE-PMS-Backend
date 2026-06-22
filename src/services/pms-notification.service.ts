@@ -4,7 +4,7 @@ import { User } from '../models/user.model';
 import { Types } from 'mongoose';
 
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 
 export class PmsNotificationService {
@@ -39,8 +39,8 @@ export class PmsNotificationService {
 
       if (entityType === 'ANNUAL_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
         annualAssignment = await AnnualAssignment.findById(entityId).lean();
-      } else if (entityType === 'QUARTER_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
-        const qa = await QuarterAssignment.findById(entityId).lean();
+      } else if (entityType === 'TERM_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
+        const qa = await TermAssignment.findById(entityId).lean();
         if (qa?.annualAssignmentId) {
           annualAssignment = await AnnualAssignment.findById(qa.annualAssignmentId).lean();
         }
@@ -89,8 +89,8 @@ export class PmsNotificationService {
 
       if (entityType === 'ANNUAL_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
         annualAssignment = await AnnualAssignment.findById(entityId).lean();
-      } else if (entityType === 'QUARTER_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
-        const qa = await QuarterAssignment.findById(entityId).lean();
+      } else if (entityType === 'TERM_ASSIGNMENT' && entityId && Types.ObjectId.isValid(entityId)) {
+        const qa = await TermAssignment.findById(entityId).lean();
         if (qa?.annualAssignmentId) {
           annualAssignment = await AnnualAssignment.findById(qa.annualAssignmentId).lean();
         }

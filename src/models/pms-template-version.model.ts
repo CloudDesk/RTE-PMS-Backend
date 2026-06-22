@@ -31,10 +31,15 @@ export interface ITemplatePredefinedObjective {
   description?: string;
   kpi?: string;
   targetValue?: string;
+  dueDate?: string;
   weightage?: number;
   successCriteria?: string;
-  quarterScope?: AssessmentTermCodeType[];
-  applicableQuarters?: AssessmentTermCodeType[];
+  attachmentAllowed?: boolean;
+  applyToAllQuarters?: boolean;
+  editable?: boolean;
+  isActive?: boolean;
+  termScope?: AssessmentTermCodeType[];
+  applicableTerms?: AssessmentTermCodeType[];
   repeatFor?: AssessmentTermCodeType[];
 }
 
@@ -42,6 +47,15 @@ export interface ITemplateObjectiveConfig {
   mode: 'PREDEFINED' | 'DYNAMIC' | 'HYBRID';
   allowEmployeeCreated?: boolean;
   allowManagerCreated?: boolean;
+  managerCreatedAutoApprove?: boolean;
+  objectiveScoringPolicy?: {
+    predefinedObjectivesScoreable?: boolean;
+    managerCreatedScoreable?: boolean;
+    employeeCreatedScoreable?: boolean;
+    requireManagerApprovalForEmployeeScore?: boolean;
+    requireWeightageBeforeAchievement?: boolean;
+    allowManagerOverallForRemainingWeightage?: boolean;
+  };
   predefinedObjectives?: ITemplatePredefinedObjective[];
 }
 
@@ -170,13 +184,18 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
     description: { type: String, trim: true },
     kpi: { type: String, trim: true },
     targetValue: { type: String, trim: true },
+    dueDate: { type: String, trim: true },
     weightage: { type: Number, min: 0, max: 100 },
     successCriteria: { type: String, trim: true },
-    quarterScope: {
+    attachmentAllowed: { type: Boolean, default: false },
+    applyToAllQuarters: { type: Boolean, default: true },
+    editable: { type: Boolean, default: true },
+    isActive: { type: Boolean, default: true },
+    termScope: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
-    applicableQuarters: {
+    applicableTerms: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
@@ -197,6 +216,15 @@ const objectiveConfigSchema = new Schema<ITemplateObjectiveConfig>(
     },
     allowEmployeeCreated: { type: Boolean, default: true },
     allowManagerCreated: { type: Boolean, default: true },
+    managerCreatedAutoApprove: { type: Boolean, default: true },
+    objectiveScoringPolicy: {
+      predefinedObjectivesScoreable: { type: Boolean, default: true },
+      managerCreatedScoreable: { type: Boolean, default: false },
+      employeeCreatedScoreable: { type: Boolean, default: false },
+      requireManagerApprovalForEmployeeScore: { type: Boolean, default: true },
+      requireWeightageBeforeAchievement: { type: Boolean, default: true },
+      allowManagerOverallForRemainingWeightage: { type: Boolean, default: true },
+    },
     predefinedObjectives: { type: [predefinedObjectiveSchema], default: [] },
   },
   { _id: false },
@@ -211,8 +239,8 @@ export interface ITemplateSection {
   repeatable?: boolean;
   displayOrder?: number;
   layout?: 'vertical' | 'grid' | 'table' | 'bordered_grid';
-  renderingScope?: 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
-  quarterScope?: AssessmentTermCodeType[];
+  renderingScope?: 'TERM_ONLY' | 'ANNUAL_ONLY' | 'BOTH';
+  termScope?: AssessmentTermCodeType[];
   sectionScoringConfig?: {
     participatesInScoring?: boolean;
     weightage?: number;
@@ -233,6 +261,9 @@ export interface IPmsTemplateVersion extends Document {
   status: PmsTemplateStatusType;
   sections: ITemplateSection[];
   metadata?: Record<string, unknown>;
+  templateOwnership?: Record<string, unknown>;
+  launchPolicy?: Record<string, unknown>;
+  flowPolicy?: Record<string, unknown>;
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
@@ -429,10 +460,10 @@ const templateSectionSchema = new Schema<ITemplateSection>(
     layout: { type: String, enum: ['vertical', 'grid', 'table', 'bordered_grid'], default: 'vertical' },
     renderingScope: {
       type: String,
-      enum: ['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'],
+      enum: ['TERM_ONLY', 'ANNUAL_ONLY', 'BOTH'],
       default: 'ANNUAL_ONLY',
     },
-    quarterScope: {
+    termScope: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
@@ -486,6 +517,9 @@ const pmsTemplateVersionSchema = new Schema<IPmsTemplateVersion>(
     },
     sections: { type: [templateSectionSchema], default: [] },
     metadata: { type: Schema.Types.Mixed, default: {} },
+    templateOwnership: { type: Schema.Types.Mixed, default: {} },
+    launchPolicy: { type: Schema.Types.Mixed, default: {} },
+    flowPolicy: { type: Schema.Types.Mixed, default: {} },
     themeConfig: { type: Schema.Types.Mixed, default: {} },
     scoringConfig: { type: Schema.Types.Mixed, default: {} },
     annualScoringConfig: { type: Schema.Types.Mixed, default: {} },

@@ -78,7 +78,7 @@ export async function pmsAuditRoutes(fastify: FastifyInstance) {
       filteredLogs = logs
         .filter((log) => {
           const action = String(log.action || '').toUpperCase();
-          const isQuarterReviewAction =
+          const isTermReviewAction =
             action.includes('QUARTER_REVIEW') ||
             action.includes('TERM_REVIEW') ||
             action.includes('TERM_FINALIZED') ||
@@ -88,7 +88,7 @@ export async function pmsAuditRoutes(fastify: FastifyInstance) {
             action.includes('ANNUAL_DECISION') ||
             action.includes('VISIBILITY');
 
-          if (isEmployee && isQuarterReviewAction && (!visibilityActive || !visibility.employeeReviewVisible)) {
+          if (isEmployee && isTermReviewAction && (!visibilityActive || !visibility.employeeReviewVisible)) {
             return false;
           }
 

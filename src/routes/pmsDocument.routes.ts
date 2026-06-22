@@ -33,8 +33,8 @@ export const pmsDocumentRoutes = async (fastify: FastifyInstance) => {
         const annualAssignmentId = body.annualAssignmentId
           ? String(body.annualAssignmentId).trim()
           : undefined;
-        const quarterAssignmentId = body.quarterAssignmentId
-          ? String(body.quarterAssignmentId).trim()
+        const termAssignmentId = body.termAssignmentId
+          ? String(body.termAssignmentId).trim()
           : undefined;
 
         if (!employeeId || !documentName || !documentDateRaw) {
@@ -67,7 +67,7 @@ export const pmsDocumentRoutes = async (fastify: FastifyInstance) => {
           description,
           cycleId,
           annualAssignmentId,
-          quarterAssignmentId,
+          termAssignmentId,
           file: files[0],
         });
 

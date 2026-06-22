@@ -3,17 +3,17 @@ import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 
-export const quarterAssignmentRoutes: RouteHandler = async (
+export const termAssignmentRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
   fastify.post(
     '/:id/finalize',
-    { onRequest: [authenticate], schema: { tags: ['PMS Quarter Assignment Workflow'] } },
+    { onRequest: [authenticate], schema: { tags: ['PMS Term Assignment Workflow'] } },
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const result = await request.container!.quarterReviewService.finalizeQuarterAssignment(id);
-        return reply.send(successResponse('Quarter assignment finalized successfully', result));
+        const result = await request.container!.termReviewService.finalizeTermAssignment(id);
+        return reply.send(successResponse('Term assignment finalized successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -23,5 +23,5 @@ export const quarterAssignmentRoutes: RouteHandler = async (
 
 function sendRouteError(reply: FastifyReply, error: unknown) {
   const message = error instanceof Error ? error.message : 'Unexpected error';
-  return reply.status(400).send(errorResponse('PMS_QUARTER_ASSIGNMENT_ERROR', message));
+  return reply.status(400).send(errorResponse('PMS_TERM_ASSIGNMENT_ERROR', message));
 }

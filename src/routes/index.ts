@@ -9,16 +9,18 @@ import { cycleRoutes } from "./cycle.routes";
 import { assignmentRoutes } from "./assignment.routes";
 import { objectiveRoutes } from "./objective.routes";
 import { employeeAchievementSubmissionRoutes } from "./employeeAchievementSubmission.routes";
-import { quarterReviewRoutes } from "./quarterReview.routes";
-import { quarterAssignmentRoutes } from "./quarterAssignment.routes";
+import { termReviewRoutes } from "./termReview.routes";
+import { termAssignmentRoutes } from "./termAssignment.routes";
 import { annualDecisionRoutes } from "./annualDecision.routes";
 import { pmsCommunicationRoutes } from "./pmsCommunication.routes";
 import { pmsAuditRoutes } from "./pmsAudit.routes";
 import { pmsSlaRoutes } from "./pmsSla.routes";
 import { delegationRoutes } from "./delegation.routes";
 import { pmsDashboardRoutes } from "./pmsDashboard.routes";
+import { pmsManagementEmployeeRoutes } from "./pmsManagementEmployee.routes";
 import { pmsBulkOperationsRoutes } from "./pmsBulkOperations.routes";
 import { pmsDocumentRoutes } from "./pmsDocument.routes";
+import { managerInitiatedReviewRoutes } from "./managerInitiatedReview.routes";
 import { publicPmsCleanupRoutes } from "./public-pms-cleanup.routes";
 import mongoose from "mongoose";
 
@@ -34,16 +36,18 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(assignmentRoutes, { prefix: "/pms/cycles" });
   fastify.register(objectiveRoutes, { prefix: "/pms/objectives" });
   fastify.register(employeeAchievementSubmissionRoutes, { prefix: "/pms/achievement-submissions" });
-  fastify.register(quarterReviewRoutes, { prefix: "/pms/quarter-reviews" });
-  fastify.register(quarterAssignmentRoutes, { prefix: "/pms/quarter-assignments" });
+  fastify.register(termReviewRoutes, { prefix: "/pms/term-reviews" });
+  fastify.register(termAssignmentRoutes, { prefix: "/pms/term-assignments" });
   fastify.register(annualDecisionRoutes, { prefix: "/pms/annual-assignments" });
   fastify.register(pmsCommunicationRoutes, { prefix: "/pms/communications" });
   fastify.register(pmsAuditRoutes, { prefix: "/pms/audit" });
   fastify.register(pmsSlaRoutes, { prefix: "/pms/sla" });
   fastify.register(delegationRoutes, { prefix: "/pms/delegations" });
   fastify.register(pmsDashboardRoutes, { prefix: "/pms/dashboard" });
+  fastify.register(pmsManagementEmployeeRoutes, { prefix: "/pms/management" });
   fastify.register(pmsBulkOperationsRoutes, { prefix: "/pms/bulk" });
   fastify.register(pmsDocumentRoutes, { prefix: "/pms/documents" });
+  fastify.register(managerInitiatedReviewRoutes, { prefix: "/pms/manager-initiated-reviews" });
   fastify.register(publicPmsCleanupRoutes, { prefix: "/public/pms" });
   fastify.get("/test", async (_request, reply) => {
     // Removed verbose logging - use request.log instead if needed

@@ -8,7 +8,7 @@ import {
   PmsTemplateSectionLevel,
   PmsTemplateSectionType,
   PmsTemplateStatus,
-  QuarterWorkflowState,
+  TermWorkflowState,
   FieldCategory,
   PmsRole,
   AssessmentTermCode,
@@ -18,7 +18,7 @@ import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
-import { QuarterAssignment } from '../models/pms-quarter-assignment.model';
+import { TermAssignment } from '../models/pms-term-assignment.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
   IPmsTemplateVersion,
@@ -41,13 +41,13 @@ export interface ResolveTemplateVersionInput {
   visibilityFlags?: string[];
   values?: Record<string, unknown>;
   annualAssignmentId?: string;
-  quarterAssignmentId?: string;
+  termAssignmentId?: string;
 }
 
 export interface SimulateTemplateAccessInput extends ResolveTemplateVersionInput {
   versionId: string;
   annualAssignmentId?: string;
-  quarterAssignmentId?: string;
+  termAssignmentId?: string;
 }
 
 export interface ResolvedTemplateField {
@@ -79,7 +79,7 @@ export interface ResolvedTemplateSection {
   title: string;
   sectionType?: string;
   module: string;
-  level: 'quarter' | 'annual';
+  level: 'term' | 'annual';
   layout: 'vertical' | 'grid' | 'table' | 'bordered_grid';
   participatesInScoring?: boolean;
   weightage?: number;
@@ -101,7 +101,7 @@ export interface ResolvedTemplateVersion {
   }>;
   simulationContext?: {
     annualAssignmentId?: string;
-    quarterAssignmentId?: string;
+    termAssignmentId?: string;
     hierarchyScope?: string;
     quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
@@ -121,6 +121,7 @@ export interface TemplateListQuery {
   search?: string;
   page?: string | number;
   limit?: string | number;
+  owner?: string;
 }
 
 export interface UpdateTemplateInput {
@@ -136,6 +137,9 @@ export interface CreateTemplateVersionInput {
   versionNumber?: number;
   sections?: unknown[];
   metadata?: Record<string, unknown>;
+  templateOwnership?: Record<string, unknown>;
+  launchPolicy?: Record<string, unknown>;
+  flowPolicy?: Record<string, unknown>;
   themeConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
   annualScoringConfig?: Record<string, unknown>;
@@ -160,6 +164,15 @@ export class PmsTemplateService extends BaseService {
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 10), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
+    const owner = String(query.owner || 'admin').toLowerCase();
+
+    if (owner !== 'all') {
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        { createdByRole: { $ne: 'MANAGER' } },
+        { visibilityScope: { $ne: 'MANAGER_TEAM' } },
+      ];
+    }
 
     if (query.status?.trim()) {
       filter.status = query.status.trim();
@@ -360,6 +373,9 @@ export class PmsTemplateService extends BaseService {
         status: PmsTemplateStatus.DRAFT,
         sections: version.sections,
         metadata: version.metadata ?? {},
+        templateOwnership: version.templateOwnership ?? {},
+        launchPolicy: version.launchPolicy ?? {},
+        flowPolicy: version.flowPolicy ?? {},
         themeConfig: version.themeConfig ?? {},
         scoringConfig: version.scoringConfig ?? {},
         annualScoringConfig: version.annualScoringConfig ?? {},
@@ -413,6 +429,9 @@ export class PmsTemplateService extends BaseService {
       versionNo,
       sections,
       metadata: input.metadata ?? latestVersion?.metadata ?? {},
+      templateOwnership: input.templateOwnership ?? latestVersion?.templateOwnership ?? {},
+      launchPolicy: input.launchPolicy ?? latestVersion?.launchPolicy ?? {},
+      flowPolicy: input.flowPolicy ?? latestVersion?.flowPolicy ?? {},
       themeConfig: input.themeConfig ?? latestVersion?.themeConfig ?? {},
       scoringConfig: input.scoringConfig ?? latestVersion?.scoringConfig ?? {},
       annualScoringConfig: input.annualScoringConfig ?? latestVersion?.annualScoringConfig ?? {},
@@ -586,6 +605,9 @@ export class PmsTemplateService extends BaseService {
     sections: unknown[],
     metadata: {
       metadata?: Record<string, unknown>;
+      templateOwnership?: Record<string, unknown>;
+      launchPolicy?: Record<string, unknown>;
+      flowPolicy?: Record<string, unknown>;
       annualScoringConfig?: Record<string, unknown>;
     } = {},
   ): Promise<IPmsTemplateVersion> {
@@ -597,6 +619,15 @@ export class PmsTemplateService extends BaseService {
     version.sections = normalizedSections;
     if (metadata.metadata !== undefined) {
       version.metadata = metadata.metadata;
+    }
+    if (metadata.templateOwnership !== undefined) {
+      version.templateOwnership = metadata.templateOwnership;
+    }
+    if (metadata.launchPolicy !== undefined) {
+      version.launchPolicy = metadata.launchPolicy;
+    }
+    if (metadata.flowPolicy !== undefined) {
+      version.flowPolicy = metadata.flowPolicy;
     }
     if (metadata.annualScoringConfig !== undefined) {
       version.annualScoringConfig = metadata.annualScoringConfig;
@@ -742,7 +773,7 @@ export class PmsTemplateService extends BaseService {
           title: section.sectionLabel,
           sectionType: section.sectionType,
           module: this.mapSectionModule(section.sectionType),
-          level: section.level === PmsTemplateSectionLevel.QUARTER ? 'quarter' : 'annual',
+          level: this.isTermLevel(section.level) ? 'term' : 'annual',
           layout: section.layout ?? 'vertical',
           participatesInScoring: section.sectionScoringConfig?.participatesInScoring === true,
           weightage: Number(section.sectionScoringConfig?.weightage ?? 0),
@@ -776,7 +807,7 @@ export class PmsTemplateService extends BaseService {
       scoringParticipants,
       simulationContext: {
         annualAssignmentId: derivedContext.annualAssignmentId,
-        quarterAssignmentId: derivedContext.quarterAssignmentId,
+        termAssignmentId: derivedContext.termAssignmentId,
         hierarchyScope,
         quarter,
         visibilityFlags: [...visibilityFlags],
@@ -798,14 +829,14 @@ export class PmsTemplateService extends BaseService {
       visibilityFlags: derivedContext.visibilityFlags,
       values: input.values,
       annualAssignmentId: derivedContext.annualAssignmentId,
-      quarterAssignmentId: derivedContext.quarterAssignmentId,
+      termAssignmentId: derivedContext.termAssignmentId,
     });
 
     return {
       ...resolved,
       simulationContext: {
         annualAssignmentId: derivedContext.annualAssignmentId,
-        quarterAssignmentId: derivedContext.quarterAssignmentId,
+        termAssignmentId: derivedContext.termAssignmentId,
         hierarchyScope: derivedContext.hierarchyScope,
         quarter: derivedContext.quarter,
         visibilityFlags: derivedContext.visibilityFlags,
@@ -844,29 +875,29 @@ export class PmsTemplateService extends BaseService {
       const legacyKey = section.key as string | undefined;
       const legacyLabel = section.label as string | undefined;
       const legacyType = section.type as ITemplateSection['sectionType'] | undefined;
-      const legacyApplicableQuarters = section.applicableQuarters as ITemplateSection['repeatFor'] | undefined;
+      const legacyApplicableQuarters = section.applicableTerms as ITemplateSection['repeatFor'] | undefined;
       const legacyOrder = section.order as number | undefined;
       const legacyPermissions = section.permissions as TemplatePermission[] | undefined;
       const sectionScoringConfig = section.sectionScoringConfig as ITemplateSection['sectionScoringConfig'] | undefined;
       const objectiveConfig = section.objectiveConfig ?? (section.metadata as any)?.objectiveConfig;
       const repeatFor = section.repeatFor ?? legacyApplicableQuarters ?? [];
-      const quarterScope = section.quarterScope as ITemplateSection['quarterScope'] | undefined;
+      const termScope = section.termScope as ITemplateSection['termScope'] | undefined;
       const rulePatch = this.rulesFromPermissions(legacyPermissions ?? []);
 
       return {
         sectionKey: section.sectionKey ?? legacyKey ?? '',
         sectionLabel: section.sectionLabel ?? legacyLabel ?? '',
         sectionType: section.sectionType ?? legacyType ?? PmsTemplateSectionType.OBJECTIVES,
-        level: section.level ?? PmsTemplateSectionLevel.ANNUAL,
+        level: this.normalizeSectionLevel(section.level),
         repeatFor,
         repeatable: section.repeatable ?? false,
         displayOrder: section.displayOrder ?? legacyOrder ?? index + 1,
         layout: ['grid', 'table', 'bordered_grid'].includes(section.layout as string) ? (section.layout as 'grid' | 'table' | 'bordered_grid') : 'vertical',
         renderingScope: this.normalizeRenderingScope(
           section.renderingScope as string | undefined,
-          section.level ?? PmsTemplateSectionLevel.ANNUAL,
+          this.normalizeSectionLevel(section.level),
         ),
-        quarterScope: quarterScope ?? repeatFor,
+        termScope: termScope ?? repeatFor,
         sectionScoringConfig: sectionScoringConfig
           ? {
             participatesInScoring: !!sectionScoringConfig.participatesInScoring,
@@ -1077,6 +1108,7 @@ export class PmsTemplateService extends BaseService {
       mode,
       allowEmployeeCreated: config.allowEmployeeCreated !== false,
       allowManagerCreated: config.allowManagerCreated !== false,
+      managerCreatedAutoApprove: config.managerCreatedAutoApprove !== false,
       predefinedObjectives: Array.isArray(config.predefinedObjectives)
         ? config.predefinedObjectives.map((objective: Record<string, any>) => ({
           objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
@@ -1084,11 +1116,31 @@ export class PmsTemplateService extends BaseService {
           description: objective.description ? String(objective.description) : undefined,
           kpi: objective.kpi ? String(objective.kpi) : undefined,
           targetValue: objective.targetValue ? String(objective.targetValue) : undefined,
+          dueDate: objective.dueDate ? String(objective.dueDate) : undefined,
           weightage:
             objective.weightage === undefined || objective.weightage === ''
               ? undefined
               : Number(objective.weightage),
           successCriteria: objective.successCriteria ? String(objective.successCriteria) : undefined,
+          attachmentAllowed: objective.attachmentAllowed === true,
+          applyToAllQuarters: objective.applyToAllQuarters !== false,
+          editable: objective.editable !== false,
+          isActive: objective.isActive !== false,
+          termScope: Array.isArray(objective.termScope)
+            ? objective.termScope.filter((quarter: unknown) =>
+              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+            )
+            : undefined,
+          applicableTerms: Array.isArray(objective.applicableTerms)
+            ? objective.applicableTerms.filter((quarter: unknown) =>
+              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+            )
+            : undefined,
+          repeatFor: Array.isArray(objective.repeatFor)
+            ? objective.repeatFor.filter((quarter: unknown) =>
+              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+            )
+            : undefined,
         }))
         : [],
     };
@@ -1158,8 +1210,8 @@ export class PmsTemplateService extends BaseService {
     quarter?: AssessmentTermCodeType,
   ): boolean {
     if (!quarter) return true;
-    const scopedQuarters = section.quarterScope?.length
-      ? section.quarterScope
+    const scopedQuarters = section.termScope?.length
+      ? section.termScope
       : section.repeatFor ?? [];
     if (scopedQuarters.length === 0) return true;
     return this.assessmentTermScopeMatches(scopedQuarters, quarter);
@@ -1440,7 +1492,7 @@ export class PmsTemplateService extends BaseService {
 
   private isApprovedWorkflowState(workflowState: string): boolean {
     return (
-      (Object.values(QuarterWorkflowState) as string[]).includes(workflowState) ||
+      (Object.values(TermWorkflowState) as string[]).includes(workflowState) ||
       (Object.values(AnnualWorkflowState) as string[]).includes(workflowState)
     );
   }
@@ -1452,11 +1504,24 @@ export class PmsTemplateService extends BaseService {
   private normalizeRenderingScope(
     renderingScope: string | undefined,
     level: string,
-  ): 'QUARTER_ONLY' | 'ANNUAL_ONLY' | 'BOTH' {
-    if (renderingScope === 'QUARTER_ONLY' || renderingScope === 'ANNUAL_ONLY' || renderingScope === 'BOTH') {
+  ): 'TERM_ONLY' | 'ANNUAL_ONLY' | 'BOTH' {
+    if (renderingScope === 'TERM_ONLY' || renderingScope === 'ANNUAL_ONLY' || renderingScope === 'BOTH') {
       return renderingScope;
     }
-    return level === PmsTemplateSectionLevel.QUARTER ? 'QUARTER_ONLY' : 'ANNUAL_ONLY';
+    return this.isTermLevel(level) ? 'TERM_ONLY' : 'ANNUAL_ONLY';
+  }
+
+  private normalizeSectionLevel(level?: unknown): PmsTemplateSectionLevel {
+    const normalized = String(level ?? '').trim().toUpperCase();
+    if (normalized === PmsTemplateSectionLevel.TERM) {
+      return PmsTemplateSectionLevel.TERM;
+    }
+    return PmsTemplateSectionLevel.ANNUAL;
+  }
+
+  private isTermLevel(level?: unknown): boolean {
+    const normalized = String(level ?? '').trim().toUpperCase();
+    return normalized === PmsTemplateSectionLevel.TERM;
   }
 
   private mapSectionModule(sectionType: string): string {
@@ -1533,15 +1598,15 @@ export class PmsTemplateService extends BaseService {
       }
       sectionKeys.add(section.sectionKey);
 
-      if (section.level === PmsTemplateSectionLevel.QUARTER) {
-        const quarters = section.repeatFor ?? [];
-        if (quarters.length === 0) {
-          throw new Error(`Quarter-level section ${section.sectionKey} must define repeatFor quarters`);
+      if (this.isTermLevel(section.level)) {
+        const terms = section.repeatFor ?? [];
+        if (terms.length === 0) {
+          throw new Error(`Assessment-term-level section ${section.sectionKey} must define repeatFor terms`);
         }
 
-        for (const quarter of quarters) {
-          if (!allowedQuarters.has(quarter)) {
-            throw new Error(`Invalid quarter ${quarter} in section ${section.sectionKey}`);
+        for (const term of terms) {
+          if (!allowedQuarters.has(term)) {
+            throw new Error(`Invalid assessment term ${term} in section ${section.sectionKey}`);
           }
         }
       }
@@ -1552,7 +1617,7 @@ export class PmsTemplateService extends BaseService {
 
       if (
         section.renderingScope &&
-        !['QUARTER_ONLY', 'ANNUAL_ONLY', 'BOTH'].includes(section.renderingScope)
+        !['TERM_ONLY', 'ANNUAL_ONLY', 'BOTH'].includes(section.renderingScope)
       ) {
         throw new Error(`Invalid renderingScope in section ${section.sectionKey}`);
       }
@@ -1831,21 +1896,21 @@ export class PmsTemplateService extends BaseService {
 
     for (const section of version.sections ?? []) {
       // Check 12: Quarter scope validity for sections
-      if (section.level === PmsTemplateSectionLevel.QUARTER) {
+      if (this.isTermLevel(section.level)) {
         const repeatFor = section.repeatFor ?? [];
         if (repeatFor.length === 0) {
-          errors.push(`Quarter-level section "${section.sectionLabel || section.sectionKey}" must define repeatFor quarters`);
+          errors.push(`Assessment-term-level section "${section.sectionLabel || section.sectionKey}" must define repeatFor terms`);
         }
         for (const q of repeatFor) {
           if (!allowedQuarters.has(q)) {
-            errors.push(`Invalid quarter "${q}" in repeatFor of section "${section.sectionLabel || section.sectionKey}"`);
+            errors.push(`Invalid assessment term "${q}" in repeatFor of section "${section.sectionLabel || section.sectionKey}"`);
           }
         }
       }
-      if (section.quarterScope && section.quarterScope.length > 0) {
-        for (const q of section.quarterScope) {
+      if (section.termScope && section.termScope.length > 0) {
+        for (const q of section.termScope) {
           if (!allowedQuarters.has(q)) {
-            errors.push(`Invalid quarter "${q}" in quarterScope of section "${section.sectionLabel || section.sectionKey}"`);
+            errors.push(`Invalid assessment term "${q}" in termScope of section "${section.sectionLabel || section.sectionKey}"`);
           }
         }
       }
@@ -2064,27 +2129,27 @@ export class PmsTemplateService extends BaseService {
     // Annual scoring weights check
     const annualScoringConfig = version.annualScoringConfig as
       | {
-        quarterWeights?: Record<string, number>;
+        termWeights?: Record<string, number>;
         excludedQuarters?: string[];
       }
       | undefined;
-    const quarterWeights = annualScoringConfig?.quarterWeights;
-    if (quarterWeights && Object.keys(quarterWeights).length > 0) {
-      for (const quarter of Object.keys(quarterWeights)) {
+    const termWeights = annualScoringConfig?.termWeights;
+    if (termWeights && Object.keys(termWeights).length > 0) {
+      for (const quarter of Object.keys(termWeights)) {
         if (!allowedQuarters.has(quarter as AssessmentTermCodeType)) {
           errors.push(`Annual scoring quarter ${quarter} is not a supported assessment term`);
           continue;
         }
-        const weight = Number(quarterWeights[quarter] ?? 0);
+        const weight = Number(termWeights[quarter] ?? 0);
         if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
           errors.push(`Annual scoring quarter ${quarter} weightage must be between 0 and 100`);
         }
       }
 
       const excluded = new Set(annualScoringConfig?.excludedQuarters ?? []);
-      const totalQuarterWeight = Object.keys(quarterWeights)
+      const totalQuarterWeight = Object.keys(termWeights)
         .filter((quarter) => !excluded.has(quarter))
-        .reduce((total, quarter) => total + Number(quarterWeights[quarter] ?? 0), 0);
+        .reduce((total, quarter) => total + Number(termWeights[quarter] ?? 0), 0);
 
       if (totalQuarterWeight !== 100) {
         errors.push(`Annual scoring quarter weightage total must be exactly 100% before activation (currently ${totalQuarterWeight}%)`);
@@ -2234,25 +2299,25 @@ export class PmsTemplateService extends BaseService {
     quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
     annualAssignmentId?: string;
-    quarterAssignmentId?: string;
+    termAssignmentId?: string;
   }> {
     const visibilityFlags = new Set(input.visibilityFlags ?? []);
     let hierarchyScope = input.hierarchyScope;
     let quarter = input.quarter;
     let annualAssignmentId = input.annualAssignmentId?.trim() || undefined;
-    let quarterAssignmentId = input.quarterAssignmentId?.trim() || undefined;
+    let termAssignmentId = input.termAssignmentId?.trim() || undefined;
 
-    if (quarterAssignmentId) {
-      const quarterAssignment = await QuarterAssignment.findOne({
-        _id: quarterAssignmentId,
+    if (termAssignmentId) {
+      const termAssignment = await TermAssignment.findOne({
+        _id: termAssignmentId,
         isDeleted: false,
       }).lean();
-      if (!quarterAssignment) {
+      if (!termAssignment) {
         throw new Error('Quarter assignment not found');
       }
 
-      annualAssignmentId = annualAssignmentId ?? quarterAssignment.annualAssignmentId.toString();
-      quarter = quarter ?? quarterAssignment.quarterCode;
+      annualAssignmentId = annualAssignmentId ?? termAssignment.annualAssignmentId.toString();
+      quarter = quarter ?? termAssignment.assessmentTermCode;
     }
 
     if (annualAssignmentId) {
@@ -2281,7 +2346,7 @@ export class PmsTemplateService extends BaseService {
       quarter,
       visibilityFlags: [...visibilityFlags],
       annualAssignmentId,
-      quarterAssignmentId,
+      termAssignmentId,
     };
   }
 
@@ -2293,16 +2358,16 @@ export class PmsTemplateService extends BaseService {
     quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
     annualAssignmentId?: string;
-    quarterAssignmentId?: string;
+    termAssignmentId?: string;
   }> {
     const visibilityFlags = new Set(input.visibilityFlags ?? []);
     let hierarchyScope = input.hierarchyScope;
     let quarter = input.quarter;
     let annualAssignmentId = input.annualAssignmentId?.trim() || undefined;
-    let quarterAssignmentId = input.quarterAssignmentId?.trim() || undefined;
-    let quarterAssignment: any = null;
+    let termAssignmentId = input.termAssignmentId?.trim() || undefined;
+    let termAssignment: any = null;
 
-    if (!annualAssignmentId && !quarterAssignmentId) {
+    if (!annualAssignmentId && !termAssignmentId) {
       return {
         hierarchyScope,
         quarter,
@@ -2310,16 +2375,16 @@ export class PmsTemplateService extends BaseService {
       };
     }
 
-    if (quarterAssignmentId) {
-      quarterAssignment = await QuarterAssignment.findOne({
-        _id: quarterAssignmentId,
+    if (termAssignmentId) {
+      termAssignment = await TermAssignment.findOne({
+        _id: termAssignmentId,
         isDeleted: false,
       }).lean();
-      if (!quarterAssignment) {
+      if (!termAssignment) {
         throw new Error('Quarter assignment not found');
       }
-      annualAssignmentId = annualAssignmentId ?? quarterAssignment.annualAssignmentId.toString();
-      quarter = quarter ?? quarterAssignment.quarterCode;
+      annualAssignmentId = annualAssignmentId ?? termAssignment.annualAssignmentId.toString();
+      quarter = quarter ?? termAssignment.assessmentTermCode;
     }
 
     const annualAssignment = annualAssignmentId
@@ -2337,7 +2402,7 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Template version does not belong to the requested assignment');
     }
 
-    await this.assertRuntimeTemplateAccess(annualAssignment, quarterAssignment);
+    await this.assertRuntimeTemplateAccess(annualAssignment, termAssignment);
 
     const assignmentVisibility = annualAssignment.visibility ?? {};
     if (assignmentVisibility.employeeReviewVisible) visibilityFlags.add('employee_review');
@@ -2362,13 +2427,13 @@ export class PmsTemplateService extends BaseService {
       quarter,
       visibilityFlags: [...visibilityFlags],
       annualAssignmentId,
-      quarterAssignmentId,
+      termAssignmentId,
     };
   }
 
   private async assertRuntimeTemplateAccess(
     annualAssignment: Record<string, any>,
-    quarterAssignment?: Record<string, any> | null,
+    termAssignment?: Record<string, any> | null,
   ): Promise<void> {
     const actor = this.context.user;
     if (!actor) {
@@ -2393,10 +2458,10 @@ export class PmsTemplateService extends BaseService {
       resource: {
         employeeId: annualAssignment.employeeId?.toString(),
         assignedManagerId:
-          quarterAssignment?.assignedManagerId?.toString() ??
+          termAssignment?.assignedManagerId?.toString() ??
           annualAssignment.assignedManagerId?.toString(),
         managerId:
-          quarterAssignment?.assignedManagerId?.toString() ??
+          termAssignment?.assignedManagerId?.toString() ??
           annualAssignment.assignedManagerId?.toString(),
       },
     });
