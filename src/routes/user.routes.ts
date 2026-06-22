@@ -289,6 +289,7 @@ export const userRoutes: RouteHandler = async (
                     _id: { type: 'string' },
                     name: { type: 'string' },
                     email: { type: 'string' },
+                    employeeCode: { type: 'string' },
                     role: { type: 'string' },
                     profilePicture: { type: 'string' }
                   }
