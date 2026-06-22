@@ -1,3 +1,4 @@
+
 import { MultipartFile } from '@fastify/multipart';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
@@ -42,6 +43,8 @@ interface AchievementItemInput {
   objectiveSnapshot?: AchievementObjectiveSnapshotInput;
   subject?: string;
   description?: string;
+  employeeSelfRating?: number | string | null;
+  employeeSelfRatingComments?: string;
   outcome?: string;
   attachments?: AchievementAttachmentInput[];
 }
@@ -84,6 +87,9 @@ type AchievementTemplateConfig = {
   achievementSubmissionRequired: boolean;
   objectiveLinkedAchievementRequired: boolean;
   additionalContributionsEnabled: boolean;
+  employeeSelfRatingEnabled: boolean;
+  employeeSelfRatingRequired: boolean;
+  employeeCommentsPerObjectiveEnabled: boolean;
   allowManagerReviewWithoutAchievement: boolean;
   managerCanEditEmployeeAchievement: false;
 };
@@ -119,6 +125,8 @@ type AchievementSubmissionRecord = {
     objectiveSnapshot?: AchievementObjectiveSnapshotInput;
     subject: string;
     description: string;
+    employeeSelfRating?: number;
+    employeeSelfRatingComments?: string;
     outcome?: string;
     attachments: Array<{
       fileName?: string;
@@ -552,6 +560,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           : undefined,
         subject: String(item.subject ?? ''),
         description: String(item.description ?? ''),
+        employeeSelfRating: item.employeeSelfRating === undefined || item.employeeSelfRating === null
+          ? undefined
+          : Number(item.employeeSelfRating),
+        employeeSelfRatingComments: item.employeeSelfRatingComments,
         outcome: item.outcome,
         attachments: (item.attachments ?? []).map((attachment: Record<string, any>) => ({
           fileName: attachment.fileName,
@@ -602,6 +614,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         ? String(objective?.title ?? item.subject ?? '').trim()
         : String(item.subject ?? '').trim();
       const description = String(item.description ?? '').trim();
+      const employeeSelfRating = this.normalizeEmployeeSelfRating(item.employeeSelfRating, index + 1);
+      const employeeSelfRatingComments = String(item.employeeSelfRatingComments ?? '').trim();
       const outcome = String(item.outcome ?? '').trim();
       const attachments = (item.attachments ?? []).map((attachment) => ({
         fileName: attachment.fileName?.trim(),
@@ -616,11 +630,15 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         itemType === AchievementItemType.ADDITIONAL &&
         !subject &&
         !description &&
+        employeeSelfRating === undefined &&
+        !employeeSelfRatingComments &&
         !outcome &&
         attachments.every((attachment) => !attachment.fileName && !attachment.fileUrl && !attachment.documentId);
       const isEmptyObjective =
         itemType === AchievementItemType.OBJECTIVE &&
         !description &&
+        employeeSelfRating === undefined &&
+        !employeeSelfRatingComments &&
         !outcome &&
         attachments.every((attachment) => !attachment.fileName && !attachment.fileUrl && !attachment.documentId);
 
@@ -631,6 +649,14 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       if (itemType === AchievementItemType.OBJECTIVE) {
         if (!objectiveId || !objective) {
           throw new Error(`Approved objective is required for achievement row ${index + 1}`);
+        }
+        if (
+          isSubmit &&
+          config?.employeeSelfRatingRequired &&
+          objective.isScoreable &&
+          employeeSelfRating === undefined
+        ) {
+          throw new Error(`Employee self rating is required for objective: ${objective.title}`);
         }
       }
 
@@ -655,6 +681,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           : undefined,
         subject,
         description,
+        employeeSelfRating,
+        employeeSelfRatingComments: employeeSelfRatingComments || undefined,
         outcome: outcome || undefined,
         attachments,
       };
@@ -766,34 +794,47 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const metadata = (templateVersion?.metadata ?? {}) as Record<string, any>;
     const sectionExists = Boolean(section);
     const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const configFlag = (key: string, fallback: boolean) => {
+      if (employeeAchievementConfig[key] !== undefined) {
+        return Boolean(employeeAchievementConfig[key]);
+      }
+      if (metadata[key] !== undefined) {
+        return Boolean(metadata[key]);
+      }
+      return fallback;
+    };
     const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
       ? 'ACHIEVEMENT_THEN_MANAGER'
       : 'MANAGER_ONLY';
 
     return {
       reviewFlowMode,
-      employeeAchievementEnabled:
-        employeeAchievementConfig.employeeAchievementEnabled !== undefined
-          ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
-          : sectionExists,
-      achievementSubmissionRequired:
-        employeeAchievementConfig.achievementSubmissionRequired !== undefined
-          ? Boolean(employeeAchievementConfig.achievementSubmissionRequired)
-          : sectionExists,
-      allowManagerReviewWithoutAchievement:
-        employeeAchievementConfig.allowManagerReviewWithoutAchievement !== undefined
-          ? Boolean(employeeAchievementConfig.allowManagerReviewWithoutAchievement)
-          : false,
+      employeeAchievementEnabled: configFlag('employeeAchievementEnabled', sectionExists),
+      achievementSubmissionRequired: configFlag('achievementSubmissionRequired', sectionExists),
+      allowManagerReviewWithoutAchievement: configFlag('allowManagerReviewWithoutAchievement', false),
       managerCanEditEmployeeAchievement: false,
-      objectiveLinkedAchievementRequired:
-        employeeAchievementConfig.objectiveLinkedAchievementRequired !== undefined
-          ? Boolean(employeeAchievementConfig.objectiveLinkedAchievementRequired)
-          : true,
-      additionalContributionsEnabled:
-        employeeAchievementConfig.additionalContributionsEnabled !== undefined
-          ? Boolean(employeeAchievementConfig.additionalContributionsEnabled)
-          : true,
+      objectiveLinkedAchievementRequired: configFlag('objectiveLinkedAchievementRequired', true),
+      additionalContributionsEnabled: configFlag('additionalContributionsEnabled', true),
+      employeeSelfRatingEnabled: configFlag('employeeSelfRatingEnabled', false),
+      employeeSelfRatingRequired: configFlag('employeeSelfRatingRequired', false),
+      employeeCommentsPerObjectiveEnabled: configFlag('employeeCommentsPerObjectiveEnabled', false),
     };
+  }
+
+  private normalizeEmployeeSelfRating(value: number | string | null | undefined, rowNumber: number): number | undefined {
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+
+    const rating = Number(value);
+    if (!Number.isFinite(rating)) {
+      throw new Error(`Employee self rating must be a number for row ${rowNumber}`);
+    }
+    if (rating < 1 || rating > 5) {
+      throw new Error(`Employee self rating must be between 1 and 5 for row ${rowNumber}`);
+    }
+
+    return rating;
   }
 
   private async getApprovedObjectives(
@@ -1193,3 +1234,4 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return submission?.annualAssignmentId?.toString();
   }
 }
+
