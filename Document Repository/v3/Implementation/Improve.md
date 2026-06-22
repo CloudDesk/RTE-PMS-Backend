@@ -197,6 +197,7 @@ Custom scoring rules
 Objective scoring flags
 ```
 
+
 ### Final Gap Check Result
 
 No major missing business area is found before implementation.
