@@ -10,3 +10,4 @@ dist
 
 # Environment variables
 .env
+scripts/*

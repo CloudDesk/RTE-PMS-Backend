@@ -45,6 +45,8 @@ export interface IAchievementItem {
   objectiveSnapshot?: IAchievementObjectiveSnapshot;
   subject: string;
   description: string;
+  employeeSelfRating?: number;
+  employeeSelfRatingComments?: string;
   outcome?: string;
   attachments?: IAchievementAttachmentMetadata[];
 }
@@ -133,6 +135,8 @@ const achievementItemSchema = new Schema<IAchievementItem>(
     },
     subject: { type: String, required: true, trim: true },
     description: { type: String, required: true, trim: true },
+    employeeSelfRating: { type: Number, min: 1, max: 5 },
+    employeeSelfRatingComments: { type: String, trim: true },
     outcome: { type: String, trim: true },
     attachments: { type: [achievementAttachmentMetadataSchema], default: [] },
   },
