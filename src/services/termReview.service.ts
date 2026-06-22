@@ -2263,7 +2263,13 @@ export class TermReviewService extends BaseService {
       return this.defaultTermReviewConfig();
     }
 
-    const objectiveScoringFields = applicableSections
+    const objectiveScoringSections = applicableSections.filter(
+      (section) =>
+        section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
+        section.sectionScoringConfig?.participatesInScoring === true,
+    );
+
+    const objectiveScoringFields = objectiveScoringSections
       .filter(
         (section) =>
           section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
@@ -2294,9 +2300,24 @@ export class TermReviewService extends BaseService {
       ) ??
       null;
 
+    const inferredObjectiveMaxScore =
+      objectiveScoringSections
+        .map((section) => Number(section.sectionScoringConfig?.maxSectionScore))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .sort((left, right) => right - left)[0] ?? 100;
+
     const objectiveRatingRule = objectiveRatingField
       ? this.buildRatingRuleFromTemplateField(objectiveRatingField)
-      : null;
+      : objectiveScoringSections.length > 0
+        ? {
+            scoreType: 'MANUAL',
+            minScore: 0,
+            maxScore: inferredObjectiveMaxScore,
+            allowedScores: [0, 0.25, 0.5, 0.75, 1].map(
+              (ratio) => Math.round(inferredObjectiveMaxScore * ratio * 100) / 100,
+            ),
+          }
+        : null;
 
     const overallScoreMax =
       applicableSections
