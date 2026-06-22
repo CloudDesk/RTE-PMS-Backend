@@ -1639,7 +1639,15 @@ export class ObjectiveService extends BaseService {
       return;
     }
 
-    const [templateVersions, existingObjectives] = await Promise.all([
+    const termCycleIds = Array.from(
+      new Set(
+        termAssignments
+          .map((item) => item.cycleTermId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const [templateVersions, existingObjectives, termCycles] = await Promise.all([
       PmsTemplateVersion.find({
         _id: { $in: templateVersionIds },
         isDeleted: false,
@@ -1650,10 +1658,19 @@ export class ObjectiveService extends BaseService {
       })
         .select('termAssignmentId source templateObjectiveKey objectiveNo')
         .lean(),
+      TermCycle.find({
+        _id: { $in: termCycleIds },
+        isDeleted: false,
+      })
+        .select('achievementSubmissionWindow termFinalizationWindow')
+        .lean(),
     ]);
 
     const templateVersionMap = new Map(
       templateVersions.map((item) => [item._id.toString(), item]),
+    );
+    const termCycleMap = new Map(
+      termCycles.map((item) => [item._id.toString(), item]),
     );
     const annualAssignmentMap = new Map(
       annualAssignments.map((item) => [item._id.toString(), item]),
@@ -1689,6 +1706,14 @@ export class ObjectiveService extends BaseService {
       const templateVersion = annualAssignment?.templateVersionId
         ? templateVersionMap.get(annualAssignment.templateVersionId.toString())
         : undefined;
+      const termCycle = termAssignment.cycleTermId
+        ? termCycleMap.get(termAssignment.cycleTermId.toString())
+        : undefined;
+      const defaultDueDate =
+        termCycle?.achievementSubmissionWindow?.endDate ||
+        termCycle?.achievementSubmissionWindow?.dueDate ||
+        termCycle?.termFinalizationWindow?.endDate ||
+        undefined;
       const objectiveConfig = templateVersion
         ? this.resolveTemplateObjectiveConfig(templateVersion.sections ?? [], termAssignment.assessmentTermCode)
         : undefined;
@@ -1724,9 +1749,6 @@ export class ObjectiveService extends BaseService {
 
         nextObjectiveNo += 1;
         existingKeys.add(predefinedObjective.key);
-        const predefinedDueDate = predefinedObjective.dueDate
-          ? new Date(predefinedObjective.dueDate)
-          : undefined;
 
         objectivePayloads.push({
           termAssignmentId: termAssignment._id,
@@ -1744,10 +1766,7 @@ export class ObjectiveService extends BaseService {
           description: predefinedObjective.description,
           targetMetric: predefinedObjective.kpi,
           targetValue: predefinedObjective.targetValue,
-          targetDate:
-            predefinedDueDate && !Number.isNaN(predefinedDueDate.getTime())
-              ? predefinedDueDate
-              : undefined,
+          targetDate: defaultDueDate,
           weightage: predefinedObjective.weightage,
           successCriteria: predefinedObjective.successCriteria,
           status: ObjectiveStatus.OBJECTIVE_APPROVED,
