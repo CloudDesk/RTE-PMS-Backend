@@ -20,6 +20,7 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { User } from '../models/user.model';
 import { auditService } from './audit.service';
+import { TermReviewService } from './termReview.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IPmsTemplateVersion, ITemplateSection } from '../models/pms-template-version.model';
 
@@ -29,6 +30,18 @@ export interface ManagerReviewTeamQuery {
   limit?: string | number;
   includeAllTeam?: string | boolean;
 }
+
+export type ManagerReviewQueueStatus =
+  | 'READY'
+  | 'MISSING_REVIEW_FORM'
+  | 'ALREADY_STARTED'
+  | 'NOT_ELIGIBLE'
+  | 'IN_PROGRESS'
+  | 'SUBMITTED'
+  | 'COMPLETED'
+  | 'OVERDUE';
+
+export interface ManagerReviewQueueQuery extends ManagerReviewTeamQuery {}
 
 export interface CreateManagerReviewTemplateInput {
   name: string;
@@ -115,6 +128,104 @@ export class ManagerInitiatedReviewService extends BaseService {
     ]);
 
     return { items, total, page, limit };
+  }
+
+  async getManagerReviewQueue(query: ManagerReviewQueueQuery = {}) {
+    const managerId = this.requireManagerActorId();
+    const [employeesResult, templates, managerAssignments] = await Promise.all([
+      this.listEligibleTeamMembers({
+        ...query,
+        includeAllTeam: query.includeAllTeam ?? true,
+        limit: query.limit ?? 100,
+      }),
+      this.listManagerTemplates(),
+      new TermReviewService(this.context).listAssignments('manager'),
+    ]);
+
+    const activeTemplates = templates.filter((template) => template.currentVersion?._id);
+    const defaultTemplate = this.resolveDefaultReviewTemplate(activeTemplates);
+    const managerInitiatedAssignments = managerAssignments.filter((assignment) =>
+      String(assignment.cycleCode || '').startsWith('MIR_'),
+    );
+    const assignmentByEmployeeId = new Map(
+      managerInitiatedAssignments.map((assignment) => [assignment.employeeId, assignment]),
+    );
+
+    const pending: Record<string, unknown>[] = [];
+    const blocked: Record<string, unknown>[] = [];
+
+    for (const employee of employeesResult.items) {
+      const employeeId = employee._id?.toString?.() ?? String(employee._id);
+      const existingAssignment = assignmentByEmployeeId.get(employeeId);
+
+      if (existingAssignment) {
+        continue;
+      }
+
+      const eligible = this.isConfirmationReviewCandidate(employee);
+      if (activeTemplates.length === 0) {
+        blocked.push(
+          this.buildQueueEmployeeRecord(employee, {
+            status: 'MISSING_REVIEW_FORM',
+            canStartReview: false,
+            cannotStartReason: 'A review form is required before you can start reviews.',
+            defaultTemplate,
+          }),
+        );
+        continue;
+      }
+
+      if (!eligible) {
+        blocked.push(
+          this.buildQueueEmployeeRecord(employee, {
+            status: 'NOT_ELIGIBLE',
+            canStartReview: false,
+            cannotStartReason: 'This employee is not ready for confirmation review yet.',
+            defaultTemplate,
+          }),
+        );
+        continue;
+      }
+
+      pending.push(
+        this.buildQueueEmployeeRecord(employee, {
+          status: 'READY',
+          canStartReview: true,
+          cannotStartReason: '',
+          defaultTemplate,
+        }),
+      );
+    }
+
+    const inProgress = managerInitiatedAssignments
+      .filter((assignment) => !this.isCompletedQueueAssignment(assignment))
+      .map((assignment) => this.withQueueAssignmentMetadata(assignment));
+    const completed = managerInitiatedAssignments
+      .filter((assignment) => this.isCompletedQueueAssignment(assignment))
+      .map((assignment) => this.withQueueAssignmentMetadata(assignment));
+
+    return {
+      pending,
+      inProgress,
+      completed,
+      blocked,
+      templates,
+      defaultTemplateVersionId: defaultTemplate?.currentVersion?._id?.toString?.() ?? '',
+      defaultTemplateName: defaultTemplate?.name ?? '',
+      counts: {
+        pending: pending.length,
+        inProgress: inProgress.length,
+        completed: completed.length,
+        blocked: blocked.length,
+      },
+      meta: {
+        source: 'manager-review-queue',
+        managerId,
+        page: employeesResult.page,
+        limit: employeesResult.limit,
+        totalEmployees: employeesResult.total,
+      },
+    };
   }
 
   async listManagerTemplates() {
@@ -676,6 +787,119 @@ export class ManagerInitiatedReviewService extends BaseService {
       version?.launchPolicy?.launchOwner === 'MANAGER' &&
       version?.launchPolicy?.launchSource === 'MANAGER_INITIATED'
     );
+  }
+
+  private resolveDefaultReviewTemplate(templates: Record<string, any>[]) {
+    if (templates.length === 0) return null;
+    if (templates.length === 1) return templates[0];
+
+    const configured = templates.find((template) => {
+      const launchPolicy = template.currentVersion?.launchPolicy ?? {};
+      const ownership = template.currentVersion?.templateOwnership ?? {};
+      return Boolean(
+        launchPolicy.isDefault ||
+        launchPolicy.defaultForm ||
+        launchPolicy.defaultReviewForm ||
+        ownership.isDefault ||
+        ownership.defaultForm ||
+        ownership.defaultReviewForm,
+      );
+    });
+    if (configured) return configured;
+
+    const namedDefault = templates.find((template) =>
+      /default|standard|confirmation/i.test(String(template.name || '')),
+    );
+    if (namedDefault) return namedDefault;
+
+    return (
+      templates.find((template) => template.templateLabel === 'Manager Template') ??
+      templates[0]
+    );
+  }
+
+  private isConfirmationReviewCandidate(employee: Record<string, any>) {
+    const text = `${employee.employmentStatus || ''} ${employee.specificRole || ''} ${employee.role || ''}`.toLowerCase();
+    return (
+      Boolean(employee.isIntern) ||
+      ['intern', 'probation', 'fresher', 'trainee', 'junior'].some((keyword) =>
+        text.includes(keyword),
+      )
+    );
+  }
+
+  private buildQueueEmployeeRecord(
+    employee: Record<string, any>,
+    input: {
+      status: ManagerReviewQueueStatus;
+      canStartReview: boolean;
+      cannotStartReason: string;
+      defaultTemplate: Record<string, any> | null;
+    },
+  ) {
+    return {
+      ...employee,
+      queueStatus: input.status,
+      primaryAction: input.canStartReview ? 'START_REVIEW' : 'VIEW_REASON',
+      canStartReview: input.canStartReview,
+      cannotStartReason: input.cannotStartReason,
+      defaultTemplateVersionId: input.defaultTemplate?.currentVersion?._id?.toString?.() ?? '',
+      defaultTemplateName: input.defaultTemplate?.name ?? '',
+      dueDate: this.suggestDueDate(employee)?.toISOString() ?? null,
+    };
+  }
+
+  private withQueueAssignmentMetadata(assignment: Record<string, any>) {
+    const status = this.queueAssignmentStatus(assignment);
+    return {
+      ...assignment,
+      queueStatus: status,
+      primaryAction: status === 'SUBMITTED' || status === 'COMPLETED' ? 'VIEW' : 'CONTINUE',
+      canStartReview: false,
+      cannotStartReason:
+        status === 'COMPLETED' || status === 'SUBMITTED'
+          ? 'This review has already been submitted.'
+          : 'A review already exists for this employee.',
+    };
+  }
+
+  private queueAssignmentStatus(assignment: Record<string, any>): ManagerReviewQueueStatus {
+    if (this.isCompletedQueueAssignment(assignment)) {
+      const state = String(assignment.termState || '').toUpperCase();
+      return state.includes('SUBMITTED') ? 'SUBMITTED' : 'COMPLETED';
+    }
+    const due = assignment.termWindows?.managerReview?.endDate;
+    if (due) {
+      const dueEnd = new Date(due);
+      dueEnd.setHours(23, 59, 59, 999);
+      if (dueEnd.getTime() < Date.now()) return 'OVERDUE';
+    }
+    return 'IN_PROGRESS';
+  }
+
+  private isCompletedQueueAssignment(assignment: Record<string, any>) {
+    const termState = String(assignment.termState || '').toUpperCase();
+    const reviewStatus = String(assignment.termReview?.reviewStatus || '').toUpperCase();
+    return (
+      termState === TermWorkflowState.MANAGER_REVIEW_SUBMITTED ||
+      termState === TermWorkflowState.TERM_FINALIZED ||
+      termState === TermWorkflowState.CLOSED_BY_ADMIN ||
+      reviewStatus === 'MANAGER_REVIEW_SUBMITTED' ||
+      reviewStatus === 'FINALIZED'
+    );
+  }
+
+  private suggestDueDate(employee: Record<string, any>) {
+    const base = employee.probationDate || employee.joiningDate;
+    const date = base ? new Date(base) : new Date();
+    if (Number.isNaN(date.getTime())) return null;
+    if (!employee.probationDate && employee.joiningDate) {
+      date.setDate(date.getDate() + 90);
+    } else if (!employee.probationDate) {
+      date.setDate(date.getDate() + 30);
+    }
+    date.setHours(23, 59, 59, 999);
+    return date;
   }
 
   private async assertEmployeeInManagerTeam(managerId: string, employeeId: Types.ObjectId) {
