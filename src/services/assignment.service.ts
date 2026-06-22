@@ -1475,25 +1475,7 @@ export class AssignmentService extends BaseService {
       return true;
     }
 
-    if (scopedTerms.includes(termCode)) {
-      return true;
-    }
-
-    const quarterlyTerms = [
-      AssessmentTermCode.Q1,
-      AssessmentTermCode.Q2,
-      AssessmentTermCode.Q3,
-      AssessmentTermCode.Q4,
-    ] as QuarterCode[];
-    const allQuarterlyTermsSelected = quarterlyTerms.every((quarter) =>
-      scopedTerms.includes(quarter),
-    );
-
-    return allQuarterlyTermsSelected && (
-      termCode === AssessmentTermCode.H1 ||
-      termCode === AssessmentTermCode.H2 ||
-      termCode === AssessmentTermCode.Y1
-    );
+    return scopedTerms.includes(termCode);
   }
 
   private async lockTemplateVersion(templateVersionId: Types.ObjectId): Promise<void> {
