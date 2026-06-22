@@ -1197,7 +1197,15 @@ export class AssignmentService extends BaseService {
   private async seedPredefinedObjectives(
     annualAssignment: IAnnualAssignment,
     termAssignments: ITermAssignment[],
-    termCycleById: Map<string, { objectiveApprovalWindow?: { endDate?: Date }; objectiveSettingWindow?: { endDate?: Date }; termFinalizationWindow?: { endDate?: Date } }>,
+    termCycleById: Map<
+      string,
+      {
+        achievementSubmissionWindow?: { endDate?: Date; dueDate?: Date };
+        objectiveApprovalWindow?: { endDate?: Date };
+        objectiveSettingWindow?: { endDate?: Date };
+        termFinalizationWindow?: { endDate?: Date };
+      }
+    >,
   ): Promise<Set<string>> {
     const templateVersionId = annualAssignment.templateVersionId?.toString();
     if (!templateVersionId) {
@@ -1239,8 +1247,8 @@ export class AssignmentService extends BaseService {
         ? termCycleById.get(termAssignment.cycleTermId.toString())
         : undefined;
       const defaultDueDate =
-        termCycle?.objectiveApprovalWindow?.endDate ||
-        termCycle?.objectiveSettingWindow?.endDate ||
+        termCycle?.achievementSubmissionWindow?.endDate ||
+        termCycle?.achievementSubmissionWindow?.dueDate ||
         termCycle?.termFinalizationWindow?.endDate ||
         undefined;
       const config = this.resolveTemplateObjectiveConfig(
