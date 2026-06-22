@@ -122,6 +122,7 @@ export interface TemplateListQuery {
   page?: string | number;
   limit?: string | number;
   owner?: string;
+  sort?: string;
 }
 
 export interface UpdateTemplateInput {
@@ -175,7 +176,7 @@ export class PmsTemplateService extends BaseService {
     }
 
     if (query.status?.trim()) {
-      filter.status = query.status.trim();
+      filter.status = query.status.trim().toUpperCase();
     }
 
     if (query.search?.trim()) {
@@ -186,9 +187,18 @@ export class PmsTemplateService extends BaseService {
       ];
     }
 
+    const sort: Record<string, 1 | -1> =
+      query.sort === 'updatedAt_asc'
+        ? { updatedAt: 1 }
+        : query.sort === 'name_asc'
+          ? { name: 1 }
+          : query.sort === 'name_desc'
+            ? { name: -1 }
+            : { updatedAt: -1 };
+
     const [items, total] = await Promise.all([
       PmsTemplate.find(filter)
-        .sort({ createdAt: -1 })
+        .sort(sort)
         .skip((page - 1) * limit)
         .limit(limit),
       PmsTemplate.countDocuments(filter),
