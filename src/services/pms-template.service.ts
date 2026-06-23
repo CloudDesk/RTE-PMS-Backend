@@ -1094,6 +1094,16 @@ export class PmsTemplateService extends BaseService {
             label: col.label,
             type: col.type,
             required: !!col.required,
+            options: Array.isArray(col.options)
+              ? col.options
+                .filter((option: any) => option?.label && option?.value)
+                .map((option: any) => ({
+                  label: option.label,
+                  value: option.value,
+                  ...(option.weight !== undefined ? { weight: Number(option.weight) } : {}),
+                  ...(option.score !== undefined ? { score: Number(option.score) } : {}),
+                }))
+              : undefined,
           })),
           minRows: field.gridConfig.minRows,
           maxRows: field.gridConfig.maxRows,

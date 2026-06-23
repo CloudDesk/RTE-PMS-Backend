@@ -124,7 +124,7 @@ export interface ITemplateField {
     borderStyle?: 'standard' | 'paper';
   };
   gridConfig?: {
-    columns: Array<{ key: string; label: string; type: string; required?: boolean }>;
+    columns: Array<{ key: string; label: string; type: string; required?: boolean; options?: ITemplateOption[] }>;
     minRows?: number;
     maxRows?: number;
   };
@@ -143,6 +143,7 @@ interface IGridColumn {
   type: string;
   weightage?: number;
   required?: boolean;
+  options?: ITemplateOption[];
 }
 
 const matrixItemSchema = new Schema<IMatrixItem>(
@@ -173,6 +174,18 @@ const gridColumnSchema = new Schema<IGridColumn>(
     weightage: { type: Number },
     type: { type: String, required: true, trim: true },
     required: { type: Boolean, default: false },
+    options: {
+      type: [
+        {
+          label: { type: String, required: true },
+          value: { type: String, required: true },
+          score: { type: Number },
+          weight: { type: Number },
+          _id: false,
+        },
+      ],
+      default: undefined,
+    },
   },
   { _id: false },
 );
