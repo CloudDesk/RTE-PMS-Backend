@@ -858,9 +858,13 @@ export class ObjectiveService extends BaseService {
             });
             this.validateContextObjectiveRequiredFields(objectiveInput, source);
             if (this.objectiveSourceIsScoreable(source, objectiveConfig)) {
+              const scoreWeight = Number(objectiveInput.weightage);
+              if (!Number.isFinite(scoreWeight) || scoreWeight <= 0 || scoreWeight > 100) {
+                throw new Error('Score weight is required for scoreable manager-created objectives and must be between 1 and 100');
+              }
               await this.validateQuarterObjectiveRules(
                 termAssignment,
-                objectiveInput.weightage,
+                scoreWeight,
                 undefined,
                 source,
                 objectiveConfig,
