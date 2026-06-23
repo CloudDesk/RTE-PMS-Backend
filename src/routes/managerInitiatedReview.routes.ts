@@ -5,6 +5,7 @@ import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
   CreateManagerReviewTemplateInput,
   LaunchManagerReviewInput,
+  ManagerReviewQueueQuery,
   ManagerReviewTeamQuery,
   UpdateManagerReviewTemplateInput,
 } from '../services/managerInitiatedReview.service';
@@ -21,6 +22,21 @@ export const managerInitiatedReviewRoutes: RouteHandler = async (
           request.query as ManagerReviewTeamQuery,
         );
         return reply.send(successResponse('Eligible team members fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/queue',
+    { onRequest: [authenticate], schema: { tags: ['PMS Manager Initiated Reviews'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.managerInitiatedReviewService.getManagerReviewQueue(
+          request.query as ManagerReviewQueueQuery,
+        );
+        return reply.send(successResponse('Manager review queue fetched successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

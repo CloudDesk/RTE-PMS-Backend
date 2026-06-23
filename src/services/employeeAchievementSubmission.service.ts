@@ -1,3 +1,4 @@
+
 import { MultipartFile } from '@fastify/multipart';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
@@ -78,7 +79,7 @@ export interface SaveAchievementDraftInput {
   achievementValues?: AchievementValueInput[];
 }
 
-export interface SubmitAchievementInput extends SaveAchievementDraftInput {}
+export interface SubmitAchievementInput extends SaveAchievementDraftInput { }
 
 type AchievementTemplateConfig = {
   reviewFlowMode: 'MANAGER_ONLY' | 'ACHIEVEMENT_THEN_MANAGER';
@@ -303,39 +304,39 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
     const submission = existingSubmission
       ? await EmployeeAchievementSubmission.findByIdAndUpdate(
-          existingSubmission._id,
-          {
-            $set: {
-              achievementItems: normalizedItems,
-              achievementValues: normalizedValues,
-              draftSavedAt: now,
-              updatedBy: actorObjectId,
-              auditMetadata: {
-                todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
-              },
+        existingSubmission._id,
+        {
+          $set: {
+            achievementItems: normalizedItems,
+            achievementValues: normalizedValues,
+            draftSavedAt: now,
+            updatedBy: actorObjectId,
+            auditMetadata: {
+              todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
             },
-            $inc: { version: 1 },
           },
-          { new: true, runValidators: true },
-        )
+          $inc: { version: 1 },
+        },
+        { new: true, runValidators: true },
+      )
       : await EmployeeAchievementSubmission.create({
-          annualAssignmentId: termAssignment.annualAssignmentId,
-          termAssignmentId: termAssignment._id,
-          cycleId: termAssignment.cycleId,
-          employeeId: termAssignment.employeeId,
-          managerId: termAssignment.assignedManagerId,
-          templateVersionId: annualAssignment.templateVersionId,
-          assessmentTermCode: termAssignment.assessmentTermCode,
-          achievementItems: normalizedItems,
-          achievementValues: normalizedValues,
-          status: EmployeeAchievementSubmissionStatus.DRAFT,
-          draftSavedAt: now,
-          auditMetadata: {
-            todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
-          },
-          createdBy: actorObjectId,
-          updatedBy: actorObjectId,
-        });
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        termAssignmentId: termAssignment._id,
+        cycleId: termAssignment.cycleId,
+        employeeId: termAssignment.employeeId,
+        managerId: termAssignment.assignedManagerId,
+        templateVersionId: annualAssignment.templateVersionId,
+        assessmentTermCode: termAssignment.assessmentTermCode,
+        achievementItems: normalizedItems,
+        achievementValues: normalizedValues,
+        status: EmployeeAchievementSubmissionStatus.DRAFT,
+        draftSavedAt: now,
+        auditMetadata: {
+          todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
+        },
+        createdBy: actorObjectId,
+        updatedBy: actorObjectId,
+      });
 
     if (!submission) {
       throw new Error('Unable to save employee achievement draft');
@@ -413,45 +414,45 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
     const submission = existingSubmission
       ? await EmployeeAchievementSubmission.findByIdAndUpdate(
-          existingSubmission._id,
-          {
-            $set: {
-              achievementItems: submitItems,
-              achievementValues: submitValues,
-              status: EmployeeAchievementSubmissionStatus.LOCKED,
-              submittedBy: actorObjectId,
-              submittedAt: now,
-              lockedAt: now,
-              updatedBy: actorObjectId,
-              auditMetadata: {
-                todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
-              },
+        existingSubmission._id,
+        {
+          $set: {
+            achievementItems: submitItems,
+            achievementValues: submitValues,
+            status: EmployeeAchievementSubmissionStatus.LOCKED,
+            submittedBy: actorObjectId,
+            submittedAt: now,
+            lockedAt: now,
+            updatedBy: actorObjectId,
+            auditMetadata: {
+              todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
             },
-            $inc: { version: 1 },
           },
-          { new: true, runValidators: true },
-        )
+          $inc: { version: 1 },
+        },
+        { new: true, runValidators: true },
+      )
       : await EmployeeAchievementSubmission.create({
-          annualAssignmentId: termAssignment.annualAssignmentId,
-          termAssignmentId: termAssignment._id,
-          cycleId: termAssignment.cycleId,
-          employeeId: termAssignment.employeeId,
-          managerId: termAssignment.assignedManagerId,
-          templateVersionId: annualAssignment.templateVersionId,
-          assessmentTermCode: termAssignment.assessmentTermCode,
-          achievementItems: submitItems,
-          achievementValues: submitValues,
-          status: EmployeeAchievementSubmissionStatus.LOCKED,
-          draftSavedAt: now,
-          submittedBy: actorObjectId,
-          submittedAt: now,
-          lockedAt: now,
-          auditMetadata: {
-            todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
-          },
-          createdBy: actorObjectId,
-          updatedBy: actorObjectId,
-        });
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        termAssignmentId: termAssignment._id,
+        cycleId: termAssignment.cycleId,
+        employeeId: termAssignment.employeeId,
+        managerId: termAssignment.assignedManagerId,
+        templateVersionId: annualAssignment.templateVersionId,
+        assessmentTermCode: termAssignment.assessmentTermCode,
+        achievementItems: submitItems,
+        achievementValues: submitValues,
+        status: EmployeeAchievementSubmissionStatus.LOCKED,
+        draftSavedAt: now,
+        submittedBy: actorObjectId,
+        submittedAt: now,
+        lockedAt: now,
+        auditMetadata: {
+          todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
+        },
+        createdBy: actorObjectId,
+        updatedBy: actorObjectId,
+      });
 
     if (!submission) {
       throw new Error('Unable to submit employee achievement');
@@ -545,17 +546,17 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         objectiveId: item.objectiveId?.toString?.(),
         objectiveSnapshot: item.objectiveSnapshot
           ? {
-              title: item.objectiveSnapshot.title,
-              description: item.objectiveSnapshot.description,
-              expectedOutcome: item.objectiveSnapshot.expectedOutcome,
-              targetMetric: item.objectiveSnapshot.targetMetric,
-              targetValue: item.objectiveSnapshot.targetValue,
-              targetDate: item.objectiveSnapshot.targetDate
-                ? new Date(item.objectiveSnapshot.targetDate).toISOString()
-                : undefined,
-              weightage: item.objectiveSnapshot.weightage,
-              source: item.objectiveSnapshot.source,
-            }
+            title: item.objectiveSnapshot.title,
+            description: item.objectiveSnapshot.description,
+            expectedOutcome: item.objectiveSnapshot.expectedOutcome,
+            targetMetric: item.objectiveSnapshot.targetMetric,
+            targetValue: item.objectiveSnapshot.targetValue,
+            targetDate: item.objectiveSnapshot.targetDate
+              ? new Date(item.objectiveSnapshot.targetDate).toISOString()
+              : undefined,
+            weightage: item.objectiveSnapshot.weightage,
+            source: item.objectiveSnapshot.source,
+          }
           : undefined,
         subject: String(item.subject ?? ''),
         description: String(item.description ?? ''),
@@ -702,17 +703,17 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const effectiveValues = inputValues.length > 0
       ? inputValues
       : [
-          {
-            templateFieldId: field.fieldKey,
-            fieldKey: field.fieldKey,
-            sectionKey: EmployeeAchievementSubmissionService.SECTION_KEY,
-            roleCode: 'EMPLOYEE',
-            workflowStage: isSubmit ? 'ACHIEVEMENT_SUBMITTED' : 'ACHIEVEMENT_DRAFT',
-            valueJson: achievementItems,
-            valueStatus: isSubmit ? 'ACTIVE' : 'DRAFT',
-            valueDate: undefined,
-          },
-        ];
+        {
+          templateFieldId: field.fieldKey,
+          fieldKey: field.fieldKey,
+          sectionKey: EmployeeAchievementSubmissionService.SECTION_KEY,
+          roleCode: 'EMPLOYEE',
+          workflowStage: isSubmit ? 'ACHIEVEMENT_SUBMITTED' : 'ACHIEVEMENT_DRAFT',
+          valueJson: achievementItems,
+          valueStatus: isSubmit ? 'ACTIVE' : 'DRAFT',
+          valueDate: undefined,
+        },
+      ];
 
     return effectiveValues.map((value) => ({
       templateFieldId: value.templateFieldId,
@@ -793,24 +794,24 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const metadata = (templateVersion?.metadata ?? {}) as Record<string, any>;
     const sectionExists = Boolean(section);
     const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const configFlag = (key: string, fallback: boolean) => {
+      if (employeeAchievementConfig[key] !== undefined) {
+        return Boolean(employeeAchievementConfig[key]);
+      }
+      if (metadata[key] !== undefined) {
+        return Boolean(metadata[key]);
+      }
+      return fallback;
+    };
     const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
       ? 'ACHIEVEMENT_THEN_MANAGER'
       : 'MANAGER_ONLY';
 
     return {
       reviewFlowMode,
-      employeeAchievementEnabled:
-        employeeAchievementConfig.employeeAchievementEnabled !== undefined
-          ? Boolean(employeeAchievementConfig.employeeAchievementEnabled)
-          : sectionExists,
-      achievementSubmissionRequired:
-        employeeAchievementConfig.achievementSubmissionRequired !== undefined
-          ? Boolean(employeeAchievementConfig.achievementSubmissionRequired)
-          : sectionExists,
-      allowManagerReviewWithoutAchievement:
-        employeeAchievementConfig.allowManagerReviewWithoutAchievement !== undefined
-          ? Boolean(employeeAchievementConfig.allowManagerReviewWithoutAchievement)
-          : false,
+      employeeAchievementEnabled: configFlag('employeeAchievementEnabled', sectionExists),
+      achievementSubmissionRequired: configFlag('achievementSubmissionRequired', sectionExists),
+      allowManagerReviewWithoutAchievement: configFlag('allowManagerReviewWithoutAchievement', false),
       managerCanEditEmployeeAchievement: false,
       objectiveLinkedAchievementRequired:
         employeeAchievementConfig.objectiveLinkedAchievementRequired !== undefined
@@ -832,6 +833,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         employeeAchievementConfig.employeeCommentsPerObjectiveEnabled !== undefined
           ? Boolean(employeeAchievementConfig.employeeCommentsPerObjectiveEnabled)
           : false,
+      //   objectiveLinkedAchievementRequired: configFlag('objectiveLinkedAchievementRequired', true),
+      //   additionalContributionsEnabled: configFlag('additionalContributionsEnabled', true),
+      //   employeeSelfRatingEnabled: configFlag('employeeSelfRatingEnabled', false),
+      //   employeeSelfRatingRequired: configFlag('employeeSelfRatingRequired', false),
+      //   employeeCommentsPerObjectiveEnabled: configFlag('employeeCommentsPerObjectiveEnabled', false),
     };
   }
 
@@ -1248,3 +1254,4 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return submission?.annualAssignmentId?.toString();
   }
 }
+

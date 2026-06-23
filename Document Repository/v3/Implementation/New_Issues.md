@@ -209,8 +209,3 @@ What should be protected:
 - Manager Review section deletion
 - Removing all manager-editable fields from that section
 - Removing `MANAGER_REVIEW_OPEN` manager edit permission from all fields
-
-
-
-----
-
