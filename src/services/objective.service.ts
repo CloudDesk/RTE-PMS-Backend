@@ -629,7 +629,11 @@ export class ObjectiveService extends BaseService {
     }
 
     await this.assertAssignmentAccess('objective.create', termAssignment);
-    await this.assertObjectiveWindow(termAssignment, 'setting');
+    if (source === ObjectiveSource.MANAGER_CREATED) {
+      await this.assertManagerCreatedObjectiveAssignmentAllowed(termAssignment);
+    } else {
+      await this.assertObjectiveWindow(termAssignment, 'setting');
+    }
     this.validateContextObjectivePayload(input as unknown as Record<string, unknown>, source, objectiveConfig);
     this.validateObjectiveInput(input);
     this.validateContextObjectiveRequiredFields(input, source);
@@ -790,7 +794,7 @@ export class ObjectiveService extends BaseService {
         }
 
         await this.assertAssignmentAccess('objective.create', termAssignment);
-        await this.assertObjectiveWindow(termAssignment, 'setting');
+        await this.assertManagerCreatedObjectiveAssignmentAllowed(termAssignment);
         this.validateCreateAgainstConfig(source, objectiveConfig);
 
         if (termAssignment.termState === TermWorkflowState.NOT_STARTED) {
@@ -3328,6 +3332,28 @@ export class ObjectiveService extends BaseService {
           : 'Objective approval window is closed for this quarter',
       );
     }
+  }
+
+  private async assertManagerCreatedObjectiveAssignmentAllowed(
+    termAssignment: ITermAssignment,
+  ): Promise<void> {
+    const allowedStates = new Set<TermWorkflowState>([
+      TermWorkflowState.NOT_STARTED,
+      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+      TermWorkflowState.OBJECTIVE_APPROVED,
+    ]);
+
+    if (!allowedStates.has(termAssignment.termState)) {
+      throw new Error(
+        `Manager-created objectives can be assigned only during objective setting or after objectives are approved. Current state: ${termAssignment.termState}`,
+      );
+    }
+
+    if (termAssignment.termState === TermWorkflowState.OBJECTIVE_APPROVED) {
+      return;
+    }
+
+    await this.assertObjectiveWindow(termAssignment, 'setting');
   }
 
   private async getObjectiveDelegation(
