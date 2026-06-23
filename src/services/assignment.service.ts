@@ -155,7 +155,7 @@ export class AssignmentService extends BaseService {
     };
   }> {
     const annualCycleId = this.toObjectId(cycleId, 'cycleId');
-    await this.assertCycleExists(annualCycleId);
+    const annualCycle = await this.assertCycleExists(annualCycleId);
 
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
@@ -273,9 +273,23 @@ export class AssignmentService extends BaseService {
 
       const mappedItem = {
         ...item,
+        annualState:
+          annualCycle.status === AnnualWorkflowState.CANCELLED
+            ? AnnualWorkflowState.CANCELLED
+            : item.annualState,
         termAssignments: quartersByAssignment.get(item._id.toString()) ?? [],
         assignmentHistory: historyByAssignment.get(item._id.toString()) ?? [],
       };
+
+      if (annualCycle.status === AnnualWorkflowState.CANCELLED) {
+        mappedItem.termAssignments = mappedItem.termAssignments.map((quarter: any) => ({
+          ...quarter,
+          termState:
+            quarter.termState === TermWorkflowState.TERM_FINALIZED
+              ? quarter.termState
+              : TermWorkflowState.CLOSED_BY_ADMIN,
+        }));
+      }
 
       return visibilityMaskService.mask(mappedItem, maskContext);
     });
@@ -499,6 +513,19 @@ export class AssignmentService extends BaseService {
       }).sort({ effectiveFrom: -1 }),
     ]);
 
+    const cycle = await AnnualCycle.findById(annualAssignment.cycleId)
+      .select('status isDeleted')
+      .lean();
+
+    if (cycle?.status === AnnualWorkflowState.CANCELLED) {
+      annualAssignment.annualState = AnnualWorkflowState.CANCELLED;
+      for (const termAssignment of termAssignments) {
+        if (termAssignment.termState !== TermWorkflowState.TERM_FINALIZED) {
+          termAssignment.termState = TermWorkflowState.CLOSED_BY_ADMIN;
+        }
+      }
+    }
+
     return { annualAssignment, termAssignments, assignmentHistory };
   }
 
@@ -603,6 +630,12 @@ export class AssignmentService extends BaseService {
       ANNUAL_DECISION_PROCESSING_STATUSES.has(
         annualAssignment.finalDecisionStatus as AnnualDecisionStatus,
       );
+
+    if (annualAssignment.annualState === AnnualWorkflowState.CANCELLED) {
+      throw new Error(
+        'Reassignment is not allowed because this assignment was cancelled when the parent cycle was cancelled.',
+      );
+    }
 
     if (mutableQuarters.length === 0 && annualDecisionProcessing) {
       throw new Error(
@@ -1672,11 +1705,12 @@ export class AssignmentService extends BaseService {
     });
   }
 
-  private async assertCycleExists(cycleId: Types.ObjectId): Promise<void> {
-    const cycle = await AnnualCycle.findById(cycleId).select('_id').lean();
+  private async assertCycleExists(cycleId: Types.ObjectId): Promise<{ _id: Types.ObjectId; status?: AnnualWorkflowState }>{
+    const cycle = await AnnualCycle.findById(cycleId).select('_id status').lean();
     if (!cycle) {
       throw new Error('Annual cycle not found');
     }
+    return cycle as { _id: Types.ObjectId; status?: AnnualWorkflowState };
   }
 
   private async getAnnualAssignment(assignmentId: string): Promise<IAnnualAssignment> {

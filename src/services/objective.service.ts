@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
+  AnnualWorkflowState,
   AssessmentTermCode,
   ObjectiveSource,
   ObjectiveStatus,
@@ -491,9 +492,17 @@ export class ObjectiveService extends BaseService {
 
     return termAssignments.map((termAssignment) => {
       const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
+      const annualCycle = annualAssignment?.cycleId
+        ? annualCycleMap.get(annualAssignment.cycleId.toString())
+        : undefined;
       const termCycle = termAssignment.cycleTermId
         ? termCycleMap.get(termAssignment.cycleTermId.toString())
         : undefined;
+      const effectiveTermState = this.getEffectiveTermStateForDisplay(
+        termAssignment.termState,
+        annualAssignment?.annualState,
+        annualCycle?.status,
+      );
       const objectiveConfig = configMap.get(termAssignment._id.toString()) ?? this.defaultObjectiveConfig();
       const objectiveRecords = (objectivesByTermAssignmentId.get(termAssignment._id.toString()) ?? [])
         .map((objective) =>
@@ -528,16 +537,14 @@ export class ObjectiveService extends BaseService {
         cycleId: termAssignment.cycleId?.toString() ?? '',
         cycleName: this.getCycleName(
           annualAssignment,
-          annualAssignment?.cycleId ? annualCycleMap.get(annualAssignment.cycleId.toString()) : undefined,
+          annualCycle,
         ),
-        cycleCode:
-          (annualAssignment?.cycleId ? annualCycleMap.get(annualAssignment.cycleId.toString())?.code : undefined) ??
-          undefined,
+        cycleCode: annualCycle?.code ?? undefined,
         quarter: termAssignment.assessmentTermCode,
         assessmentTermType: termAssignment.assessmentTermType,
         termCode: termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termLabel: termAssignment.termLabel ?? termAssignment.termCode ?? termAssignment.assessmentTermCode,
-        termState: termAssignment.termState,
+        termState: effectiveTermState,
         termWindows: this.mapTermWindows(termCycle),
         employeeId: termAssignment.employeeId.toString(),
         employeeName: this.getEmployeeName(annualAssignment, termAssignment.employeeId.toString()),
@@ -3131,6 +3138,10 @@ export class ObjectiveService extends BaseService {
   }
 
   private async assertAssignmentAccess(action: string, termAssignment: ITermAssignment): Promise<void> {
+    if (action !== 'objective.view') {
+      await this.assertObjectiveWorkflowAllowed(termAssignment);
+    }
+
     const actor = this.requireActor();
     const access = await accessService.canPerform({
       actor,
@@ -3164,6 +3175,11 @@ export class ObjectiveService extends BaseService {
     objective: IObjective,
     employeeOnly: boolean,
   ): Promise<void> {
+    if (action !== 'objective.view') {
+      const termAssignment = await this.getTermAssignment(objective.termAssignmentId.toString());
+      await this.assertObjectiveWorkflowAllowed(termAssignment);
+    }
+
     const actor = this.requireActor();
 
     if (employeeOnly && actor.actorId !== objective.employeeId.toString()) {
@@ -3234,6 +3250,48 @@ export class ObjectiveService extends BaseService {
     }
 
     return annualAssignment;
+  }
+
+  private getEffectiveTermStateForDisplay(
+    termState: TermWorkflowState,
+    annualState?: AnnualWorkflowState,
+    cycleState?: AnnualWorkflowState,
+  ): TermWorkflowState {
+    if (
+      annualState === AnnualWorkflowState.CANCELLED ||
+      cycleState === AnnualWorkflowState.CANCELLED
+    ) {
+      return termState === TermWorkflowState.TERM_FINALIZED
+        ? termState
+        : TermWorkflowState.CLOSED_BY_ADMIN;
+    }
+
+    return termState;
+  }
+
+  private async assertObjectiveWorkflowAllowed(termAssignment: ITermAssignment): Promise<void> {
+    const annualAssignment = await AnnualAssignment.findById(termAssignment.annualAssignmentId)
+      .select('annualState cycleId isDeleted')
+      .lean();
+
+    if (!annualAssignment || annualAssignment.isDeleted) {
+      throw new Error('Annual assignment not found');
+    }
+
+    const cycle = annualAssignment.cycleId
+      ? await AnnualCycle.findById(annualAssignment.cycleId).select('status isDeleted').lean()
+      : null;
+
+    if (!cycle || cycle.isDeleted) {
+      throw new Error('Annual cycle not found');
+    }
+
+    if (
+      annualAssignment.annualState === AnnualWorkflowState.CANCELLED ||
+      cycle.status === AnnualWorkflowState.CANCELLED
+    ) {
+      throw new Error('This assignment is cancelled because the parent cycle was cancelled.');
+    }
   }
 
   private async assertObjectiveWindow(
