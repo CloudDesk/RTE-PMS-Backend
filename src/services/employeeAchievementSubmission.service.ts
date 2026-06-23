@@ -4,6 +4,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
+  AnnualWorkflowState,
   AssessmentTermCode,
   normalizePmsRole,
   ObjectiveSource,
@@ -13,6 +14,7 @@ import {
 } from '../constants/pms.enums';
 import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
@@ -989,6 +991,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   private async assertEmployeeEditAccess(termAssignment: any): Promise<void> {
+    await this.assertAchievementWorkflowAllowed(termAssignment);
+
     const actor = this.requireActor();
     const access = await accessService.canPerform({
       actor,
@@ -1016,7 +1020,28 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     termAssignment: any,
     _config: AchievementTemplateConfig,
   ) {
+    await this.assertAchievementWorkflowAllowed(termAssignment);
     return termAssignment;
+  }
+
+  private async assertAchievementWorkflowAllowed(termAssignment: any): Promise<void> {
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const cycle = annualAssignment.cycleId
+      ? await AnnualCycle.findById(annualAssignment.cycleId).select('status isDeleted').lean()
+      : null;
+
+    if (!cycle || cycle.isDeleted) {
+      throw new Error('Annual cycle not found');
+    }
+
+    if (
+      annualAssignment.annualState === AnnualWorkflowState.CANCELLED ||
+      cycle.status === AnnualWorkflowState.CANCELLED
+    ) {
+      throw new Error('This assignment is cancelled because the parent cycle was cancelled.');
+    }
   }
 
   private async assertSubmitWindowOpen(

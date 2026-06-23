@@ -11,6 +11,7 @@ import {
   isTermFinalized,
   normalizePmsRole,
   PmsRole,
+  TermWorkflowState,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
@@ -338,9 +339,27 @@ export class AnnualDecisionService extends BaseService {
       annualDecision?.decisionStatus ??
       annualAssignment.finalDecisionStatus ??
       AnnualDecisionStatus.DRAFT;
+    const effectiveAnnualState =
+      cycle?.status === AnnualWorkflowState.CANCELLED
+        ? AnnualWorkflowState.CANCELLED
+        : annualAssignment.annualState;
+    const effectiveTermAssignments =
+      cycle?.status === AnnualWorkflowState.CANCELLED
+        ? termAssignments.map((termAssignment) => {
+            if (termAssignment.termState === TermWorkflowState.TERM_FINALIZED) {
+              return termAssignment;
+            }
+
+            termAssignment.termState = TermWorkflowState.CLOSED_BY_ADMIN;
+            return termAssignment;
+          })
+        : termAssignments;
     const readiness = await this.resolveAnnualDecisionReadiness(
-      annualAssignment,
-      termAssignments,
+      {
+        ...annualAssignment.toObject(),
+        annualState: effectiveAnnualState,
+      } as IAnnualAssignment,
+      effectiveTermAssignments,
       finalDecisionStatus,
       cycle ?? undefined,
     );
@@ -392,13 +411,14 @@ export class AnnualDecisionService extends BaseService {
     return {
       annualAssignment: {
         ...annualAssignment.toObject(),
+        annualState: effectiveAnnualState,
         finalDecisionStatus,
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
         termProgress: readiness.termProgress,
         availableActions: readiness.availableActions,
         lockedReason: readiness.lockedReason,
       },
-      termAssignments,
+      termAssignments: effectiveTermAssignments,
       objectives,
       termReviews,
       annualDecisionValues: annualDecisionValues.map((value) => ({
