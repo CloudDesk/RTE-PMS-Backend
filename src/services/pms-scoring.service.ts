@@ -318,6 +318,10 @@ export class PmsScoringService {
     const fieldsSnapshot: any[] = [];
 
     for (const field of section.scoringFields) {
+      if (this.shouldIgnoreScoringField(field)) {
+        continue;
+      }
+
       const matchedValue = valueMap.get(`${field.sectionKey}::${field.fieldKey}`);
       const conditionalMultiplier = this.resolveConditionalMultiplier(
         field.scoringConfig?.conditionalScoring ?? field.conditionalScoring,
@@ -373,6 +377,14 @@ export class PmsScoringService {
     }
 
     return { score, snapshot: { fields: fieldsSnapshot } };
+  }
+
+  private shouldIgnoreScoringField(field: any): boolean {
+    const metadata = field?.metadata ?? {};
+    if (metadata.purpose === 'EMPLOYEE_WORK_UPDATE') return true;
+    if (metadata.includeInScore === false) return true;
+    if (typeof metadata.includeInScore === 'string' && metadata.includeInScore.toLowerCase() === 'false') return true;
+    return false;
   }
 
   private resolveFieldScore(field: any, matchedValue?: PmsScoringReviewValue): {

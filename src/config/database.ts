@@ -98,6 +98,37 @@ async function migrateTemplateStatusesIfNeeded(): Promise<void> {
   }
 }
 
+/**
+ * One-time migration: PMS achievement submissions moved from legacy
+ * quarterAssignmentId to termAssignmentId. Drop the old unique index because
+ * new term-based documents do not set quarterAssignmentId, causing duplicate
+ * key errors on { quarterAssignmentId: null }.
+ */
+async function migrateEmployeeAchievementSubmissionIndexesIfNeeded(): Promise<void> {
+  try {
+    const coll = mongoose.connection.collection('employee_achievement_submissions');
+    const indexes = await coll.indexes();
+    const legacyIndex = (
+      indexes as Array<{ name: string; key?: Record<string, number>; unique?: boolean }>
+    ).find((index) => (
+      index.name === 'idx_employee_achievement_submission_quarter_assignment' ||
+      (index.unique === true &&
+        Object.keys(index.key ?? {}).length === 1 &&
+        index.key?.quarterAssignmentId === 1)
+    ));
+
+    if (!legacyIndex) return;
+
+    await coll.dropIndex(legacyIndex.name);
+    console.log(
+      `[DB] Dropped old employee achievement quarterAssignmentId index "${legacyIndex.name}"; app uses termAssignmentId now. No data removed.`,
+    );
+  } catch (err: any) {
+    if (err.codeName === 'IndexNotFound' || err.message?.includes('index not found')) return;
+    console.warn('[DB] migrateEmployeeAchievementSubmissionIndexesIfNeeded failed:', err.message);
+  }
+}
+
 export const connectDB = async (): Promise<void> => {
   if (mongoose.connection.readyState === 1) {
     return;
@@ -127,6 +158,7 @@ export const connectDB = async (): Promise<void> => {
 
         await migrateEmailIndexIfNeeded();
         await migrateTemplateStatusesIfNeeded();
+        await migrateEmployeeAchievementSubmissionIndexesIfNeeded();
         
         try {
           const { accessService } = await import('../services/access.service');

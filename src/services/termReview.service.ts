@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import {
+  AnnualWorkflowState,
   normalizePmsRole,
   ObjectiveStatus,
   ObjectiveSource,
@@ -392,6 +393,13 @@ export class TermReviewService extends BaseService {
         employeeSnapshot.departmentId ??
         '',
       );
+      const effectiveTermState =
+        annualAssignment?.annualState === AnnualWorkflowState.CANCELLED ||
+        cycle?.status === AnnualWorkflowState.CANCELLED
+          ? termAssignment.termState === TermWorkflowState.TERM_FINALIZED
+            ? termAssignment.termState
+            : TermWorkflowState.CLOSED_BY_ADMIN
+          : termAssignment.termState;
 
       return {
         id: termAssignment._id.toString(),
@@ -411,7 +419,7 @@ export class TermReviewService extends BaseService {
         assessmentTermType: termAssignment.assessmentTermType,
         termCode: termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termLabel: termAssignment.termLabel ?? termAssignment.termCode ?? termAssignment.assessmentTermCode,
-        termState: termAssignment.termState,
+        termState: effectiveTermState,
         termWindows: this.mapTermWindows(termCycle),
         employeeId: termAssignment.employeeId.toString(),
         employeeName: String(employeeSnapshot.name ?? 'Employee'),

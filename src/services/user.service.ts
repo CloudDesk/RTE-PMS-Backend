@@ -270,7 +270,7 @@ export class UserService extends BaseService {
       const fetchActiveAdmins = () => User.find({
         role: { $regex: this.exactCaseInsensitiveRegex('admin') },
         active: true,
-      }).select('_id name email role profilePicture');
+      }).select('_id name email employeeCode role profilePicture');
 
       // If role not found or has no priority, immediately fallback to active Admins.
       if (targetPriorities.length === 0) {
@@ -315,7 +315,7 @@ export class UserService extends BaseService {
         role: { $in: roleRegexes },
         active: true,
         ...departmentFilter,
-      }).select('_id name email role profilePicture');
+      }).select('_id name email employeeCode role profilePicture');
 
       // Fallback: If no same-department manager was found, show active admins.
       // Do not apply departmentFilter here; a new department may not have managers/admins yet.

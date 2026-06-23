@@ -11,6 +11,7 @@ import {
   isTermFinalized,
   normalizePmsRole,
   PmsRole,
+  TermWorkflowState,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
@@ -23,6 +24,11 @@ import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
+import {
+  EmployeeAchievementSubmission,
+  EmployeeAchievementSubmissionStatus,
+  type IEmployeeAchievementSubmission,
+} from '../models/pms-employee-achievement-submission.model';
 import { auditService } from './audit.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import {
@@ -38,7 +44,11 @@ import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type { ITermReview } from '../models/pms-term-review.model';
 import type { AppraisalOutcomeType as AppraisalOutcomeTypeType } from '../constants/pms.enums';
 import type { IAnnualDecisionValue } from '../models/pms-annual-decision-value.model';
-import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import {
+  PmsTemplateVersion,
+  type ITemplateField,
+  type ITemplateSection,
+} from '../models/pms-template-version.model';
 
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
@@ -84,6 +94,7 @@ export interface AnnualSummaryResult {
   termAssignments: ITermAssignment[];
   objectives: IObjective[];
   termReviews: ITermReview[];
+  employeeWorkUpdates: Array<Record<string, unknown>>;
   annualDecisionValues: Array<Record<string, unknown>>;
   calculatedFinalScore?: number;
   finalScoreOverride: Record<string, unknown> | null;
@@ -326,21 +337,55 @@ export class AnnualDecisionService extends BaseService {
 
     const termAssignmentIds = termAssignments.map((termAssignment) => termAssignment._id);
 
-    const [objectives, termReviews, annualDecision, visibilityConfiguration, cycle] = await Promise.all([
+    const [
+      objectives,
+      termReviews,
+      annualDecision,
+      visibilityConfiguration,
+      cycle,
+      achievementSubmissions,
+      templateVersion,
+    ] = await Promise.all([
       Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
       TermReview.find({ termAssignmentId: { $in: termAssignmentIds } }),
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
+      EmployeeAchievementSubmission.find({
+        termAssignmentId: { $in: termAssignmentIds },
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }).lean(),
+      annualAssignment.templateVersionId
+        ? PmsTemplateVersion.findById(annualAssignment.templateVersionId).lean()
+        : Promise.resolve(null),
     ]);
     const calculatedFinalScore = await this.tryCalculateAnnualFinalScore(annualAssignment);
     const finalDecisionStatus =
       annualDecision?.decisionStatus ??
       annualAssignment.finalDecisionStatus ??
       AnnualDecisionStatus.DRAFT;
+    const effectiveAnnualState =
+      cycle?.status === AnnualWorkflowState.CANCELLED
+        ? AnnualWorkflowState.CANCELLED
+        : annualAssignment.annualState;
+    const effectiveTermAssignments =
+      cycle?.status === AnnualWorkflowState.CANCELLED
+        ? termAssignments.map((termAssignment) => {
+            if (termAssignment.termState === TermWorkflowState.TERM_FINALIZED) {
+              return termAssignment;
+            }
+
+            termAssignment.termState = TermWorkflowState.CLOSED_BY_ADMIN;
+            return termAssignment;
+          })
+        : termAssignments;
     const readiness = await this.resolveAnnualDecisionReadiness(
-      annualAssignment,
-      termAssignments,
+      {
+        ...annualAssignment.toObject(),
+        annualState: effectiveAnnualState,
+      } as IAnnualAssignment,
+      effectiveTermAssignments,
       finalDecisionStatus,
       cycle ?? undefined,
     );
@@ -392,15 +437,21 @@ export class AnnualDecisionService extends BaseService {
     return {
       annualAssignment: {
         ...annualAssignment.toObject(),
+        annualState: effectiveAnnualState,
         finalDecisionStatus,
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
         termProgress: readiness.termProgress,
         availableActions: readiness.availableActions,
         lockedReason: readiness.lockedReason,
       },
-      termAssignments,
+      termAssignments: effectiveTermAssignments,
       objectives,
       termReviews,
+      employeeWorkUpdates: this.buildEmployeeWorkUpdateSummaries(
+        effectiveTermAssignments,
+        achievementSubmissions as unknown as IEmployeeAchievementSubmission[],
+        templateVersion?.sections as unknown as ITemplateSection[] | undefined,
+      ),
       annualDecisionValues: annualDecisionValues.map((value) => ({
         templateFieldId: value.templateFieldId,
         fieldKey: value.fieldKey,
@@ -423,6 +474,118 @@ export class AnnualDecisionService extends BaseService {
         : null,
       correctionHistory: maskedCorrectionHistory,
       preReopenSnapshots: maskedPreReopenSnapshots,
+    };
+  }
+
+  private buildEmployeeWorkUpdateSummaries(
+    termAssignments: ITermAssignment[],
+    submissions: IEmployeeAchievementSubmission[],
+    sections?: ITemplateSection[],
+  ): Array<Record<string, unknown>> {
+    const achievementSection = this.findEmployeeAchievementSection(sections);
+    const workUpdateFields = achievementSection
+      ? this.getEmployeeWorkUpdateFields(achievementSection)
+      : [];
+    if (workUpdateFields.length === 0) return [];
+
+    const submissionsByTermAssignmentId = new Map(
+      submissions.map((submission) => [
+        submission.termAssignmentId.toString(),
+        submission,
+      ]),
+    );
+
+    return termAssignments.map((termAssignment) => {
+      const submission = submissionsByTermAssignmentId.get(
+        termAssignment._id.toString(),
+      );
+      const submitted =
+        submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED ||
+        submission?.status === EmployeeAchievementSubmissionStatus.LOCKED;
+
+      return {
+        termAssignmentId: termAssignment._id.toString(),
+        assessmentTermCode: termAssignment.assessmentTermCode,
+        termCode: termAssignment.termCode,
+        termLabel: termAssignment.termLabel,
+        termState: termAssignment.termState,
+        status: submission?.status ?? null,
+        submitted,
+        submittedAt: submission?.submittedAt
+          ? new Date(submission.submittedAt).toISOString()
+          : undefined,
+        lockedAt: submission?.lockedAt
+          ? new Date(submission.lockedAt).toISOString()
+          : undefined,
+        section: {
+          key: achievementSection?.sectionKey,
+          title: achievementSection?.sectionLabel,
+        },
+        fields: workUpdateFields.map((field) =>
+          this.mapEmployeeWorkUpdateField(field),
+        ),
+        values: submitted
+          ? (submission?.achievementValues ?? [])
+              .filter((value) =>
+                workUpdateFields.some(
+                  (field) => field.fieldKey === value.fieldKey,
+                ),
+              )
+              .map((value) => ({
+                templateFieldId: value.templateFieldId,
+                fieldKey: value.fieldKey,
+                sectionKey: value.sectionKey,
+                roleCode: value.roleCode,
+                actorUserId: value.actorUserId?.toString?.(),
+                workflowStage: value.workflowStage,
+                valueJson: value.valueJson,
+                valueText: value.valueText,
+                valueNumber: value.valueNumber,
+                valueDate: value.valueDate
+                  ? new Date(value.valueDate).toISOString()
+                  : undefined,
+                valueStatus: value.valueStatus,
+                submittedAt: value.submittedAt
+                  ? new Date(value.submittedAt).toISOString()
+                  : undefined,
+              }))
+          : [],
+      };
+    });
+  }
+
+  private findEmployeeAchievementSection(
+    sections?: ITemplateSection[],
+  ): ITemplateSection | undefined {
+    return (sections ?? []).find((section) => {
+      const metadata = (section.metadata ?? {}) as Record<string, unknown>;
+      return (
+        metadata.purpose === 'EMPLOYEE_ACHIEVEMENT_SUBMISSION' ||
+        section.sectionKey === 'employee_achievement_submission'
+      );
+    });
+  }
+
+  private getEmployeeWorkUpdateFields(section: ITemplateSection): ITemplateField[] {
+    return (section.fields ?? []).filter((field) => {
+      const metadata = (field.metadata ?? {}) as Record<string, unknown>;
+      return metadata.purpose === 'EMPLOYEE_WORK_UPDATE';
+    });
+  }
+
+  private mapEmployeeWorkUpdateField(field: ITemplateField) {
+    return {
+      fieldKey: field.fieldKey,
+      fieldLabel: field.fieldLabel,
+      fieldType: field.fieldType,
+      isRequired: Boolean(field.isRequired),
+      placeholder: field.placeholder,
+      helpText: field.helpText,
+      options: (field.options ?? []).map((option) => ({
+        label: option.label,
+        value: option.value,
+      })),
+      metadata: field.metadata,
     };
   }
 

@@ -155,7 +155,7 @@ export class AssignmentService extends BaseService {
     };
   }> {
     const annualCycleId = this.toObjectId(cycleId, 'cycleId');
-    await this.assertCycleExists(annualCycleId);
+    const annualCycle = await this.assertCycleExists(annualCycleId);
 
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
@@ -273,9 +273,23 @@ export class AssignmentService extends BaseService {
 
       const mappedItem = {
         ...item,
+        annualState:
+          annualCycle.status === AnnualWorkflowState.CANCELLED
+            ? AnnualWorkflowState.CANCELLED
+            : item.annualState,
         termAssignments: quartersByAssignment.get(item._id.toString()) ?? [],
         assignmentHistory: historyByAssignment.get(item._id.toString()) ?? [],
       };
+
+      if (annualCycle.status === AnnualWorkflowState.CANCELLED) {
+        mappedItem.termAssignments = mappedItem.termAssignments.map((quarter: any) => ({
+          ...quarter,
+          termState:
+            quarter.termState === TermWorkflowState.TERM_FINALIZED
+              ? quarter.termState
+              : TermWorkflowState.CLOSED_BY_ADMIN,
+        }));
+      }
 
       return visibilityMaskService.mask(mappedItem, maskContext);
     });
@@ -378,6 +392,7 @@ export class AssignmentService extends BaseService {
     await this.openSeededTermAssignmentsForObjectiveSetting(
       termAssignments,
       seededTermAssignmentIds,
+      termCycleById,
     );
 
     await this.lockTemplateVersion(selectedTemplateVersionId);
@@ -499,6 +514,19 @@ export class AssignmentService extends BaseService {
       }).sort({ effectiveFrom: -1 }),
     ]);
 
+    const cycle = await AnnualCycle.findById(annualAssignment.cycleId)
+      .select('status isDeleted')
+      .lean();
+
+    if (cycle?.status === AnnualWorkflowState.CANCELLED) {
+      annualAssignment.annualState = AnnualWorkflowState.CANCELLED;
+      for (const termAssignment of termAssignments) {
+        if (termAssignment.termState !== TermWorkflowState.TERM_FINALIZED) {
+          termAssignment.termState = TermWorkflowState.CLOSED_BY_ADMIN;
+        }
+      }
+    }
+
     return { annualAssignment, termAssignments, assignmentHistory };
   }
 
@@ -603,6 +631,12 @@ export class AssignmentService extends BaseService {
       ANNUAL_DECISION_PROCESSING_STATUSES.has(
         annualAssignment.finalDecisionStatus as AnnualDecisionStatus,
       );
+
+    if (annualAssignment.annualState === AnnualWorkflowState.CANCELLED) {
+      throw new Error(
+        'Reassignment is not allowed because this assignment was cancelled when the parent cycle was cancelled.',
+      );
+    }
 
     if (mutableQuarters.length === 0 && annualDecisionProcessing) {
       throw new Error(
@@ -1334,44 +1368,145 @@ export class AssignmentService extends BaseService {
   private async openSeededTermAssignmentsForObjectiveSetting(
     termAssignments: ITermAssignment[],
     seededTermAssignmentIds: Set<string>,
+    termCycleById: Map<
+      string,
+      {
+        assessmentTermCode?: QuarterCode;
+        assessmentTermType?: AssessmentTermTypeType;
+        objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
+      }
+    >,
   ): Promise<void> {
     if (seededTermAssignmentIds.size === 0) {
       return;
     }
 
-    for (const termAssignment of termAssignments) {
-      const termAssignmentId = termAssignment._id.toString();
-      if (!seededTermAssignmentIds.has(termAssignmentId)) {
-        continue;
-      }
+    const activeSeededTermAssignment = this.findCurrentSeededObjectiveSettingTerm(
+      termAssignments,
+      seededTermAssignmentIds,
+      termCycleById,
+    );
 
-      const targetState = TermWorkflowState.OBJECTIVE_SETTING_OPEN;
-
-      if (termAssignment.termState === targetState) {
-        continue;
-      }
-
-      const previousState = termAssignment.termState;
-      const updatedTermAssignment = await transitionTermAssignmentState(
-        termAssignmentId,
-        targetState,
-        this.requireActor(),
-        'Seeded predefined objectives are approved; objective setting remains open for additional objectives',
-      );
-
-      await this.audit(
-        'PMS_TERM_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
-        'TERM_ASSIGNMENT',
-        termAssignment._id.toString(),
-        {
-          termState: previousState,
-        },
-        {
-          termState: updatedTermAssignment.termState,
-        },
-        'Seeded predefined objectives opened the objective-setting workflow at assignment launch',
-      );
+    if (!activeSeededTermAssignment) {
+      return;
     }
+
+    const termAssignmentId = activeSeededTermAssignment._id.toString();
+    const targetState = TermWorkflowState.OBJECTIVE_SETTING_OPEN;
+
+    if (activeSeededTermAssignment.termState === targetState) {
+      return;
+    }
+
+    const previousState = activeSeededTermAssignment.termState;
+    const updatedTermAssignment = await transitionTermAssignmentState(
+      termAssignmentId,
+      targetState,
+      this.requireActor(),
+      'Seeded predefined objectives are approved and the current objective-setting window is active',
+    );
+
+    await this.audit(
+      'PMS_TERM_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
+      'TERM_ASSIGNMENT',
+      activeSeededTermAssignment._id.toString(),
+      {
+        termState: previousState,
+      },
+      {
+        termState: updatedTermAssignment.termState,
+      },
+      'Seeded predefined objectives opened only the currently active objective-setting term at assignment launch',
+    );
+  }
+
+  private findCurrentSeededObjectiveSettingTerm(
+    termAssignments: ITermAssignment[],
+    seededTermAssignmentIds: Set<string>,
+    termCycleById: Map<
+      string,
+      {
+        assessmentTermCode?: QuarterCode;
+        assessmentTermType?: AssessmentTermTypeType;
+        objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
+      }
+    >,
+  ): ITermAssignment | null {
+    const seededAssignments = termAssignments
+      .filter((termAssignment) => seededTermAssignmentIds.has(termAssignment._id.toString()))
+      .sort((left, right) => this.compareTermAssignments(left, right, termCycleById));
+
+    for (const termAssignment of seededAssignments) {
+      const cycleTerm = termAssignment.cycleTermId
+        ? termCycleById.get(termAssignment.cycleTermId.toString())
+        : undefined;
+
+      if (!this.isObjectiveSettingWindowActive(cycleTerm?.objectiveSettingWindow)) {
+        continue;
+      }
+
+      return termAssignment;
+    }
+
+    return null;
+  }
+
+  private compareTermAssignments(
+    left: ITermAssignment,
+    right: ITermAssignment,
+    termCycleById: Map<
+      string,
+      {
+        assessmentTermCode?: QuarterCode;
+        assessmentTermType?: AssessmentTermTypeType;
+        objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
+      }
+    >,
+  ): number {
+    const leftCycle = left.cycleTermId ? termCycleById.get(left.cycleTermId.toString()) : undefined;
+    const rightCycle = right.cycleTermId ? termCycleById.get(right.cycleTermId.toString()) : undefined;
+    const leftRank = this.getAssessmentTermRank(
+      left.assessmentTermCode,
+      left.assessmentTermType ?? leftCycle?.assessmentTermType,
+    );
+    const rightRank = this.getAssessmentTermRank(
+      right.assessmentTermCode,
+      right.assessmentTermType ?? rightCycle?.assessmentTermType,
+    );
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    const leftStart = leftCycle?.objectiveSettingWindow?.startDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    const rightStart = rightCycle?.objectiveSettingWindow?.startDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    return leftStart - rightStart;
+  }
+
+  private getAssessmentTermRank(
+    assessmentTermCode: QuarterCode,
+    assessmentTermType?: AssessmentTermTypeType,
+  ): number {
+    const orderedTerms = getAssessmentTerms(assessmentTermType ?? getDefaultAssessmentTermType());
+    const index = orderedTerms.indexOf(assessmentTermCode);
+    return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+  }
+
+  private isObjectiveSettingWindowActive(
+    window?: { startDate?: Date; endDate?: Date },
+  ): boolean {
+    if (!window?.startDate || !window?.endDate) {
+      return false;
+    }
+
+    const now = this.getCurrentDate();
+    const start = new Date(window.startDate);
+    const end = new Date(window.endDate);
+    return now >= start && now <= end;
+  }
+
+  private getCurrentDate(): Date {
+    return this.context.pmsCurrentDate ?? new Date();
   }
 
   private resolveTemplateObjectiveConfig(
@@ -1672,11 +1807,12 @@ export class AssignmentService extends BaseService {
     });
   }
 
-  private async assertCycleExists(cycleId: Types.ObjectId): Promise<void> {
-    const cycle = await AnnualCycle.findById(cycleId).select('_id').lean();
+  private async assertCycleExists(cycleId: Types.ObjectId): Promise<{ _id: Types.ObjectId; status?: AnnualWorkflowState }>{
+    const cycle = await AnnualCycle.findById(cycleId).select('_id status').lean();
     if (!cycle) {
       throw new Error('Annual cycle not found');
     }
+    return cycle as { _id: Types.ObjectId; status?: AnnualWorkflowState };
   }
 
   private async getAnnualAssignment(assignmentId: string): Promise<IAnnualAssignment> {

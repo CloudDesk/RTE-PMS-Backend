@@ -110,6 +110,7 @@ export interface ITemplateField {
   editabilityRules?: Record<string, unknown>;
   optionConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   defaultValue?: unknown;
   colSpan?: 1 | 2 | 3 | 4;
   options?: ITemplateOption[];
@@ -124,7 +125,7 @@ export interface ITemplateField {
     borderStyle?: 'standard' | 'paper';
   };
   gridConfig?: {
-    columns: Array<{ key: string; label: string; type: string; required?: boolean }>;
+    columns: Array<{ key: string; label: string; type: string; required?: boolean; options?: ITemplateOption[] }>;
     minRows?: number;
     maxRows?: number;
   };
@@ -143,6 +144,7 @@ interface IGridColumn {
   type: string;
   weightage?: number;
   required?: boolean;
+  options?: ITemplateOption[];
 }
 
 const matrixItemSchema = new Schema<IMatrixItem>(
@@ -173,6 +175,18 @@ const gridColumnSchema = new Schema<IGridColumn>(
     weightage: { type: Number },
     type: { type: String, required: true, trim: true },
     required: { type: Boolean, default: false },
+    options: {
+      type: [
+        {
+          label: { type: String, required: true },
+          value: { type: String, required: true },
+          score: { type: Number },
+          weight: { type: Number },
+          _id: false,
+        },
+      ],
+      default: undefined,
+    },
   },
   { _id: false },
 );
@@ -309,6 +323,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
     editabilityRules: Schema.Types.Mixed,
     optionConfig: Schema.Types.Mixed,
     scoringConfig: Schema.Types.Mixed,
+    metadata: Schema.Types.Mixed,
     defaultValue: Schema.Types.Mixed,
     colSpan: { type: Number, enum: [1, 2, 3, 4], default: 4 },
     behaviors: {

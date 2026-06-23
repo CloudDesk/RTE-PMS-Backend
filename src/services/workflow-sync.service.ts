@@ -148,6 +148,19 @@ export class WorkflowSyncService extends BaseService {
     const termCycleMap = new Map(
       termCycles.map((termCycle) => [termCycle.assessmentTermCode, termCycle]),
     );
+    const termAssignmentsByAnnualAssignment = new Map<string, ITermAssignment[]>();
+
+    for (const termAssignment of termAssignments) {
+      const key = termAssignment.annualAssignmentId.toString();
+      termAssignmentsByAnnualAssignment.set(key, [
+        ...(termAssignmentsByAnnualAssignment.get(key) ?? []),
+        termAssignment,
+      ]);
+    }
+
+    for (const assignmentTerms of termAssignmentsByAnnualAssignment.values()) {
+      assignmentTerms.sort((left, right) => this.compareAssignmentTerms(left, right, termCycleMap));
+    }
 
     const result: WorkflowSyncResult = {
       totalChecked: termAssignments.length,
@@ -166,9 +179,14 @@ export class WorkflowSyncService extends BaseService {
 
     for (const termAssignment of termAssignments) {
       const termCycle = termCycleMap.get(termAssignment.assessmentTermCode);
+      const assignmentTerms = termAssignmentsByAnnualAssignment.get(
+        termAssignment.annualAssignmentId.toString(),
+      ) ?? [termAssignment];
       const item = await this.processTermAssignment(
         termAssignment,
         termCycle,
+        assignmentTerms,
+        termCycleMap,
         input,
       );
       result.results.push(item);
@@ -196,6 +214,8 @@ export class WorkflowSyncService extends BaseService {
   private async processTermAssignment(
     termAssignment: ITermAssignment,
     termCycle: ITermCycle | undefined,
+    assignmentTerms: ITermAssignment[],
+    termCycleMap: Map<AssessmentTermCodeType, ITermCycle>,
     input: WorkflowSyncInput,
   ): Promise<WorkflowSyncResultItem> {
     if (termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
@@ -208,7 +228,7 @@ export class WorkflowSyncService extends BaseService {
 
     const candidate = await this.resolveCandidate(termAssignment, termCycle, {
       ignoreWindowDates: input.ignoreWindowDates === true,
-    });
+    }, assignmentTerms, termCycleMap);
     const baseItem = this.buildBaseResultItem(termAssignment, candidate);
 
     if (!candidate.targetState) {
@@ -466,6 +486,8 @@ export class WorkflowSyncService extends BaseService {
     termAssignment: ITermAssignment,
     termCycle?: ITermCycle,
     options: { ignoreWindowDates?: boolean } = {},
+    assignmentTerms: ITermAssignment[] = [],
+    termCycleMap: Map<AssessmentTermCodeType, ITermCycle> = new Map(),
   ): Promise<WorkflowSyncCandidate> {
     const state = termAssignment.termState;
     const now = this.getCurrentDate();
@@ -486,13 +508,22 @@ export class WorkflowSyncService extends BaseService {
     }
 
     if (state === TermWorkflowState.NOT_STARTED) {
-      const window = termCycle.objectiveSettingWindow;
-      if (!ignoreWindowDates && !this.isWindowActive(now, window)) {
+      const objectiveSettingEligibility = this.resolveObjectiveSettingOpenEligibility(
+        termAssignment,
+        assignmentTerms,
+        termCycleMap,
+        ignoreWindowDates,
+        now,
+      );
+
+      if (!objectiveSettingEligibility.eligible) {
         return {
           skipReason: 'NOT_ELIGIBLE',
-          reason: 'Objective setting window is not active.',
+          reason: objectiveSettingEligibility.reason,
         };
       }
+
+      const window = termCycle.objectiveSettingWindow;
       return this.transitionCandidate(
         TermWorkflowState.OBJECTIVE_SETTING_OPEN,
         'Objective Setting Window',
@@ -596,6 +627,121 @@ export class WorkflowSyncService extends BaseService {
       reason,
       windowOverrideApplied,
     };
+  }
+
+  private resolveObjectiveSettingOpenEligibility(
+    termAssignment: ITermAssignment,
+    assignmentTerms: ITermAssignment[],
+    termCycleMap: Map<AssessmentTermCodeType, ITermCycle>,
+    ignoreWindowDates: boolean,
+    now: Date,
+  ): { eligible: boolean; reason: string } {
+    const orderedTerms = assignmentTerms.length > 0
+      ? assignmentTerms
+      : [termAssignment];
+
+    for (const currentTerm of orderedTerms) {
+      const state = currentTerm.termState;
+      const isTarget = currentTerm._id.toString() === termAssignment._id.toString();
+      const label = currentTerm.termLabel || currentTerm.assessmentTermCode;
+
+      if (this.isTermPastObjectiveSetting(state)) {
+        continue;
+      }
+
+      if (state === TermWorkflowState.NOT_STARTED) {
+        const currentTermCycle = termCycleMap.get(currentTerm.assessmentTermCode);
+        const windowActive = ignoreWindowDates || this.isWindowActive(now, currentTermCycle?.objectiveSettingWindow);
+
+        if (!windowActive) {
+          return {
+            eligible: false,
+            reason: isTarget
+              ? 'Objective setting window is not active.'
+              : `${label} is the next scheduled assessment term, but its objective setting window is not active yet.`,
+          };
+        }
+
+        if (!isTarget) {
+          return {
+            eligible: false,
+            reason: `${label} must open objective setting before later terms can move forward.`,
+          };
+        }
+
+        return {
+          eligible: true,
+          reason: ignoreWindowDates
+            ? 'Objective setting window date bypassed for testing.'
+            : 'Objective setting window is active.',
+        };
+      }
+
+      return {
+        eligible: false,
+        reason: `${label} is still in the objective-setting workflow and must move forward before later terms can open.`,
+      };
+    }
+
+    return {
+      eligible: false,
+      reason: 'This assessment term is not the next eligible term for objective setting.',
+    };
+  }
+
+  private isTermPastObjectiveSetting(state: TermWorkflowStateType): boolean {
+    switch (state) {
+      case TermWorkflowState.OBJECTIVE_APPROVED:
+      case TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN:
+      case TermWorkflowState.MANAGER_REVIEW_OPEN:
+      case TermWorkflowState.MANAGER_REVIEW_SUBMITTED:
+      case TermWorkflowState.TERM_FINALIZED:
+      case TermWorkflowState.CLOSED_BY_ADMIN:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private compareAssignmentTerms(
+    left: ITermAssignment,
+    right: ITermAssignment,
+    termCycleMap: Map<AssessmentTermCodeType, ITermCycle>,
+  ): number {
+    const leftRank = this.getAssessmentTermRank(
+      left.assessmentTermCode,
+      left.assessmentTermType ?? termCycleMap.get(left.assessmentTermCode)?.assessmentTermType,
+    );
+    const rightRank = this.getAssessmentTermRank(
+      right.assessmentTermCode,
+      right.assessmentTermType ?? termCycleMap.get(right.assessmentTermCode)?.assessmentTermType,
+    );
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    const leftStart = termCycleMap.get(left.assessmentTermCode)?.objectiveSettingWindow?.startDate?.getTime()
+      ?? Number.MAX_SAFE_INTEGER;
+    const rightStart = termCycleMap.get(right.assessmentTermCode)?.objectiveSettingWindow?.startDate?.getTime()
+      ?? Number.MAX_SAFE_INTEGER;
+    return leftStart - rightStart;
+  }
+
+  private getAssessmentTermRank(
+    assessmentTermCode: AssessmentTermCodeType,
+    assessmentTermType?: string,
+  ): number {
+    if (assessmentTermType === 'HALF_YEARLY') {
+      const index = ['H1', 'H2'].indexOf(assessmentTermCode);
+      return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+    }
+    if (assessmentTermType === 'YEARLY') {
+      const index = ['Y1'].indexOf(assessmentTermCode);
+      return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+    }
+    const index = ['Q1', 'Q2', 'Q3', 'Q4'].indexOf(assessmentTermCode);
+    return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
   }
 
   private async canAutoCloseObjectiveSetting(

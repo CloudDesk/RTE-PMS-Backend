@@ -17,6 +17,7 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import { WorkflowEvent } from '../models/pms-workflow-event.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { workflowService } from './workflow.service';
@@ -607,14 +608,32 @@ export class CycleService extends BaseService {
     }
 
     await this.assertCycleCanBeCancelled(cycle);
+    const session = await mongoose.startSession();
 
-    return this.executeTransition(
-      cycle,
-      AnnualWorkflowState.CANCELLED,
-      'PMS_CYCLE_CANCELLED',
-      {},
-      reason,
-    );
+    try {
+      let cancelledCycle: IAnnualCycle | null = null;
+
+      await session.withTransaction(async () => {
+        cancelledCycle = await this.executeTransition(
+          cycle,
+          AnnualWorkflowState.CANCELLED,
+          'PMS_CYCLE_CANCELLED',
+          {},
+          reason,
+          { returnDocument: true, session },
+        );
+
+        await this.cancelLinkedAssignmentsForCycle(cancelledCycle!, reason, session);
+      });
+
+      if (!cancelledCycle) {
+        throw new Error('Cycle cancellation did not complete');
+      }
+
+      return this.decorateCycleResponse(cancelledCycle);
+    } finally {
+      await session.endSession();
+    }
   }
 
   async syncCycleProgression(cycleId: string): Promise<IAnnualCycle> {
@@ -683,7 +702,7 @@ export class CycleService extends BaseService {
     auditEvent: string,
     additionalUpdates: Record<string, unknown> = {},
     reason?: string,
-    options: { returnDocument?: boolean } = {},
+    options: { returnDocument?: boolean; session?: mongoose.ClientSession } = {},
   ): Promise<any> {
     const previousState = cycle.status;
     const transition = this.transitionAnnualCycle(cycle, nextState, reason);
@@ -691,7 +710,7 @@ export class CycleService extends BaseService {
     cycle.status = transition.currentState as AnnualWorkflowStateType;
     Object.assign(cycle, additionalUpdates);
     cycle.updatedBy = this.actorIdObject();
-    await cycle.save();
+    await cycle.save({ session: options.session });
 
     await this.audit(
       auditEvent,
@@ -700,12 +719,17 @@ export class CycleService extends BaseService {
       { status: previousState },
       { status: cycle.status },
       reason,
+      options.session,
     );
 
     if (options.returnDocument) {
       return cycle;
     }
 
+    return this.decorateCycleResponse(cycle);
+  }
+
+  private async decorateCycleResponse(cycle: IAnnualCycle): Promise<any> {
     const obj = cycle.toObject() as any;
     if (cycle.templateVersionId) {
       const version = await PmsTemplateVersion.findById(cycle.templateVersionId).lean();
@@ -720,6 +744,139 @@ export class CycleService extends BaseService {
     }
 
     return obj;
+  }
+
+  private async cancelLinkedAssignmentsForCycle(
+    cycle: IAnnualCycle,
+    reason: string,
+    session: mongoose.ClientSession,
+  ): Promise<void> {
+    const actorId = this.actorIdObject();
+    const actor = this.requireActor();
+    const actorRole = this.context.user?.role;
+
+    const annualAssignments = await AnnualAssignment.find({
+      cycleId: cycle._id,
+      isDeleted: false,
+      annualState: {
+        $nin: [
+          AnnualWorkflowState.CANCELLED,
+          AnnualWorkflowState.CLOSED,
+          AnnualWorkflowState.ARCHIVED,
+        ],
+      },
+    }).session(session);
+
+    if (annualAssignments.length > 0) {
+      const annualAssignmentIds = annualAssignments.map((assignment) => assignment._id);
+
+      for (const annualAssignment of annualAssignments) {
+        const previousValue = annualAssignment.toObject();
+        annualAssignment.annualState = AnnualWorkflowState.CANCELLED;
+        annualAssignment.updatedBy = actorId;
+        annualAssignment.version += 1;
+        await annualAssignment.save({ session });
+
+        await this.audit(
+          'PMS_ASSIGNMENT_CANCELLED',
+          'ANNUAL_ASSIGNMENT',
+          annualAssignment._id.toString(),
+          previousValue,
+          {
+            annualState: annualAssignment.annualState,
+            cancelledByCycleId: cycle._id.toString(),
+          },
+          reason,
+          session,
+        );
+      }
+
+      const termAssignments = await TermAssignment.find({
+        annualAssignmentId: { $in: annualAssignmentIds },
+        isDeleted: false,
+        termState: {
+          $nin: [TermWorkflowState.TERM_FINALIZED, TermWorkflowState.CLOSED_BY_ADMIN],
+        },
+      }).session(session);
+
+      for (const termAssignment of termAssignments) {
+        const transition = workflowService.transition({
+          entityType: WorkflowEntityType.TERM_ASSIGNMENT,
+          entityId: termAssignment._id.toString(),
+          currentState: termAssignment.termState,
+          nextState: TermWorkflowState.CLOSED_BY_ADMIN,
+          actorId: actor.actorId,
+          actorRole: actor.actorRole,
+          reason: `Cycle cancelled: ${reason}`,
+          metadata: {
+            source: 'CYCLE_CANCELLATION',
+            cycleId: cycle._id.toString(),
+          },
+        });
+
+        termAssignment.previousTermState = transition.previousState as TermWorkflowState;
+        termAssignment.termState = transition.currentState as TermWorkflowState;
+        termAssignment.lastTransitionAt = transition.transitionedAt;
+        termAssignment.lastTransitionBy = actorId;
+        termAssignment.lastTransitionRole = actorRole;
+        termAssignment.lastTransitionReason = `Cycle cancelled: ${reason}`;
+        termAssignment.updatedBy = actorId;
+        termAssignment.version += 1;
+        await termAssignment.save({ session });
+
+        await WorkflowEvent.create(
+          [
+            {
+              entityType: WorkflowEntityType.TERM_ASSIGNMENT,
+              entityId: termAssignment._id,
+              annualAssignmentId: termAssignment.annualAssignmentId,
+              termAssignmentId: termAssignment._id,
+              cycleId: termAssignment.cycleId,
+              fromState: transition.previousState,
+              toState: transition.currentState,
+              action: 'PMS_TERM_ASSIGNMENT_CLOSED_BY_CYCLE_CANCELLATION',
+              actorUserId: Types.ObjectId.isValid(actor.actorId)
+                ? new Types.ObjectId(actor.actorId)
+                : actor.actorId,
+              actorRole: actor.actorRole,
+              reason: `Cycle cancelled: ${reason}`,
+              metadata: transition.metadata ?? {},
+              createdBy: Types.ObjectId.isValid(actor.actorId)
+                ? new Types.ObjectId(actor.actorId)
+                : actor.actorId,
+              createdAt: transition.transitionedAt,
+            },
+          ],
+          { session },
+        );
+
+        await this.audit(
+          'TERM_ASSIGNMENT_STATE_TRANSITIONED',
+          WorkflowEntityType.TERM_ASSIGNMENT,
+          termAssignment._id.toString(),
+          { termState: transition.previousState },
+          { termState: transition.currentState },
+          `Cycle cancelled: ${reason}`,
+          session,
+        );
+      }
+
+      await this.audit(
+        'PMS_CYCLE_ASSIGNMENTS_CANCELLED',
+        'ANNUAL_CYCLE',
+        cycle._id.toString(),
+        {
+          annualAssignmentsAffected: 0,
+          termAssignmentsAffected: 0,
+        },
+        {
+          annualAssignmentsAffected: annualAssignments.length,
+          termAssignmentsAffected: termAssignments.length,
+        },
+        reason,
+        session,
+      );
+    }
   }
 
   private buildQuarterPayloads(
@@ -1545,31 +1702,7 @@ export class CycleService extends BaseService {
   }
 
   private async assertCycleCanBeCancelled(cycle: IAnnualCycle): Promise<void> {
-    if (
-      cycle.status !== AnnualWorkflowState.ACTIVE &&
-      cycle.status !== AnnualWorkflowState.IN_PROGRESS
-    ) {
-      return;
-    }
-
-    const activeAssignments = await AnnualAssignment.countDocuments({
-      cycleId: cycle._id,
-      isDeleted: false,
-      annualState: {
-        $nin: [
-          AnnualWorkflowState.DRAFT,
-          AnnualWorkflowState.CANCELLED,
-          AnnualWorkflowState.CLOSED,
-          AnnualWorkflowState.ARCHIVED,
-        ],
-      },
-    });
-
-    if (activeAssignments > 0) {
-      throw new Error(
-        'Cycle has active assignments. Close or archive affected assignments before cancelling the cycle.',
-      );
-    }
+    void cycle;
   }
 
   private async getQuarterCompletionForCycle(cycle: IAnnualCycle): Promise<{
