@@ -16,6 +16,11 @@ import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
 import { ObjectiveComment } from '../models/pms-objective-comment.model';
 import { PmsDocument } from '../models/pms-document.model';
 import { ManagerObjectiveLibrary } from '../models/pms-manager-objective-library.model';
+import {
+  EmployeeAchievementSubmission,
+  EmployeeAchievementSubmissionStatus,
+  type IEmployeeAchievementSubmission,
+} from '../models/pms-employee-achievement-submission.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
@@ -32,6 +37,7 @@ import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type {
   IObjectiveBucket,
+  ITemplateField,
   ITemplatePredefinedObjective,
   ITemplateSection,
 } from '../models/pms-template-version.model';
@@ -270,6 +276,7 @@ type ObjectiveRecord = {
     uploadedByName?: string;
     uploadedByRole?: string;
   }>;
+  employeeAchievement?: Record<string, unknown>;
   submittedAt?: string;
   approvedAt?: string;
   returnedReason?: string;
@@ -303,6 +310,7 @@ type AssignmentRecord = {
   objectiveWeightageCap: number;
   backendConnected: boolean;
   objectiveConfig: ObjectiveConfig;
+  employeeWorkUpdate?: Record<string, unknown>;
   objectives: ObjectiveRecord[];
 };
 
@@ -488,7 +496,10 @@ export class ObjectiveService extends BaseService {
       objectivesByTermAssignmentId.set(key, bucket);
     }
 
-    const configMap = await this.buildObjectiveConfigMap(annualAssignments, termAssignments);
+    const [configMap, employeeAchievementContext] = await Promise.all([
+      this.buildObjectiveConfigMap(annualAssignments, termAssignments),
+      this.buildEmployeeAchievementContextMap(annualAssignments, termAssignments),
+    ]);
 
     return termAssignments.map((termAssignment) => {
       const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
@@ -505,15 +516,22 @@ export class ObjectiveService extends BaseService {
       );
       const objectiveConfig = configMap.get(termAssignment._id.toString()) ?? this.defaultObjectiveConfig();
       const objectiveRecords = (objectivesByTermAssignmentId.get(termAssignment._id.toString()) ?? [])
-        .map((objective) =>
-          this.mapObjectiveRecord(
+        .map((objective) => {
+          const objectiveRecord = this.mapObjectiveRecord(
             objective,
             annualAssignment,
             commentsByObjectiveId.get(objective._id.toString()) ?? [],
             objectiveValuesByObjectiveId.get(objective._id.toString()) ?? [],
             attachmentsByObjectiveId.get(objective._id.toString()) ?? [],
-          ),
-        );
+          );
+          return {
+            ...objectiveRecord,
+            employeeAchievement:
+              employeeAchievementContext.objectiveAchievementByObjectiveId.get(
+                objective._id.toString(),
+              ),
+          };
+        });
 
       const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
       const employeeCode = String(employeeSnapshot.employeeCode ?? '');
@@ -560,6 +578,9 @@ export class ObjectiveService extends BaseService {
         backendConnected: true,
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         objectiveConfig,
+        employeeWorkUpdate: employeeAchievementContext.workUpdateByTermAssignmentId.get(
+          termAssignment._id.toString(),
+        ),
         objectives: objectiveRecords,
       };
     });
@@ -592,13 +613,23 @@ export class ObjectiveService extends BaseService {
       .sort({ uploadedAt: 1, createdAt: 1 })
       .lean();
 
-    return this.mapObjectiveRecord(
+    const objectiveRecord = this.mapObjectiveRecord(
       objective.toObject(),
       annualAssignment,
       comments,
       objectiveValues,
       objectiveAttachments,
     );
+    const context = await this.buildEmployeeAchievementContextMap(
+      annualAssignment ? [annualAssignment as unknown as IAnnualAssignment] : [],
+      objective.termAssignmentId
+        ? [await this.getTermAssignment(objective.termAssignmentId.toString())]
+        : [],
+    );
+    return {
+      ...objectiveRecord,
+      employeeAchievement: context.objectiveAchievementByObjectiveId.get(objective._id.toString()),
+    };
   }
 
   async createObjective(input: CreateObjectiveInput): Promise<IObjective> {
@@ -2034,6 +2065,187 @@ export class ObjectiveService extends BaseService {
     }
 
     return scopedTerms.includes(termCode);
+  }
+
+  private async buildEmployeeAchievementContextMap(
+    annualAssignments: Array<IAnnualAssignment | Record<string, any>>,
+    termAssignments: Array<ITermAssignment | Record<string, any>>,
+  ): Promise<{
+    workUpdateByTermAssignmentId: Map<string, Record<string, unknown>>;
+    objectiveAchievementByObjectiveId: Map<string, Record<string, unknown>>;
+  }> {
+    const workUpdateByTermAssignmentId = new Map<string, Record<string, unknown>>();
+    const objectiveAchievementByObjectiveId = new Map<string, Record<string, unknown>>();
+
+    if (termAssignments.length === 0) {
+      return { workUpdateByTermAssignmentId, objectiveAchievementByObjectiveId };
+    }
+
+    const termAssignmentIds = termAssignments.map((item) => item._id);
+    const submissions = await EmployeeAchievementSubmission.find({
+      termAssignmentId: { $in: termAssignmentIds },
+      isDeleted: false,
+      status: {
+        $in: [
+          EmployeeAchievementSubmissionStatus.SUBMITTED,
+          EmployeeAchievementSubmissionStatus.LOCKED,
+        ],
+      },
+    }).lean();
+
+    const submissionsByTermAssignmentId = new Map(
+      submissions.map((submission) => [
+        submission.termAssignmentId.toString(),
+        submission as unknown as IEmployeeAchievementSubmission,
+      ]),
+    );
+
+    for (const submission of submissions) {
+      for (const item of submission.achievementItems ?? []) {
+        const objectiveId = item.objectiveId?.toString?.();
+        if (!objectiveId || item.type !== 'OBJECTIVE') continue;
+        objectiveAchievementByObjectiveId.set(objectiveId, {
+          subject: item.subject,
+          description: item.description,
+          employeeSelfRating: item.employeeSelfRating,
+          employeeSelfRatingComments: item.employeeSelfRatingComments,
+          outcome: item.outcome,
+          attachments: (item.attachments ?? []).map((attachment) => ({
+            fileName: attachment.fileName,
+            fileUrl: attachment.fileUrl,
+            fileType: attachment.fileType,
+            fileSize: attachment.fileSize,
+            documentId: attachment.documentId,
+            uploadedAt: attachment.uploadedAt
+              ? new Date(attachment.uploadedAt).toISOString()
+              : undefined,
+          })),
+          submittedAt: submission.submittedAt
+            ? new Date(submission.submittedAt).toISOString()
+            : undefined,
+        });
+      }
+    }
+
+    const annualAssignmentById = new Map(
+      annualAssignments.map((assignment) => [assignment._id.toString(), assignment]),
+    );
+    const templateVersionIds = Array.from(
+      new Set(
+        annualAssignments
+          .map((assignment) => assignment.templateVersionId?.toString?.())
+          .filter(Boolean) as string[],
+      ),
+    );
+    const templateVersions = templateVersionIds.length
+      ? await PmsTemplateVersion.find({ _id: { $in: templateVersionIds } }).lean()
+      : [];
+    const templateVersionById = new Map(
+      templateVersions.map((version) => [version._id.toString(), version]),
+    );
+
+    for (const termAssignment of termAssignments) {
+      const annualAssignment = annualAssignmentById.get(
+        termAssignment.annualAssignmentId.toString(),
+      );
+      const templateVersion = annualAssignment?.templateVersionId
+        ? templateVersionById.get(annualAssignment.templateVersionId.toString())
+        : undefined;
+      const achievementSection = this.findEmployeeAchievementSection(
+        templateVersion?.sections as ITemplateSection[] | undefined,
+      );
+      const workUpdateFields = achievementSection
+        ? this.getEmployeeWorkUpdateFields(achievementSection)
+        : [];
+      if (workUpdateFields.length === 0) continue;
+
+      const submission = submissionsByTermAssignmentId.get(termAssignment._id.toString());
+      workUpdateByTermAssignmentId.set(termAssignment._id.toString(), {
+        termAssignmentId: termAssignment._id.toString(),
+        assessmentTermCode: termAssignment.assessmentTermCode,
+        termCode: termAssignment.termCode,
+        termLabel: termAssignment.termLabel,
+        termState: termAssignment.termState,
+        status: submission?.status ?? null,
+        submitted: Boolean(submission),
+        submittedAt: submission?.submittedAt
+          ? new Date(submission.submittedAt).toISOString()
+          : undefined,
+        lockedAt: submission?.lockedAt
+          ? new Date(submission.lockedAt).toISOString()
+          : undefined,
+        section: {
+          key: achievementSection?.sectionKey,
+          title: achievementSection?.sectionLabel,
+        },
+        fields: workUpdateFields.map((field) =>
+          this.mapEmployeeWorkUpdateField(field),
+        ),
+        values: submission
+          ? (submission.achievementValues ?? [])
+              .filter((value) =>
+                workUpdateFields.some(
+                  (field) => field.fieldKey === value.fieldKey,
+                ),
+              )
+              .map((value) => ({
+                templateFieldId: value.templateFieldId,
+                fieldKey: value.fieldKey,
+                sectionKey: value.sectionKey,
+                roleCode: value.roleCode,
+                actorUserId: value.actorUserId?.toString?.(),
+                workflowStage: value.workflowStage,
+                valueJson: value.valueJson,
+                valueText: value.valueText,
+                valueNumber: value.valueNumber,
+                valueDate: value.valueDate
+                  ? new Date(value.valueDate).toISOString()
+                  : undefined,
+                valueStatus: value.valueStatus,
+                submittedAt: value.submittedAt
+                  ? new Date(value.submittedAt).toISOString()
+                  : undefined,
+              }))
+          : [],
+      });
+    }
+
+    return { workUpdateByTermAssignmentId, objectiveAchievementByObjectiveId };
+  }
+
+  private findEmployeeAchievementSection(
+    sections?: ITemplateSection[],
+  ): ITemplateSection | undefined {
+    return (sections ?? []).find((section) => {
+      const metadata = (section.metadata ?? {}) as Record<string, unknown>;
+      return (
+        metadata.purpose === 'EMPLOYEE_ACHIEVEMENT_SUBMISSION' ||
+        section.sectionKey === 'employee_achievement_submission'
+      );
+    });
+  }
+
+  private getEmployeeWorkUpdateFields(section: ITemplateSection): ITemplateField[] {
+    return (section.fields ?? []).filter((field) => {
+      const metadata = (field.metadata ?? {}) as Record<string, unknown>;
+      return metadata.purpose === 'EMPLOYEE_WORK_UPDATE';
+    });
+  }
+
+  private mapEmployeeWorkUpdateField(field: ITemplateField) {
+    return {
+      fieldKey: field.fieldKey,
+      fieldLabel: field.fieldLabel,
+      fieldType: field.fieldType,
+      isRequired: Boolean(field.isRequired),
+      placeholder: field.placeholder,
+      helpText: field.helpText,
+      options: (field.options ?? []).map((option) => ({
+        label: option.label,
+        value: option.value,
+      })),
+      metadata: field.metadata,
+    };
   }
 
   private mapObjectiveRecord(

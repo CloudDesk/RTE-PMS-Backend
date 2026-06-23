@@ -10,6 +10,7 @@ import {
   ObjectiveSource,
   ObjectiveStatus,
   PmsRole,
+  PmsTemplateFieldType,
   TermWorkflowState,
 } from '../constants/pms.enums';
 import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
@@ -75,6 +76,17 @@ interface AchievementValueInput {
   valueDate?: Date | string;
   valueStatus?: string;
 }
+
+type EmployeeWorkUpdateFieldRecord = {
+  fieldKey: string;
+  fieldLabel: string;
+  fieldType: string;
+  isRequired: boolean;
+  placeholder?: string;
+  helpText?: string;
+  options?: Array<{ label?: string; value?: string }>;
+  metadata?: Record<string, unknown>;
+};
 
 export interface SaveAchievementDraftInput {
   achievementItems?: AchievementItemInput[];
@@ -176,6 +188,7 @@ type AchievementSubmissionDetail = {
     title: string;
     fieldKey: string;
     fieldLabel: string;
+    workUpdateFields: EmployeeWorkUpdateFieldRecord[];
   };
   objectives: AchievementObjectiveRecord[];
   submission: AchievementSubmissionRecord | null;
@@ -207,6 +220,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
     const section = this.getAchievementSection(templateVersion, termAssignment.assessmentTermCode);
     const field = this.getAchievementField(section);
+    const workUpdateFields = this.getEmployeeWorkUpdateFields(section);
     const config = this.resolveTemplateConfig(templateVersion, section);
 
     if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
@@ -237,6 +251,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         title: section.sectionLabel,
         fieldKey: field.fieldKey,
         fieldLabel: field.fieldLabel,
+        workUpdateFields: workUpdateFields.map((workUpdateField) =>
+          this.mapEmployeeWorkUpdateField(workUpdateField),
+        ),
       },
       objectives,
       submission: submission ? this.mapSubmissionRecord(submission) : null,
@@ -257,6 +274,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
     const section = this.getAchievementSection(templateVersion, termAssignment.assessmentTermCode);
     const field = this.getAchievementField(section);
+    const workUpdateFields = this.getEmployeeWorkUpdateFields(section);
     const config = this.resolveTemplateConfig(templateVersion, section);
 
     if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
@@ -287,18 +305,30 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       input.achievementValues ?? [],
       normalizedItems,
       field,
+      workUpdateFields,
       false,
     );
 
-    this.validateAchievementPayload(
-      section,
-      field,
-      normalizedItems,
-      normalizedValues,
-      false,
-      config,
-      approvedObjectives,
-    );
+    try {
+      this.validateAchievementPayload(
+        section,
+        field,
+        workUpdateFields,
+        normalizedItems,
+        normalizedValues,
+        false,
+        config,
+        approvedObjectives,
+      );
+    } catch (error) {
+      await this.auditTermAssignmentBlockedAttempt(
+        termAssignment,
+        existingSubmission,
+        'PMS_EMPLOYEE_ACHIEVEMENT_DRAFT_VALIDATION_BLOCKED',
+        { reason: error instanceof Error ? error.message : 'Invalid employee achievement draft payload' },
+      );
+      throw error;
+    }
 
     const actorObjectId = this.actorIdObject();
     const previousValue = existingSubmission?.toObject();
@@ -365,6 +395,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const templateVersion = await this.getTemplateVersion(annualAssignment.templateVersionId?.toString());
     const section = this.getAchievementSection(templateVersion, termAssignment.assessmentTermCode);
     const field = this.getAchievementField(section);
+    const workUpdateFields = this.getEmployeeWorkUpdateFields(section);
     const config = this.resolveTemplateConfig(templateVersion, section);
 
     if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
@@ -394,21 +425,33 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       config,
     );
     const submitValues = this.normalizeAchievementValues(
-      input.achievementValues ?? [],
+      input.achievementValues ?? (existingSubmission?.achievementValues as unknown as AchievementValueInput[]) ?? [],
       submitItems,
       field,
+      workUpdateFields,
       true,
     );
 
-    this.validateAchievementPayload(
-      section,
-      field,
-      submitItems,
-      submitValues,
-      true,
-      config,
-      approvedObjectives,
-    );
+    try {
+      this.validateAchievementPayload(
+        section,
+        field,
+        workUpdateFields,
+        submitItems,
+        submitValues,
+        true,
+        config,
+        approvedObjectives,
+      );
+    } catch (error) {
+      await this.auditTermAssignmentBlockedAttempt(
+        termAssignment,
+        existingSubmission,
+        'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_VALIDATION_BLOCKED',
+        { reason: error instanceof Error ? error.message : 'Invalid employee achievement submit payload' },
+      );
+      throw error;
+    }
 
     const actorObjectId = this.actorIdObject();
     const previousValue = existingSubmission?.toObject();
@@ -697,47 +740,64 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     inputValues: AchievementValueInput[],
     achievementItems: Array<Record<string, any>>,
     field: ITemplateField,
+    workUpdateFields: ITemplateField[],
     isSubmit: boolean,
   ) {
     const actor = this.requireActor();
     const actorUserId = this.toObjectId(actor.actorId, 'actorId');
     const now = new Date();
-    const effectiveValues = inputValues.length > 0
+    const allowedFields = new Map<string, ITemplateField>([
+      [field.fieldKey, field],
+      ...workUpdateFields.map((workUpdateField) => [workUpdateField.fieldKey, workUpdateField] as const),
+    ]);
+    const hasAchievementItemsValue = inputValues.some(
+      (value) =>
+        value.sectionKey === EmployeeAchievementSubmissionService.SECTION_KEY &&
+        value.fieldKey === field.fieldKey,
+    );
+    const defaultAchievementValue: AchievementValueInput = {
+      templateFieldId: field.fieldKey,
+      fieldKey: field.fieldKey,
+      sectionKey: EmployeeAchievementSubmissionService.SECTION_KEY,
+      roleCode: PmsRole.EMPLOYEE,
+      workflowStage: isSubmit ? 'ACHIEVEMENT_SUBMITTED' : 'ACHIEVEMENT_DRAFT',
+      valueJson: achievementItems,
+      valueStatus: isSubmit ? 'ACTIVE' : 'DRAFT',
+      valueDate: undefined,
+    };
+    const effectiveValues = hasAchievementItemsValue
       ? inputValues
-      : [
-          {
-            templateFieldId: field.fieldKey,
-            fieldKey: field.fieldKey,
-            sectionKey: EmployeeAchievementSubmissionService.SECTION_KEY,
-            roleCode: 'EMPLOYEE',
-            workflowStage: isSubmit ? 'ACHIEVEMENT_SUBMITTED' : 'ACHIEVEMENT_DRAFT',
-            valueJson: achievementItems,
-            valueStatus: isSubmit ? 'ACTIVE' : 'DRAFT',
-            valueDate: undefined,
-          },
-        ];
+      : [defaultAchievementValue, ...inputValues];
 
-    return effectiveValues.map((value) => ({
-      templateFieldId: value.templateFieldId,
-      fieldKey: value.fieldKey,
-      sectionKey: value.sectionKey,
-      roleCode: value.roleCode?.trim() || 'EMPLOYEE',
-      actorUserId,
-      workflowStage: value.workflowStage?.trim() || (isSubmit ? 'ACHIEVEMENT_SUBMITTED' : 'ACHIEVEMENT_DRAFT'),
-      valueJson: value.valueJson ?? achievementItems,
-      valueText: value.valueText?.trim(),
-      valueNumber: value.valueNumber === undefined || value.valueNumber === null
-        ? undefined
-        : Number(value.valueNumber),
-      valueDate: value.valueDate ? new Date(value.valueDate) : undefined,
-      valueStatus: value.valueStatus?.trim() || (isSubmit ? 'ACTIVE' : 'DRAFT'),
-      submittedAt: isSubmit ? now : undefined,
-    }));
+    return effectiveValues.map((value) => {
+      const templateField = allowedFields.get(value.fieldKey);
+      const isAchievementItemsField = value.fieldKey === field.fieldKey;
+
+      return {
+        templateFieldId: value.templateFieldId || templateField?.fieldKey,
+        fieldKey: value.fieldKey,
+        sectionKey: value.sectionKey,
+        roleCode: value.roleCode?.trim() || PmsRole.EMPLOYEE,
+        actorUserId,
+        workflowStage: value.workflowStage?.trim() || (isSubmit ? 'ACHIEVEMENT_SUBMITTED' : 'ACHIEVEMENT_DRAFT'),
+        valueJson: isAchievementItemsField
+          ? (value.valueJson ?? achievementItems)
+          : value.valueJson,
+        valueText: value.valueText?.trim(),
+        valueNumber: value.valueNumber === undefined || value.valueNumber === null
+          ? undefined
+          : Number(value.valueNumber),
+        valueDate: value.valueDate ? new Date(value.valueDate) : undefined,
+        valueStatus: value.valueStatus?.trim() || (isSubmit ? 'ACTIVE' : 'DRAFT'),
+        submittedAt: isSubmit ? now : undefined,
+      };
+    });
   }
 
   private validateAchievementPayload(
     section: ITemplateSection,
     field: ITemplateField,
+    workUpdateFields: ITemplateField[],
     items: Array<Record<string, any>>,
     values: Array<Record<string, any>>,
     isSubmit: boolean,
@@ -752,13 +812,31 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Achievement Items field must use DATA_GRID');
     }
 
+    const allowedWorkUpdateFields = new Map(workUpdateFields.map((item) => [item.fieldKey, item]));
+    const valuesByFieldKey = new Map<string, Record<string, any>>();
+
     for (const value of values) {
       if (value.sectionKey !== EmployeeAchievementSubmissionService.SECTION_KEY) {
         throw new Error('Only Employee Achievement Submission values can be saved through this API');
       }
-      if (value.fieldKey !== field.fieldKey) {
-        throw new Error('Only Achievement Items field values can be saved through this API');
+
+      const normalizedRole = normalizePmsRole(String(value.roleCode ?? PmsRole.EMPLOYEE));
+      if (normalizedRole !== PmsRole.EMPLOYEE) {
+        throw new Error('Only employee-owned Employee Achievement Submission values can be saved through this API');
       }
+
+      if (value.fieldKey === field.fieldKey) {
+        valuesByFieldKey.set(value.fieldKey, value);
+        continue;
+      }
+
+      const workUpdateField = allowedWorkUpdateFields.get(value.fieldKey);
+      if (!workUpdateField) {
+        throw new Error(`Employee Work Update field "${value.fieldKey}" is not configured in the locked template version`);
+      }
+
+      this.validateEmployeeWorkUpdateValue(workUpdateField, value);
+      valuesByFieldKey.set(value.fieldKey, value);
     }
 
     if (isSubmit && config.achievementSubmissionRequired && items.length === 0) {
@@ -781,12 +859,158 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }
 
     const gridColumns = Array.isArray(field.gridConfig?.columns) ? field.gridConfig.columns : [];
-    const subjectColumn = gridColumns.find((column) => column.key === 'achievement_subject');
-    const descriptionColumn = gridColumns.find((column) => column.key === 'achievement_description');
+    const subjectColumn = gridColumns.find((column) =>
+      ['achievement_subject', 'objective_ref', 'objective'].includes(column.key),
+    );
+    const descriptionColumn = gridColumns.find((column) =>
+      ['achievement_description', 'achievement', 'description'].includes(column.key),
+    );
 
     if (!subjectColumn || !descriptionColumn) {
       throw new Error('Achievement Items field is missing required grid columns');
     }
+
+    if (!isSubmit) {
+      return;
+    }
+
+    for (const workUpdateField of workUpdateFields) {
+      const submittedValue = valuesByFieldKey.get(workUpdateField.fieldKey);
+      if (this.isEmployeeWorkUpdateRequired(workUpdateField) && this.isAchievementValueEmpty(submittedValue)) {
+        throw new Error(`Employee Work Update field "${workUpdateField.fieldLabel}" is required before submission`);
+      }
+    }
+  }
+
+  private getEmployeeWorkUpdateFields(section: ITemplateSection): ITemplateField[] {
+    return (section.fields ?? []).filter((field) => {
+      const metadata = (field.metadata ?? {}) as Record<string, unknown>;
+      return metadata.purpose === 'EMPLOYEE_WORK_UPDATE';
+    });
+  }
+
+  private mapEmployeeWorkUpdateField(field: ITemplateField): EmployeeWorkUpdateFieldRecord {
+    return {
+      fieldKey: field.fieldKey,
+      fieldLabel: field.fieldLabel,
+      fieldType: field.fieldType,
+      isRequired: this.isEmployeeWorkUpdateRequired(field),
+      placeholder: field.placeholder,
+      helpText: field.helpText,
+      options: (field.options ?? []).map((option) => ({
+        label: option.label,
+        value: option.value,
+      })),
+      metadata: field.metadata,
+    };
+  }
+
+  private isEmployeeWorkUpdateRequired(field: ITemplateField): boolean {
+    if (field.isRequired) {
+      return true;
+    }
+
+    return (field.behaviors ?? []).some((behavior) => {
+      const roleMatches = normalizePmsRole(String(behavior.role ?? '')) === PmsRole.EMPLOYEE;
+      const stateMatches = !behavior.workflowState ||
+        behavior.workflowState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN ||
+        behavior.workflowState === 'EMPLOYEE_ACHIEVEMENT_SUBMISSION';
+
+      return roleMatches && stateMatches && behavior.mandatory === true;
+    });
+  }
+
+  private validateEmployeeWorkUpdateValue(field: ITemplateField, value: Record<string, any>): void {
+    if (this.isAchievementValueEmpty(value)) {
+      return;
+    }
+
+    const choiceFieldTypes = new Set<string>([
+      PmsTemplateFieldType.DROPDOWN,
+      PmsTemplateFieldType.RADIO,
+      PmsTemplateFieldType.CHECKBOX,
+      PmsTemplateFieldType.CHECKBOX_GROUP,
+      PmsTemplateFieldType.MULTISELECT,
+    ]);
+
+    if (!choiceFieldTypes.has(field.fieldType)) {
+      return;
+    }
+
+    const validOptions = new Set(
+      (field.options ?? [])
+        .flatMap((option) => [option.value, option.label])
+        .filter((option): option is string => Boolean(String(option ?? '').trim()))
+        .map((option) => option.trim()),
+    );
+
+    if (validOptions.size === 0) {
+      return;
+    }
+
+    const submittedValues = this.extractChoiceValues(value);
+    const invalidOption = submittedValues.find((item) => !validOptions.has(item));
+
+    if (invalidOption) {
+      throw new Error(`Invalid option "${invalidOption}" for Employee Work Update field "${field.fieldLabel}"`);
+    }
+  }
+
+  private extractChoiceValues(value: Record<string, any>): string[] {
+    const normalize = (item: unknown): string[] => {
+      if (item === undefined || item === null || item === '') {
+        return [];
+      }
+      if (Array.isArray(item)) {
+        return item.flatMap((entry) => normalize(entry));
+      }
+      if (typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        if (record.value !== undefined) return normalize(record.value);
+        if (record.values !== undefined) return normalize(record.values);
+        if (record.selected !== undefined) return normalize(record.selected);
+        return [];
+      }
+      return String(item)
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    };
+
+    const rawValue = value.valueJson !== undefined ? value.valueJson : value.valueText;
+    return normalize(rawValue);
+  }
+
+  private isAchievementValueEmpty(value?: Record<string, any>): boolean {
+    if (!value) {
+      return true;
+    }
+
+    if (String(value.valueText ?? '').trim()) {
+      return false;
+    }
+    if (value.valueNumber !== undefined && value.valueNumber !== null && Number.isFinite(Number(value.valueNumber))) {
+      return false;
+    }
+    if (value.valueDate) {
+      return false;
+    }
+
+    const jsonValue = value.valueJson;
+    if (jsonValue === undefined || jsonValue === null) {
+      return true;
+    }
+    if (typeof jsonValue === 'string') {
+      return !jsonValue.trim();
+    }
+    if (Array.isArray(jsonValue)) {
+      return jsonValue.length === 0;
+    }
+    if (typeof jsonValue === 'object') {
+      return Object.keys(jsonValue as Record<string, unknown>).length === 0;
+    }
+
+    return false;
   }
 
   private resolveTemplateConfig(
@@ -1259,4 +1483,3 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return submission?.annualAssignmentId?.toString();
   }
 }
-

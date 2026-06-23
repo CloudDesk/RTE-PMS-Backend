@@ -184,6 +184,62 @@ describe('QuarterReviewService - Template Engine Scoring Logic', () => {
   });
 
   describe('Phase 3 scoring policies', () => {
+    it('ignores employee work update and includeInScore=false fields even if they are present in scoring config', () => {
+      const reviewConfig = {
+        objectiveRatingRule: null,
+        overallScoreMax: 100,
+        sections: [
+          {
+            sectionKey: 'employee_achievement',
+            sectionType: PmsTemplateSectionType.QUARTER_REVIEW,
+            weightage: 100,
+            aggregationMethod: 'WEIGHTED_AVERAGE',
+            maxSectionScore: null,
+            scoringFields: [
+              {
+                fieldKey: 'manager_rating',
+                sectionKey: 'employee_achievement',
+                fieldType: 'NUMBER',
+                scoreType: 'MANUAL',
+                weightage: 100,
+                maxScore: 100,
+              },
+              {
+                fieldKey: 'employee_work_update',
+                sectionKey: 'employee_achievement',
+                fieldType: 'NUMBER',
+                scoreType: 'MANUAL',
+                weightage: 100,
+                maxScore: 100,
+                metadata: { purpose: 'EMPLOYEE_WORK_UPDATE', includeInScore: false },
+              },
+              {
+                fieldKey: 'view_only_note',
+                sectionKey: 'employee_achievement',
+                fieldType: 'NUMBER',
+                scoreType: 'MANUAL',
+                weightage: 100,
+                maxScore: 100,
+                metadata: { includeInScore: false },
+              },
+            ],
+          },
+        ],
+      };
+
+      const reviewValues = [
+        { sectionKey: 'employee_achievement', fieldKey: 'manager_rating', valueNumber: 50 },
+        { sectionKey: 'employee_achievement', fieldKey: 'employee_work_update', valueNumber: 100 },
+        { sectionKey: 'employee_achievement', fieldKey: 'view_only_note', valueNumber: 100 },
+      ];
+
+      const { sectionScores, sectionsSnapshot } = service.calculateSectionScores(reviewValues, reviewConfig, [], []);
+
+      expect(sectionScores[0].score).toBe(50);
+      expect(sectionsSnapshot[0].fields).toHaveLength(1);
+      expect(sectionsSnapshot[0].fields[0].fieldKey).toBe('manager_rating');
+    });
+
     it('applies conditional scoring, normalization, and rounding policies', () => {
       const reviewConfig = {
         objectiveRatingRule: null,

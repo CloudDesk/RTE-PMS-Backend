@@ -69,6 +69,7 @@ export interface ResolvedTemplateField {
   fieldCategory?: string;
   semanticRole?: string;
   scoringConfig?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   validationRules?: Record<string, unknown>;
   conditionalRendering?: TemplateField['conditionalRendering'];
 }
@@ -1022,6 +1023,7 @@ export class PmsTemplateService extends BaseService {
       editabilityRules: field.editabilityRules ?? rulePatch.editabilityRules ?? {},
       optionConfig: field.optionConfig ?? {},
       scoringConfig,
+      metadata: field.metadata ?? {},
       defaultValue: field.defaultValue,
       colSpan: [1, 2, 3, 4].includes(Number(field.colSpan))
         ? (Number(field.colSpan) as 1 | 2 | 3 | 4)
@@ -1322,6 +1324,7 @@ export class PmsTemplateService extends BaseService {
       fieldCategory: field.fieldCategory,
       semanticRole: field.semanticRole,
       scoringConfig: field.scoringConfig,
+      metadata: field.metadata ?? {},
       validationRules: field.validationRules,
       conditionalRendering: field.conditionalRendering,
     };
@@ -1473,6 +1476,104 @@ export class PmsTemplateService extends BaseService {
         this.normalizeRoleCode(behavior.role) === role &&
         behavior.workflowState === workflowState,
     );
+  }
+
+  private isEmployeeAchievementSubmissionSection(section: ITemplateSection): boolean {
+    const metadata = (section.metadata ?? {}) as Record<string, unknown>;
+    return (
+      metadata.purpose === 'EMPLOYEE_ACHIEVEMENT_SUBMISSION' ||
+      section.sectionKey === 'employee_achievement_submission'
+    );
+  }
+
+  private isEmployeeWorkUpdateField(field: ITemplateField): boolean {
+    const metadata = (field.metadata ?? {}) as Record<string, unknown>;
+    return metadata.purpose === 'EMPLOYEE_WORK_UPDATE';
+  }
+
+  private isScoringField(field: ITemplateField): boolean {
+    return (
+      field.fieldCategory === FieldCategory.SCORING ||
+      field.scoringConfig?.participatesInScoring === true ||
+      (field.metadata as Record<string, unknown> | undefined)?.includeInScore === true
+    );
+  }
+
+  private isEmployeeEditableDuringAchievementOpen(field: ITemplateField): boolean {
+    const employeeRole = this.normalizeRoleCode(PmsRole.EMPLOYEE);
+    const behavior = this.findBehavior(
+      field,
+      employeeRole,
+      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+    );
+
+    if (behavior) {
+      return behavior.visibility === 'VISIBLE' && behavior.editability === 'EDITABLE';
+    }
+
+    return this.isFieldEditable(
+      field,
+      employeeRole,
+      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+    );
+  }
+
+  private validateEmployeeWorkUpdateField(
+    section: ITemplateSection,
+    field: ITemplateField,
+  ): string[] {
+    const errors: string[] = [];
+    const sectionName = section.sectionLabel || section.sectionKey;
+    const fieldName = field.fieldLabel || field.fieldKey;
+    const metadata = (field.metadata ?? {}) as Record<string, unknown>;
+
+    if (!this.isEmployeeAchievementSubmissionSection(section)) {
+      errors.push(
+        `Employee Work Update field "${fieldName}" must be inside the Employee Achievement Submission section`,
+      );
+    }
+
+    if (this.isScoringField(field)) {
+      errors.push(
+        `Employee Work Update field "${fieldName}" in section "${sectionName}" cannot participate in scoring`,
+      );
+    }
+
+    if (metadata.includeInScore !== false) {
+      errors.push(
+        `Employee Work Update field "${fieldName}" must set metadata.includeInScore to false`,
+      );
+    }
+
+    for (const behavior of field.behaviors ?? []) {
+      const role = this.normalizeRoleCode(behavior.role);
+      if (
+        role &&
+        role !== this.normalizeRoleCode(PmsRole.EMPLOYEE) &&
+        behavior.editability === 'EDITABLE'
+      ) {
+        errors.push(
+          `Employee Work Update field "${fieldName}" must be read-only for ${role}`,
+        );
+      }
+    }
+
+    const isRequiredForEmployee =
+      field.isRequired ||
+      (field.behaviors ?? []).some(
+        (behavior) =>
+          this.normalizeRoleCode(behavior.role) === this.normalizeRoleCode(PmsRole.EMPLOYEE) &&
+          behavior.workflowState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
+          behavior.mandatory === true,
+      );
+
+    if (isRequiredForEmployee && !this.isEmployeeEditableDuringAchievementOpen(field)) {
+      errors.push(
+        `Required Employee Work Update field "${fieldName}" must be editable by Employee during EMPLOYEE_ACHIEVEMENT_OPEN`,
+      );
+    }
+
+    return errors;
   }
 
   private evaluateCondition(
@@ -1835,6 +1936,13 @@ export class PmsTemplateService extends BaseService {
         if (field.conditionalRendering?.dependsOn) {
           conditionalDependencies.set(field.fieldKey, [field.conditionalRendering.dependsOn]);
         }
+
+        if (this.isEmployeeWorkUpdateField(field)) {
+          const issues = this.validateEmployeeWorkUpdateField(section, field);
+          if (issues.length > 0) {
+            throw new Error(issues.join('; '));
+          }
+        }
       }
     }
 
@@ -1970,6 +2078,10 @@ export class PmsTemplateService extends BaseService {
 
       for (const field of section.fields ?? []) {
         const isScoring = field.fieldCategory === 'SCORING' || field.scoringConfig?.participatesInScoring === true;
+
+        if (this.isEmployeeWorkUpdateField(field)) {
+          errors.push(...this.validateEmployeeWorkUpdateField(section, field));
+        }
 
         const nonScorableTypes = new Set<string>([
           PmsTemplateFieldType.SHORT_TEXT,
