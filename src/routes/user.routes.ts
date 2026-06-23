@@ -1856,6 +1856,14 @@ export const userRoutes: RouteHandler = async (
           limit: Number(limit) || 10000 // Get all matching users
         }, authenticatedUser);
 
+        const departmentLov = await request.container!.lovService.findByType('department');
+        const departmentLabelMap = new Map(
+          (departmentLov?.values || []).map((item: any) => [
+            String(item.value || '').toLowerCase(),
+            item.label || item.value || ''
+          ])
+        );
+
         // Create Excel workbook
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Users Data');
@@ -1866,7 +1874,7 @@ export const userRoutes: RouteHandler = async (
           'Email',
           'Employee Code',
           'Role',
-          'Department ID',
+          'Department',
           'Manager Name',
           'Active',
           'Joining Date',
@@ -1893,7 +1901,7 @@ export const userRoutes: RouteHandler = async (
             user.email || '',
             user.employeeCode || '',
             user.role || '',
-            user.departmentId || '',
+            departmentLabelMap.get(String(user.departmentId || '').toLowerCase()) || user.departmentId || '',
             user.managerName || '',
             user.active ? 'Yes' : 'No',
             user.joiningDate ? new Date(user.joiningDate).toLocaleDateString() : '',
@@ -1916,7 +1924,7 @@ export const userRoutes: RouteHandler = async (
         worksheet.getColumn('B').width = 30; // Email
         worksheet.getColumn('C').width = 15; // Employee Code
         worksheet.getColumn('D').width = 20; // Role
-        worksheet.getColumn('E').width = 20; // Department ID
+        worksheet.getColumn('E').width = 20; // Department
         worksheet.getColumn('F').width = 25; // Manager Name
         worksheet.getColumn('G').width = 10; // Active
         worksheet.getColumn('H').width = 15; // Joining Date
