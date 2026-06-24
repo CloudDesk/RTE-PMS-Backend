@@ -3681,6 +3681,8 @@ export class ObjectiveService extends BaseService {
       actorRole,
       createdBy: actorObjectId,
     });
+  }
+
   private assertPredefinedObjectiveValueOnlyUpdate(
     objective: IObjective,
     input: UpdateObjectiveInput,
