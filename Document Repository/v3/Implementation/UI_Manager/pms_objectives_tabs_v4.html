@@ -1,0 +1,541 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif;background:#F4F4F8;color:#111827;min-height:100vh}
+.page{padding:20px 24px;max-width:1080px;margin:0 auto}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.breadcrumb{display:flex;align-items:center;gap:5px;font-size:12px;color:#9CA3AF}
+.breadcrumb b{color:#111827;font-weight:500}
+.term-badge{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #E5E7EB;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:500;color:#374151}
+.term-dot{width:7px;height:7px;border-radius:50%;background:#10B981}
+.hero{background:#fff;border:1px solid #E5E7EB;border-radius:16px;padding:22px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.hero-left{display:flex;align-items:center;gap:14px;flex:1;min-width:0}
+.hero-icon{width:46px;height:46px;border-radius:12px;background:#EEF2FF;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hero-info{flex:1;min-width:0}
+.hero-name{font-size:15px;font-weight:600;color:#111827;margin-bottom:2px}
+.hero-sub{font-size:12px;color:#6B7280}
+.hero-stats{display:flex;gap:20px;flex-shrink:0}
+.stat-box{text-align:center}
+.stat-num{font-size:20px;font-weight:700;color:#4F46E5}
+.stat-lbl{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:#9CA3AF;margin-top:1px}
+.stat-div{width:1px;background:#E5E7EB}
+.tab-bar{display:flex;gap:0;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:4px;margin-bottom:16px;width:fit-content}
+.tab{padding:8px 22px;border-radius:9px;font-size:13px;font-weight:500;cursor:pointer;border:none;background:none;color:#6B7280;transition:all .15s;display:flex;align-items:center;gap:7px}
+.tab.on{background:#4F46E5;color:#fff}
+.tab .tab-count{background:rgba(255,255,255,.25);border-radius:100px;font-size:10px;font-weight:700;padding:1px 7px}
+.tab:not(.on) .tab-count{background:#F3F4F6;color:#6B7280}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 248px;gap:14px}
+.card{background:#fff;border:1px solid #E5E7EB;border-radius:14px;overflow:hidden;margin-bottom:12px}
+.card-pad{padding:18px 20px}
+.sec-head{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.sec-icon{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.ic-v{background:#EEF2FF;color:#4F46E5}
+.ic-g{background:#ECFDF5;color:#059669}
+.ic-a{background:#FFFBEB;color:#D97706}
+.ic-b{background:#EFF6FF;color:#2563EB}
+.ic-r{background:#FEF2F2;color:#DC2626}
+.sec-title{font-size:13px;font-weight:600;color:#111827}
+.sec-sub{font-size:11px;color:#9CA3AF;margin-top:1px}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:100px;font-size:11px;font-weight:600}
+.p-green{background:#ECFDF5;color:#065F46}
+.p-violet{background:#EEF2FF;color:#3730A3}
+.p-teal{background:#F0FDFA;color:#0F766E}
+.p-blue{background:#EFF6FF;color:#1D4ED8}
+.p-amber{background:#FFFBEB;color:#92400E}
+.p-gray{background:#F3F4F6;color:#374151}
+.p-red{background:#FEF2F2;color:#991B1B}
+.obj-card{border:1px solid #E5E7EB;border-radius:12px;padding:16px;margin-bottom:10px;cursor:pointer;transition:all .15s;position:relative}
+.obj-card:hover{border-color:#6366F1;background:#FAFAFE}
+.obj-card.active{border-color:#4F46E5;background:#FAFAFE}
+.obj-card.active::before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:3px;background:#4F46E5;border-radius:0 3px 3px 0}
+.obj-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.obj-title{font-size:13px;font-weight:600;color:#111827;margin-bottom:4px}
+.obj-desc{font-size:11px;color:#6B7280;line-height:1.5}
+.wt-ring{flex-shrink:0}
+.divider{height:1px;background:#F3F4F6;margin:14px 0}
+.meta3{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #F3F4F6;border-radius:10px;overflow:hidden}
+.mcell{padding:12px 14px;background:#FAFAFA}
+.mcell:not(:last-child){border-right:1px solid #F3F4F6}
+.mk{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px}
+.mv{font-size:12px;color:#111827;font-weight:500;line-height:1.4}
+.criteria{background:#F8F7FF;border-left:3px solid #4F46E5;border-radius:0 8px 8px 0;padding:12px 14px;margin-top:12px}
+.ck{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#4338CA;margin-bottom:4px}
+.cv{font-size:12px;color:#374151;line-height:1.5}
+textarea{width:100%;border:1.5px solid #E5E7EB;border-radius:10px;padding:11px 13px;font-size:13px;font-family:inherit;color:#111827;resize:vertical;line-height:1.6;background:#FAFAFA;transition:all .15s}
+textarea:focus{outline:none;border-color:#4F46E5;background:#fff;box-shadow:0 0 0 3px rgba(79,70,229,.08)}
+.flbl{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;margin-bottom:6px}
+.upload-zone{border:1.5px dashed #D1D5DB;border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:all .15s;background:#FAFAFA}
+.upload-zone:hover{border-color:#4F46E5;background:#EEF2FF}
+.fchip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:8px;font-size:12px;color:#3730A3;font-weight:500;margin:3px}
+.stars{display:flex;gap:4px}
+.star{font-size:22px;cursor:pointer;color:#E5E7EB;transition:color .12s;user-select:none}
+.star.on{color:#F59E0B}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;border:1.5px solid}
+.btn-ghost{background:#fff;border-color:#D1D5DB;color:#374151}
+.btn-ghost:hover{border-color:#4F46E5;color:#4F46E5;background:#EEF2FF}
+.btn-primary{background:#4F46E5;border-color:#4F46E5;color:#fff}
+.btn-primary:hover{background:#4338CA}
+.btn-danger{background:#fff;border-color:#FCA5A5;color:#DC2626}
+.btn-danger:hover{background:#FEF2F2}
+.score-opt{padding:6px 14px;border-radius:100px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid #E5E7EB;background:#fff;color:#6B7280;transition:all .15s}
+.score-opt.on{background:#EEF2FF;border-color:#A5B4FC;color:#3730A3}
+.sbcard{background:#fff;border:1px solid #E5E7EB;border-radius:14px;padding:16px;margin-bottom:12px}
+.sb-title{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9CA3AF;margin-bottom:11px;display:flex;align-items:center;gap:5px}
+.sb-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #F3F4F6;font-size:12px}
+.sb-row:last-child{border-bottom:none}
+.sb-row .k{color:#9CA3AF}
+.sb-row .v{font-weight:600;color:#111827}
+.av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.tl-row{display:flex;gap:10px;align-items:stretch}
+.tl-col{display:flex;flex-direction:column;align-items:center;width:14px;flex-shrink:0}
+.tl-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0;margin-top:2px}
+.tl-line{width:2px;flex:1;min-height:10px;background:#F3F4F6;margin:2px 0}
+.td-g{background:#10B981}
+.td-v{background:#4F46E5}
+.td-o{background:#E5E7EB}
+.tl-body{padding-bottom:14px}
+.tl-body .t{font-size:12px;font-weight:600;color:#111827}
+.tl-body .d{font-size:11px;color:#9CA3AF;margin-top:1px}
+.tl-body .s{font-size:11px;font-weight:600;margin-top:3px}
+.s-g{color:#059669}.s-v{color:#4F46E5}.s-o{color:#D1D5DB}
+.prog-bg{height:5px;background:#F3F4F6;border-radius:3px;overflow:hidden;margin-top:8px}
+.prog-fill{height:100%;border-radius:3px;background:#4F46E5}
+.ach-obj-card{border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;margin-bottom:12px}
+.ach-obj-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:#FAFAFE;border-bottom:1px solid #F3F4F6}
+.ach-obj-body{padding:16px}
+.readonly-val{background:#F9FAFB;border:1px solid #E5E7EB;border-radius:9px;padding:11px 13px;font-size:13px;color:#111827;line-height:1.6;margin-bottom:8px}
+.notice-bar{display:flex;align-items:center;gap:9px;padding:10px 14px;border-radius:10px;font-size:12px;font-weight:500;margin-bottom:14px;border:1px solid}
+.n-open{background:#ECFDF5;border-color:#A7F3D0;color:#065F46}
+.n-done{background:#EEF2FF;border-color:#C7D2FE;color:#3730A3}
+.n-closed{background:#F9FAFB;border-color:#E5E7EB;color:#6B7280}
+.detail-panel{display:none}
+.detail-panel.show{display:block}
+.back-btn{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:#6B7280;cursor:pointer;margin-bottom:14px;border:none;background:none;padding:0}
+.back-btn:hover{color:#4F46E5}
+.obj-list-panel{display:block}
+.empty-ach{text-align:center;padding:36px 16px;color:#9CA3AF}
+.empty-ach i{font-size:36px;display:block;margin-bottom:10px;color:#D1D5DB}
+.empty-ach p{font-size:13px}
+.seg{display:inline-flex;background:#F3F4F6;border-radius:9px;padding:3px;gap:2px;margin-bottom:16px}
+.seg-btn{padding:6px 16px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:none;background:none;color:#6B7280;transition:all .15s}
+.seg-btn.on{background:#fff;color:#4F46E5;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.success-row{display:none;align-items:center;gap:8px;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:9px;padding:9px 13px;font-size:12px;font-weight:600;color:#065F46;margin-top:10px}
+</style>
+
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)">PMS employee module — objectives and achievement submission with tabs</h2>
+
+<div class="page">
+
+<div class="topbar">
+  <div class="breadcrumb">
+    <i class="ti ti-home" style="font-size:13px" aria-hidden="true"></i>
+    <i class="ti ti-chevron-right" style="font-size:11px" aria-hidden="true"></i>
+    <b>My objectives</b>
+  </div>
+  <div class="term-badge"><div class="term-dot"></div>Q1 &mdash; New cycle &mdash; Ben &rarr; Kane</div>
+</div>
+
+<div class="hero">
+  <div class="hero-left">
+    <div class="hero-icon"><i class="ti ti-user-check" style="font-size:22px;color:#4F46E5" aria-hidden="true"></i></div>
+    <div class="hero-info">
+      <div class="hero-name">Ben's performance — Q1</div>
+      <div class="hero-sub">Manager: Kane &nbsp;·&nbsp; Assessment term finalized &nbsp;·&nbsp; Hybrid mode</div>
+    </div>
+  </div>
+  <div class="hero-stats">
+    <div class="stat-box"><div class="stat-num">2</div><div class="stat-lbl">Objectives</div></div>
+    <div class="stat-div"></div>
+    <div class="stat-box"><div class="stat-num">2</div><div class="stat-lbl">Approved</div></div>
+    <div class="stat-div"></div>
+    <div class="stat-box"><div class="stat-num" style="color:#10B981">100%</div><div class="stat-lbl">Weightage</div></div>
+  </div>
+</div>
+
+<div class="tab-bar" role="tablist">
+  <button class="tab on" role="tab" aria-selected="true" onclick="switchTab('obj',this)">
+    <i class="ti ti-target" style="font-size:14px" aria-hidden="true"></i> Objectives <span class="tab-count">2</span>
+  </button>
+  <button class="tab" role="tab" aria-selected="false" onclick="switchTab('ach',this)">
+    <i class="ti ti-writing" style="font-size:14px" aria-hidden="true"></i> Achievement submission <span class="tab-count">1</span>
+  </button>
+</div>
+
+<div id="tab-obj">
+  <div class="layout">
+    <div>
+      <div id="obj-list-panel">
+        <div class="obj-card active" id="oc0" onclick="openObj(0)">
+          <div class="obj-row">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px">
+                <span class="pill p-green"><i class="ti ti-circle-check" style="font-size:11px"></i> Approved</span>
+                <span class="pill p-violet"><i class="ti ti-template" style="font-size:11px"></i> Predefined</span>
+                <span class="pill p-teal"><i class="ti ti-bookmark" style="font-size:11px"></i> Template ref</span>
+              </div>
+              <div class="obj-title">Key performance objective</div>
+              <div class="obj-desc">Key performance objective for the applicable assessment term.</div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+                <span style="font-size:11px;color:#9CA3AF;display:flex;align-items:center;gap:4px"><i class="ti ti-calendar" style="font-size:12px" aria-hidden="true"></i> Due 16/06/2026</span>
+                <span style="font-size:11px;color:#9CA3AF;display:flex;align-items:center;gap:4px"><i class="ti ti-paperclip" style="font-size:12px" aria-hidden="true"></i> 1 attachment</span>
+              </div>
+            </div>
+            <div style="text-align:center;flex-shrink:0;margin-left:10px">
+              <svg width="56" height="56" viewBox="0 0 56 56" aria-label="50% weightage">
+                <circle cx="28" cy="28" r="21" fill="none" stroke="#EEF2FF" stroke-width="5"/>
+                <circle cx="28" cy="28" r="21" fill="none" stroke="#4F46E5" stroke-width="5" stroke-dasharray="65.97 65.97" stroke-linecap="round" transform="rotate(-90 28 28)"/>
+                <text x="28" y="32" text-anchor="middle" font-size="11" font-weight="700" fill="#4F46E5" font-family="inherit">50%</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="obj-card" id="oc1" onclick="openObj(1)">
+          <div class="obj-row">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px">
+                <span class="pill p-green"><i class="ti ti-circle-check" style="font-size:11px"></i> Approved</span>
+                <span class="pill p-violet"><i class="ti ti-template" style="font-size:11px"></i> Predefined</span>
+                <span class="pill p-teal"><i class="ti ti-bookmark" style="font-size:11px"></i> Template ref</span>
+              </div>
+              <div class="obj-title">Improvement / development objective</div>
+              <div class="obj-desc">Improvement and development objective for the applicable assessment term.</div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+                <span style="font-size:11px;color:#9CA3AF;display:flex;align-items:center;gap:4px"><i class="ti ti-calendar" style="font-size:12px" aria-hidden="true"></i> Due 16/06/2026</span>
+              </div>
+            </div>
+            <div style="text-align:center;flex-shrink:0;margin-left:10px">
+              <svg width="56" height="56" viewBox="0 0 56 56" aria-label="50% weightage">
+                <circle cx="28" cy="28" r="21" fill="none" stroke="#EEF2FF" stroke-width="5"/>
+                <circle cx="28" cy="28" r="21" fill="none" stroke="#4F46E5" stroke-width="5" stroke-dasharray="65.97 65.97" stroke-linecap="round" transform="rotate(-90 28 28)"/>
+                <text x="28" y="32" text-anchor="middle" font-size="11" font-weight="700" fill="#4F46E5" font-family="inherit">50%</text>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card detail-panel" id="obj-detail-panel">
+        <div class="card-pad">
+          <button class="back-btn" onclick="backToList()"><i class="ti ti-arrow-left" style="font-size:13px" aria-hidden="true"></i> All objectives</button>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px" id="dd-pills"></div>
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px">
+            <div>
+              <div style="font-size:17px;font-weight:700;color:#111827;margin-bottom:4px" id="dd-title"></div>
+              <div style="font-size:12px;color:#6B7280;line-height:1.5" id="dd-desc"></div>
+              <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap" id="dd-meta-row"></div>
+            </div>
+            <div id="dd-ring"></div>
+          </div>
+          <div class="meta3" id="dd-meta3"></div>
+          <div class="criteria" id="dd-criteria"></div>
+          <div class="divider"></div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:6px">Achievement linked to this objective</div>
+          <div id="dd-ach-ref" style="background:#ECFDF5;border:1px solid #A7F3D0;border-radius:9px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px"><span class="pill p-green"><i class="ti ti-circle-check" style="font-size:11px"></i> Submitted 23/06/2026</span></div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6B7280;margin-bottom:3px">Achievement</div>
+            <div class="readonly-val" style="margin-bottom:8px" id="dd-ach-text">done this</div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6B7280;margin-bottom:3px">Outcome</div>
+            <div class="readonly-val" id="dd-out-text">done this</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sbcard">
+        <div class="sb-title"><i class="ti ti-users" style="font-size:12px;color:#4F46E5" aria-hidden="true"></i> Assignment summary</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <div class="av" style="background:#EEF2FF;color:#3730A3">BE</div>
+          <div style="font-size:12px"><div style="font-weight:600">Ben</div><div style="color:#9CA3AF;font-size:11px">Employee</div></div>
+          <i class="ti ti-arrow-right" style="font-size:12px;color:#D1D5DB;margin:0 4px" aria-hidden="true"></i>
+          <div class="av" style="background:#EFF6FF;color:#1D4ED8">KA</div>
+          <div style="font-size:12px"><div style="font-weight:600">Kane</div><div style="color:#9CA3AF;font-size:11px">Manager</div></div>
+        </div>
+        <div class="divider" style="margin:8px 0 10px"></div>
+        <div class="sb-row"><span class="k">Term state</span><span class="v">Term finalized</span></div>
+        <div class="sb-row"><span class="k">Objectives</span><span class="v">2</span></div>
+        <div class="sb-row"><span class="k">Approved</span><span class="v">2</span></div>
+        <div class="sb-row"><span class="k">Weightage cap</span><span class="v">100%</span></div>
+        <div class="sb-row"><span class="k">Assigned</span><span class="v" style="color:#059669">100%</span></div>
+        <div class="prog-bg"><div class="prog-fill" style="width:100%"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:4px;color:#9CA3AF"><span>Cap 100%</span><span>0% left</span></div>
+      </div>
+
+      <div class="sbcard">
+        <div class="sb-title"><i class="ti ti-timeline" style="font-size:12px;color:#4F46E5" aria-hidden="true"></i> Workflow windows</div>
+        <div class="tl-row"><div class="tl-col"><div class="tl-dot td-g"></div><div class="tl-line"></div></div><div class="tl-body"><div class="t">Objective setting</div><div class="d">01/04 – 07/04/2026</div><div class="s s-g">Completed</div></div></div>
+        <div class="tl-row"><div class="tl-col"><div class="tl-dot td-g"></div><div class="tl-line"></div></div><div class="tl-body"><div class="t">Objective approval</div><div class="d">08/04 – 14/04/2026</div><div class="s s-g">Completed</div></div></div>
+        <div class="tl-row"><div class="tl-col"><div class="tl-dot td-v"></div></div><div class="tl-body"><div class="t" style="color:#4F46E5">Achievement submission</div><div class="d">07/07 – 17/08/2026</div><div class="s s-v">Active now</div></div></div>
+      </div>
+
+      <div class="sbcard">
+        <div class="sb-title"><i class="ti ti-adjustments-alt" style="font-size:12px;color:#4F46E5" aria-hidden="true"></i> Objective rules</div>
+        <div class="sb-row"><span class="k">Mode</span><span class="v">Hybrid</span></div>
+        <div class="sb-row"><span class="k">Employee-created</span><span class="v" style="color:#059669">Allowed</span></div>
+        <div class="sb-row"><span class="k">Manager-created</span><span class="v" style="color:#059669">Allowed</span></div>
+        <div class="sb-row"><span class="k">Approved objs</span><span class="v">Read-only</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-ach" style="display:none">
+  <div class="layout">
+    <div>
+      <div class="notice-bar n-open" id="ach-notice">
+        <i class="ti ti-lock-open" style="font-size:14px" aria-hidden="true"></i>
+        <span>Achievement submission is <strong>open</strong> &mdash; window closes 17/08/2026</span>
+      </div>
+
+      <div class="seg" role="group" aria-label="View role">
+        <button class="seg-btn on" onclick="setAchRole('emp',this)">Employee view</button>
+        <button class="seg-btn" onclick="setAchRole('mgr',this)">Manager view</button>
+      </div>
+
+      <div id="ach-emp">
+        <div class="ach-obj-card">
+          <div class="ach-obj-head">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#111827">Objective 1 of 2</div>
+              <div style="font-size:13px;font-weight:700;color:#111827;margin-top:2px">Key performance objective</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px;color:#4F46E5;font-weight:700">50%</span>
+              <span class="pill p-gray" id="ach1-status">Not submitted</span>
+            </div>
+          </div>
+          <div class="ach-obj-body" id="ach1-form">
+            <div style="margin-bottom:12px">
+              <div class="flbl">Achievement against this objective <span style="color:#EF4444;font-weight:400;text-transform:none;letter-spacing:0">*</span></div>
+              <textarea id="ach1-txt" rows="3" placeholder="Describe what was achieved against this objective..."></textarea>
+            </div>
+            <div style="margin-bottom:12px">
+              <div class="flbl">Remarks / outcome <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9CA3AF">(optional)</span></div>
+              <textarea rows="2" placeholder="Optional remarks or outcome..."></textarea>
+            </div>
+            <div style="margin-bottom:12px">
+              <div class="flbl">Attachment <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9CA3AF">(optional)</span></div>
+              <div class="upload-zone" onclick="addF1()">
+                <i class="ti ti-cloud-upload" style="font-size:26px;color:#C7D2FE;display:block;margin:0 auto 7px" aria-hidden="true"></i>
+                <div style="font-size:12px;font-weight:500;color:#374151">Click to upload</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:2px">PDF, JPG, PNG · max 10 MB</div>
+              </div>
+              <div id="f1list" style="margin-top:8px;display:flex;flex-wrap:wrap"></div>
+            </div>
+          </div>
+          <div class="ach-obj-body" id="ach1-done" style="display:none">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">Achievement</div>
+            <div class="readonly-val" id="ach1-disp"></div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">Attachment</div>
+            <span class="fchip"><i class="ti ti-file-type-jpg" style="font-size:13px" aria-hidden="true"></i> Award-Certificate-Template-scaled.jpg</span>
+          </div>
+        </div>
+
+        <div class="ach-obj-card">
+          <div class="ach-obj-head">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#111827">Objective 2 of 2</div>
+              <div style="font-size:13px;font-weight:700;color:#111827;margin-top:2px">Improvement / development objective</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:12px;color:#4F46E5;font-weight:700">50%</span>
+              <span class="pill p-gray" id="ach2-status">Not submitted</span>
+            </div>
+          </div>
+          <div class="ach-obj-body" id="ach2-form">
+            <div style="margin-bottom:12px">
+              <div class="flbl">Achievement against this objective <span style="color:#EF4444;font-weight:400;text-transform:none;letter-spacing:0">*</span></div>
+              <textarea id="ach2-txt" rows="3" placeholder="Describe what was achieved against this objective..."></textarea>
+            </div>
+            <div style="margin-bottom:12px">
+              <div class="flbl">Remarks / outcome <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9CA3AF">(optional)</span></div>
+              <textarea rows="2" placeholder="Optional remarks or outcome..."></textarea>
+            </div>
+            <div>
+              <div class="flbl">Attachment <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9CA3AF">(optional)</span></div>
+              <div class="upload-zone" onclick="addF2()">
+                <i class="ti ti-cloud-upload" style="font-size:26px;color:#C7D2FE;display:block;margin:0 auto 7px" aria-hidden="true"></i>
+                <div style="font-size:12px;font-weight:500;color:#374151">Click to upload</div>
+                <div style="font-size:11px;color:#9CA3AF;margin-top:2px">PDF, JPG, PNG · max 10 MB</div>
+              </div>
+              <div id="f2list" style="margin-top:8px;display:flex;flex-wrap:wrap"></div>
+            </div>
+          </div>
+          <div class="ach-obj-body" id="ach2-done" style="display:none">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">Achievement</div>
+            <div class="readonly-val" id="ach2-disp"></div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;padding-bottom:8px" id="ach-actions">
+          <button class="btn btn-ghost"><i class="ti ti-device-floppy" aria-hidden="true"></i> Save draft</button>
+          <button class="btn btn-primary" onclick="submitAll()"><i class="ti ti-send" aria-hidden="true"></i> Submit all achievements</button>
+        </div>
+        <div class="success-row" id="ach-success"><i class="ti ti-circle-check" style="font-size:15px"></i> All achievements submitted successfully</div>
+      </div>
+
+      <div id="ach-mgr" style="display:none">
+        <div class="ach-obj-card">
+          <div class="ach-obj-head">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#111827">Objective 1 of 2</div>
+              <div style="font-size:13px;font-weight:700;color:#111827;margin-top:2px">Key performance objective</div>
+            </div>
+            <span class="pill p-blue"><i class="ti ti-circle-check" style="font-size:11px"></i> Submitted</span>
+          </div>
+          <div class="ach-obj-body">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">Employee achievement</div>
+            <div class="readonly-val">done this — completed as per the target.</div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px;margin-top:8px">Outcome</div>
+            <div class="readonly-val">done this</div>
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:6px;margin-top:8px">Attachment</div>
+            <div class="fchip" style="margin-bottom:14px"><i class="ti ti-file-type-jpg" style="font-size:13px" aria-hidden="true"></i> Award-Certificate-Template-scaled.jpg</div>
+            <div class="divider"></div>
+            <div style="font-size:12px;font-weight:600;color:#111827;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+              <div class="sec-icon ic-g" style="width:24px;height:24px;border-radius:7px;font-size:12px"><i class="ti ti-clipboard-check" aria-hidden="true"></i></div> Manager review
+            </div>
+            <div style="margin-bottom:10px">
+              <div class="flbl" style="margin-bottom:7px">Score</div>
+              <div style="display:flex;flex-wrap:wrap;gap:7px">
+                <button class="score-opt" onclick="sc(this)">Excellent</button>
+                <button class="score-opt" onclick="sc(this)">Good</button>
+                <button class="score-opt" onclick="sc(this)">Meets expectations</button>
+                <button class="score-opt" onclick="sc(this)">Needs improvement</button>
+              </div>
+            </div>
+            <div class="flbl" style="margin-bottom:6px">Comments</div>
+            <textarea rows="3" placeholder="Add your review comments..."></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+              <button class="btn btn-danger"><i class="ti ti-refresh" aria-hidden="true"></i> Request revision</button>
+              <button class="btn btn-primary"><i class="ti ti-circle-check" aria-hidden="true"></i> Verify &amp; approve</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ach-obj-card">
+          <div class="ach-obj-head">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#111827">Objective 2 of 2</div>
+              <div style="font-size:13px;font-weight:700;color:#111827;margin-top:2px">Improvement / development objective</div>
+            </div>
+            <span class="pill p-blue"><i class="ti ti-circle-check" style="font-size:11px"></i> Submitted</span>
+          </div>
+          <div class="ach-obj-body">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-bottom:4px">Employee achievement</div>
+            <div class="readonly-val">done this 2 — completed as per the development target.</div>
+            <div class="divider"></div>
+            <div style="font-size:12px;font-weight:600;color:#111827;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+              <div class="sec-icon ic-g" style="width:24px;height:24px;border-radius:7px;font-size:12px"><i class="ti ti-clipboard-check" aria-hidden="true"></i></div> Manager review
+            </div>
+            <div style="margin-bottom:10px">
+              <div class="flbl" style="margin-bottom:7px">Score</div>
+              <div style="display:flex;flex-wrap:wrap;gap:7px">
+                <button class="score-opt" onclick="sc(this)">Excellent</button>
+                <button class="score-opt" onclick="sc(this)">Good</button>
+                <button class="score-opt" onclick="sc(this)">Meets expectations</button>
+                <button class="score-opt" onclick="sc(this)">Needs improvement</button>
+              </div>
+            </div>
+            <div class="flbl" style="margin-bottom:6px">Comments</div>
+            <textarea rows="3" placeholder="Add your review comments..."></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+              <button class="btn btn-danger"><i class="ti ti-refresh" aria-hidden="true"></i> Request revision</button>
+              <button class="btn btn-primary"><i class="ti ti-circle-check" aria-hidden="true"></i> Verify &amp; approve</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="sbcard">
+        <div class="sb-title"><i class="ti ti-users" style="font-size:12px;color:#4F46E5" aria-hidden="true"></i> Assignment</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <div class="av" style="background:#EEF2FF;color:#3730A3">BE</div>
+          <div style="font-size:12px"><div style="font-weight:600">Ben</div><div style="color:#9CA3AF;font-size:11px">Employee</div></div>
+          <i class="ti ti-arrow-right" style="font-size:12px;color:#D1D5DB;margin:0 4px" aria-hidden="true"></i>
+          <div class="av" style="background:#EFF6FF;color:#1D4ED8">KA</div>
+          <div style="font-size:12px"><div style="font-weight:600">Kane</div><div style="color:#9CA3AF;font-size:11px">Manager</div></div>
+        </div>
+        <div class="divider" style="margin:8px 0 10px"></div>
+        <div class="sb-row"><span class="k">Cycle</span><span class="v">Cycle -9272</span></div>
+        <div class="sb-row"><span class="k">Window</span><span class="v">07/07 – 17/08/2026</span></div>
+        <div class="sb-row"><span class="k">Status</span><span class="v" style="color:#059669">Open</span></div>
+      </div>
+      <div class="sbcard">
+        <div class="sb-title"><i class="ti ti-timeline" style="font-size:12px;color:#4F46E5" aria-hidden="true"></i> Workflow windows</div>
+        <div class="tl-row"><div class="tl-col"><div class="tl-dot td-g"></div><div class="tl-line"></div></div><div class="tl-body"><div class="t">Objective setting</div><div class="d">01/04 – 07/04/2026</div><div class="s s-g">Completed</div></div></div>
+        <div class="tl-row"><div class="tl-col"><div class="tl-dot td-g"></div><div class="tl-line"></div></div><div class="tl-body"><div class="t">Objective approval</div><div class="d">08/04 – 14/04/2026</div><div class="s s-g">Completed</div></div></div>
+        <div class="tl-row"><div class="tl-col"><div class="tl-dot td-v"></div></div><div class="tl-body"><div class="t" style="color:#4F46E5">Achievement submission</div><div class="d">07/07 – 17/08/2026</div><div class="s s-v">Active now</div></div></div>
+      </div>
+      <div class="sbcard">
+        <div class="sb-title"><i class="ti ti-adjustments-alt" style="font-size:12px;color:#4F46E5" aria-hidden="true"></i> Objective rules</div>
+        <div class="sb-row"><span class="k">Mode</span><span class="v">Hybrid</span></div>
+        <div class="sb-row"><span class="k">Employee-created</span><span class="v" style="color:#059669">Allowed</span></div>
+        <div class="sb-row"><span class="k">Manager-created</span><span class="v" style="color:#059669">Allowed</span></div>
+        <div class="sb-row"><span class="k">Approved objs</span><span class="v">Read-only</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+var objs=[
+  {title:'Key performance objective',desc:'Key performance objective for the applicable assessment term.',pills:['p-green|ti-circle-check|Approved','p-violet|ti-template|Predefined','p-teal|ti-bookmark|Template ref'],wt:50,kpi:'Achievement evidence and manager verification',target:'Completed as agreed for the assessment term',due:'16/06/2026',criteria:'Employee submits achievement details and relevant proof; manager verifies completion during review.',achTxt:'done this',outcome:'done this'},
+  {title:'Improvement / development objective',desc:'Improvement and development objective for the applicable assessment term.',pills:['p-green|ti-circle-check|Approved','p-violet|ti-template|Predefined','p-teal|ti-bookmark|Template ref'],wt:50,kpi:'Achievement evidence and manager verification',target:'Completed as agreed for the assessment term',due:'16/06/2026',criteria:'Employee submits achievement details and relevant proof; manager verifies completion during review.',achTxt:'done this 2',outcome:'done this 2'}
+];
+function switchTab(t,btn){
+  document.querySelectorAll('.tab').forEach(b=>{b.classList.remove('on');b.setAttribute('aria-selected','false')});
+  btn.classList.add('on');btn.setAttribute('aria-selected','true');
+  document.getElementById('tab-obj').style.display=t==='obj'?'block':'none';
+  document.getElementById('tab-ach').style.display=t==='ach'?'block':'none';
+}
+function openObj(i){
+  document.querySelectorAll('.obj-card').forEach((c,j)=>c.classList.toggle('active',j===i));
+  var o=objs[i];
+  document.getElementById('dd-title').textContent=o.title;
+  document.getElementById('dd-desc').textContent=o.desc;
+  var pills=document.getElementById('dd-pills');pills.innerHTML='';
+  o.pills.forEach(p=>{var[cls,ic,lbl]=p.split('|');pills.innerHTML+='<span class="pill '+cls+'"><i class="ti ti-'+ic+'" style="font-size:11px"></i> '+lbl+'</span> '});
+  document.getElementById('dd-ring').innerHTML='<svg width="56" height="56" viewBox="0 0 56 56" aria-label="'+o.wt+'% weightage"><circle cx="28" cy="28" r="21" fill="none" stroke="#EEF2FF" stroke-width="5"/><circle cx="28" cy="28" r="21" fill="none" stroke="#4F46E5" stroke-width="5" stroke-dasharray="'+(o.wt/100*131.95)+' 131.95" stroke-linecap="round" transform="rotate(-90 28 28)"/><text x="28" y="32" text-anchor="middle" font-size="11" font-weight="700" fill="#4F46E5" font-family="inherit">'+o.wt+'%</text></svg><div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9CA3AF;margin-top:4px;text-align:center">Weightage</div>';
+  document.getElementById('dd-meta3').innerHTML='<div class="mcell"><div class="mk">KPI / measurement</div><div class="mv">'+o.kpi+'</div></div><div class="mcell"><div class="mk">Target value</div><div class="mv">'+o.target+'</div></div><div class="mcell"><div class="mk">Due date</div><div class="mv"><i class="ti ti-calendar-event" style="font-size:12px;color:#4F46E5" aria-hidden="true"></i> '+o.due+'</div></div>';
+  document.getElementById('dd-criteria').innerHTML='<div class="ck">Success criteria / expected output</div><div class="cv">'+o.criteria+'</div>';
+  if(o.achTxt){document.getElementById('dd-ach-text').textContent=o.achTxt;document.getElementById('dd-out-text').textContent=o.outcome;document.getElementById('dd-ach-ref').style.display='block';}
+  else{document.getElementById('dd-ach-ref').style.display='none';}
+  document.getElementById('obj-list-panel').style.display='none';
+  document.getElementById('obj-detail-panel').classList.add('show');
+}
+function backToList(){
+  document.getElementById('obj-list-panel').style.display='block';
+  document.getElementById('obj-detail-panel').classList.remove('show');
+}
+function setAchRole(r,btn){
+  document.querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');
+  document.getElementById('ach-emp').style.display=r==='emp'?'block':'none';
+  document.getElementById('ach-mgr').style.display=r==='mgr'?'block':'none';
+}
+function sc(b){var p=b.closest('.ach-obj-body')||b.closest('.card-pad');p.querySelectorAll('.score-opt').forEach(x=>x.classList.remove('on'));b.classList.add('on')}
+var f1c=0,f1n=['Q1-Report.pdf','Evidence.jpg'];
+function addF1(){if(f1c>=f1n.length)return;var d=document.createElement('div');d.className='fchip';d.innerHTML='<i class="ti ti-file" style="font-size:13px" aria-hidden="true"></i>'+f1n[f1c]+'<span style="margin-left:5px;cursor:pointer;color:#9CA3AF" onclick="this.parentNode.remove()">×</span>';document.getElementById('f1list').appendChild(d);f1c++;}
+var f2c=0,f2n=['Dev-evidence.pdf'];
+function addF2(){if(f2c>=f2n.length)return;var d=document.createElement('div');d.className='fchip';d.innerHTML='<i class="ti ti-file" style="font-size:13px" aria-hidden="true"></i>'+f2n[f2c]+'<span style="margin-left:5px;cursor:pointer;color:#9CA3AF" onclick="this.parentNode.remove()">×</span>';document.getElementById('f2list').appendChild(d);f2c++;}
+function submitAll(){
+  var t1=document.getElementById('ach1-txt').value.trim();
+  var t2=document.getElementById('ach2-txt').value.trim();
+  if(!t1){document.getElementById('ach1-txt').style.borderColor='#FCA5A5';document.getElementById('ach1-txt').focus();setTimeout(()=>document.getElementById('ach1-txt').style.borderColor='',1500);return;}
+  if(!t2){document.getElementById('ach2-txt').style.borderColor='#FCA5A5';document.getElementById('ach2-txt').focus();setTimeout(()=>document.getElementById('ach2-txt').style.borderColor='',1500);return;}
+  document.getElementById('ach1-disp').textContent=t1;
+  document.getElementById('ach2-disp').textContent=t2;
+  document.getElementById('ach1-form').style.display='none';document.getElementById('ach1-done').style.display='block';
+  document.getElementById('ach2-form').style.display='none';document.getElementById('ach2-done').style.display='block';
+  document.getElementById('ach1-status').className='pill p-green';document.getElementById('ach1-status').innerHTML='<i class="ti ti-circle-check" style="font-size:11px"></i> Submitted';
+  document.getElementById('ach2-status').className='pill p-green';document.getElementById('ach2-status').innerHTML='<i class="ti ti-circle-check" style="font-size:11px"></i> Submitted';
+  document.getElementById('ach-actions').style.display='none';
+  var s=document.getElementById('ach-success');s.style.display='flex';
+  var nb=document.getElementById('ach-notice');nb.className='notice-bar n-done';nb.innerHTML='<i class="ti ti-circle-check" style="font-size:14px" aria-hidden="true"></i><span>All achievements <strong>submitted</strong> — pending manager review.</span>';
+  var tabs=document.querySelectorAll('.tab');tabs[1].querySelector('.tab-count').textContent='2';
+}
+</script>
