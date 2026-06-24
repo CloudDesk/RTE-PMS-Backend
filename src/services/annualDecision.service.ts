@@ -1140,6 +1140,7 @@ export class AnnualDecisionService extends BaseService {
       finalDecisionStatus !== AnnualDecisionStatus.DRAFT ||
       (
         annualState !== AnnualWorkflowState.ALL_TERMS_FINALIZED &&
+        annualState !== AnnualWorkflowState.APPRAISAL_WINDOW_OPEN &&
         annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT
       )
     ) {
@@ -1190,6 +1191,7 @@ export class AnnualDecisionService extends BaseService {
     if (
       finalDecisionStatus === AnnualDecisionStatus.DRAFT &&
       annualState !== AnnualWorkflowState.ALL_TERMS_FINALIZED &&
+      annualState !== AnnualWorkflowState.APPRAISAL_WINDOW_OPEN &&
       annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT
     ) {
       return 'Annual assignment is not ready for decision draft.';
