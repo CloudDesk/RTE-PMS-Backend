@@ -87,6 +87,10 @@ export interface CreateObjectiveInput {
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
   objectiveValues?: ObjectiveValueInput[];
+  weightageAdjustments?: Array<{
+    objectiveId: string;
+    weightage: number;
+  }>;
   commentText?: string;
 }
 
@@ -717,15 +721,33 @@ export class ObjectiveService extends BaseService {
     this.validateObjectiveInput(input);
     this.validateContextObjectiveRequiredFields(input, source);
     this.validateCreateAgainstConfig(source, objectiveConfig);
-    if (this.objectiveSourceIsScoreable(source, objectiveConfig)) {
-      await this.validateQuarterObjectiveRules(
+    const sourceIsScoreable = this.objectiveSourceIsScoreable(source, objectiveConfig);
+    const managerCreateNeedsWeightagePlan = source === ObjectiveSource.MANAGER_CREATED && sourceIsScoreable;
+    const preparedCreateWeightageAdjustments = managerCreateNeedsWeightagePlan
+      ? await this.prepareCreateObjectiveWeightageAdjustments(
         termAssignment,
-        input.weightage,
-        undefined,
-        source,
         objectiveConfig,
-        false,
-      );
+        source,
+        input.weightage,
+        input.weightageAdjustments ?? [],
+      )
+      : [];
+
+    if (!managerCreateNeedsWeightagePlan) {
+      if ((input.weightageAdjustments ?? []).length > 0) {
+        throw new Error('Weightage adjustments are allowed only while creating scoreable manager objectives');
+      }
+
+      if (sourceIsScoreable) {
+        await this.validateQuarterObjectiveRules(
+          termAssignment,
+          input.weightage,
+          undefined,
+          source,
+          objectiveConfig,
+          false,
+        );
+      }
     }
 
     if (termAssignment.termState === TermWorkflowState.NOT_STARTED) {
@@ -761,6 +783,35 @@ export class ObjectiveService extends BaseService {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = termAssignment.assignedManagerId;
       }
+    }
+
+    for (const adjustment of preparedCreateWeightageAdjustments) {
+      const previousWeightage = adjustment.objective.weightage;
+      if (previousWeightage === adjustment.weightage) {
+        continue;
+      }
+
+      adjustment.objective.weightage = adjustment.weightage;
+      adjustment.objective.updatedBy = actorObjectId;
+      await adjustment.objective.save();
+
+      await this.audit(
+        'PMS_OBJECTIVE_WEIGHTAGE_ADJUSTED_DURING_MANAGER_CREATE',
+        'OBJECTIVE',
+        adjustment.objective._id.toString(),
+        { weightage: previousWeightage },
+        { weightage: adjustment.weightage },
+        'Manager redistributed score weight while creating a manager objective',
+      );
+
+      await this.createWeightageAdjustmentComment(
+        adjustment.objective,
+        actorObjectId,
+        actor.actorRole,
+        previousWeightage,
+        adjustment.weightage,
+        'manager objective creation',
+      );
     }
 
     const objective = await Objective.create({
@@ -924,6 +975,15 @@ export class ObjectiveService extends BaseService {
             adjustment.objective._id.toString(),
             { weightage: previousWeightage },
             { weightage: adjustment.weightage },
+          );
+
+          await this.createWeightageAdjustmentComment(
+            adjustment.objective,
+            actorObjectId,
+            actor.actorRole,
+            previousWeightage,
+            adjustment.weightage,
+            'bulk manager assignment',
           );
         }
 
@@ -1530,6 +1590,15 @@ export class ObjectiveService extends BaseService {
           approvedObjectiveId: objective._id.toString(),
         },
         'Manager redistributed score weight while approving an employee-created objective',
+      );
+
+      await this.createWeightageAdjustmentComment(
+        adjustment.objective,
+        actorObjectId,
+        actor.actorRole,
+        previousWeightage,
+        adjustment.weightage,
+        'employee objective approval',
       );
     }
 
@@ -3378,6 +3447,114 @@ export class ObjectiveService extends BaseService {
     }
 
     return preparedAdjustments;
+  }
+
+  private async prepareCreateObjectiveWeightageAdjustments(
+    termAssignment: ITermAssignment,
+    objectiveConfig: ObjectiveConfig,
+    source: ObjectiveSourceType,
+    newObjectiveWeightage: number | undefined,
+    adjustments: Array<{ objectiveId: string; weightage: number }>,
+  ): Promise<Array<{ objective: IObjective; weightage: number }>> {
+    if (source !== ObjectiveSource.MANAGER_CREATED) {
+      throw new Error('Create-time score redistribution is only supported for manager-created objectives');
+    }
+
+    if (!this.objectiveSourceIsScoreable(source, objectiveConfig)) {
+      if (adjustments.length > 0) {
+        throw new Error('Manager-created objectives are context-only for this assignment; score redistribution is not allowed');
+      }
+      return [];
+    }
+
+    const nextWeightage = Number(newObjectiveWeightage);
+    if (!Number.isFinite(nextWeightage) || nextWeightage <= 0 || nextWeightage > 100) {
+      throw new Error('Score weight is required for scoreable manager-created objectives and must be between 1 and 100');
+    }
+
+    await this.validateQuarterObjectiveRules(
+      termAssignment,
+      undefined,
+      undefined,
+      source,
+      objectiveConfig,
+      false,
+    );
+
+    const existingObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    });
+    const existingById = new Map(existingObjectives.map((objective) => [
+      objective._id.toString(),
+      objective,
+    ]));
+    const preparedAdjustments: Array<{ objective: IObjective; weightage: number }> = [];
+
+    for (const adjustment of adjustments) {
+      const objectiveId = adjustment.objectiveId?.trim();
+      const objective = objectiveId ? existingById.get(objectiveId) : undefined;
+      if (!objective) {
+        throw new Error('Weightage adjustment objective must belong to the same assignment');
+      }
+
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        throw new Error(`Objective "${objective.title}" cannot carry score weight for this assignment`);
+      }
+
+      const weightage = Number(adjustment.weightage);
+      if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
+        throw new Error(`Weightage for "${objective.title}" must be between 0 and 100`);
+      }
+
+      preparedAdjustments.push({ objective, weightage });
+    }
+
+    const adjustedWeightByObjectiveId = new Map(
+      preparedAdjustments.map((adjustment) => [
+        adjustment.objective._id.toString(),
+        adjustment.weightage,
+      ]),
+    );
+    const existingScoreableTotal = existingObjectives.reduce((sum, objective) => {
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        return sum;
+      }
+      const adjustedWeight = adjustedWeightByObjectiveId.get(objective._id.toString());
+      return sum + Number(adjustedWeight ?? objective.weightage ?? 0);
+    }, 0);
+    const finalTotal = existingScoreableTotal + nextWeightage;
+
+    if (finalTotal > 100) {
+      throw new Error(
+        `Total scoreable objective weightage for the quarter cannot exceed 100%. Current total is ${finalTotal}%.`,
+      );
+    }
+
+    return preparedAdjustments;
+  }
+
+  private async createWeightageAdjustmentComment(
+    objective: IObjective,
+    actorObjectId: Types.ObjectId,
+    actorRole: string,
+    previousWeightage: number | undefined,
+    nextWeightage: number | undefined,
+    context: string,
+  ): Promise<void> {
+    await ObjectiveComment.create({
+      objectiveId: objective._id,
+      termAssignmentId: objective.termAssignmentId,
+      annualAssignmentId: objective.annualAssignmentId,
+      cycleId: objective.cycleId,
+      assessmentTermCode: objective.assessmentTermCode,
+      employeeId: objective.employeeId,
+      commentType: 'WEIGHTAGE_ADJUSTMENT',
+      commentText: `Manager updated score weightage from ${previousWeightage ?? 0}% to ${nextWeightage ?? 0}% during ${context}.`,
+      actorUserId: actorObjectId,
+      actorRole,
+      createdBy: actorObjectId,
+    });
   }
 
   private assertRegularObjectiveEditAccess(objective: IObjective): void {
