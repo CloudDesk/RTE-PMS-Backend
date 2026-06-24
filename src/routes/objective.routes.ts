@@ -13,6 +13,8 @@ import type {
   CloseObjectiveSettingInput,
   CreateObjectiveInput,
   CorrectObjectiveInput,
+  DeleteManagerObjectiveLibraryItemInput,
+  ManagerObjectiveLibraryDraftInput,
   ReturnObjectiveInput,
   SaveManagerObjectiveLibraryInput,
   UpdateObjectiveInput,
@@ -76,6 +78,37 @@ export const objectiveRoutes: RouteHandler = async (
           request.body as SaveManagerObjectiveLibraryInput,
         );
         return reply.send(successResponse('Manager objective library saved successfully', objectives));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/manager-library/items',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const objectives = await request.container!.objectiveService.createManagerObjectiveLibraryItem(
+          request.body as ManagerObjectiveLibraryDraftInput,
+        );
+        return reply.status(201).send(successResponse('Manager objective saved successfully', objectives));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.delete(
+    '/manager-library/items/:localId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const { localId } = request.params as DeleteManagerObjectiveLibraryItemInput;
+        const objectives = await request.container!.objectiveService.deleteManagerObjectiveLibraryItem({
+          localId,
+        });
+        return reply.send(successResponse('Manager objective removed successfully', objectives));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

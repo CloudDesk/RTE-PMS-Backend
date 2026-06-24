@@ -127,6 +127,10 @@ export interface SaveManagerObjectiveLibraryInput {
   objectives?: ManagerObjectiveLibraryDraftInput[];
 }
 
+export interface DeleteManagerObjectiveLibraryItemInput {
+  localId: string;
+}
+
 export interface BulkCreateManagerObjectiveInput extends Partial<BulkManagerObjectiveDraftInput> {
   termAssignmentIds: string[];
   objectives?: BulkManagerObjectiveDraftInput[];
@@ -368,6 +372,46 @@ export class ObjectiveService extends BaseService {
       { managerId },
       { $set: { objectives } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    return (library?.objectives ?? []).map((objective) =>
+      this.mapManagerObjectiveLibraryItem(objective),
+    );
+  }
+
+  async createManagerObjectiveLibraryItem(
+    input: ManagerObjectiveLibraryDraftInput,
+  ): Promise<IManagerObjectiveLibraryItem[]> {
+    const actor = this.requireActor();
+    const managerId = this.toObjectId(actor.actorId, 'actorId');
+    const item = this.normalizeManagerObjectiveLibraryItem(input, 0);
+
+    const library = await ManagerObjectiveLibrary.findOneAndUpdate(
+      { managerId },
+      { $push: { objectives: item } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    return (library?.objectives ?? []).map((objective) =>
+      this.mapManagerObjectiveLibraryItem(objective),
+    );
+  }
+
+  async deleteManagerObjectiveLibraryItem(
+    input: DeleteManagerObjectiveLibraryItemInput,
+  ): Promise<IManagerObjectiveLibraryItem[]> {
+    const actor = this.requireActor();
+    const managerId = this.toObjectId(actor.actorId, 'actorId');
+    const localId = input.localId?.trim();
+
+    if (!localId) {
+      throw new Error('Objective library item id is required');
+    }
+
+    const library = await ManagerObjectiveLibrary.findOneAndUpdate(
+      { managerId },
+      { $pull: { objectives: { localId } } },
+      { new: true },
     ).lean();
 
     return (library?.objectives ?? []).map((objective) =>
@@ -2922,17 +2966,24 @@ export class ObjectiveService extends BaseService {
     if (!objective.description?.trim()) {
       throw new Error(`Objective ${index + 1}: description is required`);
     }
+    const expectedOutcome =
+      objective.expectedOutcome?.trim() ||
+      objective.description?.trim();
     const priority = this.normalizeObjectivePriority(objective.priority);
     if (!priority) {
       throw new Error(`Objective ${index + 1}: priority is required`);
     }
-    if (!objective.expectedOutcome?.trim()) {
+    if (!expectedOutcome) {
       throw new Error(`Objective ${index + 1}: expected outcome is required`);
     }
-    this.validateContextObjectivePayload(
-      objective as unknown as Record<string, unknown>,
-      ObjectiveSource.MANAGER_CREATED,
-    );
+    const rawWeightage = objective.weightage as unknown;
+    const weightage =
+      rawWeightage === undefined || rawWeightage === null || rawWeightage === ''
+        ? undefined
+        : Number(rawWeightage);
+    if (weightage !== undefined && (!Number.isFinite(weightage) || weightage <= 0 || weightage > 100)) {
+      throw new Error(`Objective ${index + 1}: default score weight must be between 1 and 100`);
+    }
 
     const existing = objective as ManagerObjectiveLibraryDraftInput & {
       createdAt?: Date | string;
@@ -2947,11 +2998,11 @@ export class ObjectiveService extends BaseService {
       title,
       description: objective.description?.trim(),
       priority,
-      expectedOutcome: objective.expectedOutcome?.trim(),
+      expectedOutcome,
       kpi: undefined,
       targetValue: undefined,
       dueDate: undefined,
-      weightage: undefined,
+      weightage,
       successCriteria: undefined,
       attachments: (objective.attachments ?? []) as unknown as Record<string, unknown>[],
       objectiveValues: (objective.objectiveValues ?? []) as unknown as Record<string, unknown>[],
@@ -2973,7 +3024,7 @@ export class ObjectiveService extends BaseService {
       kpi: '',
       targetValue: '',
       dueDate: '',
-      weightage: undefined,
+      weightage: objective.weightage,
       successCriteria: '',
       attachments: objective.attachments ?? [],
       objectiveValues: objective.objectiveValues ?? [],
