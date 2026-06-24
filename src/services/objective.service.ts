@@ -87,6 +87,10 @@ export interface CreateObjectiveInput {
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
   objectiveValues?: ObjectiveValueInput[];
+  weightageAdjustments?: Array<{
+    objectiveId: string;
+    weightage: number;
+  }>;
   commentText?: string;
 }
 
@@ -127,6 +131,10 @@ export interface SaveManagerObjectiveLibraryInput {
   objectives?: ManagerObjectiveLibraryDraftInput[];
 }
 
+export interface DeleteManagerObjectiveLibraryItemInput {
+  localId: string;
+}
+
 export interface BulkCreateManagerObjectiveInput extends Partial<BulkManagerObjectiveDraftInput> {
   termAssignmentIds: string[];
   objectives?: BulkManagerObjectiveDraftInput[];
@@ -154,6 +162,10 @@ export interface ReturnObjectiveInput {
 
 export interface ApproveObjectiveInput {
   weightage?: number;
+  weightageAdjustments?: Array<{
+    objectiveId: string;
+    weightage: number;
+  }>;
 }
 
 export interface AddObjectiveCommentInput {
@@ -368,6 +380,46 @@ export class ObjectiveService extends BaseService {
       { managerId },
       { $set: { objectives } },
       { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    return (library?.objectives ?? []).map((objective) =>
+      this.mapManagerObjectiveLibraryItem(objective),
+    );
+  }
+
+  async createManagerObjectiveLibraryItem(
+    input: ManagerObjectiveLibraryDraftInput,
+  ): Promise<IManagerObjectiveLibraryItem[]> {
+    const actor = this.requireActor();
+    const managerId = this.toObjectId(actor.actorId, 'actorId');
+    const item = this.normalizeManagerObjectiveLibraryItem(input, 0);
+
+    const library = await ManagerObjectiveLibrary.findOneAndUpdate(
+      { managerId },
+      { $push: { objectives: item } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    return (library?.objectives ?? []).map((objective) =>
+      this.mapManagerObjectiveLibraryItem(objective),
+    );
+  }
+
+  async deleteManagerObjectiveLibraryItem(
+    input: DeleteManagerObjectiveLibraryItemInput,
+  ): Promise<IManagerObjectiveLibraryItem[]> {
+    const actor = this.requireActor();
+    const managerId = this.toObjectId(actor.actorId, 'actorId');
+    const localId = input.localId?.trim();
+
+    if (!localId) {
+      throw new Error('Objective library item id is required');
+    }
+
+    const library = await ManagerObjectiveLibrary.findOneAndUpdate(
+      { managerId },
+      { $pull: { objectives: { localId } } },
+      { new: true },
     ).lean();
 
     return (library?.objectives ?? []).map((objective) =>
@@ -669,15 +721,36 @@ export class ObjectiveService extends BaseService {
     this.validateObjectiveInput(input);
     this.validateContextObjectiveRequiredFields(input, source);
     this.validateCreateAgainstConfig(source, objectiveConfig);
-    if (this.objectiveSourceIsScoreable(source, objectiveConfig)) {
-      await this.validateQuarterObjectiveRules(
+    const sourceIsScoreable = this.objectiveSourceIsScoreable(source, objectiveConfig);
+    const managerCreateNeedsWeightagePlan =
+      source === ObjectiveSource.MANAGER_CREATED &&
+      sourceIsScoreable &&
+      input.weightage !== undefined;
+    const preparedCreateWeightageAdjustments = managerCreateNeedsWeightagePlan
+      ? await this.prepareCreateObjectiveWeightageAdjustments(
         termAssignment,
-        input.weightage,
-        undefined,
-        source,
         objectiveConfig,
-        false,
-      );
+        source,
+        input.weightage,
+        input.weightageAdjustments ?? [],
+      )
+      : [];
+
+    if (!managerCreateNeedsWeightagePlan) {
+      if ((input.weightageAdjustments ?? []).length > 0) {
+        throw new Error('Weightage adjustments are allowed only while creating scoreable manager objectives');
+      }
+
+      if (sourceIsScoreable) {
+        await this.validateQuarterObjectiveRules(
+          termAssignment,
+          input.weightage,
+          undefined,
+          source,
+          objectiveConfig,
+          false,
+        );
+      }
     }
 
     if (termAssignment.termState === TermWorkflowState.NOT_STARTED) {
@@ -713,6 +786,35 @@ export class ObjectiveService extends BaseService {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = termAssignment.assignedManagerId;
       }
+    }
+
+    for (const adjustment of preparedCreateWeightageAdjustments) {
+      const previousWeightage = adjustment.objective.weightage;
+      if (previousWeightage === adjustment.weightage) {
+        continue;
+      }
+
+      adjustment.objective.weightage = adjustment.weightage;
+      adjustment.objective.updatedBy = actorObjectId;
+      await adjustment.objective.save();
+
+      await this.audit(
+        'PMS_OBJECTIVE_WEIGHTAGE_ADJUSTED_DURING_MANAGER_CREATE',
+        'OBJECTIVE',
+        adjustment.objective._id.toString(),
+        { weightage: previousWeightage },
+        { weightage: adjustment.weightage },
+        'Manager redistributed score weight while creating a manager objective',
+      );
+
+      await this.createWeightageAdjustmentComment(
+        adjustment.objective,
+        actorObjectId,
+        actor.actorRole,
+        previousWeightage,
+        adjustment.weightage,
+        'manager objective creation',
+      );
     }
 
     const objective = await Objective.create({
@@ -786,9 +888,9 @@ export class ObjectiveService extends BaseService {
     if (objectiveInputs.length === 0) {
       throw new Error('At least one objective is required');
     }
-    if ((input.weightageAdjustments ?? []).length > 0 || (input.objectiveWeightageOverrides ?? []).length > 0) {
-      throw new Error('Bulk weightage adjustments are not supported; set weightage on each scoreable manager objective');
-    }
+    const adjustmentsByTermAssignmentId = this.groupBulkWeightageAdjustments(input.weightageAdjustments ?? []);
+    const objectiveWeightageOverridesByTermAssignmentId =
+      this.groupBulkObjectiveWeightageOverrides(input.objectiveWeightageOverrides ?? []);
     const actor = this.requireActor();
     const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
     const created: BulkCreateManagerObjectiveResult['created'] = [];
@@ -843,7 +945,50 @@ export class ObjectiveService extends BaseService {
           originalOwnerUserId = termAssignment.assignedManagerId;
         }
 
-        const objectiveInputsForAssignment = objectiveInputs;
+        const preparedWeights = await this.prepareBulkScoreableWeightagePlan(
+          termAssignment,
+          objectiveConfig,
+          objectiveInputs,
+          adjustmentsByTermAssignmentId.get(termAssignmentId) ?? [],
+          objectiveWeightageOverridesByTermAssignmentId.get(termAssignmentId) ?? [],
+        );
+        const objectiveInputsForAssignment = preparedWeights.objectiveInputs;
+
+        for (const adjustment of preparedWeights.adjustments) {
+          const previousWeightage = adjustment.objective.weightage;
+          if (previousWeightage === adjustment.weightage) {
+            continue;
+          }
+
+          adjustment.objective.weightage = adjustment.weightage;
+          adjustment.objective.updatedBy = actorObjectId;
+          await adjustment.objective.save();
+
+          updated.push({
+            termAssignmentId,
+            objectiveId: adjustment.objective._id.toString(),
+            objectiveTitle: adjustment.objective.title,
+            previousWeightage,
+            weightage: adjustment.weightage,
+          });
+
+          await this.audit(
+            'PMS_MANAGER_OBJECTIVE_BULK_WEIGHTAGE_UPDATED',
+            'OBJECTIVE',
+            adjustment.objective._id.toString(),
+            { weightage: previousWeightage },
+            { weightage: adjustment.weightage },
+          );
+
+          await this.createWeightageAdjustmentComment(
+            adjustment.objective,
+            actorObjectId,
+            actor.actorRole,
+            previousWeightage,
+            adjustment.weightage,
+            'bulk manager assignment',
+          );
+        }
 
         for (const objectiveInput of objectiveInputsForAssignment) {
           try {
@@ -1399,21 +1544,6 @@ export class ObjectiveService extends BaseService {
       throw new Error('This objective type cannot carry score weightage for this assignment');
     }
 
-    if (input.weightage !== undefined) {
-      this.validateObjectiveInput({
-        title: objective.title,
-        weightage: input.weightage,
-      });
-      await this.validateQuarterObjectiveRules(
-        termAssignment,
-        input.weightage,
-        objective._id.toString(),
-        objective.source as ObjectiveSourceType,
-        objectiveConfig,
-        false,
-      );
-    }
-
     const actor = this.requireActor();
     const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
     let actingDelegateUserId: Types.ObjectId | undefined;
@@ -1430,6 +1560,49 @@ export class ObjectiveService extends BaseService {
         actingDelegateUserId = actorObjectId;
         originalOwnerUserId = objective.assignedManagerId;
       }
+    }
+
+    const preparedWeightageAdjustments = await this.prepareApprovalWeightageAdjustments(
+      termAssignment,
+      objectiveConfig,
+      objective,
+      input.weightage,
+      input.weightageAdjustments ?? [],
+    );
+
+    for (const adjustment of preparedWeightageAdjustments) {
+      const previousWeightage = adjustment.objective.weightage;
+      if (previousWeightage === adjustment.weightage) {
+        continue;
+      }
+
+      adjustment.objective.weightage = adjustment.weightage;
+      adjustment.objective.updatedBy = actorObjectId;
+      await adjustment.objective.save();
+
+      await this.audit(
+        'PMS_OBJECTIVE_WEIGHTAGE_ADJUSTED_DURING_APPROVAL',
+        'OBJECTIVE',
+        adjustment.objective._id.toString(),
+        {
+          weightage: previousWeightage,
+          approvedObjectiveId: objective._id.toString(),
+        },
+        {
+          weightage: adjustment.weightage,
+          approvedObjectiveId: objective._id.toString(),
+        },
+        'Manager redistributed score weight while approving an employee-created objective',
+      );
+
+      await this.createWeightageAdjustmentComment(
+        adjustment.objective,
+        actorObjectId,
+        actor.actorRole,
+        previousWeightage,
+        adjustment.weightage,
+        'employee objective approval',
+      );
     }
 
     const previousState = objective.status;
@@ -2922,17 +3095,24 @@ export class ObjectiveService extends BaseService {
     if (!objective.description?.trim()) {
       throw new Error(`Objective ${index + 1}: description is required`);
     }
+    const expectedOutcome =
+      objective.expectedOutcome?.trim() ||
+      objective.description?.trim();
     const priority = this.normalizeObjectivePriority(objective.priority);
     if (!priority) {
       throw new Error(`Objective ${index + 1}: priority is required`);
     }
-    if (!objective.expectedOutcome?.trim()) {
+    if (!expectedOutcome) {
       throw new Error(`Objective ${index + 1}: expected outcome is required`);
     }
-    this.validateContextObjectivePayload(
-      objective as unknown as Record<string, unknown>,
-      ObjectiveSource.MANAGER_CREATED,
-    );
+    const rawWeightage = objective.weightage as unknown;
+    const weightage =
+      rawWeightage === undefined || rawWeightage === null || rawWeightage === ''
+        ? undefined
+        : Number(rawWeightage);
+    if (weightage !== undefined && (!Number.isFinite(weightage) || weightage <= 0 || weightage > 100)) {
+      throw new Error(`Objective ${index + 1}: default score weight must be between 1 and 100`);
+    }
 
     const existing = objective as ManagerObjectiveLibraryDraftInput & {
       createdAt?: Date | string;
@@ -2947,11 +3127,11 @@ export class ObjectiveService extends BaseService {
       title,
       description: objective.description?.trim(),
       priority,
-      expectedOutcome: objective.expectedOutcome?.trim(),
+      expectedOutcome,
       kpi: undefined,
       targetValue: undefined,
       dueDate: undefined,
-      weightage: undefined,
+      weightage,
       successCriteria: undefined,
       attachments: (objective.attachments ?? []) as unknown as Record<string, unknown>[],
       objectiveValues: (objective.objectiveValues ?? []) as unknown as Record<string, unknown>[],
@@ -2973,7 +3153,7 @@ export class ObjectiveService extends BaseService {
       kpi: '',
       targetValue: '',
       dueDate: '',
-      weightage: undefined,
+      weightage: objective.weightage,
       successCriteria: '',
       attachments: objective.attachments ?? [],
       objectiveValues: objective.objectiveValues ?? [],
@@ -2997,6 +3177,164 @@ export class ObjectiveService extends BaseService {
       ...objectiveInput
     } = input;
     return [objectiveInput as BulkManagerObjectiveDraftInput];
+  }
+
+  private groupBulkWeightageAdjustments(
+    adjustments: BulkManagerObjectiveWeightageAdjustmentInput[],
+  ): Map<string, BulkManagerObjectiveWeightageAdjustmentInput[]> {
+    const grouped = new Map<string, BulkManagerObjectiveWeightageAdjustmentInput[]>();
+
+    for (const adjustment of adjustments) {
+      const termAssignmentId = adjustment.termAssignmentId?.trim();
+      if (!termAssignmentId) continue;
+      const current = grouped.get(termAssignmentId) ?? [];
+      current.push(adjustment);
+      grouped.set(termAssignmentId, current);
+    }
+
+    return grouped;
+  }
+
+  private groupBulkObjectiveWeightageOverrides(
+    overrides: BulkManagerObjectiveWeightageOverrideInput[],
+  ): Map<string, BulkManagerObjectiveWeightageOverrideInput[]> {
+    const grouped = new Map<string, BulkManagerObjectiveWeightageOverrideInput[]>();
+
+    for (const override of overrides) {
+      const termAssignmentId = override.termAssignmentId?.trim();
+      if (!termAssignmentId) continue;
+      const current = grouped.get(termAssignmentId) ?? [];
+      current.push(override);
+      grouped.set(termAssignmentId, current);
+    }
+
+    return grouped;
+  }
+
+  private applyBulkObjectiveWeightageOverrides(
+    objectiveInputs: BulkManagerObjectiveDraftInput[],
+    overrides: BulkManagerObjectiveWeightageOverrideInput[],
+  ): BulkManagerObjectiveDraftInput[] {
+    if (overrides.length === 0) {
+      return objectiveInputs.map((objective) => ({ ...objective }));
+    }
+
+    return objectiveInputs.map((objective, index) => {
+      const override = overrides.find((item) => {
+        if (item.clientObjectiveId && objective.clientObjectiveId) {
+          return item.clientObjectiveId === objective.clientObjectiveId;
+        }
+        return item.objectiveIndex === index;
+      });
+
+      if (!override) {
+        return { ...objective };
+      }
+
+      return {
+        ...objective,
+        weightage: override.weightage,
+      };
+    });
+  }
+
+  private async prepareBulkScoreableWeightagePlan(
+    termAssignment: ITermAssignment,
+    objectiveConfig: ObjectiveConfig,
+    objectiveInputs: BulkManagerObjectiveDraftInput[],
+    adjustments: BulkManagerObjectiveWeightageAdjustmentInput[],
+    overrides: BulkManagerObjectiveWeightageOverrideInput[],
+  ): Promise<{
+    objectiveInputs: BulkManagerObjectiveDraftInput[];
+    adjustments: Array<{ objective: IObjective; weightage: number }>;
+  }> {
+    const termAssignmentId = termAssignment._id.toString();
+    const objectiveInputsForAssignment = this.applyBulkObjectiveWeightageOverrides(
+      objectiveInputs,
+      overrides,
+    );
+    const managerObjectivesAreScoreable = this.objectiveSourceIsScoreable(
+      ObjectiveSource.MANAGER_CREATED,
+      objectiveConfig,
+    );
+
+    const existingObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    });
+    const existingById = new Map(existingObjectives.map((objective) => [
+      objective._id.toString(),
+      objective,
+    ]));
+    const preparedAdjustments: Array<{ objective: IObjective; weightage: number }> = [];
+
+    for (const adjustment of adjustments) {
+      const objectiveId = adjustment.objectiveId?.trim();
+      const objective = objectiveId ? existingById.get(objectiveId) : undefined;
+      if (!objective) {
+        throw new Error(`Weightage adjustment objective must belong to assignment ${termAssignmentId}`);
+      }
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        throw new Error(`Objective "${objective.title}" cannot carry score weight for this assignment`);
+      }
+
+      const weightage = Number(adjustment.weightage);
+      if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
+        throw new Error(`Weightage for "${objective.title}" must be between 0 and 100`);
+      }
+
+      preparedAdjustments.push({ objective, weightage });
+    }
+
+    if (!managerObjectivesAreScoreable) {
+      if (overrides.length > 0) {
+        throw new Error('Manager-created objectives are context-only for this assignment; score weight overrides are not allowed');
+      }
+      return {
+        objectiveInputs: objectiveInputsForAssignment.map((objective) => ({
+          ...objective,
+          weightage: undefined,
+        })),
+        adjustments: preparedAdjustments,
+      };
+    }
+
+    for (const objectiveInput of objectiveInputsForAssignment) {
+      const weightage = Number(objectiveInput.weightage);
+      if (!Number.isFinite(weightage) || weightage <= 0 || weightage > 100) {
+        throw new Error('Score weight is required for scoreable manager-created objectives and must be between 1 and 100');
+      }
+    }
+
+    const adjustedWeightByObjectiveId = new Map(
+      preparedAdjustments.map((adjustment) => [
+        adjustment.objective._id.toString(),
+        adjustment.weightage,
+      ]),
+    );
+    const existingScoreableTotal = existingObjectives.reduce((sum, objective) => {
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        return sum;
+      }
+      const adjustedWeight = adjustedWeightByObjectiveId.get(objective._id.toString());
+      return sum + Number(adjustedWeight ?? objective.weightage ?? 0);
+    }, 0);
+    const newScoreableTotal = objectiveInputsForAssignment.reduce(
+      (sum, objective) => sum + Number(objective.weightage ?? 0),
+      0,
+    );
+    const finalTotal = existingScoreableTotal + newScoreableTotal;
+
+    if (Math.abs(finalTotal - 100) > 0.001) {
+      throw new Error(
+        `Scoreable objective weightage must total 100% after bulk assignment. Current total is ${finalTotal}%.`,
+      );
+    }
+
+    return {
+      objectiveInputs: objectiveInputsForAssignment,
+      adjustments: preparedAdjustments,
+    };
   }
 
   private async validateUpdateAgainstConfig(
@@ -3027,6 +3365,199 @@ export class ObjectiveService extends BaseService {
       objectiveConfig,
       false,
     );
+  }
+
+  private async prepareApprovalWeightageAdjustments(
+    termAssignment: ITermAssignment,
+    objectiveConfig: ObjectiveConfig,
+    approvingObjective: IObjective,
+    approvingObjectiveWeightage: number | undefined,
+    adjustments: Array<{ objectiveId: string; weightage: number }>,
+  ): Promise<Array<{ objective: IObjective; weightage: number }>> {
+    if (adjustments.length > 0 && approvingObjectiveWeightage === undefined) {
+      throw new Error('Weightage adjustments are allowed only when approving the objective as scoreable');
+    }
+
+    if (approvingObjectiveWeightage === undefined) {
+      return [];
+    }
+
+    this.validateObjectiveInput({
+      title: approvingObjective.title,
+      weightage: approvingObjectiveWeightage,
+    });
+
+    if (!this.objectiveSourceIsScoreable(approvingObjective.source as ObjectiveSourceType, objectiveConfig)) {
+      throw new Error('This objective type cannot carry score weightage for this assignment');
+    }
+
+    if (
+      !Number.isFinite(Number(approvingObjectiveWeightage)) ||
+      approvingObjectiveWeightage <= 0 ||
+      approvingObjectiveWeightage > 100
+    ) {
+      throw new Error('Approved objective weightage must be between 1 and 100');
+    }
+
+    const existingObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+      _id: { $ne: approvingObjective._id },
+    });
+    const existingById = new Map(
+      existingObjectives.map((objective) => [objective._id.toString(), objective]),
+    );
+    const preparedAdjustments: Array<{ objective: IObjective; weightage: number }> = [];
+
+    for (const adjustment of adjustments) {
+      const objectiveId = adjustment.objectiveId?.trim();
+      const objective = objectiveId ? existingById.get(objectiveId) : undefined;
+      if (!objective) {
+        throw new Error('Weightage adjustment objective must belong to the same assignment');
+      }
+
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        throw new Error(`Objective "${objective.title}" cannot carry score weight for this assignment`);
+      }
+
+      const weightage = Number(adjustment.weightage);
+      if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
+        throw new Error(`Weightage for "${objective.title}" must be between 0 and 100`);
+      }
+
+      preparedAdjustments.push({ objective, weightage });
+    }
+
+    const adjustedWeightByObjectiveId = new Map(
+      preparedAdjustments.map((adjustment) => [
+        adjustment.objective._id.toString(),
+        adjustment.weightage,
+      ]),
+    );
+    const existingScoreableTotal = existingObjectives.reduce((sum, objective) => {
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        return sum;
+      }
+      const adjustedWeight = adjustedWeightByObjectiveId.get(objective._id.toString());
+      return sum + Number(adjustedWeight ?? objective.weightage ?? 0);
+    }, 0);
+    const nextTotal = existingScoreableTotal + Number(approvingObjectiveWeightage);
+
+    if (nextTotal > 100) {
+      throw new Error(
+        `Total scoreable objective weightage for the quarter cannot exceed 100%. Current total is ${nextTotal}%.`,
+      );
+    }
+
+    return preparedAdjustments;
+  }
+
+  private async prepareCreateObjectiveWeightageAdjustments(
+    termAssignment: ITermAssignment,
+    objectiveConfig: ObjectiveConfig,
+    source: ObjectiveSourceType,
+    newObjectiveWeightage: number | undefined,
+    adjustments: Array<{ objectiveId: string; weightage: number }>,
+  ): Promise<Array<{ objective: IObjective; weightage: number }>> {
+    if (source !== ObjectiveSource.MANAGER_CREATED) {
+      throw new Error('Create-time score redistribution is only supported for manager-created objectives');
+    }
+
+    if (!this.objectiveSourceIsScoreable(source, objectiveConfig)) {
+      if (adjustments.length > 0) {
+        throw new Error('Manager-created objectives are context-only for this assignment; score redistribution is not allowed');
+      }
+      return [];
+    }
+
+    const nextWeightage = Number(newObjectiveWeightage);
+    if (!Number.isFinite(nextWeightage) || nextWeightage <= 0 || nextWeightage > 100) {
+      throw new Error('Score weight is required for scoreable manager-created objectives and must be between 1 and 100');
+    }
+
+    await this.validateQuarterObjectiveRules(
+      termAssignment,
+      undefined,
+      undefined,
+      source,
+      objectiveConfig,
+      false,
+    );
+
+    const existingObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    });
+    const existingById = new Map(existingObjectives.map((objective) => [
+      objective._id.toString(),
+      objective,
+    ]));
+    const preparedAdjustments: Array<{ objective: IObjective; weightage: number }> = [];
+
+    for (const adjustment of adjustments) {
+      const objectiveId = adjustment.objectiveId?.trim();
+      const objective = objectiveId ? existingById.get(objectiveId) : undefined;
+      if (!objective) {
+        throw new Error('Weightage adjustment objective must belong to the same assignment');
+      }
+
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        throw new Error(`Objective "${objective.title}" cannot carry score weight for this assignment`);
+      }
+
+      const weightage = Number(adjustment.weightage);
+      if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
+        throw new Error(`Weightage for "${objective.title}" must be between 0 and 100`);
+      }
+
+      preparedAdjustments.push({ objective, weightage });
+    }
+
+    const adjustedWeightByObjectiveId = new Map(
+      preparedAdjustments.map((adjustment) => [
+        adjustment.objective._id.toString(),
+        adjustment.weightage,
+      ]),
+    );
+    const existingScoreableTotal = existingObjectives.reduce((sum, objective) => {
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        return sum;
+      }
+      const adjustedWeight = adjustedWeightByObjectiveId.get(objective._id.toString());
+      return sum + Number(adjustedWeight ?? objective.weightage ?? 0);
+    }, 0);
+    const finalTotal = existingScoreableTotal + nextWeightage;
+
+    if (finalTotal > 100) {
+      throw new Error(
+        `Total scoreable objective weightage for the quarter cannot exceed 100%. Current total is ${finalTotal}%.`,
+      );
+    }
+
+    return preparedAdjustments;
+  }
+
+  private async createWeightageAdjustmentComment(
+    objective: IObjective,
+    actorObjectId: Types.ObjectId,
+    actorRole: string,
+    previousWeightage: number | undefined,
+    nextWeightage: number | undefined,
+    context: string,
+  ): Promise<void> {
+    await ObjectiveComment.create({
+      objectiveId: objective._id,
+      termAssignmentId: objective.termAssignmentId,
+      annualAssignmentId: objective.annualAssignmentId,
+      cycleId: objective.cycleId,
+      assessmentTermCode: objective.assessmentTermCode,
+      employeeId: objective.employeeId,
+      commentType: 'WEIGHTAGE_ADJUSTMENT',
+      commentText: `Manager updated score weightage from ${previousWeightage ?? 0}% to ${nextWeightage ?? 0}% during ${context}.`,
+      actorUserId: actorObjectId,
+      actorRole,
+      createdBy: actorObjectId,
+    });
   }
 
   private assertRegularObjectiveEditAccess(objective: IObjective): void {

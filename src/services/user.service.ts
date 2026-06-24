@@ -338,7 +338,7 @@ export class UserService extends BaseService {
     search?: string;
     role?: string;
     status?: string;
-    active?: boolean;
+    active?: boolean | string;
     departmentId?: string;
     managerId?: string;
     country?: string;
@@ -372,6 +372,19 @@ export class UserService extends BaseService {
       sortOrder = 'asc',
       select
     } = query;
+    const rawActive: unknown = active;
+    const normalizedActive =
+      typeof rawActive === 'boolean'
+        ? rawActive
+        : typeof rawActive === 'string'
+          ? rawActive.toLowerCase() === 'true'
+            ? true
+            : rawActive.toLowerCase() === 'false'
+              ? false
+              : undefined
+          : undefined;
+    const includeAllActiveStates =
+      typeof rawActive === 'string' && rawActive.toLowerCase() === 'all';
 
     // Set limit to 1000 if role is specified (for dropdowns)
     // Override the default limit of 10 when role filter is used
@@ -410,7 +423,11 @@ export class UserService extends BaseService {
         // For non-managers, get direct subordinates only
         filter.managerId = authenticatedUser._id;
       }
-      filter.active = true;
+      if (typeof normalizedActive === 'boolean') {
+        filter.active = normalizedActive;
+      } else if (!includeAllActiveStates) {
+        filter.active = true;
+      }
     } else {
       // Apply role-based access control
       if (this.context.reqRole === 'MANAGER') {
@@ -478,8 +495,8 @@ export class UserService extends BaseService {
     }
 
     // Handle active filter - direct boolean (takes precedence over status)
-    if (typeof active === 'boolean') {
-      filter.active = active;
+    if (typeof normalizedActive === 'boolean') {
+      filter.active = normalizedActive;
     } else if (status) {
       // Fallback to status enum if active is not provided
       filter.active = status === 'active';

@@ -1131,6 +1131,20 @@ export class PmsTemplateService extends BaseService {
       allowEmployeeCreated: config.allowEmployeeCreated !== false,
       allowManagerCreated: config.allowManagerCreated !== false,
       managerCreatedAutoApprove: config.managerCreatedAutoApprove !== false,
+      objectiveScoringPolicy: {
+        predefinedObjectivesScoreable:
+          config.objectiveScoringPolicy?.predefinedObjectivesScoreable !== false,
+        managerCreatedScoreable:
+          config.objectiveScoringPolicy?.managerCreatedScoreable === true,
+        employeeCreatedScoreable:
+          config.objectiveScoringPolicy?.employeeCreatedScoreable === true,
+        requireManagerApprovalForEmployeeScore:
+          config.objectiveScoringPolicy?.requireManagerApprovalForEmployeeScore !== false,
+        requireWeightageBeforeAchievement:
+          config.objectiveScoringPolicy?.requireWeightageBeforeAchievement !== false,
+        allowManagerOverallForRemainingWeightage:
+          config.objectiveScoringPolicy?.allowManagerOverallForRemainingWeightage !== false,
+      },
       predefinedObjectives: Array.isArray(config.predefinedObjectives)
         ? config.predefinedObjectives.map((objective: Record<string, any>) => ({
           objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
