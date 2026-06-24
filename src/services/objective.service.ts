@@ -156,6 +156,10 @@ export interface UpdateObjectiveInput {
   objectiveValues?: ObjectiveValueInput[];
 }
 
+export interface SaveAssignmentTemplateValuesInput {
+  objectiveValues?: ObjectiveValueInput[];
+}
+
 export interface ReturnObjectiveInput {
   reason: string;
 }
@@ -323,6 +327,19 @@ type AssignmentRecord = {
   backendConnected: boolean;
   objectiveConfig: ObjectiveConfig;
   employeeWorkUpdate?: Record<string, unknown>;
+  objectiveTemplateValues?: Array<{
+    templateFieldId?: string;
+    fieldKey: string;
+    sectionKey: string;
+    roleCode: string;
+    actorUserId?: string;
+    workflowStage: string;
+    valueJson?: unknown;
+    valueText?: string;
+    valueNumber?: number;
+    valueDate?: string;
+    valueStatus?: string;
+  }>;
   objectives: ObjectiveRecord[];
 };
 
@@ -631,7 +648,10 @@ export class ObjectiveService extends BaseService {
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         objectiveConfig,
         employeeWorkUpdate: employeeAchievementContext.workUpdateByTermAssignmentId.get(
-          termAssignment._id.toString(),
+          termAssignment._id.toString()),
+        objectiveTemplateValues: this.mapTemplateObjectiveValues(
+          (termAssignment.termSummary as Record<string, unknown> | undefined)
+            ?.objectiveTemplateValues as Array<Record<string, any>> | undefined,
         ),
         objectives: objectiveRecords,
       };
@@ -682,6 +702,60 @@ export class ObjectiveService extends BaseService {
       ...objectiveRecord,
       employeeAchievement: context.objectiveAchievementByObjectiveId.get(objective._id.toString()),
     };
+  }
+
+  async saveAssignmentTemplateValues(
+    termAssignmentId: string,
+    input: SaveAssignmentTemplateValuesInput,
+  ): Promise<Array<Record<string, unknown>>> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+
+    await this.assertAssignmentAccess('objective.create', termAssignment);
+    await this.assertObjectiveWindow(termAssignment, 'setting');
+
+    if (
+      mappedRole !== PmsRole.ADMIN &&
+      actor.actorId !== termAssignment.employeeId.toString()
+    ) {
+      throw new Error('Only the employee or admin can update template form values');
+    }
+
+    const normalizedValues = (input.objectiveValues ?? [])
+      .filter((value) => value.fieldKey?.trim() && value.sectionKey?.trim())
+      .map((value) => ({
+        templateFieldId: value.templateFieldId,
+        fieldKey: value.fieldKey.trim(),
+        sectionKey: value.sectionKey.trim(),
+        roleCode: value.roleCode ?? actor.actorRole,
+        actorUserId: value.actorUserId ?? actor.actorId,
+        workflowStage: value.workflowStage ?? 'OBJECTIVE_SETTING',
+        valueJson: value.valueJson,
+        valueText: value.valueText,
+        valueNumber: value.valueNumber,
+        valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+        valueStatus: value.valueStatus ?? 'ACTIVE',
+      }));
+
+    const previousSummary = (termAssignment.termSummary ?? {}) as Record<string, unknown>;
+    termAssignment.termSummary = {
+      ...previousSummary,
+      objectiveTemplateValues: normalizedValues,
+    };
+    termAssignment.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+    termAssignment.version += 1;
+    await termAssignment.save();
+
+    await this.audit(
+      'PMS_OBJECTIVE_TEMPLATE_VALUES_UPDATED',
+      'TERM_ASSIGNMENT',
+      termAssignment._id.toString(),
+      previousSummary,
+      termAssignment.termSummary,
+    );
+
+    return this.mapTemplateObjectiveValues(normalizedValues);
   }
 
   async createObjective(input: CreateObjectiveInput): Promise<IObjective> {
@@ -1213,14 +1287,47 @@ export class ObjectiveService extends BaseService {
     const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, termAssignment);
     const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
 
     await this.assertObjectiveAccess('objective.edit', objective, false);
-    this.assertRegularObjectiveEditAccess(objective);
     await this.assertObjectiveWindow(termAssignment, 'setting');
+
+    const allowEmployeePredefinedValueUpdate =
+      objective.source === ObjectiveSource.PREDEFINED &&
+      mappedRole === PmsRole.EMPLOYEE &&
+      actor.actorId === objective.employeeId.toString();
+
+    if (allowEmployeePredefinedValueUpdate) {
+      this.assertPredefinedObjectiveValueOnlyUpdate(objective, input);
+
+      const previousValue = objective.toObject();
+      objective.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+      objective.version += 1;
+      await objective.save();
+
+      await this.persistObjectiveValues(
+        objective,
+        termAssignment,
+        input.objectiveValues ?? [],
+        objective.status === ObjectiveStatus.OBJECTIVE_SUBMITTED || objective.status === ObjectiveStatus.OBJECTIVE_APPROVED,
+      );
+
+      await this.audit(
+        'PMS_PREDEFINED_OBJECTIVE_VALUES_UPDATED',
+        'OBJECTIVE',
+        objective._id.toString(),
+        previousValue,
+        objective.toObject(),
+      );
+
+      return objective;
+    }
+
+    this.assertRegularObjectiveEditAccess(objective);
 
     // Predefined gating check
     if (objective.source === ObjectiveSource.PREDEFINED || objectiveConfig.mode === 'PREDEFINED') {
-      if (accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
+      if (mappedRole !== PmsRole.ADMIN) {
         throw new Error('Predefined objectives are read-only and cannot be modified');
       }
     }
@@ -2520,6 +2627,22 @@ export class ObjectiveService extends BaseService {
     };
   }
 
+  private mapTemplateObjectiveValues(values?: Array<Record<string, any>>) {
+    return (values ?? []).map((value) => ({
+      templateFieldId: value.templateFieldId,
+      fieldKey: value.fieldKey,
+      sectionKey: value.sectionKey,
+      roleCode: value.roleCode,
+      actorUserId: value.actorUserId?.toString?.() ?? value.actorUserId,
+      workflowStage: value.workflowStage,
+      valueJson: value.valueJson,
+      valueText: value.valueText,
+      valueNumber: value.valueNumber,
+      valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+      valueStatus: value.valueStatus,
+    }));
+  }
+
   private groupCommentsByObjective(comments: Array<Record<string, any>>) {
     const grouped = new Map<string, Array<Record<string, any>>>();
     for (const comment of comments) {
@@ -3558,6 +3681,49 @@ export class ObjectiveService extends BaseService {
       actorRole,
       createdBy: actorObjectId,
     });
+  private assertPredefinedObjectiveValueOnlyUpdate(
+    objective: IObjective,
+    input: UpdateObjectiveInput,
+  ): void {
+    const normalizedTargetDate = (value?: Date | string) => {
+      if (!value) return '';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
+    };
+
+    const titleMatches =
+      input.title === undefined || String(input.title).trim() === String(objective.title || '').trim();
+    const descriptionMatches =
+      input.description === undefined ||
+      String(input.description || '').trim() === String(objective.description || '').trim();
+    const targetMetricMatches =
+      input.targetMetric === undefined ||
+      String(input.targetMetric || '').trim() === String(objective.targetMetric || '').trim();
+    const targetValueMatches =
+      input.targetValue === undefined ||
+      String(input.targetValue || '').trim() === String(objective.targetValue || '').trim();
+    const targetDateMatches =
+      input.targetDate === undefined ||
+      normalizedTargetDate(input.targetDate) === normalizedTargetDate(objective.targetDate);
+    const weightageMatches =
+      input.weightage === undefined || Number(input.weightage) === Number(objective.weightage);
+    const successCriteriaMatches =
+      input.successCriteria === undefined ||
+      String(input.successCriteria || '').trim() === String(objective.successCriteria || '').trim();
+    const attachmentsEmpty = (input.attachments ?? []).length === 0;
+
+    if (
+      !titleMatches ||
+      !descriptionMatches ||
+      !targetMetricMatches ||
+      !targetValueMatches ||
+      !targetDateMatches ||
+      !weightageMatches ||
+      !successCriteriaMatches ||
+      !attachmentsEmpty
+    ) {
+      throw new Error('Predefined objective core fields are read-only; only template field values can be updated');
+    }
   }
 
   private assertRegularObjectiveEditAccess(objective: IObjective): void {
