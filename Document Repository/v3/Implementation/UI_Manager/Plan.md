@@ -829,6 +829,207 @@ Acceptance:
 - No feature from the current workspaces is unaccounted for in this plan.
 - No backend/API change is required.
 
+#### Phase 1 Output: Existing Feature Surface Map
+
+Phase 1 is documentation and mapping only. No runtime code changes are required for this phase.
+
+Current employee/user routes:
+
+- `/my/assignments`
+  - Current label: `Objectives`
+  - Current component: `ObjectiveWorkspace mode="employee"`
+  - Planned destination: unified `My Performance` workspace, `Objectives` tab.
+- `/my/achievements`
+  - Current label: `Achievement Submission`
+  - Current component: `EmployeeAchievementWorkspace`
+  - Planned destination: unified `My Performance` workspace, `Achievement Submission` tab.
+
+Current manager routes for later alignment:
+
+- `/manager/objectives`
+  - Current label: `Objectives`
+  - Current component: `ObjectiveWorkspace mode="manager"`
+  - Planned destination: keep route; later apply shared visual style only.
+- `/manager/reviews`
+  - Current label: manager review entry.
+  - Current component: `TermReviewWorkspace mode="manager"`
+  - Planned destination: keep route; later apply shared visual style only.
+
+Sidebar mapping:
+
+- Keep existing employee/user sidebar entries for now:
+  - `Objectives`
+  - `Achievement Submission`
+- Add one new employee/user sidebar entry:
+  - Recommended label: `My Performance`
+  - Planned route: a new frontend route for the unified workspace, or existing `/my/assignments` enhanced with tab state.
+- Do not hide old entries until the unified workspace passes feature parity testing.
+
+#### Phase 1 Output: Employee/User Action Mapping
+
+The unified employee/user workspace should contain two primary tabs:
+
+- `Objectives`
+- `Achievement Submission`
+
+Objectives tab must bind existing `ObjectiveWorkspace mode="employee"` logic:
+
+| Current feature/action | Current source | New UI destination | Logic rule |
+| --- | --- | --- | --- |
+| Assignment list | `ObjectiveWorkspace` list view | `My Performance` term list | Keep existing list/filter/pagination logic. |
+| Search | `ObjectiveWorkspace` | Term list toolbar | Reuse existing search state. |
+| Quarter/term filter | `ObjectiveWorkspace` | Term list toolbar | Reuse existing filter state. |
+| Cycle filter | `ObjectiveWorkspace` | Term list toolbar | Reuse existing filter state. |
+| Open assignment | `openDetail` / list row action | Open term workspace detail | Reuse existing selection logic. |
+| PMS date override | `workspaceDateOverride` handlers | Testing control in workspace | Keep unchanged while SIT testing needs it. |
+| Add employee objective | `openCreateObjective` | Objectives tab action | Bind existing handler. |
+| Edit draft objective | existing editor state/handlers | Objective detail/editor panel | Bind existing editor state. |
+| Save objective draft | `handleSaveDraft` | Objectives tab save action | Bind existing handler and payload. |
+| Submit objective | `handleSubmitObjective` | Objective card/detail action | Bind existing handler and validation. |
+| Delete draft objective | `handleDeleteDraftObjective` | Objective card/detail action | Keep existing confirmation/guard. |
+| Add objective comment | `handleAddComment` | Objective detail comments area | Bind existing handler. |
+| Upload objective attachment | existing upload API through objective flow | Objective editor/upload control | Keep existing file/payload behavior. |
+| Remove objective attachment | `removeDraftAttachment` | Objective editor attachment chip | Bind existing handler. |
+| Runtime template fields | `AssignmentFormRuntime` | Objectives tab form area | Keep runtime form rendering. |
+| Objective buckets | `displayObjectiveBuckets` | Objective cards/groups | Render same buckets. |
+| Read-only approved objectives | `canEditObjective` and status checks | Objective card/detail state | Keep read-only behavior. |
+| Achievement readiness CTA | `isReadyForAchievementSubmission` | Achievement tab availability/notice | Keep same readiness checks. |
+
+Achievement Submission tab must bind existing `EmployeeAchievementWorkspace` logic:
+
+| Current feature/action | Current source | New UI destination | Logic rule |
+| --- | --- | --- | --- |
+| Achievement assignment list | `EmployeeAchievementWorkspace` list view | Prefer shared term list or direct tab route | Keep route compatibility. |
+| Load submission detail | `loadSubmissionDetail(termAssignmentId)` | Achievement tab open/load | Bind same loader. |
+| Build objective achievement rows | `populateDraftItems` | Achievement objective cards | Keep generated item behavior. |
+| Add additional achievement | `addAchievementItem` | Achievement tab button | Bind existing handler. |
+| Remove additional achievement | `removeAchievementItem` | Additional achievement card action | Bind existing handler. |
+| Save achievement draft | `handleSaveDraft` | Achievement tab save button | Bind existing handler and payload. |
+| Submit achievement | `handleSubmit` | Achievement tab submit button | Bind existing handler and validation. |
+| Upload achievement attachment | `handleAttachmentFileChange` | Achievement card upload control | Keep existing upload API and metadata. |
+| Preview achievement attachment | `openAttachmentPreview` | Attachment chip/preview action | Bind existing preview behavior. |
+| Work update fields | work update helper/rendering logic | Achievement tab dynamic section | Keep dynamic field rendering and validation. |
+| Employee self rating | config-driven rating logic | Objective achievement card | Keep enabled/required rules. |
+| Employee comments per objective | config-driven comments logic | Objective achievement card | Keep enabled rules. |
+| Additional contribution config | `additionalContributionsEnabled` | Additional achievements area | Keep config rules. |
+| Window open/closed checks | `getAchievementWindowStatus` and submit guards | Notice bar/action disabled states | Keep blocking behavior. |
+| Locked/submitted read-only state | `submissionStatus` / `isLocked` | Achievement cards read-only mode | Keep read-only behavior. |
+
+#### Phase 1 Output: Manager/Later Alignment Mapping
+
+Manager screens are not the first implementation scope. They are mapped here only to prevent future UI work from missing existing capabilities.
+
+Manager Objectives later visual alignment:
+
+| Current feature/action | Current source | Later UI destination | Logic rule |
+| --- | --- | --- | --- |
+| Assignment list/search/filter/page | `ObjectiveWorkspace mode="manager"` | Manager objective term list | Keep existing logic. |
+| Approve objective | `handleApproveObjective` | Manager objective card/detail | Bind existing handler. |
+| Return objective | `handleReturnObjective` | Manager objective card/detail | Bind existing handler/comment rules. |
+| Manager-created objective | `openCreateObjective` + save flow | Manager objective tab/action | Keep auto-approval behavior. |
+| Manager objective library | library handlers | Manager library panel/modal | Do not simplify/remove. |
+| Bulk assign objectives | `handleBulkAssignManagerObjective` | Bulk assignment modal/panel | Keep full flow and result handling. |
+| Close objective setting | `handleCloseObjectiveSetting` | Term action area | Keep confirmation and backend guard. |
+
+Manager Reviews later visual alignment:
+
+| Current feature/action | Current source | Later UI destination | Logic rule |
+| --- | --- | --- | --- |
+| Manager Review tab | `TermReviewWorkspace` | Redesigned manager review tab | Keep draft/save/submit/finalize/reopen. |
+| Approved Objectives tab | `activeDetailTab = "objectives"` | Redesigned approved objective cards | Keep objective rating logic. |
+| Employee Achievement tab | `activeDetailTab = "achievement"` | Redesigned achievement reference tab | Keep read-only reference behavior. |
+| Load achievement reference | `loadAchievementReference` | Achievement reference tab | Keep same API call. |
+| Objective rating | rating helpers/validation | Objective cards | Keep score rules. |
+| Review attachments | attachment handlers | Review attachment area | Keep upload/preview/remove behavior. |
+| Export CSV | `handleExportCsv` | Review toolbar/action | Keep existing export behavior. |
+
+#### Phase 1 Output: Shared Data And Handler Binding Map
+
+Reusable child components should receive data and callbacks from parent workspaces instead of owning action logic.
+
+Shared data candidates:
+
+- `selectedAssignment`
+- `termAssignmentId`
+- `employeeName`
+- `managerName`
+- `cycleName`
+- `quarter` / assessment term display
+- `termState`
+- `termWindows`
+- `objectiveConfig`
+- `reviewConfig`
+- `objectives`
+- `approvedObjectives`
+- `employeeAchievement`
+- `submissionDetail`
+- `draftItems`
+- `workUpdateValues`
+- loading and error states
+
+Shared UI-only components can safely render:
+
+- Term hero.
+- Assignment summary card.
+- Workflow windows card.
+- Objective rules card.
+- Weightage progress card.
+- Status/source pills.
+- Objective card.
+- Objective read-only detail panel.
+- Achievement read-only summary.
+
+Logic that must stay in parent components:
+
+- API calls.
+- Payload building.
+- Form validation.
+- Permission/capability checks.
+- Workflow window checks.
+- Submit blockers.
+- Upload handling.
+- Preview handling.
+- Toast/error handling.
+- Refresh after action.
+
+#### Phase 1 Output: Duplicate/Shareable Helper Candidates
+
+These are candidates for later shared frontend utilities/components. They should be extracted only if extraction is low risk.
+
+Possible shared display helpers:
+
+- Assessment term label display.
+- Workflow state label display.
+- Date/window range display.
+- Status pill rendering.
+- Objective source label rendering.
+- Weightage summary/progress rendering.
+- Employee-manager assignment summary rendering.
+- Empty/loading/error panels.
+
+Possible shared UI components:
+
+- `PmsTermHero.svelte`
+- `PmsAssignmentSummaryCard.svelte`
+- `PmsWorkflowWindowsCard.svelte`
+- `PmsObjectiveRulesCard.svelte`
+- `PmsWeightageProgressCard.svelte`
+- `PmsStatusPill.svelte`
+- `PmsObjectiveCard.svelte`
+
+Do not extract these yet if it makes Phase 2 risky. First preference is to create child components that receive existing computed values and handlers.
+
+#### Phase 1 Status
+
+Phase 1 documentation is complete when:
+
+- The employee/user current routes are mapped.
+- Existing employee objective actions are mapped to the new `Objectives` tab.
+- Existing achievement submission actions are mapped to the new `Achievement Submission` tab.
+- Manager features are recorded as later alignment scope.
+- Sidebar rollout is documented as additive first, hide old entries later.
+- No backend/API changes are required.
+
 ### Phase 2: Shared Visual Components
 
 Deliverables:
