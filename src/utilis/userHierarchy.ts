@@ -26,10 +26,9 @@ export async function getSubordinateUserIds(userId: string | Types.ObjectId): Pr
     }
     visited.add(currentUserIdStr);
     
-    // Find direct subordinates of current user
+    // Collect the full hierarchy first; callers apply active/inactive filters later.
     const subordinates = await User.find({
-      managerId: currentUserId,
-      active: true
+      managerId: currentUserId
     }).select('_id role').lean();
     
     for (const subordinate of subordinates) {

@@ -369,8 +369,11 @@ export const userRoutes: RouteHandler = async (
               description: 'Filter by user status'
             },
             active: {
-              type: 'boolean',
-              description: 'Filter by active status (true for active, false for inactive)'
+              anyOf: [
+                { type: 'boolean' },
+                { type: 'string', enum: ['true', 'false', 'all'] }
+              ],
+              description: 'Filter by active status (true for active, false for inactive, all for both)'
             },
             departmentId: {
               type: 'string',
@@ -479,7 +482,7 @@ export const userRoutes: RouteHandler = async (
           search?: string;
           role?: string;
           status?: string;
-          active?: boolean;
+          active?: boolean | 'all';
           departmentId?: string;
           managerId?: string;
           country?: string;
