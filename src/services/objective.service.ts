@@ -722,7 +722,10 @@ export class ObjectiveService extends BaseService {
     this.validateContextObjectiveRequiredFields(input, source);
     this.validateCreateAgainstConfig(source, objectiveConfig);
     const sourceIsScoreable = this.objectiveSourceIsScoreable(source, objectiveConfig);
-    const managerCreateNeedsWeightagePlan = source === ObjectiveSource.MANAGER_CREATED && sourceIsScoreable;
+    const managerCreateNeedsWeightagePlan =
+      source === ObjectiveSource.MANAGER_CREATED &&
+      sourceIsScoreable &&
+      input.weightage !== undefined;
     const preparedCreateWeightageAdjustments = managerCreateNeedsWeightagePlan
       ? await this.prepareCreateObjectiveWeightageAdjustments(
         termAssignment,
