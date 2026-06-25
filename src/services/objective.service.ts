@@ -154,6 +154,14 @@ export interface UpdateObjectiveInput {
   successCriteria?: string;
   attachments?: ObjectiveAttachmentInput[];
   objectiveValues?: ObjectiveValueInput[];
+  weightageAdjustments?: Array<{
+    objectiveId: string;
+    weightage: number;
+  }>;
+}
+
+export interface SaveAssignmentTemplateValuesInput {
+  objectiveValues?: ObjectiveValueInput[];
 }
 
 export interface ReturnObjectiveInput {
@@ -323,6 +331,19 @@ type AssignmentRecord = {
   backendConnected: boolean;
   objectiveConfig: ObjectiveConfig;
   employeeWorkUpdate?: Record<string, unknown>;
+  objectiveTemplateValues?: Array<{
+    templateFieldId?: string;
+    fieldKey: string;
+    sectionKey: string;
+    roleCode: string;
+    actorUserId?: string;
+    workflowStage: string;
+    valueJson?: unknown;
+    valueText?: string;
+    valueNumber?: number;
+    valueDate?: string;
+    valueStatus?: string;
+  }>;
   objectives: ObjectiveRecord[];
 };
 
@@ -631,7 +652,10 @@ export class ObjectiveService extends BaseService {
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         objectiveConfig,
         employeeWorkUpdate: employeeAchievementContext.workUpdateByTermAssignmentId.get(
-          termAssignment._id.toString(),
+          termAssignment._id.toString()),
+        objectiveTemplateValues: this.mapTemplateObjectiveValues(
+          (termAssignment.termSummary as Record<string, unknown> | undefined)
+            ?.objectiveTemplateValues as Array<Record<string, any>> | undefined,
         ),
         objectives: objectiveRecords,
       };
@@ -684,6 +708,60 @@ export class ObjectiveService extends BaseService {
     };
   }
 
+  async saveAssignmentTemplateValues(
+    termAssignmentId: string,
+    input: SaveAssignmentTemplateValuesInput,
+  ): Promise<Array<Record<string, unknown>>> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+
+    await this.assertAssignmentAccess('objective.create', termAssignment);
+    await this.assertObjectiveWindow(termAssignment, 'setting');
+
+    if (
+      mappedRole !== PmsRole.ADMIN &&
+      actor.actorId !== termAssignment.employeeId.toString()
+    ) {
+      throw new Error('Only the employee or admin can update template form values');
+    }
+
+    const normalizedValues = (input.objectiveValues ?? [])
+      .filter((value) => value.fieldKey?.trim() && value.sectionKey?.trim())
+      .map((value) => ({
+        templateFieldId: value.templateFieldId,
+        fieldKey: value.fieldKey.trim(),
+        sectionKey: value.sectionKey.trim(),
+        roleCode: value.roleCode ?? actor.actorRole,
+        actorUserId: value.actorUserId ?? actor.actorId,
+        workflowStage: value.workflowStage ?? 'OBJECTIVE_SETTING',
+        valueJson: value.valueJson,
+        valueText: value.valueText,
+        valueNumber: value.valueNumber,
+        valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+        valueStatus: value.valueStatus ?? 'ACTIVE',
+      }));
+
+    const previousSummary = (termAssignment.termSummary ?? {}) as Record<string, unknown>;
+    termAssignment.termSummary = {
+      ...previousSummary,
+      objectiveTemplateValues: normalizedValues,
+    };
+    termAssignment.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+    termAssignment.version += 1;
+    await termAssignment.save();
+
+    await this.audit(
+      'PMS_OBJECTIVE_TEMPLATE_VALUES_UPDATED',
+      'TERM_ASSIGNMENT',
+      termAssignment._id.toString(),
+      previousSummary,
+      termAssignment.termSummary,
+    );
+
+    return this.mapTemplateObjectiveValues(normalizedValues);
+  }
+
   async createObjective(input: CreateObjectiveInput): Promise<IObjective> {
     const actor = this.requireActor();
     const termAssignment = await this.getTermAssignment(input.termAssignmentId);
@@ -722,11 +800,11 @@ export class ObjectiveService extends BaseService {
     this.validateContextObjectiveRequiredFields(input, source);
     this.validateCreateAgainstConfig(source, objectiveConfig);
     const sourceIsScoreable = this.objectiveSourceIsScoreable(source, objectiveConfig);
-    const managerCreateNeedsWeightagePlan =
-      source === ObjectiveSource.MANAGER_CREATED &&
+    const createNeedsWeightagePlan =
       sourceIsScoreable &&
-      input.weightage !== undefined;
-    const preparedCreateWeightageAdjustments = managerCreateNeedsWeightagePlan
+      input.weightage !== undefined &&
+      (input.weightageAdjustments ?? []).length > 0;
+    const preparedCreateWeightageAdjustments = createNeedsWeightagePlan
       ? await this.prepareCreateObjectiveWeightageAdjustments(
         termAssignment,
         objectiveConfig,
@@ -736,9 +814,9 @@ export class ObjectiveService extends BaseService {
       )
       : [];
 
-    if (!managerCreateNeedsWeightagePlan) {
+    if (!createNeedsWeightagePlan) {
       if ((input.weightageAdjustments ?? []).length > 0) {
-        throw new Error('Weightage adjustments are allowed only while creating scoreable manager objectives');
+        throw new Error('Weightage adjustments are allowed only while creating scoreable objectives');
       }
 
       if (sourceIsScoreable) {
@@ -1213,14 +1291,48 @@ export class ObjectiveService extends BaseService {
     const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, termAssignment);
     const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
 
     await this.assertObjectiveAccess('objective.edit', objective, false);
-    this.assertRegularObjectiveEditAccess(objective);
     await this.assertObjectiveWindow(termAssignment, 'setting');
+
+    const allowEmployeePredefinedValueUpdate =
+      objective.source === ObjectiveSource.PREDEFINED &&
+      mappedRole === PmsRole.EMPLOYEE &&
+      actor.actorId === objective.employeeId.toString();
+
+    if (allowEmployeePredefinedValueUpdate) {
+      this.assertPredefinedObjectiveValueOnlyUpdate(objective, input);
+
+      const previousValue = objective.toObject();
+      objective.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+      objective.version += 1;
+      await objective.save();
+
+      await this.persistObjectiveValues(
+        objective,
+        termAssignment,
+        input.objectiveValues ?? [],
+        objective.status === ObjectiveStatus.OBJECTIVE_SUBMITTED || objective.status === ObjectiveStatus.OBJECTIVE_APPROVED,
+      );
+
+      await this.audit(
+        'PMS_PREDEFINED_OBJECTIVE_VALUES_UPDATED',
+        'OBJECTIVE',
+        objective._id.toString(),
+        previousValue,
+        objective.toObject(),
+      );
+
+      return objective;
+    }
+
+    this.assertRegularObjectiveEditAccess(objective);
 
     // Predefined gating check
     if (objective.source === ObjectiveSource.PREDEFINED || objectiveConfig.mode === 'PREDEFINED') {
-      if (accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
+      if (mappedRole !== PmsRole.ADMIN) {
         throw new Error('Predefined objectives are read-only and cannot be modified');
       }
     }
@@ -1251,13 +1363,43 @@ export class ObjectiveService extends BaseService {
       },
       objective.source as ObjectiveSourceType,
     );
-    await this.validateUpdateAgainstConfig(
-      objective,
-      objectiveConfig,
-      this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)
-        ? input.weightage ?? objective.weightage
-        : undefined,
-    );
+    const objectiveSource = objective.source as ObjectiveSourceType;
+    const sourceIsScoreable = this.objectiveSourceIsScoreable(objectiveSource, objectiveConfig);
+    const nextScoreWeightage = sourceIsScoreable
+      ? input.weightage ?? objective.weightage
+      : undefined;
+    const hasWeightageAdjustments = (input.weightageAdjustments ?? []).length > 0;
+
+    let preparedUpdateWeightageAdjustments: Array<{ objective: IObjective; weightage: number }> = [];
+    if (hasWeightageAdjustments) {
+      if (
+        objective.source === ObjectiveSource.EMPLOYEE_CREATED &&
+        !objectiveConfig.allowEmployeeCreated
+      ) {
+        throw new Error('Employee-created objectives are not allowed for this assignment');
+      }
+
+      if (
+        objective.source === ObjectiveSource.MANAGER_CREATED &&
+        !objectiveConfig.allowManagerCreated
+      ) {
+        throw new Error('Manager-created objectives are not allowed for this assignment');
+      }
+
+      preparedUpdateWeightageAdjustments = await this.prepareUpdateObjectiveWeightageAdjustments(
+        termAssignment,
+        objectiveConfig,
+        objective,
+        nextScoreWeightage,
+        input.weightageAdjustments ?? [],
+      );
+    } else {
+      await this.validateUpdateAgainstConfig(
+        objective,
+        objectiveConfig,
+        nextScoreWeightage,
+      );
+    }
 
     let actingDelegateUserId: Types.ObjectId | undefined;
     let originalOwnerUserId: Types.ObjectId | undefined;
@@ -1318,13 +1460,48 @@ export class ObjectiveService extends BaseService {
     objective.attachments = input.attachments === undefined
       ? objective.attachments
       : this.normalizeAttachments(input.attachments);
-    objective.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+    objective.updatedBy = actorObjectId;
     if (actingDelegateUserId) {
       objective.actingDelegateUserId = actingDelegateUserId;
       objective.originalOwnerUserId = originalOwnerUserId;
     }
     objective.version += 1;
     await objective.save();
+
+    for (const adjustment of preparedUpdateWeightageAdjustments) {
+      const previousWeightage = adjustment.objective.weightage;
+      if (previousWeightage === adjustment.weightage) {
+        continue;
+      }
+
+      adjustment.objective.weightage = adjustment.weightage;
+      adjustment.objective.updatedBy = actorObjectId;
+      await adjustment.objective.save();
+
+      await this.audit(
+        'PMS_OBJECTIVE_WEIGHTAGE_ADJUSTED_DURING_UPDATE',
+        'OBJECTIVE',
+        adjustment.objective._id.toString(),
+        {
+          weightage: previousWeightage,
+          editedObjectiveId: objective._id.toString(),
+        },
+        {
+          weightage: adjustment.weightage,
+          editedObjectiveId: objective._id.toString(),
+        },
+        'User redistributed score weight while updating an objective',
+      );
+
+      await this.createWeightageAdjustmentComment(
+        adjustment.objective,
+        actorObjectId,
+        actor.actorRole,
+        previousWeightage,
+        adjustment.weightage,
+        'objective update',
+      );
+    }
 
     if (input.attachments !== undefined) {
       await this.replaceObjectiveAttachments(objective, input.attachments, actor.actorRole);
@@ -2520,6 +2697,22 @@ export class ObjectiveService extends BaseService {
     };
   }
 
+  private mapTemplateObjectiveValues(values?: Array<Record<string, any>>) {
+    return (values ?? []).map((value) => ({
+      templateFieldId: value.templateFieldId,
+      fieldKey: value.fieldKey,
+      sectionKey: value.sectionKey,
+      roleCode: value.roleCode,
+      actorUserId: value.actorUserId?.toString?.() ?? value.actorUserId,
+      workflowStage: value.workflowStage,
+      valueJson: value.valueJson,
+      valueText: value.valueText,
+      valueNumber: value.valueNumber,
+      valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+      valueStatus: value.valueStatus,
+    }));
+  }
+
   private groupCommentsByObjective(comments: Array<Record<string, any>>) {
     const grouped = new Map<string, Array<Record<string, any>>>();
     for (const comment of comments) {
@@ -3367,6 +3560,91 @@ export class ObjectiveService extends BaseService {
     );
   }
 
+  private async prepareUpdateObjectiveWeightageAdjustments(
+    termAssignment: ITermAssignment,
+    objectiveConfig: ObjectiveConfig,
+    editingObjective: IObjective,
+    editingObjectiveWeightage: number | undefined,
+    adjustments: Array<{ objectiveId: string; weightage: number }>,
+  ): Promise<Array<{ objective: IObjective; weightage: number }>> {
+    if (adjustments.length > 0 && editingObjectiveWeightage === undefined) {
+      throw new Error('Weightage adjustments are allowed only when updating the objective as scoreable');
+    }
+
+    if (editingObjectiveWeightage === undefined) {
+      return [];
+    }
+
+    this.validateObjectiveInput({
+      title: editingObjective.title,
+      weightage: editingObjectiveWeightage,
+    });
+
+    if (!this.objectiveSourceIsScoreable(editingObjective.source as ObjectiveSourceType, objectiveConfig)) {
+      throw new Error('This objective type cannot carry score weightage for this assignment');
+    }
+
+    if (
+      !Number.isFinite(Number(editingObjectiveWeightage)) ||
+      editingObjectiveWeightage <= 0 ||
+      editingObjectiveWeightage > 100
+    ) {
+      throw new Error('Objective weightage must be between 1 and 100');
+    }
+
+    const existingObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+      _id: { $ne: editingObjective._id },
+    });
+    const existingById = new Map(
+      existingObjectives.map((objective) => [objective._id.toString(), objective]),
+    );
+    const preparedAdjustments: Array<{ objective: IObjective; weightage: number }> = [];
+
+    for (const adjustment of adjustments) {
+      const objectiveId = adjustment.objectiveId?.trim();
+      const objective = objectiveId ? existingById.get(objectiveId) : undefined;
+      if (!objective) {
+        throw new Error('Weightage adjustment objective must belong to the same assignment');
+      }
+
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        throw new Error(`Objective "${objective.title}" cannot carry score weight for this assignment`);
+      }
+
+      const weightage = Number(adjustment.weightage);
+      if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
+        throw new Error(`Weightage for "${objective.title}" must be between 0 and 100`);
+      }
+
+      preparedAdjustments.push({ objective, weightage });
+    }
+
+    const adjustedWeightByObjectiveId = new Map(
+      preparedAdjustments.map((adjustment) => [
+        adjustment.objective._id.toString(),
+        adjustment.weightage,
+      ]),
+    );
+    const existingScoreableTotal = existingObjectives.reduce((sum, objective) => {
+      if (!this.objectiveSourceIsScoreable(objective.source as ObjectiveSourceType, objectiveConfig)) {
+        return sum;
+      }
+      const adjustedWeight = adjustedWeightByObjectiveId.get(objective._id.toString());
+      return sum + Number(adjustedWeight ?? objective.weightage ?? 0);
+    }, 0);
+    const nextTotal = existingScoreableTotal + Number(editingObjectiveWeightage);
+
+    if (nextTotal > 100) {
+      throw new Error(
+        `Total scoreable objective weightage for the quarter cannot exceed 100%. Current total is ${nextTotal}%.`,
+      );
+    }
+
+    return preparedAdjustments;
+  }
+
   private async prepareApprovalWeightageAdjustments(
     termAssignment: ITermAssignment,
     objectiveConfig: ObjectiveConfig,
@@ -3459,20 +3737,16 @@ export class ObjectiveService extends BaseService {
     newObjectiveWeightage: number | undefined,
     adjustments: Array<{ objectiveId: string; weightage: number }>,
   ): Promise<Array<{ objective: IObjective; weightage: number }>> {
-    if (source !== ObjectiveSource.MANAGER_CREATED) {
-      throw new Error('Create-time score redistribution is only supported for manager-created objectives');
-    }
-
     if (!this.objectiveSourceIsScoreable(source, objectiveConfig)) {
       if (adjustments.length > 0) {
-        throw new Error('Manager-created objectives are context-only for this assignment; score redistribution is not allowed');
+        throw new Error('This objective type is context-only for this assignment; score redistribution is not allowed');
       }
       return [];
     }
 
     const nextWeightage = Number(newObjectiveWeightage);
     if (!Number.isFinite(nextWeightage) || nextWeightage <= 0 || nextWeightage > 100) {
-      throw new Error('Score weight is required for scoreable manager-created objectives and must be between 1 and 100');
+      throw new Error('Score weight is required for scoreable objectives and must be between 1 and 100');
     }
 
     await this.validateQuarterObjectiveRules(
@@ -3558,6 +3832,51 @@ export class ObjectiveService extends BaseService {
       actorRole,
       createdBy: actorObjectId,
     });
+  }
+
+  private assertPredefinedObjectiveValueOnlyUpdate(
+    objective: IObjective,
+    input: UpdateObjectiveInput,
+  ): void {
+    const normalizedTargetDate = (value?: Date | string) => {
+      if (!value) return '';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
+    };
+
+    const titleMatches =
+      input.title === undefined || String(input.title).trim() === String(objective.title || '').trim();
+    const descriptionMatches =
+      input.description === undefined ||
+      String(input.description || '').trim() === String(objective.description || '').trim();
+    const targetMetricMatches =
+      input.targetMetric === undefined ||
+      String(input.targetMetric || '').trim() === String(objective.targetMetric || '').trim();
+    const targetValueMatches =
+      input.targetValue === undefined ||
+      String(input.targetValue || '').trim() === String(objective.targetValue || '').trim();
+    const targetDateMatches =
+      input.targetDate === undefined ||
+      normalizedTargetDate(input.targetDate) === normalizedTargetDate(objective.targetDate);
+    const weightageMatches =
+      input.weightage === undefined || Number(input.weightage) === Number(objective.weightage);
+    const successCriteriaMatches =
+      input.successCriteria === undefined ||
+      String(input.successCriteria || '').trim() === String(objective.successCriteria || '').trim();
+    const attachmentsEmpty = (input.attachments ?? []).length === 0;
+
+    if (
+      !titleMatches ||
+      !descriptionMatches ||
+      !targetMetricMatches ||
+      !targetValueMatches ||
+      !targetDateMatches ||
+      !weightageMatches ||
+      !successCriteriaMatches ||
+      !attachmentsEmpty
+    ) {
+      throw new Error('Predefined objective core fields are read-only; only template field values can be updated');
+    }
   }
 
   private assertRegularObjectiveEditAccess(objective: IObjective): void {

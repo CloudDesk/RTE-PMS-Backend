@@ -16,6 +16,7 @@ import type {
   DeleteManagerObjectiveLibraryItemInput,
   ManagerObjectiveLibraryDraftInput,
   ReturnObjectiveInput,
+  SaveAssignmentTemplateValuesInput,
   SaveManagerObjectiveLibraryInput,
   UpdateObjectiveInput,
 } from '../services/objective.service';
@@ -140,6 +141,23 @@ export const objectiveRoutes: RouteHandler = async (
           request.body as CloseObjectiveSettingInput,
         );
         return reply.send(successResponse('Objective setting closed successfully', termAssignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/assignments/:termAssignmentId/template-values',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
+        const values = await request.container!.objectiveService.saveAssignmentTemplateValues(
+          termAssignmentId,
+          request.body as SaveAssignmentTemplateValuesInput,
+        );
+        return reply.send(successResponse('Objective template values saved successfully', values));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
