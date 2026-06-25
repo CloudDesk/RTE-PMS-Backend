@@ -16,6 +16,7 @@ import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import { TermReview } from '../models/pms-term-review.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { User } from '../models/user.model';
@@ -28,6 +29,13 @@ export interface ManagerReviewTeamQuery {
   page?: string | number;
   limit?: string | number;
   includeAllTeam?: string | boolean;
+}
+
+export interface ManagerReviewQueueQuery extends ManagerReviewTeamQuery {
+  status?: string;
+  department?: string;
+  reviewType?: string;
+  dueDate?: string;
 }
 
 export interface CreateManagerReviewTemplateInput {
@@ -150,6 +158,175 @@ export class ManagerInitiatedReviewService extends BaseService {
         currentVersion: versionByTemplateId.get(template._id.toString()) ?? null,
       }))
       .filter((template) => this.isManagerLaunchTemplate(template, managerId));
+  }
+
+  async getManagerReviewQueue(query: ManagerReviewQueueQuery = {}) {
+    const managerId = this.requireManagerActorId();
+    const page = this.normalizePositiveInteger(query.page, 1);
+    const limit = Math.min(this.normalizePositiveInteger(query.limit, 100), 200);
+    const search = query.search?.trim().toLowerCase() || '';
+    const statusFilter = query.status?.trim().toUpperCase() || '';
+    const departmentFilter = query.department?.trim().toLowerCase() || '';
+    const reviewTypeFilter = query.reviewType?.trim().toLowerCase() || '';
+    const dueDateFilter = query.dueDate?.trim() || '';
+    const subordinateIds = await getSubordinateUserIds(managerId);
+    const templates = await this.listManagerTemplates();
+    const defaultTemplate = templates.find((template: any) => template.currentVersion?._id) || null;
+    const managerObjectId = new Types.ObjectId(managerId);
+
+    if (subordinateIds.length === 0) {
+      return {
+        pending: [],
+        inProgress: [],
+        completed: [],
+        blocked: [],
+        templates,
+        defaultTemplateVersionId: defaultTemplate?.currentVersion?._id?.toString?.() || null,
+        defaultTemplateName: defaultTemplate?.name || null,
+        counts: { pending: 0, inProgress: 0, completed: 0, blocked: 0, ready: 0 },
+        meta: { page, limit, total: 0 },
+      };
+    }
+
+    const [employees, cycles] = await Promise.all([
+      User.find({ _id: { $in: subordinateIds }, active: true })
+        .select('name email role specificRole departmentId active joiningDate probationDate managerId managerName employeeCode employmentStatus isIntern location')
+        .sort({ name: 1 })
+        .lean(),
+      AnnualCycle.find({
+        launchSource: 'MANAGER_INITIATED',
+        launchedByUserId: managerObjectId,
+        isDeleted: false,
+      })
+        .select('_id name code startDate endDate status launchedAt managerInitiatedReview')
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
+
+    const cycleIds = cycles.map((cycle: any) => cycle._id);
+    const [termAssignments, termCycles, termReviews] = await Promise.all([
+      TermAssignment.find({
+        cycleId: { $in: cycleIds },
+        assignedManagerId: managerObjectId,
+        isDeleted: false,
+      })
+        .select('_id annualAssignmentId cycleId cycleTermId employeeId templateVersionId termState termLabel termScore termRating termSummary createdAt updatedAt')
+        .lean(),
+      TermCycle.find({ cycleId: { $in: cycleIds }, isDeleted: false })
+        .select('_id cycleId managerReviewWindow termFinalizationWindow startDate endDate')
+        .lean(),
+      TermReview.find({ cycleId: { $in: cycleIds }, managerId: managerObjectId, isDeleted: false })
+        .select('termAssignmentId reviewStatus comments score overallScore overallRating recommendation achievements developmentObservations attachments submittedAt finalizedAt')
+        .lean(),
+    ]);
+
+    const cycleById = new Map(cycles.map((cycle: any) => [cycle._id.toString(), cycle]));
+    const termCycleById = new Map(termCycles.map((cycle: any) => [cycle._id.toString(), cycle]));
+    const reviewByTermAssignmentId = new Map(
+      termReviews.map((review: any) => [review.termAssignmentId.toString(), review]),
+    );
+    const assignmentsByEmployeeId = new Map<string, any[]>();
+    for (const assignment of termAssignments as any[]) {
+      const employeeId = assignment.employeeId?.toString?.();
+      if (!employeeId) continue;
+      assignmentsByEmployeeId.set(employeeId, [
+        ...(assignmentsByEmployeeId.get(employeeId) || []),
+        assignment,
+      ]);
+    }
+
+    const pending = employees.map((employee: any) => {
+      const existing = assignmentsByEmployeeId.get(employee._id.toString())?.[0] || null;
+      const eligible = this.isConfirmationReviewEligible(employee);
+      const status = !defaultTemplate
+        ? 'MISSING_REVIEW_FORM'
+        : existing
+          ? 'ALREADY_STARTED'
+          : eligible
+            ? 'READY'
+            : 'NOT_ELIGIBLE';
+      return {
+        employee,
+        employeeId: employee._id.toString(),
+        employeeName: employee.name,
+        employeeCode: employee.employeeCode,
+        department: employee.departmentId,
+        joiningDate: employee.joiningDate,
+        reviewType: 'Confirmation Review',
+        status,
+        canStartReview: status === 'READY',
+        cannotStartReason: this.queueCannotStartReason(status),
+        primaryAction: status === 'READY' ? 'START_REVIEW' : existing ? 'OPEN_REVIEW' : 'NONE',
+        dueDate: employee.probationDate || null,
+        existingReviewId: existing?._id?.toString?.() || null,
+      };
+    });
+
+    const reviewRows = (termAssignments as any[]).map((assignment) => {
+      const cycle = cycleById.get(assignment.cycleId?.toString?.() || '');
+      const termCycle = termCycleById.get(assignment.cycleTermId?.toString?.() || '');
+      const termReview = reviewByTermAssignmentId.get(assignment._id.toString()) || null;
+      const employee = employees.find((item: any) => item._id.toString() === assignment.employeeId?.toString?.());
+      const dueDate = termCycle?.managerReviewWindow?.endDate || cycle?.endDate || null;
+      const queueStatus = this.queueStatusForTermState(assignment.termState, dueDate);
+      return {
+        id: assignment._id.toString(),
+        termAssignmentId: assignment._id.toString(),
+        employeeId: assignment.employeeId?.toString?.(),
+        employeeName: employee?.name || 'Employee',
+        employeeCode: employee?.employeeCode,
+        department: employee?.departmentId,
+        reviewName: assignment.termLabel || cycle?.name || 'Confirmation Review',
+        cycleName: cycle?.name || assignment.termLabel || 'Confirmation Review',
+        startedOn: termCycle?.managerReviewWindow?.startDate || cycle?.startDate || assignment.createdAt,
+        dueDate,
+        completedOn: termReview?.finalizedAt || termReview?.submittedAt || assignment.updatedAt,
+        currentStep: this.queueStepLabel(queueStatus),
+        status: queueStatus,
+        primaryAction: queueStatus === 'COMPLETED' || queueStatus === 'SUBMITTED' ? 'VIEW' : 'CONTINUE',
+        result: assignment.termRating || termReview?.overallRating || termReview?.reviewStatus || queueStatus,
+        termState: assignment.termState,
+        score: assignment.termScore ?? termReview?.overallScore ?? termReview?.score,
+        rating: assignment.termRating || termReview?.overallRating,
+        comments: termReview?.comments,
+        recommendation: termReview?.recommendation,
+        achievements: termReview?.achievements,
+        developmentObservations: termReview?.developmentObservations,
+        attachments: termReview?.attachments || [],
+      };
+    });
+
+    const inProgress = reviewRows.filter((row) => row.status === 'IN_PROGRESS' || row.status === 'OVERDUE');
+    const completed = reviewRows.filter((row) => row.status === 'SUBMITTED' || row.status === 'COMPLETED');
+    const blocked = pending.filter((row) => !row.canStartReview && row.status !== 'ALREADY_STARTED');
+
+    const queueFilters = { search, statusFilter, departmentFilter, reviewTypeFilter, dueDateFilter };
+    const filteredPending = this.filterQueueRows(pending, queueFilters);
+    const filteredInProgress = this.filterQueueRows(inProgress, queueFilters);
+    const filteredCompleted = this.filterQueueRows(completed, queueFilters);
+    const filteredBlocked = this.filterQueueRows(blocked, queueFilters);
+
+    return {
+      pending: filteredPending.slice((page - 1) * limit, page * limit),
+      inProgress: filteredInProgress,
+      completed: filteredCompleted,
+      blocked: filteredBlocked,
+      templates,
+      defaultTemplateVersionId: defaultTemplate?.currentVersion?._id?.toString?.() || null,
+      defaultTemplateName: defaultTemplate?.name || null,
+      counts: {
+        pending: filteredPending.length,
+        inProgress: filteredInProgress.length,
+        completed: filteredCompleted.length,
+        blocked: filteredBlocked.length,
+        ready: filteredPending.filter((row) => row.status === 'READY').length,
+      },
+      meta: {
+        page,
+        limit,
+        total: filteredPending.length,
+      },
+    };
   }
 
   async getTemplate(templateId: string) {
@@ -676,6 +853,101 @@ export class ManagerInitiatedReviewService extends BaseService {
       version?.launchPolicy?.launchOwner === 'MANAGER' &&
       version?.launchPolicy?.launchSource === 'MANAGER_INITIATED'
     );
+  }
+
+  private isConfirmationReviewEligible(employee: Record<string, any>): boolean {
+    if (employee.active === false) return false;
+    if (employee.isIntern) return true;
+    const haystack = [
+      employee.role,
+      employee.specificRole,
+      employee.employmentStatus,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return ['intern', 'probation', 'fresher', 'trainee', 'junior'].some((keyword) =>
+      haystack.includes(keyword),
+    );
+  }
+
+  private queueCannotStartReason(status: string): string | null {
+    if (status === 'MISSING_REVIEW_FORM') {
+      return 'A review form is required before you can start reviews.';
+    }
+    if (status === 'NOT_ELIGIBLE') {
+      return 'This employee is not ready for confirmation review yet.';
+    }
+    if (status === 'ALREADY_STARTED') {
+      return 'A confirmation review has already been started for this employee.';
+    }
+    return null;
+  }
+
+  private queueStatusForTermState(state: string, dueDate?: Date | string | null): string {
+    if (state === TermWorkflowState.TERM_FINALIZED || state === TermWorkflowState.CLOSED_BY_ADMIN) {
+      return 'COMPLETED';
+    }
+    if (state === TermWorkflowState.MANAGER_REVIEW_SUBMITTED) {
+      return 'SUBMITTED';
+    }
+    if (dueDate && new Date(dueDate).getTime() < Date.now()) {
+      return 'OVERDUE';
+    }
+    return 'IN_PROGRESS';
+  }
+
+  private queueStepLabel(status: string): string {
+    if (status === 'SUBMITTED') return 'Review Submitted';
+    if (status === 'COMPLETED') return 'Completed';
+    if (status === 'OVERDUE') return 'Overdue';
+    return 'Manager Review Pending';
+  }
+
+  private filterQueueRows<T extends Record<string, any>>(
+    rows: T[],
+    filters: {
+      search: string;
+      statusFilter: string;
+      departmentFilter: string;
+      reviewTypeFilter: string;
+      dueDateFilter: string;
+    },
+  ): T[] {
+    return rows.filter((row) => {
+      if (filters.statusFilter && row.status !== filters.statusFilter) return false;
+      if (
+        filters.reviewTypeFilter &&
+        !String(row.reviewType || row.reviewName || '')
+          .toLowerCase()
+          .includes(filters.reviewTypeFilter)
+      ) {
+        return false;
+      }
+      if (filters.dueDateFilter) {
+        const rowDueDate = row.dueDate ? new Date(row.dueDate).toISOString().slice(0, 10) : '';
+        if (rowDueDate !== filters.dueDateFilter) return false;
+      }
+      if (
+        filters.departmentFilter &&
+        !String(row.department || '').toLowerCase().includes(filters.departmentFilter)
+      ) {
+        return false;
+      }
+      if (!filters.search) return true;
+      return [
+        row.employeeName,
+        row.employeeCode,
+        row.department,
+        row.reviewName,
+        row.reviewType,
+        row.status,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(filters.search);
+    });
   }
 
   private async assertEmployeeInManagerTeam(managerId: string, employeeId: Types.ObjectId) {
