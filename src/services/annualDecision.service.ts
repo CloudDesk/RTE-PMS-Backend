@@ -465,19 +465,24 @@ export class AnnualDecisionService extends BaseService {
       existingDecision?.decisionStatus ?? annualAssignment.finalDecisionStatus ?? AnnualDecisionStatus.DRAFT,
     );
 
-    const appraisalOutcomeType = this.deriveOutcome(
-      input.isGradeApplied,
-      input.isMeritApplied,
-    );
     const calculatedFinalScore = await this.calculateAnnualFinalScore(annualAssignment);
     const effectiveFinalScore = await this.resolveEffectiveAnnualFinalScore(
       existingDecision?._id,
       calculatedFinalScore,
     );
-    const decisionInput: SaveDecisionDraftInput = {
+    const rawDecisionInput: SaveDecisionDraftInput = {
       ...input,
       finalScore: effectiveFinalScore,
     };
+    const decisionInput = await this.sanitizeAnnualDecisionInputForTemplate(
+      annualAssignment,
+      rawDecisionInput,
+      existingDecision,
+    );
+    const appraisalOutcomeType = this.deriveOutcome(
+      decisionInput.isGradeApplied,
+      decisionInput.isMeritApplied,
+    );
     this.validateDecisionInput(decisionInput, appraisalOutcomeType);
     await this.validateAnnualTemplateInput(annualAssignment, decisionInput);
 
@@ -485,15 +490,15 @@ export class AnnualDecisionService extends BaseService {
       annualAssignmentId: annualAssignment._id,
       cycleId: annualAssignment.cycleId,
       employeeId: annualAssignment.employeeId,
-      isGradeApplied: input.isGradeApplied,
-      isMeritApplied: input.isMeritApplied,
+      isGradeApplied: decisionInput.isGradeApplied,
+      isMeritApplied: decisionInput.isMeritApplied,
       appraisalOutcomeType,
-      gradeDetails: input.gradeDetails,
-      meritDetails: input.meritDetails,
-      nilReason: appraisalOutcomeType === AppraisalOutcomeType.NIL ? input.nilReason : undefined,
-      managementRemarks: input.managementRemarks,
+      gradeDetails: decisionInput.gradeDetails,
+      meritDetails: decisionInput.meritDetails,
+      nilReason: appraisalOutcomeType === AppraisalOutcomeType.NIL ? decisionInput.nilReason : undefined,
+      managementRemarks: decisionInput.managementRemarks,
       finalScore: effectiveFinalScore,
-      finalRating: input.finalRating,
+      finalRating: decisionInput.finalRating,
       decisionStatus: AnnualDecisionStatus.DRAFT,
       decidedBy: this.actorIdObject(),
       updatedBy: this.actorIdObject(),
@@ -1242,10 +1247,30 @@ export class AnnualDecisionService extends BaseService {
 
     const values = this.buildAnnualTemplateResolveValues(input);
     const missingFields: string[] = [];
+    const resolvedFieldMap = new Map(
+      resolvedTemplate.sections.flatMap((section) => section.fields).map((field) => [field.key, field]),
+    );
+
+    for (const decisionValue of input.decisionValues ?? []) {
+      if (!decisionValue.fieldKey?.trim() || this.isFinalScoreFieldKey(decisionValue.fieldKey)) {
+        continue;
+      }
+
+      const field = resolvedFieldMap.get(decisionValue.fieldKey);
+      if (!field) {
+        if (this.isStandardAnnualDecisionFieldKey(decisionValue.fieldKey)) {
+          continue;
+        }
+        throw new Error(`Field "${decisionValue.fieldKey}" is not visible for Annual Decision`);
+      }
+      if (field.editable !== true) {
+        throw new Error(`Field "${field.label || decisionValue.fieldKey}" is read-only for Annual Decision`);
+      }
+    }
 
     for (const section of resolvedTemplate.sections) {
       for (const field of section.fields) {
-        if (!field.required) {
+        if (!field.required || field.editable !== true) {
           continue;
         }
 
@@ -1389,9 +1414,87 @@ export class AnnualDecisionService extends BaseService {
         role,
         workflowState: annualAssignment.annualState,
         hierarchyScope: 'direct-report',
+        annualAssignmentId: annualAssignment._id.toString(),
         values: this.buildAnnualTemplateResolveValues(input),
       },
     );
+  }
+
+  private async sanitizeAnnualDecisionInputForTemplate(
+    annualAssignment: IAnnualAssignment,
+    input: SaveDecisionDraftInput,
+    existingDecision?: IAnnualDecision | null,
+  ): Promise<SaveDecisionDraftInput> {
+    if (!existingDecision) {
+      return input;
+    }
+
+    const resolvedTemplate = await this.resolveAnnualDecisionTemplate(annualAssignment, input);
+    if (!resolvedTemplate) {
+      return input;
+    }
+
+    const fieldMap = new Map(
+      resolvedTemplate.sections
+        .flatMap((section) => section.fields)
+        .map((field) => [this.normalizeAnnualFieldKey(field.key), field]),
+    );
+    const isReadOnly = (aliases: string[]) =>
+      aliases.some((alias) => fieldMap.get(this.normalizeAnnualFieldKey(alias))?.editable === false);
+
+    const nextInput: SaveDecisionDraftInput = { ...input };
+
+    if (isReadOnly(['final_rating', 'finalrating', 'rating', 'annual_overall_rating', 'annualoverallrating'])) {
+      nextInput.finalRating = existingDecision.finalRating;
+    }
+
+    if (isReadOnly(['is_grade_applied', 'isgradeapplied', 'apply_grade_decision', 'applygradedecision'])) {
+      nextInput.isGradeApplied = Boolean(existingDecision.isGradeApplied);
+    }
+
+    if (isReadOnly(['is_merit_applied', 'ismeritapplied', 'apply_merit_decision', 'applymeritdecision'])) {
+      nextInput.isMeritApplied = Boolean(existingDecision.isMeritApplied);
+    }
+
+    const existingGradeDetails = existingDecision.gradeDetails as Record<string, unknown> | undefined;
+    if (isReadOnly(['grade_details', 'gradedetails'])) {
+      nextInput.gradeDetails = existingGradeDetails;
+    } else if (nextInput.gradeDetails) {
+      nextInput.gradeDetails = {
+        ...nextInput.gradeDetails,
+        ...(isReadOnly(['grade', 'final_grade', 'finalgrade', 'grade_code', 'gradecode'])
+          ? { grade: existingGradeDetails?.grade }
+          : {}),
+        ...(isReadOnly(['grade_notes', 'gradenotes', 'grade_note', 'gradenote'])
+          ? { notes: existingGradeDetails?.notes }
+          : {}),
+      };
+    }
+
+    const existingMeritDetails = existingDecision.meritDetails as Record<string, unknown> | undefined;
+    if (isReadOnly(['merit_details', 'meritdetails'])) {
+      nextInput.meritDetails = existingMeritDetails;
+    } else if (nextInput.meritDetails) {
+      nextInput.meritDetails = {
+        ...nextInput.meritDetails,
+        ...(isReadOnly(['merit_amount', 'meritamount', 'merit_percentage', 'meritpercentage'])
+          ? { amount: existingMeritDetails?.amount }
+          : {}),
+        ...(isReadOnly(['merit_notes', 'meritnotes', 'merit_note', 'meritnote'])
+          ? { notes: existingMeritDetails?.notes }
+          : {}),
+      };
+    }
+
+    if (isReadOnly(['nil_reason', 'nilreason'])) {
+      nextInput.nilReason = existingDecision.nilReason;
+    }
+
+    if (isReadOnly(['management_remarks', 'managementremarks', 'remarks', 'comments'])) {
+      nextInput.managementRemarks = existingDecision.managementRemarks;
+    }
+
+    return nextInput;
   }
 
   private buildDecisionInputFromRecord(
@@ -1622,6 +1725,7 @@ export class AnnualDecisionService extends BaseService {
           }]
         : []),
       ...this.normalizeExplicitDecisionValues(input.decisionValues ?? [], actorUserId, baseValue),
+      ...await this.getPreservedReadOnlyAnnualDecisionValues(decision, annualAssignment, input),
     ];
 
     await AnnualDecisionValue.deleteMany({ annualDecisionId: decision._id });
@@ -1655,6 +1759,40 @@ export class AnnualDecisionService extends BaseService {
       }));
   }
 
+  private async getPreservedReadOnlyAnnualDecisionValues(
+    decision: IAnnualDecision,
+    annualAssignment: IAnnualAssignment,
+    input: SaveDecisionDraftInput,
+  ): Promise<Array<Record<string, unknown>>> {
+    const resolvedTemplate = await this.resolveAnnualDecisionTemplate(annualAssignment, input);
+    if (!resolvedTemplate) {
+      return [];
+    }
+
+    const resolvedFieldMap = new Map(
+      resolvedTemplate.sections.flatMap((section) => section.fields).map((field) => [field.key, field]),
+    );
+    const nextKeys = new Set(
+      (input.decisionValues ?? []).map((value) => `${value.sectionKey}::${value.fieldKey}`),
+    );
+    const existingValues = await AnnualDecisionValue.find({
+      annualDecisionId: decision._id,
+      isDeleted: false,
+    }).lean();
+
+    return existingValues
+      .filter((value) => {
+        if (!value.fieldKey || !value.sectionKey || this.isFinalScoreFieldKey(value.fieldKey)) return false;
+        const resolvedField = resolvedFieldMap.get(value.fieldKey);
+        if (resolvedField?.editable === true) return false;
+        return !nextKeys.has(`${value.sectionKey}::${value.fieldKey}`);
+      })
+      .map((value) => {
+        const { _id, createdAt, updatedAt, __v, ...preservedValue } = value as Record<string, unknown>;
+        return preservedValue;
+      });
+  }
+
   private async syncAnnualFinalScoreValue(
     decision: IAnnualDecision,
     annualAssignment: IAnnualAssignment,
@@ -1680,9 +1818,40 @@ export class AnnualDecisionService extends BaseService {
   }
 
   private isFinalScoreFieldKey(fieldKey: string): boolean {
-    return ['finalscore', 'score'].includes(
-      String(fieldKey || '').toLowerCase().replace(/[^a-z0-9]/g, ''),
-    );
+    return ['finalscore', 'score'].includes(this.normalizeAnnualFieldKey(fieldKey));
+  }
+
+  private isStandardAnnualDecisionFieldKey(fieldKey: string): boolean {
+    return new Set([
+      'finalrating',
+      'annualoverallrating',
+      'rating',
+      'isgradeapplied',
+      'applygradedecision',
+      'ismeritapplied',
+      'applymeritdecision',
+      'gradedetails',
+      'grade',
+      'finalgrade',
+      'gradecode',
+      'gradenotes',
+      'gradenote',
+      'meritdetails',
+      'meritamount',
+      'meritpercentage',
+      'meritnotes',
+      'meritnote',
+      'meritrecommendation',
+      'recommendation',
+      'nilreason',
+      'managementremarks',
+      'remarks',
+      'comments',
+    ]).has(this.normalizeAnnualFieldKey(fieldKey));
+  }
+
+  private normalizeAnnualFieldKey(fieldKey: string): string {
+    return String(fieldKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
   private hasMeaningfulDecisionDetails(value?: Record<string, unknown>): boolean {
