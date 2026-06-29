@@ -181,6 +181,7 @@ type EmployeeWorkUpdateFieldRecord = {
   fieldLabel: string;
   fieldType: string;
   isRequired: boolean;
+  visible?: boolean;
   editable?: boolean;
   placeholder?: string;
   helpText?: string;
@@ -1014,6 +1015,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         fieldLabel: field.fieldLabel,
         fieldType: field.fieldType,
         isRequired: resolvedFieldMap.get(field.fieldKey)?.required ?? field.isRequired === true,
+        visible: resolvedFieldMap.get(field.fieldKey)?.visible !== false,
         editable: resolvedFieldMap.get(field.fieldKey)?.editable === true,
         placeholder: field.placeholder,
         helpText: field.helpText,
