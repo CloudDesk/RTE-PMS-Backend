@@ -146,7 +146,7 @@ export class ManagerInitiatedReviewService extends BaseService {
       status: PmsTemplateStatus.ACTIVE,
       isDeleted: false,
     })
-      .select('_id templateId versionNo status templateOwnership launchPolicy flowPolicy')
+      .select('_id templateId versionNo status metadata templateOwnership launchPolicy flowPolicy')
       .lean();
     const versionByTemplateId = new Map(
       versions.map((version) => [version.templateId.toString(), version]),
@@ -850,6 +850,9 @@ export class ManagerInitiatedReviewService extends BaseService {
     const version = template.currentVersion;
     return (
       template.visibilityScope === 'GLOBAL' &&
+      ((template.metadata as Record<string, unknown> | undefined)?.isFullPmsTemplate === false ||
+        version?.metadata?.isFullPmsTemplate === false) &&
+      version?.metadata?.reviewFlowMode === 'MANAGER_ONLY' &&
       version?.launchPolicy?.launchOwner === 'MANAGER' &&
       version?.launchPolicy?.launchSource === 'MANAGER_INITIATED'
     );
