@@ -163,7 +163,7 @@ async function runTests() {
   console.log('Section Scores:', JSON.stringify(sectionScores, null, 2));
   console.log('Sections Snapshot:', JSON.stringify(sectionsSnapshot, null, 2));
 
-  // Assert Competency Matrix Scoring:
+  // Assert Employee Skill Rating Table Scoring:
   // - job_knowledge row weight: 60%
   //   selected: EXCELLENT -> score 10. Max score = 10. normalizedRowScore = 100%. contribution = 60%
   // - communication row weight: 40%
@@ -175,7 +175,7 @@ async function runTests() {
   const compSection = sectionScores.find((s: any) => s.sectionKey === 'competencies_section');
   assert(compSection !== undefined, 'Competency section score not calculated');
   assert(compSection!.score === 100, `Competency section score expected 100, got ${compSection!.score}`);
-  console.log('✅ Competency Matrix calculation assertions passed!');
+  console.log('✅ Employee Skill Rating Table calculation assertions passed!');
 
   // Assert Objectives Redistribution & Scoring:
   // - Predefined bucket score: 9/10 rating -> 90%

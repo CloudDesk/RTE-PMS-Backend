@@ -1928,7 +1928,7 @@ export class PmsTemplateService extends BaseService {
     // Check 9: Workflow role validation
     // Check 12: Quarter scope validity
     // Check 13: Objective bucket validations
-    // Check 14: Competency matrix validations
+    // Check 14: Employee Skill Rating Table validations
     const allowedQuarters = new Set(Object.values(AssessmentTermCode));
 
     for (const section of version.sections ?? []) {
@@ -2079,7 +2079,7 @@ export class PmsTemplateService extends BaseService {
           }
         }
 
-        // Check 14: Competency matrix validations
+        // Check 14: Employee Skill Rating Table validations
         if (field.fieldType === 'MATRIX') {
           const matrixConfig = field.matrixConfig;
           if (!matrixConfig) {
