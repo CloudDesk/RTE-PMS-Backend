@@ -29,6 +29,7 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { PmsScoringService } from './pms-scoring.service';
+import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -490,12 +491,12 @@ export class TermReviewService extends BaseService {
 
     this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
     
-    if (annualAssignment.templateVersionId) {
-      const templateVersion = await PmsTemplateVersion.findById(annualAssignment.templateVersionId).lean();
-      if (templateVersion) {
-        this.validateReviewValuesAgainstTemplate(input.reviewValues ?? [], templateVersion);
-      }
-    }
+    await this.validateReviewValuesAgainstTemplate(
+      input.reviewValues ?? [],
+      annualAssignment,
+      termAssignment,
+      false,
+    );
 
     const existingReview = await TermReview.findOne({
       termAssignmentId: termAssignment._id,
@@ -505,6 +506,18 @@ export class TermReviewService extends BaseService {
     if (existingReview?.submittedAt) {
       throw new Error('Submitted quarter review cannot be edited as draft');
     }
+    const resolvedReviewFields = await this.resolveManagerReviewFields(
+      annualAssignment,
+      termAssignment,
+      scoringResolution.reviewValues,
+    );
+    const preservedReviewValues = existingReview
+      ? await this.getPreservedReadOnlyTermReviewValues(
+          existingReview._id,
+          scoringResolution.reviewValues,
+          resolvedReviewFields,
+        )
+      : [];
 
     const actor = this.requireActor();
     const actorObjectId = new Types.ObjectId(actor.actorId);
@@ -572,6 +585,7 @@ export class TermReviewService extends BaseService {
         reviewValues: scoringResolution.reviewValues,
       },
       false,
+      preservedReviewValues,
     );
     await this.syncTermAssignmentReviewSummary(termAssignment, termReview);
 
@@ -629,12 +643,12 @@ export class TermReviewService extends BaseService {
     const scoringResolution = this.resolveTermReviewScoring(input, reviewConfig, approvedObjectives);
     this.validateReviewInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
 
-    if (annualAssignment.templateVersionId) {
-      const templateVersion = await PmsTemplateVersion.findById(annualAssignment.templateVersionId).lean();
-      if (templateVersion) {
-        this.validateReviewValuesAgainstTemplate(input.reviewValues ?? [], templateVersion, true);
-      }
-    }
+    await this.validateReviewValuesAgainstTemplate(
+      input.reviewValues ?? [],
+      annualAssignment,
+      termAssignment,
+      true,
+    );
 
     const existingReview = await TermReview.findOne({
       termAssignmentId: termAssignment._id,
@@ -644,6 +658,18 @@ export class TermReviewService extends BaseService {
     if (existingReview?.submittedAt) {
       throw new Error('Quarter review already submitted');
     }
+    const resolvedReviewFields = await this.resolveManagerReviewFields(
+      annualAssignment,
+      termAssignment,
+      scoringResolution.reviewValues,
+    );
+    const preservedReviewValues = existingReview
+      ? await this.getPreservedReadOnlyTermReviewValues(
+          existingReview._id,
+          scoringResolution.reviewValues,
+          resolvedReviewFields,
+        )
+      : [];
 
     const actor = this.requireActor();
     const actorObjectId = new Types.ObjectId(actor.actorId);
@@ -714,6 +740,7 @@ export class TermReviewService extends BaseService {
         reviewValues: scoringResolution.reviewValues,
       },
       true,
+      preservedReviewValues,
     );
 
     const submittedTermAssignment = await transitionTermAssignmentState(
@@ -1154,48 +1181,126 @@ export class TermReviewService extends BaseService {
     };
   }
 
-  private validateReviewValuesAgainstTemplate(
+  private async validateReviewValuesAgainstTemplate(
     reviewValues: TermReviewValueInput[],
-    templateVersion: any,
+    annualAssignment: IAnnualAssignment,
+    termAssignment: ITermAssignment,
     isSubmit = false
-  ): void {
-    if (!templateVersion?.sections) return;
+  ): Promise<void> {
+    if (!annualAssignment.templateVersionId) return;
 
-    const fieldsMap = new Map<string, any>();
-    for (const section of templateVersion.sections) {
-      for (const field of section.fields ?? []) {
-        fieldsMap.set(field.fieldKey, field);
-      }
-    }
+    const resolvedFields = await this.resolveManagerReviewFields(
+      annualAssignment,
+      termAssignment,
+      reviewValues,
+    );
+    const fieldsMap = new Map<string, ResolvedTemplateField>(
+      resolvedFields.map((field) => [field.key, field]),
+    );
 
     for (const val of reviewValues) {
       const fieldDef = fieldsMap.get(val.fieldKey);
-      if (!fieldDef) continue;
+      if (!fieldDef) {
+        throw new Error(`Field "${val.fieldKey}" is not visible for Manager Review`);
+      }
 
-      if (isSubmit && fieldDef.isRequired && val.valueText === undefined && val.valueNumber === undefined && val.valueDate === undefined && val.valueJson === undefined) {
-        throw new Error(`Field ${fieldDef.fieldLabel || val.fieldKey} is required`);
+      if (fieldDef.editable !== true) {
+        throw new Error(`Field "${fieldDef.label || val.fieldKey}" is read-only for Manager Review`);
+      }
+
+      if (isSubmit && fieldDef.required && val.valueText === undefined && val.valueNumber === undefined && val.valueDate === undefined && val.valueJson === undefined) {
+        throw new Error(`Field ${fieldDef.label || val.fieldKey} is required`);
       }
 
       if (val.valueText) {
         const minLength = fieldDef.validationRules?.minLength as number | undefined;
         const maxLength = fieldDef.validationRules?.maxLength as number | undefined;
         if (minLength && val.valueText.length < minLength) {
-          throw new Error(`Field ${fieldDef.fieldLabel || val.fieldKey} must be at least ${minLength} characters`);
+          throw new Error(`Field ${fieldDef.label || val.fieldKey} must be at least ${minLength} characters`);
         }
         if (maxLength && val.valueText.length > maxLength) {
-          throw new Error(`Field ${fieldDef.fieldLabel || val.fieldKey} must be at most ${maxLength} characters`);
+          throw new Error(`Field ${fieldDef.label || val.fieldKey} must be at most ${maxLength} characters`);
         }
       }
 
-      if (fieldDef.fieldType === 'DROPDOWN' || fieldDef.fieldType === 'RADIO') {
+      if (fieldDef.type === 'select' || fieldDef.type === 'radio') {
         if (val.valueText && fieldDef.options) {
           const allowedValues = fieldDef.options.map((opt: any) => String(opt.value));
           if (!allowedValues.includes(String(val.valueText))) {
-            throw new Error(`Invalid option for field ${fieldDef.fieldLabel || val.fieldKey}: ${val.valueText}`);
+            throw new Error(`Invalid option for field ${fieldDef.label || val.fieldKey}: ${val.valueText}`);
           }
         }
       }
     }
+
+    if (isSubmit) {
+      const valueMap = new Map(reviewValues.map((value) => [value.fieldKey, value]));
+      for (const fieldDef of resolvedFields) {
+        if (!fieldDef.required || fieldDef.editable !== true) {
+          continue;
+        }
+        if (fieldDef.type === 'section_divider' || fieldDef.type === 'static_text') {
+          continue;
+        }
+        if (!this.hasMeaningfulReviewValue(valueMap.get(fieldDef.key))) {
+          throw new Error(`Field ${fieldDef.label || fieldDef.key} is required`);
+        }
+      }
+    }
+  }
+
+  private hasMeaningfulReviewValue(value?: TermReviewValueInput): boolean {
+    if (!value) return false;
+    if (value.valueJson !== undefined && value.valueJson !== null) {
+      if (Array.isArray(value.valueJson)) return value.valueJson.length > 0;
+      if (typeof value.valueJson === 'object') return Object.keys(value.valueJson).length > 0;
+      return String(value.valueJson).trim().length > 0;
+    }
+    if (value.valueNumber !== undefined && value.valueNumber !== null) {
+      return Number.isFinite(Number(value.valueNumber));
+    }
+    if (value.valueDate) {
+      return !Number.isNaN(new Date(value.valueDate).getTime());
+    }
+    return String(value.valueText ?? '').trim().length > 0;
+  }
+
+  private async resolveManagerReviewFields(
+    annualAssignment: IAnnualAssignment,
+    termAssignment: ITermAssignment,
+    reviewValues: TermReviewValueInput[],
+  ): Promise<ResolvedTemplateField[]> {
+    if (!annualAssignment.templateVersionId) {
+      return [];
+    }
+
+    const templateService = new PmsTemplateService(this.context);
+    const resolved = await templateService.resolveTemplateVersion(
+      annualAssignment.templateVersionId.toString(),
+      {
+        role: PmsRole.MANAGER,
+        workflowState: termAssignment.termState,
+        hierarchyScope: 'direct-report',
+        quarter: termAssignment.assessmentTermCode,
+        annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+        termAssignmentId: termAssignment._id.toString(),
+        values: this.buildReviewResolveValues(reviewValues),
+      },
+    );
+
+    return resolved.sections.flatMap((section) => section.fields);
+  }
+
+  private buildReviewResolveValues(reviewValues: TermReviewValueInput[]): Record<string, unknown> {
+    const values: Record<string, unknown> = {};
+    for (const value of reviewValues) {
+      if (!value.fieldKey) continue;
+      if (value.valueJson !== undefined) values[value.fieldKey] = value.valueJson;
+      else if (value.valueNumber !== undefined) values[value.fieldKey] = value.valueNumber;
+      else if (value.valueDate !== undefined) values[value.fieldKey] = value.valueDate;
+      else if (value.valueText !== undefined) values[value.fieldKey] = value.valueText;
+    }
+    return values;
   }
 
   private validateDraftInput(
@@ -1414,6 +1519,7 @@ export class TermReviewService extends BaseService {
     termAssignment: ITermAssignment,
     input: TermReviewBaseInput,
     isSubmitted: boolean,
+    preservedValues: Array<Record<string, unknown>> = [],
   ): Promise<void> {
     const actor = this.requireActor();
     const actorUserId = new Types.ObjectId(actor.actorId);
@@ -1492,6 +1598,7 @@ export class TermReviewService extends BaseService {
         baseValue,
         isSubmitted,
       ),
+      ...preservedValues,
     ];
 
     await TermReviewValue.deleteMany({ termReviewId: termReview._id });
@@ -1545,6 +1652,31 @@ export class TermReviewService extends BaseService {
       valueStatus: reviewValue.valueStatus ?? (isSubmitted ? 'ACTIVE' : 'DRAFT'),
       submittedAt: isSubmitted ? effectiveAt : undefined,
     }));
+  }
+
+  private async getPreservedReadOnlyTermReviewValues(
+    termReviewId: Types.ObjectId,
+    nextValues: TermReviewValueInput[],
+    resolvedFields: ResolvedTemplateField[],
+  ): Promise<Array<Record<string, unknown>>> {
+    const resolvedFieldMap = new Map(resolvedFields.map((field) => [field.key, field]));
+    const nextKeys = new Set(nextValues.map((value) => `${value.sectionKey}::${value.fieldKey}`));
+    const existingValues = await TermReviewValue.find({
+      termReviewId,
+      isDeleted: false,
+    }).lean();
+
+    return existingValues
+      .filter((value) => {
+        if (!value.fieldKey || !value.sectionKey) return false;
+        const resolvedField = resolvedFieldMap.get(value.fieldKey);
+        if (resolvedField?.editable === true) return false;
+        return !nextKeys.has(`${value.sectionKey}::${value.fieldKey}`);
+      })
+      .map((value) => {
+        const { _id, createdAt, updatedAt, __v, ...preservedValue } = value as Record<string, unknown>;
+        return preservedValue;
+      });
   }
 
   private buildComputedReviewValues(

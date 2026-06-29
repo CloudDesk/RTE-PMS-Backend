@@ -14,6 +14,7 @@ export interface IPmsTemplate extends Document {
   visibilityScope?: 'GLOBAL' | 'MANAGER_TEAM';
   templateLabel?: 'Company Template' | 'Manager Template';
   approvalStatus?: 'DRAFT' | 'ACTIVE' | 'ADMIN_APPROVED';
+  metadata?: Record<string, unknown>;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
   updatedBy?: Types.ObjectId;
@@ -76,6 +77,7 @@ const pmsTemplateSchema = new Schema<IPmsTemplate>(
       enum: ['DRAFT', 'ACTIVE', 'ADMIN_APPROVED'],
       default: 'ACTIVE',
     },
+    metadata: { type: Schema.Types.Mixed, default: {} },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },

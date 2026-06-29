@@ -115,6 +115,7 @@ export interface CreateTemplateInput {
   description?: string;
   effectiveDate?: string | Date;
   status?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TemplateListQuery {
@@ -123,6 +124,7 @@ export interface TemplateListQuery {
   page?: string | number;
   limit?: string | number;
   owner?: string;
+  templateType?: string;
   sort?: string;
 }
 
@@ -132,6 +134,7 @@ export interface UpdateTemplateInput {
   description?: string;
   effectiveDate?: string | Date;
   status?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreateTemplateVersionInput {
@@ -173,6 +176,24 @@ export class PmsTemplateService extends BaseService {
         ...(Array.isArray(filter.$and) ? filter.$and : []),
         { createdByRole: { $ne: 'MANAGER' } },
         { visibilityScope: { $ne: 'MANAGER_TEAM' } },
+      ];
+    }
+
+    const templateType = String(query.templateType || 'all').toLowerCase();
+    if (templateType === 'manager') {
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        { 'metadata.isFullPmsTemplate': false },
+      ];
+    } else if (templateType === 'full') {
+      filter.$and = [
+        ...(Array.isArray(filter.$and) ? filter.$and : []),
+        {
+          $or: [
+            { 'metadata.isFullPmsTemplate': true },
+            { 'metadata.isFullPmsTemplate': { $exists: false } },
+          ],
+        },
       ];
     }
 
@@ -236,6 +257,7 @@ export class PmsTemplateService extends BaseService {
       code,
       effectiveDate: this.normalizeOptionalDate(input.effectiveDate),
       status,
+      metadata: input.metadata ?? {},
       createdBy: this.actorIdObject(),
     });
 
@@ -299,6 +321,10 @@ export class PmsTemplateService extends BaseService {
         throw new Error('Template cannot be marked as Active without an activated template version.');
       }
       updatePayload.status = targetStatus;
+    }
+
+    if (input.metadata !== undefined) {
+      updatePayload.metadata = input.metadata;
     }
 
     const template = await PmsTemplate.findByIdAndUpdate(
@@ -373,6 +399,7 @@ export class PmsTemplateService extends BaseService {
       description: template.description,
       status: PmsTemplateStatus.DRAFT,
       effectiveDate: template.effectiveDate,
+      metadata: template.metadata ?? {},
       createdBy: this.actorIdObject(),
     });
 
