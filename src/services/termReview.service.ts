@@ -196,6 +196,7 @@ export type TermReviewAssignmentRecord = {
   managerName: string;
   templateVersionId?: string;
   reviewConfig: {
+    mode?: 'AUTO' | 'MANUAL';
     objectiveRating: {
       scoreType: string;
       minScore: number;
@@ -435,6 +436,7 @@ export class TermReviewService extends BaseService {
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
+          mode: reviewConfig.mode ?? 'AUTO',
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
         },
@@ -1047,6 +1049,7 @@ export class TermReviewService extends BaseService {
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
+          mode: reviewConfig.mode ?? 'AUTO',
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
         },
