@@ -13,7 +13,10 @@ import {
   PmsRole,
   AssessmentTermCode,
 } from '../constants/pms.enums';
-import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  PmsTemplateSectionType as PmsTemplateSectionTypeType,
+} from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -485,6 +488,7 @@ export class PmsTemplateService extends BaseService {
   async activateTemplateVersion(versionId: string): Promise<IPmsTemplateVersion> {
     await this.assertAdmin('templateVersion.activate');
     const version = await this.getEditableOrExistingVersion(versionId, false);
+    version.sections = this.normalizeSections(version.sections as unknown[]);
     this.validateSections(version.sections);
     await this.validateTemplateVersionForActivation(version);
 
@@ -920,15 +924,18 @@ export class PmsTemplateService extends BaseService {
       const legacyOrder = section.order as number | undefined;
       const legacyPermissions = section.permissions as TemplatePermission[] | undefined;
       const sectionScoringConfig = section.sectionScoringConfig as ITemplateSection['sectionScoringConfig'] | undefined;
-      const objectiveConfig = section.objectiveConfig ?? (section.metadata as any)?.objectiveConfig;
+      const objectiveConfig = this.normalizeObjectiveConfig(
+        section.objectiveConfig ?? (section.metadata as any)?.objectiveConfig,
+      );
       const repeatFor = section.repeatFor ?? legacyApplicableQuarters ?? [];
       const termScope = section.termScope as ITemplateSection['termScope'] | undefined;
       const rulePatch = this.rulesFromPermissions(legacyPermissions ?? []);
+      const sectionType = section.sectionType ?? legacyType ?? PmsTemplateSectionType.OBJECTIVES;
 
       return {
         sectionKey: section.sectionKey ?? legacyKey ?? '',
         sectionLabel: section.sectionLabel ?? legacyLabel ?? '',
-        sectionType: section.sectionType ?? legacyType ?? PmsTemplateSectionType.OBJECTIVES,
+        sectionType,
         level: this.normalizeSectionLevel(section.level),
         repeatFor,
         repeatable: section.repeatable ?? false,
@@ -950,20 +957,12 @@ export class PmsTemplateService extends BaseService {
         visibilityRules: section.visibilityRules ?? rulePatch.visibilityRules ?? {},
         editabilityRules: section.editabilityRules ?? rulePatch.editabilityRules ?? {},
         metadata: section.metadata ?? {},
-        objectiveConfig: this.normalizeObjectiveConfig(objectiveConfig),
-        objectiveBuckets: Array.isArray(section.objectiveBuckets)
-          ? section.objectiveBuckets.map((bucket: any) => ({
-            bucketKey: String(bucket.bucketKey ?? '').trim(),
-            label: String(bucket.label ?? '').trim(),
-            source: bucket.source,
-            owner: bucket.owner,
-            bucketWeightage: Number(bucket.bucketWeightage ?? 0),
-            rowWeightMode: bucket.rowWeightMode,
-            editableBy: Array.isArray(bucket.editableBy) ? bucket.editableBy.map(String) : [],
-            requiresManagerApproval: !!bucket.requiresManagerApproval,
-            autoApprove: !!bucket.autoApprove,
-          }))
-          : undefined,
+        objectiveConfig,
+        objectiveBuckets: this.normalizeObjectiveBuckets(
+          section.objectiveBuckets,
+          objectiveConfig,
+          sectionType,
+        ),
         fields: (section.fields ?? []).map((field, fieldIndex) =>
           this.normalizeField(field, fieldIndex),
         ),
@@ -1141,49 +1140,293 @@ export class PmsTemplateService extends BaseService {
     }
 
     const config = rawConfig as Record<string, any>;
-    const mode = ['PREDEFINED', 'DYNAMIC', 'HYBRID'].includes(config.mode)
+    let mode = ['PREDEFINED', 'DYNAMIC', 'HYBRID'].includes(config.mode)
       ? config.mode
       : 'DYNAMIC';
+    const allowEmployeeCreated = config.allowEmployeeCreated !== false;
+    const allowManagerCreated = config.allowManagerCreated !== false;
+    const predefinedObjectives = Array.isArray(config.predefinedObjectives)
+      ? config.predefinedObjectives.map((objective: Record<string, any>) => ({
+        objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
+        title: String(objective.title ?? '').trim(),
+        description: objective.description ? String(objective.description) : undefined,
+        kpi: objective.kpi ? String(objective.kpi) : undefined,
+        targetValue: objective.targetValue ? String(objective.targetValue) : undefined,
+        dueDate: objective.dueDate ? String(objective.dueDate) : undefined,
+        weightage:
+          objective.weightage === undefined || objective.weightage === ''
+            ? undefined
+            : Number(objective.weightage),
+        successCriteria: objective.successCriteria ? String(objective.successCriteria) : undefined,
+        attachmentAllowed: objective.attachmentAllowed === true,
+        applyToAllQuarters: objective.applyToAllQuarters !== false,
+        editable: objective.editable !== false,
+        isActive: objective.isActive !== false,
+        termScope: Array.isArray(objective.termScope)
+          ? objective.termScope.filter((quarter: unknown) =>
+            Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+          )
+          : undefined,
+        applicableTerms: Array.isArray(objective.applicableTerms)
+          ? objective.applicableTerms.filter((quarter: unknown) =>
+            Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+          )
+          : undefined,
+        repeatFor: Array.isArray(objective.repeatFor)
+          ? objective.repeatFor.filter((quarter: unknown) =>
+            Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
+          )
+          : undefined,
+      }))
+      : [];
+    const hasActivePredefinedObjectives = predefinedObjectives.some(
+      (objective) => objective.isActive !== false,
+    );
+
+    if (hasActivePredefinedObjectives && mode === 'DYNAMIC') {
+      mode = allowEmployeeCreated || allowManagerCreated ? 'HYBRID' : 'PREDEFINED';
+    }
 
     return {
       mode,
-      allowEmployeeCreated: config.allowEmployeeCreated !== false,
-      allowManagerCreated: config.allowManagerCreated !== false,
+      allowEmployeeCreated,
+      allowManagerCreated,
       managerCreatedAutoApprove: config.managerCreatedAutoApprove !== false,
-      predefinedObjectives: Array.isArray(config.predefinedObjectives)
-        ? config.predefinedObjectives.map((objective: Record<string, any>) => ({
-          objectiveKey: String(objective.objectiveKey ?? objective.key ?? '').trim(),
-          title: String(objective.title ?? '').trim(),
-          description: objective.description ? String(objective.description) : undefined,
-          kpi: objective.kpi ? String(objective.kpi) : undefined,
-          targetValue: objective.targetValue ? String(objective.targetValue) : undefined,
-          dueDate: objective.dueDate ? String(objective.dueDate) : undefined,
-          weightage:
-            objective.weightage === undefined || objective.weightage === ''
-              ? undefined
-              : Number(objective.weightage),
-          successCriteria: objective.successCriteria ? String(objective.successCriteria) : undefined,
-          attachmentAllowed: objective.attachmentAllowed === true,
-          applyToAllQuarters: objective.applyToAllQuarters !== false,
-          editable: objective.editable !== false,
-          isActive: objective.isActive !== false,
-          termScope: Array.isArray(objective.termScope)
-            ? objective.termScope.filter((quarter: unknown) =>
-              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
-            )
-            : undefined,
-          applicableTerms: Array.isArray(objective.applicableTerms)
-            ? objective.applicableTerms.filter((quarter: unknown) =>
-              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
-            )
-            : undefined,
-          repeatFor: Array.isArray(objective.repeatFor)
-            ? objective.repeatFor.filter((quarter: unknown) =>
-              Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
-            )
-            : undefined,
-        }))
-        : [],
+      objectiveScoringPolicy: {
+        predefinedObjectivesScoreable:
+          config.objectiveScoringPolicy?.predefinedObjectivesScoreable !== false,
+        managerCreatedScoreable:
+          config.objectiveScoringPolicy?.managerCreatedScoreable === true,
+        employeeCreatedScoreable:
+          config.objectiveScoringPolicy?.employeeCreatedScoreable === true,
+        requireManagerApprovalForEmployeeScore:
+          config.objectiveScoringPolicy?.requireManagerApprovalForEmployeeScore !== false,
+        requireWeightageBeforeAchievement:
+          config.objectiveScoringPolicy?.requireWeightageBeforeAchievement !== false,
+        allowManagerOverallForRemainingWeightage:
+          config.objectiveScoringPolicy?.allowManagerOverallForRemainingWeightage !== false,
+      },
+      predefinedObjectives,
+    };
+  }
+
+  private normalizeObjectiveBuckets(
+    rawBuckets: unknown,
+    objectiveConfig: ITemplateSection['objectiveConfig'] | undefined,
+    sectionType: PmsTemplateSectionTypeType,
+  ): ITemplateSection['objectiveBuckets'] | undefined {
+    if (sectionType !== PmsTemplateSectionType.OBJECTIVES || !objectiveConfig) {
+      return Array.isArray(rawBuckets)
+        ? rawBuckets.map((bucket: any) => this.normalizeObjectiveBucket(bucket))
+        : undefined;
+    }
+
+    const existingBuckets = Array.isArray(rawBuckets)
+      ? rawBuckets.map((bucket: any) => this.normalizeObjectiveBucket(bucket))
+      : [];
+    const existingWeightSum = existingBuckets.reduce(
+      (sum, bucket) => sum + Number(bucket.bucketWeightage ?? 0),
+      0,
+    );
+    const existingValidSources = existingBuckets.every((bucket) =>
+      ['TEMPLATE_PREDEFINED', 'EMPLOYEE_DYNAMIC', 'MANAGER_DYNAMIC'].includes(bucket.source),
+    );
+    const hasActivePredefinedObjectives = (objectiveConfig.predefinedObjectives ?? []).some(
+      (objective) => objective.isActive !== false,
+    );
+    const needsPredefinedBucket =
+      hasActivePredefinedObjectives &&
+      objectiveConfig.objectiveScoringPolicy?.predefinedObjectivesScoreable !== false;
+    const hasPredefinedBucket = existingBuckets.some(
+      (bucket) => bucket.source === 'TEMPLATE_PREDEFINED',
+    );
+
+    if (
+      existingBuckets.length > 0 &&
+      existingValidSources &&
+      existingWeightSum === 100 &&
+      (!needsPredefinedBucket || hasPredefinedBucket)
+    ) {
+      return existingBuckets;
+    }
+
+    return this.deriveObjectiveBuckets(objectiveConfig);
+  }
+
+  private normalizeObjectiveBucket(
+    bucket: any,
+  ): NonNullable<ITemplateSection['objectiveBuckets']>[number] {
+    const bucketKey = String(bucket.bucketKey ?? '').trim();
+    const source = this.inferObjectiveBucketSource(bucket.source, bucketKey);
+    const owner = this.inferObjectiveBucketOwner(bucket.owner, source);
+
+    return {
+      bucketKey,
+      label: String(bucket.label ?? bucket.bucketLabel ?? '').trim(),
+      source,
+      owner,
+      bucketWeightage: Number(bucket.bucketWeightage ?? bucket.weightage ?? 0),
+      rowWeightMode:
+        bucket.rowWeightMode ??
+        (source === 'TEMPLATE_PREDEFINED' ? 'FIXED_BY_TEMPLATE' : 'OWNER_ENTERED'),
+      editableBy: Array.isArray(bucket.editableBy)
+        ? bucket.editableBy.map(String)
+        : source === 'TEMPLATE_PREDEFINED'
+          ? ['ADMIN']
+          : [owner],
+      requiresManagerApproval:
+        bucket.requiresManagerApproval !== undefined
+          ? !!bucket.requiresManagerApproval
+          : source === 'EMPLOYEE_DYNAMIC',
+      autoApprove:
+        bucket.autoApprove !== undefined
+          ? !!bucket.autoApprove
+          : source !== 'EMPLOYEE_DYNAMIC',
+    };
+  }
+
+  private inferObjectiveBucketSource(
+    source: unknown,
+    bucketKey: string,
+  ): 'TEMPLATE_PREDEFINED' | 'EMPLOYEE_DYNAMIC' | 'MANAGER_DYNAMIC' {
+    if (
+      source === 'TEMPLATE_PREDEFINED' ||
+      source === 'EMPLOYEE_DYNAMIC' ||
+      source === 'MANAGER_DYNAMIC'
+    ) {
+      return source;
+    }
+    if (bucketKey === 'template_predefined') return 'TEMPLATE_PREDEFINED';
+    if (bucketKey === 'manager_dynamic') return 'MANAGER_DYNAMIC';
+    return 'EMPLOYEE_DYNAMIC';
+  }
+
+  private inferObjectiveBucketOwner(
+    owner: unknown,
+    source: 'TEMPLATE_PREDEFINED' | 'EMPLOYEE_DYNAMIC' | 'MANAGER_DYNAMIC',
+  ): 'SYSTEM' | 'EMPLOYEE' | 'MANAGER' {
+    if (owner === 'SYSTEM' || owner === 'EMPLOYEE' || owner === 'MANAGER') {
+      return owner;
+    }
+    if (source === 'TEMPLATE_PREDEFINED') return 'SYSTEM';
+    if (source === 'MANAGER_DYNAMIC') return 'MANAGER';
+    return 'EMPLOYEE';
+  }
+
+  private deriveObjectiveBuckets(
+    objectiveConfig: ITemplateSection['objectiveConfig'],
+  ): NonNullable<ITemplateSection['objectiveBuckets']> {
+    const policy = objectiveConfig?.objectiveScoringPolicy ?? {};
+    const hasActivePredefinedObjectives = (objectiveConfig?.predefinedObjectives ?? []).some(
+      (objective) => objective.isActive !== false,
+    );
+    const scoreableSources: Array<'TEMPLATE_PREDEFINED' | 'EMPLOYEE_DYNAMIC' | 'MANAGER_DYNAMIC'> = [];
+
+    if (hasActivePredefinedObjectives && policy.predefinedObjectivesScoreable !== false) {
+      scoreableSources.push('TEMPLATE_PREDEFINED');
+    }
+    if (objectiveConfig?.allowEmployeeCreated !== false && policy.employeeCreatedScoreable === true) {
+      scoreableSources.push('EMPLOYEE_DYNAMIC');
+    }
+    if (objectiveConfig?.allowManagerCreated !== false && policy.managerCreatedScoreable === true) {
+      scoreableSources.push('MANAGER_DYNAMIC');
+    }
+
+    if (scoreableSources.length === 0) {
+      if (hasActivePredefinedObjectives) {
+        scoreableSources.push('TEMPLATE_PREDEFINED');
+      } else {
+        if (objectiveConfig?.allowEmployeeCreated !== false) {
+          scoreableSources.push('EMPLOYEE_DYNAMIC');
+        }
+        if (objectiveConfig?.allowManagerCreated !== false) {
+          scoreableSources.push('MANAGER_DYNAMIC');
+        }
+      }
+    }
+
+    const weights = this.distributeObjectiveBucketWeightage(scoreableSources.length);
+    const weightForSource = new Map(
+      scoreableSources.map((source, index) => [source, weights[index] ?? 0]),
+    );
+
+    return [
+      this.createObjectiveBucket(
+        'TEMPLATE_PREDEFINED',
+        weightForSource.get('TEMPLATE_PREDEFINED') ?? 0,
+      ),
+      this.createObjectiveBucket(
+        'EMPLOYEE_DYNAMIC',
+        weightForSource.get('EMPLOYEE_DYNAMIC') ?? 0,
+      ),
+      this.createObjectiveBucket(
+        'MANAGER_DYNAMIC',
+        weightForSource.get('MANAGER_DYNAMIC') ?? 0,
+      ),
+    ].filter((bucket) => {
+      if (bucket.source === 'TEMPLATE_PREDEFINED') {
+        return hasActivePredefinedObjectives;
+      }
+      if (bucket.source === 'EMPLOYEE_DYNAMIC') {
+        return objectiveConfig?.allowEmployeeCreated !== false;
+      }
+      return objectiveConfig?.allowManagerCreated !== false;
+    });
+  }
+
+  private distributeObjectiveBucketWeightage(count: number): number[] {
+    if (count <= 0) return [];
+    const base = Math.floor(100 / count);
+    let remainder = 100 - base * count;
+    return Array.from({ length: count }, () => {
+      const extra = remainder > 0 ? 1 : 0;
+      remainder -= extra;
+      return base + extra;
+    });
+  }
+
+  private createObjectiveBucket(
+    source: 'TEMPLATE_PREDEFINED' | 'EMPLOYEE_DYNAMIC' | 'MANAGER_DYNAMIC',
+    bucketWeightage: number,
+  ): NonNullable<ITemplateSection['objectiveBuckets']>[number] {
+    if (source === 'TEMPLATE_PREDEFINED') {
+      return {
+        bucketKey: 'template_predefined',
+        label: 'Template Predefined Objectives',
+        source,
+        owner: 'SYSTEM',
+        bucketWeightage,
+        rowWeightMode: 'FIXED_BY_TEMPLATE',
+        editableBy: ['ADMIN'],
+        requiresManagerApproval: false,
+        autoApprove: true,
+      };
+    }
+
+    if (source === 'MANAGER_DYNAMIC') {
+      return {
+        bucketKey: 'manager_dynamic',
+        label: 'Manager Objectives',
+        source,
+        owner: 'MANAGER',
+        bucketWeightage,
+        rowWeightMode: 'OWNER_ENTERED',
+        editableBy: ['MANAGER'],
+        requiresManagerApproval: false,
+        autoApprove: true,
+      };
+    }
+
+    return {
+      bucketKey: 'employee_dynamic',
+      label: 'Employee Objectives',
+      source,
+      owner: 'EMPLOYEE',
+      bucketWeightage,
+      rowWeightMode: 'OWNER_ENTERED',
+      editableBy: ['EMPLOYEE'],
+      requiresManagerApproval: true,
+      autoApprove: false,
     };
   }
 
