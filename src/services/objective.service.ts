@@ -22,6 +22,7 @@ import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
+import { AuditLog } from '../models/audit-log.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -552,6 +553,47 @@ export class ObjectiveService extends BaseService {
     }
 
     const configMap = await this.buildObjectiveConfigMap(annualAssignments, termAssignments);
+    const termAssignmentIdsNeedingTemplateValueFallback = termAssignments
+      .filter((termAssignment) => {
+        const summary = (termAssignment.termSummary as Record<string, unknown> | undefined) ?? {};
+        const values = summary.objectiveTemplateValues;
+        return !Array.isArray(values) || values.length === 0;
+      })
+      .map((termAssignment) => termAssignment._id.toString());
+    const objectiveTemplateValueAuditFallbackByTermId = new Map<string, Array<Record<string, any>>>();
+
+    if (termAssignmentIdsNeedingTemplateValueFallback.length > 0) {
+      const termAssignmentAuditEntityIds = [
+        ...termAssignmentIdsNeedingTemplateValueFallback,
+        ...termAssignmentIdsNeedingTemplateValueFallback
+          .filter((termAssignmentId) => Types.ObjectId.isValid(termAssignmentId))
+          .map((termAssignmentId) => new Types.ObjectId(termAssignmentId)),
+      ];
+      const latestTemplateValueAudits = await AuditLog.find({
+        entityType: 'TERM_ASSIGNMENT',
+        action: 'PMS_OBJECTIVE_TEMPLATE_VALUES_UPDATED',
+        entityId: { $in: termAssignmentAuditEntityIds },
+      })
+        .sort({ timestamp: -1, createdAt: -1 })
+        .lean();
+      const seenTermIds = new Set<string>();
+
+      for (const audit of latestTemplateValueAudits) {
+        const termAssignmentId = String(audit.entityId ?? '');
+        if (!termAssignmentId || seenTermIds.has(termAssignmentId)) continue;
+        seenTermIds.add(termAssignmentId);
+
+        const newValue =
+          audit.newValue && typeof audit.newValue === 'object'
+            ? (audit.newValue as Record<string, unknown>)
+            : {};
+        const values = newValue.objectiveTemplateValues;
+        objectiveTemplateValueAuditFallbackByTermId.set(
+          termAssignmentId,
+          Array.isArray(values) ? (values as Array<Record<string, any>>) : [],
+        );
+      }
+    }
 
     return termAssignments.map((termAssignment) => {
       const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
@@ -592,6 +634,14 @@ export class ObjectiveService extends BaseService {
         employeeSnapshot.departmentId ??
         '',
       );
+      const summary = (termAssignment.termSummary as Record<string, unknown> | undefined) ?? {};
+      const summaryTemplateValues = Array.isArray(summary.objectiveTemplateValues)
+        ? (summary.objectiveTemplateValues as Array<Record<string, any>>)
+        : [];
+      const objectiveTemplateValues =
+        summaryTemplateValues.length > 0
+          ? summaryTemplateValues
+          : objectiveTemplateValueAuditFallbackByTermId.get(termAssignment._id.toString()) ?? [];
 
       return {
         id: termAssignment._id.toString(),
@@ -623,10 +673,7 @@ export class ObjectiveService extends BaseService {
         backendConnected: true,
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         objectiveConfig,
-        objectiveTemplateValues: this.mapTemplateObjectiveValues(
-          (termAssignment.termSummary as Record<string, unknown> | undefined)
-            ?.objectiveTemplateValues as Array<Record<string, any>> | undefined,
-        ),
+        objectiveTemplateValues: this.mapTemplateObjectiveValues(objectiveTemplateValues),
         objectives: objectiveRecords,
       };
     });

@@ -2227,9 +2227,12 @@ export class TermReviewService extends BaseService {
     termAssignment: ITermAssignment,
     termReview: ITermReview,
   ): Promise<void> {
+    const existingSummary = (termAssignment.termSummary ?? {}) as Record<string, unknown>;
+
     termAssignment.termScore = termReview.score;
     termAssignment.termRating = termReview.overallRating;
     termAssignment.termSummary = {
+      ...existingSummary,
       comments: termReview.comments,
       achievements: termReview.achievements,
       developmentObservations: termReview.developmentObservations,
