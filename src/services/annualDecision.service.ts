@@ -896,6 +896,8 @@ export class AnnualDecisionService extends BaseService {
       ? Number(decision.finalScore)
       : systemFinalScore;
     const roundedOverrideScore = this.roundAnnualScore(overrideScore);
+    const resolvedFinalRating =
+      await this.resolveFinalRatingFromScore(annualAssignment, roundedOverrideScore);
     const previousValue = decision.toObject();
 
     await CorrectionLayer.create({
@@ -919,10 +921,16 @@ export class AnnualDecisionService extends BaseService {
     });
 
     decision.finalScore = roundedOverrideScore;
+    if (resolvedFinalRating) {
+      decision.finalRating = resolvedFinalRating;
+    }
     decision.updatedBy = this.actorIdObject();
     decision.version += 1;
     await decision.save();
     await this.syncAnnualFinalScoreValue(decision, annualAssignment, roundedOverrideScore);
+    if (resolvedFinalRating) {
+      await this.syncAnnualFinalRatingValue(decision, annualAssignment, resolvedFinalRating);
+    }
 
     await this.audit(
       'PMS_ANNUAL_FINAL_SCORE_OVERRIDDEN',
@@ -1163,7 +1171,10 @@ export class AnnualDecisionService extends BaseService {
     }
 
     if (finalDecisionStatus === AnnualDecisionStatus.SUBMITTED) {
-      if (annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED) {
+      if (
+        annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
+        annualState !== AnnualWorkflowState.COMMUNICATION_SENT
+      ) {
         return [];
       }
       return ['FREEZE'];
@@ -1423,6 +1434,42 @@ export class AnnualDecisionService extends BaseService {
 
   private roundAnnualScore(score: number): number {
     return Math.round((score + Number.EPSILON) * 1_000_000) / 1_000_000;
+  }
+
+  private async resolveFinalRatingFromScore(
+    annualAssignment: IAnnualAssignment,
+    finalScore: number,
+  ): Promise<string | undefined> {
+    if (!annualAssignment.templateVersionId || !Number.isFinite(finalScore)) {
+      return undefined;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findById(
+      annualAssignment.templateVersionId,
+    ).lean();
+    const fields = (templateVersion?.sections ?? []).flatMap((section: any) => section.fields ?? []);
+    const ratingField = fields.find((field: any) =>
+      ['annualoverallrating', 'finalrating', 'rating'].includes(
+        this.normalizeAnnualFieldKey(field.fieldKey ?? field.key ?? ''),
+      ),
+    );
+    const options = Array.isArray(ratingField?.options) ? ratingField.options : [];
+    const scoredOptions: Array<{ value: string; score: number }> = options
+      .map((option: any) => ({
+        value: String(option.value ?? ''),
+        score: Number(option.score ?? option.weight),
+      }))
+      .filter((option: { value: string; score: number }) => option.value && Number.isFinite(option.score))
+      .sort((a: { score: number }, b: { score: number }) => a.score - b.score);
+
+    if (scoredOptions.length === 0) {
+      return undefined;
+    }
+
+    const selected =
+      [...scoredOptions].reverse().find((option) => finalScore >= option.score) ??
+      scoredOptions[0];
+    return selected.value;
   }
 
   private async resolveAnnualDecisionTemplate(
@@ -1856,6 +1903,30 @@ export class AnnualDecisionService extends BaseService {
       roleCode: 'ADMIN',
       actorUserId,
       valueNumber: finalScore,
+      createdBy: actorUserId,
+      updatedBy: actorUserId,
+    });
+  }
+
+  private async syncAnnualFinalRatingValue(
+    decision: IAnnualDecision,
+    annualAssignment: IAnnualAssignment,
+    finalRating: string,
+  ): Promise<void> {
+    const actor = this.requireActor();
+    const actorUserId = new Types.ObjectId(actor.actorId);
+    await AnnualDecisionValue.deleteMany({
+      annualDecisionId: decision._id,
+      fieldKey: { $in: ['final_rating', 'finalrating', 'annual_overall_rating', 'annualoverallrating', 'rating'] },
+    });
+    await AnnualDecisionValue.create({
+      annualDecisionId: decision._id,
+      annualAssignmentId: annualAssignment._id,
+      fieldKey: 'final_rating',
+      sectionKey: 'annual_decision',
+      roleCode: 'ADMIN',
+      actorUserId,
+      valueText: finalRating,
       createdBy: actorUserId,
       updatedBy: actorUserId,
     });
