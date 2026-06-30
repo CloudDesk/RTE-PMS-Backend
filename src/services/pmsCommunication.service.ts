@@ -30,7 +30,12 @@ export interface SendPmsCommunicationInput extends PreviewPmsCommunicationInput 
   resendOf?: string;
   correctionReason?: string;
   skipEmail?: boolean;
+  allowSubmittedDecisionDispatch?: boolean;
 }
+
+type RenderPmsCommunicationInput = PreviewPmsCommunicationInput & {
+  allowSubmittedDecisionDispatch?: boolean;
+};
 
 interface RenderedCommunication {
   annualAssignment: IAnnualAssignment;
@@ -238,7 +243,7 @@ export class PmsCommunicationService extends BaseService {
   }
 
   private async renderCommunication(
-    input: PreviewPmsCommunicationInput,
+    input: RenderPmsCommunicationInput,
   ): Promise<RenderedCommunication> {
     const annualAssignment = await AnnualAssignment.findById(input.annualAssignmentId);
     if (!annualAssignment) {
@@ -252,14 +257,21 @@ export class PmsCommunicationService extends BaseService {
       throw new Error('Annual decision not found');
     }
 
-    if (annualDecision.decisionStatus !== AnnualDecisionStatus.VISIBILITY_ENABLED) {
+    const canDispatchSubmittedDecision =
+      input.allowSubmittedDecisionDispatch === true &&
+      annualDecision.decisionStatus === AnnualDecisionStatus.SUBMITTED;
+
+    if (
+      annualDecision.decisionStatus !== AnnualDecisionStatus.VISIBILITY_ENABLED &&
+      !canDispatchSubmittedDecision
+    ) {
       throw new Error('Communication is allowed only after visibility is enabled');
     }
 
     const visibility = await VisibilityConfiguration.findOne({
       annualAssignmentId: annualAssignment._id,
     });
-    if (!visibility || !this.hasAnyVisibility(visibility)) {
+    if (!canDispatchSubmittedDecision && (!visibility || !this.hasAnyVisibility(visibility))) {
       throw new Error('Visibility must be enabled before communication dispatch');
     }
 
