@@ -324,7 +324,7 @@ export class PmsCommunicationService extends BaseService {
           contentKey,
           subjectTemplate: 'Your Annual Appraisal Outcome',
           bodyTemplate:
-            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nFinal grade: {{finalGrade}}\nMerit amount: {{meritAmount}}\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nFinal grade: {{finalGrade}}\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
         };
       case 'MERIT_ONLY':
         return {
@@ -332,7 +332,7 @@ export class PmsCommunicationService extends BaseService {
           contentKey,
           subjectTemplate: 'Your Annual Appraisal Outcome',
           bodyTemplate:
-            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nMerit amount: {{meritAmount}}\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
         };
       case 'GRADE_ONLY':
         return {
@@ -373,6 +373,13 @@ export class PmsCommunicationService extends BaseService {
     const employee = await User.findById(annualAssignment.employeeId).lean();
     const gradeDetails = annualDecision.gradeDetails ?? {};
     const meritDetails = annualDecision.meritDetails ?? {};
+    const meritPercentage = this.formatPercentageValue(
+      meritDetails.meritPercentage ??
+        meritDetails.percentage ??
+        meritDetails.meritAmount ??
+        meritDetails.amount ??
+        '',
+    );
 
     return {
       employeeName: annualAssignment.employeeSnapshot?.name ?? employee?.name ?? '',
@@ -384,13 +391,19 @@ export class PmsCommunicationService extends BaseService {
       finalGrade: this.formatEnumDisplayValue(
         gradeDetails.gradeValue ?? gradeDetails.finalGrade ?? gradeDetails.grade ?? '',
       ),
-      meritAmount: meritDetails.meritAmount ?? meritDetails.amount ?? '',
-      meritPercentage: meritDetails.meritPercentage ?? meritDetails.percentage ?? '',
+      meritAmount: meritPercentage,
+      meritPercentage,
       finalScore: annualDecision.finalScore ?? '',
       finalRating: this.formatEnumDisplayValue(annualDecision.finalRating ?? ''),
       nilReason: this.capitalizeFirstLetter(annualDecision.nilReason ?? ''),
       managementRemarks: this.capitalizeFirstLetter(annualDecision.managementRemarks ?? ''),
     };
+  }
+
+  private formatPercentageValue(value: unknown): string {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    return `${text.replace(/%+$/g, '')}%`;
   }
 
   private formatEnumDisplayValue(value: unknown): string {
