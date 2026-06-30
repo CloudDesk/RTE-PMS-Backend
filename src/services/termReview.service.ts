@@ -243,6 +243,7 @@ type TermReviewSectionConfig = {
 };
 
 type TermReviewConfig = {
+  mode?: 'AUTO' | 'MANUAL';
   objectiveRatingRule: ReviewScoringRule | null;
   overallScoreMax: number | null;
   scoringPolicy?: any;
@@ -1393,7 +1394,10 @@ export class TermReviewService extends BaseService {
       ? undefined
       : Number(input.score);
 
-    const overallScore = computedOverallScore ?? manualScore;
+    const overallScore =
+      reviewConfig.mode === 'MANUAL'
+        ? manualScore
+        : computedOverallScore ?? manualScore;
     const scoreSnapshot = {
       overallScore,
       calculatedScore: computedOverallScore,
@@ -2513,6 +2517,7 @@ export class TermReviewService extends BaseService {
     return {
       objectiveRatingRule,
       overallScoreMax,
+      mode: (templateVersion.scoringConfig as Record<string, unknown> | undefined)?.mode === 'MANUAL' ? 'MANUAL' : 'AUTO',
       scoringPolicy: (templateVersion.scoringConfig as Record<string, unknown> | undefined)?.scoringPolicy as any,
       sections,
     };
@@ -2522,6 +2527,7 @@ export class TermReviewService extends BaseService {
     return {
       objectiveRatingRule: null,
       overallScoreMax: null,
+      mode: 'MANUAL',
       scoringPolicy: undefined,
       sections: [],
     };

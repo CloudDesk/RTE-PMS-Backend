@@ -14,6 +14,7 @@ export type PmsScoringRating = {
 };
 
 export type PmsScoringConfig = {
+  mode?: 'AUTO' | 'MANUAL';
   objectiveRatingRule?: { maxScore?: number } | null;
   overallScoreMax?: number | null;
   scoringPolicy?: PmsScoringPolicy;
