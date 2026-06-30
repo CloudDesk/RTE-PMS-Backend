@@ -646,6 +646,7 @@ export class PmsTemplateService extends BaseService {
       launchPolicy?: Record<string, unknown>;
       flowPolicy?: Record<string, unknown>;
       annualScoringConfig?: Record<string, unknown>;
+      scoringConfig?: Record<string, unknown>;
     } = {},
   ): Promise<IPmsTemplateVersion> {
     await this.assertAdmin('templateVersion.configureSections');
@@ -668,6 +669,9 @@ export class PmsTemplateService extends BaseService {
     }
     if (metadata.annualScoringConfig !== undefined) {
       version.annualScoringConfig = metadata.annualScoringConfig;
+    }
+    if (metadata.scoringConfig !== undefined) {
+      version.scoringConfig = metadata.scoringConfig;
     }
     version.updatedBy = this.actorIdObject();
     await version.save();
