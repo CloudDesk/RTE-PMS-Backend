@@ -2,8 +2,10 @@ import { FastifyInstance } from 'fastify';
 import awsLambdaFastify from '@fastify/aws-lambda';
 import { createApp } from './app';
 
+ 
 let fastifyApp: FastifyInstance;
 let proxy: any;
+
 
 // Lambda handler
 export const handler = async (event: any, context: any) => {

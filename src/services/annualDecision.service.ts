@@ -91,7 +91,7 @@ export interface AnnualSummaryResult {
     availableActions: AnnualDecisionAction[];
     lockedReason?: string;
   };
-  termAssignments: ITermAssignment[];
+  termAssignments: Array<Record<string, unknown>>;
   objectives: IObjective[];
   termReviews: ITermReview[];
   employeeWorkUpdates: Array<Record<string, unknown>>;
@@ -444,7 +444,26 @@ export class AnnualDecisionService extends BaseService {
         availableActions: readiness.availableActions,
         lockedReason: readiness.lockedReason,
       },
-      termAssignments: effectiveTermAssignments,
+      termAssignments: effectiveTermAssignments.map((termAssignment) => {
+        const termAssignmentObject =
+          typeof termAssignment.toObject === 'function'
+            ? termAssignment.toObject()
+            : termAssignment;
+        const termSummary =
+          (termAssignmentObject.termSummary as Record<string, unknown> | undefined) ?? {};
+        const objectiveTemplateValues = this.mapTemplateObjectiveValues(
+          termSummary.objectiveTemplateValues as Array<Record<string, any>> | undefined,
+        );
+
+        return {
+          ...termAssignmentObject,
+          objectiveTemplateValues,
+          termSummary: {
+            ...termSummary,
+            objectiveTemplateValues,
+          },
+        };
+      }),
       objectives,
       termReviews,
       employeeWorkUpdates: this.buildEmployeeWorkUpdateSummaries(
@@ -1743,6 +1762,22 @@ export class AnnualDecisionService extends BaseService {
     }
 
     return values;
+  }
+
+  private mapTemplateObjectiveValues(values?: Array<Record<string, any>>) {
+    return (values ?? []).map((value) => ({
+      templateFieldId: value.templateFieldId,
+      fieldKey: value.fieldKey,
+      sectionKey: value.sectionKey,
+      roleCode: value.roleCode,
+      actorUserId: value.actorUserId?.toString?.() ?? value.actorUserId,
+      workflowStage: value.workflowStage,
+      valueJson: value.valueJson,
+      valueText: value.valueText,
+      valueNumber: value.valueNumber,
+      valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+      valueStatus: value.valueStatus,
+    }));
   }
 
   private extractAnnualDecisionValue(decisionValue: AnnualDecisionValueInput): unknown {

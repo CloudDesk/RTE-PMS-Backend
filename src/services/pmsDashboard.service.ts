@@ -17,6 +17,19 @@ import { visibilityMaskService } from './visibilityMask.service';
 import { accessService } from './access.service';
 
 export class PmsDashboardService extends BaseService {
+  private gradeAppliedQuery() {
+    return {
+      annualState: { $in: ['ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'CLOSED'] },
+      isGradeApplied: true,
+      $or: [
+        { 'gradeDetails.grade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+        { 'gradeDetails.finalGrade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+        { 'gradeDetails.gradeValue': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+        { 'gradeDetails.gradeCode': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+      ],
+    };
+  }
+
   /**
    * Get PMS Employee Dashboard Data
    */
@@ -509,13 +522,29 @@ export class PmsDashboardService extends BaseService {
       {
         $match: {
           ...query,
-          annualState: { $in: ['ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'CLOSED'] },
-          isGradeApplied: true,
+          ...this.gradeAppliedQuery(),
+        },
+      },
+      {
+        $project: {
+          grade: {
+            $ifNull: [
+              '$gradeDetails.grade',
+              {
+                $ifNull: [
+                  '$gradeDetails.finalGrade',
+                  {
+                    $ifNull: ['$gradeDetails.gradeValue', '$gradeDetails.gradeCode'],
+                  },
+                ],
+              },
+            ],
+          },
         },
       },
       {
         $group: {
-          _id: '$gradeDetails.grade',
+          _id: '$grade',
           count: { $sum: 1 },
         },
       },
@@ -552,7 +581,7 @@ export class PmsDashboardService extends BaseService {
       annualState: 'VISIBILITY_ENABLED',
     });
 
-    const [decisionDraftCount, frozenDecisionCount, reopenCount] = await Promise.all([
+    const [decisionDraftCount, frozenDecisionCount, gradesAppliedCount, reopenCount] = await Promise.all([
       AnnualAssignment.countDocuments({
         ...query,
         annualState: 'MANAGEMENT_DECISION_DRAFT',
@@ -560,6 +589,10 @@ export class PmsDashboardService extends BaseService {
       AnnualAssignment.countDocuments({
         ...query,
         annualState: 'ANNUAL_FINALIZED',
+      }),
+      AnnualAssignment.countDocuments({
+        ...query,
+        ...this.gradeAppliedQuery(),
       }),
       AuditLog.countDocuments({
         action: { $regex: /reopen/i },
@@ -572,7 +605,7 @@ export class PmsDashboardService extends BaseService {
     ]);
 
     const totalAssignments = annualAssignments.length;
-    const assignedManagerCount = assignedManagerIds.length;
+    const employeeManagerCount = assignedManagerIds.length;
     const cycleCompletionPercentage = totalAssignments > 0 
       ? Math.round((frozenDecisionCount / totalAssignments) * 100) 
       : 0;
@@ -586,11 +619,13 @@ export class PmsDashboardService extends BaseService {
       },
       readiness: {
         totalAssignments,
-        assignedManagerCount,
+        employeeManagerCount,
+        assignedManagerCount: employeeManagerCount,
         communicationReady: communicationReadinessCount,
         decisionDrafts: decisionDraftCount,
         decisionsFinalized: frozenDecisionCount,
         decisionReadiness: decisionDraftCount + frozenDecisionCount,
+        gradesApplied: gradesAppliedCount,
         cycleCompletionPercentage,
       },
       reassignmentMetrics: {

@@ -647,6 +647,7 @@ export class PmsTemplateService extends BaseService {
       launchPolicy?: Record<string, unknown>;
       flowPolicy?: Record<string, unknown>;
       annualScoringConfig?: Record<string, unknown>;
+      scoringConfig?: Record<string, unknown>;
     } = {},
   ): Promise<IPmsTemplateVersion> {
     await this.assertAdmin('templateVersion.configureSections');
@@ -669,6 +670,9 @@ export class PmsTemplateService extends BaseService {
     }
     if (metadata.annualScoringConfig !== undefined) {
       version.annualScoringConfig = metadata.annualScoringConfig;
+    }
+    if (metadata.scoringConfig !== undefined) {
+      version.scoringConfig = metadata.scoringConfig;
     }
     version.updatedBy = this.actorIdObject();
     await version.save();
@@ -2060,7 +2064,7 @@ export class PmsTemplateService extends BaseService {
     // Check 9: Workflow role validation
     // Check 12: Quarter scope validity
     // Check 13: Objective bucket validations
-    // Check 14: Competency matrix validations
+    // Check 14: Employee Skill Rating Table validations
     const allowedQuarters = new Set(Object.values(AssessmentTermCode));
 
     for (const section of version.sections ?? []) {
@@ -2215,7 +2219,7 @@ export class PmsTemplateService extends BaseService {
           }
         }
 
-        // Check 14: Competency matrix validations
+        // Check 14: Employee Skill Rating Table validations
         if (field.fieldType === 'MATRIX') {
           const matrixConfig = field.matrixConfig;
           if (!matrixConfig) {

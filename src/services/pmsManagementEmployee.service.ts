@@ -9,10 +9,13 @@ export interface ManagementEmployeeListQuery {
   page?: number;
   limit?: number;
   search?: string;
-  active?: boolean;
+  active?: boolean | string;
   departmentId?: string;
   managerId?: string;
   employeeId?: string;
+  cycleId?: string;
+  assignedOnly?: boolean | string;
+  assignmentScope?: string;
   sort?: string;
   sortOrder?: 'asc' | 'desc';
 }
@@ -26,6 +29,18 @@ type ManagementEmployeeRecord = {
   departmentName?: string;
   managerId?: string;
   managerName?: string;
+  managerEmployeeCode?: string;
+  managerEmail?: string;
+  managerDepartmentId?: string;
+  managerDepartmentName?: string;
+  managerRole?: string;
+  managerSpecificRole?: string;
+  managerReportsToId?: string;
+  managerReportsToName?: string;
+  annualState?: string;
+  finalDecisionStatus?: string;
+  isGradeApplied?: boolean;
+  gradeDetails?: Record<string, unknown>;
   role?: string;
   specificRole?: string;
   active?: boolean;
@@ -41,10 +56,17 @@ export class PmsManagementEmployeeService extends BaseService {
     const page = this.positiveNumber(query.page, 1);
     const limit = Math.min(this.positiveNumber(query.limit, 10), 1000);
     const skip = (page - 1) * limit;
-    const filter: Record<string, any> = {};
+    const assignedOnly = this.booleanValue(query.assignedOnly) === true;
 
-    if (typeof query.active === 'boolean') {
-      filter.active = query.active;
+    if (assignedOnly) {
+      return this.listAssignedEmployees(query, page, limit, skip);
+    }
+
+    const filter: Record<string, any> = {};
+    const active = this.booleanValue(query.active);
+
+    if (typeof active === 'boolean') {
+      filter.active = active;
     }
 
     if (query.employeeId?.trim()) {
@@ -265,6 +287,187 @@ export class PmsManagementEmployeeService extends BaseService {
     });
   }
 
+  private async listAssignedEmployees(
+    query: ManagementEmployeeListQuery,
+    page: number,
+    limit: number,
+    skip: number,
+  ) {
+    const assignmentFilter: Record<string, any> = { isDeleted: false };
+
+    if (query.cycleId?.trim()) {
+      if (!Types.ObjectId.isValid(query.cycleId)) {
+        throw new Error('Invalid cycle id');
+      }
+      assignmentFilter.cycleId = new Types.ObjectId(query.cycleId);
+    }
+
+    if (query.employeeId?.trim()) {
+      if (!Types.ObjectId.isValid(query.employeeId)) {
+        throw new Error('Invalid employee id');
+      }
+      assignmentFilter.employeeId = new Types.ObjectId(query.employeeId);
+    }
+
+    if (query.managerId?.trim() && Types.ObjectId.isValid(query.managerId)) {
+      assignmentFilter.assignedManagerId = new Types.ObjectId(query.managerId);
+    }
+
+    const assignmentScope = Array.isArray(query.assignmentScope)
+      ? String(query.assignmentScope[0] ?? '').trim()
+      : String(query.assignmentScope ?? '').trim();
+
+    switch (assignmentScope) {
+      case 'decisionReady':
+        assignmentFilter.annualState = { $in: ['MANAGEMENT_DECISION_DRAFT', 'ANNUAL_FINALIZED'] };
+        break;
+      case 'gradesApplied':
+        assignmentFilter.annualState = { $in: ['ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'CLOSED'] };
+        assignmentFilter.isGradeApplied = true;
+        assignmentFilter.$or = [
+          { 'gradeDetails.grade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+          { 'gradeDetails.finalGrade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+          { 'gradeDetails.gradeValue': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+          { 'gradeDetails.gradeCode': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
+        ];
+        break;
+      case '':
+        break;
+      default:
+        throw new Error('Invalid assignment scope');
+    }
+
+    const assignments = await AnnualAssignment.find(assignmentFilter)
+      .select('employeeId assignedManagerId employeeSnapshot managerSnapshot annualState finalDecisionStatus isGradeApplied gradeDetails cycleId createdAt updatedAt')
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .lean();
+
+    const employeeIds = [
+      ...new Set(
+        assignments
+          .map((assignment) => assignment.employeeId?.toString?.())
+          .filter((id): id is string => Boolean(id) && Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const managerIds = [
+      ...new Set(
+        assignments
+          .map((assignment) => assignment.assignedManagerId?.toString?.())
+          .filter((id): id is string => Boolean(id) && Types.ObjectId.isValid(id)),
+      ),
+    ];
+
+    const [users, managers] = await Promise.all([
+      employeeIds.length
+        ? User.find({ _id: { $in: employeeIds.map((id) => new Types.ObjectId(id)) } })
+            .select('_id name email role specificRole departmentId departmentName active managerId managerName employeeCode')
+            .lean()
+        : [],
+      managerIds.length
+        ? User.find({ _id: { $in: managerIds.map((id) => new Types.ObjectId(id)) } })
+            .select('_id name email employeeCode role specificRole departmentId departmentName managerId managerName')
+            .lean()
+        : [],
+    ]);
+
+    const userMap = new Map(users.map((user) => [user._id.toString(), user]));
+    const managerMap = new Map(managers.map((manager) => [manager._id.toString(), manager]));
+    const recordsByEmployee = new Map<string, ManagementEmployeeRecord>();
+
+    for (const assignment of assignments) {
+      const employeeId = assignment.employeeId?.toString?.();
+      if (!employeeId || recordsByEmployee.has(employeeId)) continue;
+
+      const user = userMap.get(employeeId) as Record<string, any> | undefined;
+      const employeeSnapshot = assignment.employeeSnapshot ?? {};
+      const managerId = assignment.assignedManagerId?.toString?.();
+      const manager = (managerId ? managerMap.get(managerId) : undefined) as Record<string, any> | undefined;
+      const managerSnapshot = assignment.managerSnapshot ?? {};
+
+      recordsByEmployee.set(employeeId, {
+        _id: employeeId,
+        name: String(user?.name ?? employeeSnapshot.name ?? 'Employee'),
+        email: String(user?.email ?? employeeSnapshot.email ?? ''),
+        employeeCode: String(user?.employeeCode ?? employeeSnapshot.employeeCode ?? ''),
+        departmentId: String(user?.departmentId ?? employeeSnapshot.departmentId ?? employeeSnapshot.department ?? ''),
+        departmentName: String(user?.departmentName ?? employeeSnapshot.departmentName ?? employeeSnapshot.department ?? ''),
+        managerId,
+        managerName: String(manager?.name ?? managerSnapshot.name ?? ''),
+        managerEmployeeCode: String(manager?.employeeCode ?? managerSnapshot.employeeCode ?? ''),
+        managerEmail: String(manager?.email ?? managerSnapshot.email ?? ''),
+        managerDepartmentId: String(manager?.departmentId ?? managerSnapshot.departmentId ?? managerSnapshot.department ?? ''),
+        managerDepartmentName: String(manager?.departmentName ?? managerSnapshot.departmentName ?? managerSnapshot.department ?? ''),
+        managerRole: String(manager?.role ?? managerSnapshot.role ?? managerSnapshot.specificRole ?? ''),
+        managerSpecificRole: String(manager?.specificRole ?? managerSnapshot.specificRole ?? ''),
+        managerReportsToId: manager?.managerId?.toString?.() ?? '',
+        managerReportsToName: String(manager?.managerName ?? managerSnapshot.managerName ?? ''),
+        annualState: String(assignment.annualState ?? ''),
+        finalDecisionStatus: String(assignment.finalDecisionStatus ?? ''),
+        isGradeApplied: Boolean(assignment.isGradeApplied),
+        gradeDetails: assignment.gradeDetails as Record<string, unknown> | undefined,
+        role: String(user?.role ?? employeeSnapshot.role ?? employeeSnapshot.specificRole ?? 'Employee'),
+        specificRole: String(user?.specificRole ?? employeeSnapshot.specificRole ?? ''),
+        active: user?.active ?? true,
+      });
+    }
+
+    let records = Array.from(recordsByEmployee.values());
+    const active = this.booleanValue(query.active);
+    if (typeof active === 'boolean') {
+      records = records.filter((record) => record.active === active);
+    }
+
+    if (query.managerId?.trim() && !Types.ObjectId.isValid(query.managerId)) {
+      const managerName = this.normalize(query.managerId);
+      records = records.filter((record) => this.normalize(record.managerName) === managerName);
+    }
+
+    if (query.departmentId?.trim()) {
+      const department = this.normalize(query.departmentId);
+      records = records.filter(
+        (record) =>
+          this.normalize(record.departmentId) === department ||
+          this.normalize(record.departmentName) === department,
+      );
+    }
+
+    if (query.search?.trim()) {
+      const search = this.normalize(query.search);
+      records = records.filter((record) =>
+        [
+          record.name,
+          record.email,
+          record.employeeCode,
+          record.role,
+          record.specificRole,
+          record.departmentId,
+          record.departmentName,
+          record.managerName,
+        ].some((value) => this.normalize(value).includes(search)),
+      );
+    }
+
+    const sortField = query.sort?.trim() || 'name';
+    const sortDirection = query.sortOrder === 'desc' ? -1 : 1;
+    records.sort((left, right) => {
+      const leftValue = this.normalize((left as Record<string, unknown>)[sortField]);
+      const rightValue = this.normalize((right as Record<string, unknown>)[sortField]);
+      return leftValue.localeCompare(rightValue) * sortDirection;
+    });
+
+    const total = records.length;
+
+    return {
+      employees: records.slice(skip, skip + limit),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
+  }
+
   private assertManagementAccess(action: string): void {
     const user = this.context.user;
     if (!user) {
@@ -292,6 +495,19 @@ export class PmsManagementEmployeeService extends BaseService {
       return fallback;
     }
     return Math.trunc(parsed);
+  }
+
+  private booleanValue(value: unknown): boolean | undefined {
+    if (typeof value === 'boolean') return value;
+    if (typeof value !== 'string') return undefined;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    return undefined;
+  }
+
+  private normalize(value: unknown): string {
+    return String(value ?? '').trim().toLowerCase();
   }
 
   private exactCaseInsensitiveRegex(value: string): RegExp {

@@ -27,6 +27,9 @@ export interface IAnnualAssignment extends Document {
   finalDecisionStatus?: AnnualDecisionStatusType;
   isGradeApplied?: boolean;
   isMeritApplied?: boolean;
+  gradeDetails?: Record<string, unknown>;
+  meritDetails?: Record<string, unknown>;
+  nilReason?: string;
   appraisalOutcomeType?: string;
   applicableTerms: QuarterCode[];
   assignmentReason: string;
@@ -103,6 +106,9 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
     },
     isGradeApplied: Boolean,
     isMeritApplied: Boolean,
+    gradeDetails: Schema.Types.Mixed,
+    meritDetails: Schema.Types.Mixed,
+    nilReason: String,
     appraisalOutcomeType: String,
     applicableTerms: {
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
