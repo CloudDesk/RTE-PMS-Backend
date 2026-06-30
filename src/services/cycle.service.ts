@@ -20,6 +20,7 @@ import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { WorkflowEvent } from '../models/pms-workflow-event.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { emailService } from './email.service';
 import { workflowService } from './workflow.service';
 import type { IAnnualCycle, ICommunicationRuleConfig } from '../models/pms-annual-cycle.model';
 import type { ITermCycle } from '../models/pms-term-cycle.model';
@@ -566,9 +567,13 @@ export class CycleService extends BaseService {
       );
     }
 
-    return this.executeTransition(cycle, AnnualWorkflowState.ACTIVE, 'PMS_CYCLE_LAUNCHED', {
+    const launchedCycle = await this.executeTransition(cycle, AnnualWorkflowState.ACTIVE, 'PMS_CYCLE_LAUNCHED', {
       launchedAt: new Date(),
     });
+
+    void this.sendCycleLaunchEmails(launchedCycle);
+
+    return launchedCycle;
   }
 
   async scheduleCycle(cycleId: string): Promise<IAnnualCycle> {
@@ -1699,6 +1704,142 @@ export class CycleService extends BaseService {
         }
       }
     }
+  }
+
+  private async sendCycleLaunchEmails(cycle: IAnnualCycle): Promise<void> {
+    try {
+      const assignments = await AnnualAssignment.find({
+        cycleId: cycle._id,
+        isDeleted: false,
+      })
+        .populate('employeeId', 'name email employeeCode')
+        .populate('assignedManagerId', 'name email employeeCode')
+        .lean();
+
+      if (assignments.length === 0) {
+        return;
+      }
+
+      const cycleName = cycle.name || 'PMS Cycle';
+      const cycleWindow = this.formatCycleWindow(cycle.startDate, cycle.endDate);
+      const portalUrl = this.getPmsPortalUrl();
+      const managerAssignments = new Map<string, { manager: any; employees: string[] }>();
+
+      await Promise.all(assignments.map(async (assignment) => {
+        const employee = assignment.employeeId as any;
+        const manager = assignment.assignedManagerId as any;
+
+        if (manager?._id) {
+          const managerId = manager._id.toString();
+          const group = managerAssignments.get(managerId) ?? { manager, employees: [] };
+          group.employees.push(this.userDisplayName(employee, 'Employee'));
+          managerAssignments.set(managerId, group);
+        }
+
+        if (!employee?.email) {
+          return;
+        }
+
+        const employeeName = this.userDisplayName(employee, 'Employee');
+        const managerName = this.userDisplayName(manager, 'your manager');
+        const subject = `PMS Cycle Launched: ${cycleName}`;
+        const text = [
+          `Hello ${employeeName},`,
+          '',
+          `The PMS cycle "${cycleName}" has been launched.`,
+          `Cycle window: ${cycleWindow}`,
+          `Manager: ${managerName}`,
+          '',
+          'Please log in to the PMS portal and complete the required actions for this cycle.',
+          portalUrl ? `Portal: ${portalUrl}` : undefined,
+          '',
+          'Regards,',
+          'HR Team',
+        ].filter(Boolean).join('\n');
+
+        await this.sendBestEffortCycleLaunchEmail(employee.email, subject, text);
+      }));
+
+      await Promise.all(Array.from(managerAssignments.values()).map(async ({ manager, employees }) => {
+        if (!manager?.email) {
+          return;
+        }
+
+        const managerName = this.userDisplayName(manager, 'Manager');
+        const employeeCount = employees.length;
+        const previewEmployees = employees.slice(0, 10).map((name) => `- ${name}`).join('\n');
+        const moreCount = employeeCount > 10 ? `\n- +${employeeCount - 10} more` : '';
+        const subject = `PMS Cycle Launched for Your Team: ${cycleName}`;
+        const text = [
+          `Hello ${managerName},`,
+          '',
+          `The PMS cycle "${cycleName}" has been launched for your team.`,
+          `Cycle window: ${cycleWindow}`,
+          `Assigned employees: ${employeeCount}`,
+          '',
+          previewEmployees ? `Team members:\n${previewEmployees}${moreCount}` : undefined,
+          '',
+          'Please log in to the PMS portal to track objective setup, approvals, and review actions.',
+          portalUrl ? `Portal: ${portalUrl}` : undefined,
+          '',
+          'Regards,',
+          'HR Team',
+        ].filter(Boolean).join('\n');
+
+        await this.sendBestEffortCycleLaunchEmail(manager.email, subject, text);
+      }));
+    } catch (error) {
+      console.warn('PMS cycle launch email notification failed:', error);
+    }
+  }
+
+  private async sendBestEffortCycleLaunchEmail(
+    to: string,
+    subject: string,
+    text: string,
+  ): Promise<void> {
+    try {
+      await emailService.sendEmail({
+        body: {
+          to,
+          subject,
+          text,
+          html: `<div style="font-family: Arial, sans-serif; padding: 20px; line-height: 1.5;">${this.escapeHtml(text).replace(/\n/g, '<br>')}</div>`,
+        },
+      });
+    } catch (error) {
+      console.warn(`PMS cycle launch email failed for ${to}:`, error);
+    }
+  }
+
+  private formatCycleWindow(startDate: Date, endDate: Date): string {
+    return `${this.formatNotificationDate(startDate)} to ${this.formatNotificationDate(endDate)}`;
+  }
+
+  private formatNotificationDate(value: Date): string {
+    return new Date(value).toLocaleDateString('en-GB');
+  }
+
+  private getPmsPortalUrl(): string | undefined {
+    const baseUrl = process.env.APP_URL || process.env.FRONTEND_URL;
+    if (!baseUrl) {
+      return undefined;
+    }
+
+    return `${baseUrl.replace(/\/$/, '')}/admin/pms`;
+  }
+
+  private userDisplayName(user: any, fallback: string): string {
+    return user?.name || user?.employeeCode || user?.email || fallback;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   private async assertCycleCanBeCancelled(cycle: IAnnualCycle): Promise<void> {
