@@ -384,6 +384,52 @@ export class ObjectiveService extends BaseService {
     );
   }
 
+  async createManagerObjectiveLibraryItem(
+    input: ManagerObjectiveLibraryDraftInput,
+  ): Promise<IManagerObjectiveLibraryItem[]> {
+    const actor = this.requireActor();
+    const managerId = this.toObjectId(actor.actorId, 'actorId');
+    const objective = this.normalizeManagerObjectiveLibraryItem(input, 0);
+    const existingLibrary = await ManagerObjectiveLibrary.findOne({ managerId }).lean();
+    const existingObjectives = (existingLibrary?.objectives ?? []).map((existingObjective) =>
+      this.mapManagerObjectiveLibraryItem(existingObjective),
+    );
+    const objectives = [
+      ...existingObjectives.filter((existingObjective) => existingObjective.localId !== objective.localId),
+      objective,
+    ];
+
+    const library = await ManagerObjectiveLibrary.findOneAndUpdate(
+      { managerId },
+      { $set: { objectives } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean();
+
+    return (library?.objectives ?? []).map((libraryObjective) =>
+      this.mapManagerObjectiveLibraryItem(libraryObjective),
+    );
+  }
+
+  async deleteManagerObjectiveLibraryItem(localId: string): Promise<IManagerObjectiveLibraryItem[]> {
+    const actor = this.requireActor();
+    const managerId = this.toObjectId(actor.actorId, 'actorId');
+    const normalizedLocalId = localId.trim();
+
+    if (!normalizedLocalId) {
+      throw new Error('Objective localId is required');
+    }
+
+    const library = await ManagerObjectiveLibrary.findOneAndUpdate(
+      { managerId },
+      { $pull: { objectives: { localId: normalizedLocalId } } },
+      { new: true },
+    ).lean();
+
+    return (library?.objectives ?? []).map((objective) =>
+      this.mapManagerObjectiveLibraryItem(objective),
+    );
+  }
+
   async listAssignments(mode: AssignmentMode): Promise<AssignmentRecord[]> {
     const actor = this.requireActor();
     const filter: Record<string, unknown> = { isDeleted: false };
