@@ -1826,7 +1826,7 @@ export class CycleService extends BaseService {
       return undefined;
     }
 
-    return `${baseUrl.replace(/\/$/, '')}/admin/pms`;
+    return baseUrl.replace(/\/$/, '');
   }
 
   private userDisplayName(user: any, fallback: string): string {
