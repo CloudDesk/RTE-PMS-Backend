@@ -77,6 +77,16 @@ interface TermReviewBaseInput {
   reviewValues?: TermReviewValueInput[];
 }
 
+const SYSTEM_MANAGED_TERM_REVIEW_FIELD_KEYS = new Set([
+  'manager_comments',
+  'manager_score',
+  'manager_rating',
+  'manager_recommendation',
+  'manager_achievements',
+  'manager_development_observations',
+  'objective_rating',
+]);
+
 export interface SaveTermReviewDraftInput extends TermReviewBaseInput {}
 
 export interface SubmitTermReviewInput extends TermReviewBaseInput {
@@ -196,6 +206,7 @@ export type TermReviewAssignmentRecord = {
   managerName: string;
   templateVersionId?: string;
   reviewConfig: {
+    mode?: 'AUTO' | 'MANUAL';
     objectiveRating: {
       scoreType: string;
       minScore: number;
@@ -435,6 +446,7 @@ export class TermReviewService extends BaseService {
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
+          mode: reviewConfig.mode ?? 'AUTO',
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
         },
@@ -1047,6 +1059,7 @@ export class TermReviewService extends BaseService {
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
+          mode: reviewConfig.mode ?? 'AUTO',
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
         },
@@ -1190,16 +1203,17 @@ export class TermReviewService extends BaseService {
   ): Promise<void> {
     if (!annualAssignment.templateVersionId) return;
 
+    const templateReviewValues = this.getTemplateReviewValues(reviewValues);
     const resolvedFields = await this.resolveManagerReviewFields(
       annualAssignment,
       termAssignment,
-      reviewValues,
+      templateReviewValues,
     );
     const fieldsMap = new Map<string, ResolvedTemplateField>(
       resolvedFields.map((field) => [field.key, field]),
     );
 
-    for (const val of reviewValues) {
+    for (const val of templateReviewValues) {
       const fieldDef = fieldsMap.get(val.fieldKey);
       if (!fieldDef) {
         throw new Error(`Field "${val.fieldKey}" is not visible for Manager Review`);
@@ -1235,7 +1249,7 @@ export class TermReviewService extends BaseService {
     }
 
     if (isSubmit) {
-      const valueMap = new Map(reviewValues.map((value) => [value.fieldKey, value]));
+      const valueMap = new Map(templateReviewValues.map((value) => [value.fieldKey, value]));
       for (const fieldDef of resolvedFields) {
         if (!fieldDef.required || fieldDef.editable !== true) {
           continue;
@@ -1379,9 +1393,14 @@ export class TermReviewService extends BaseService {
     reviewValues: TermReviewValueInput[];
     scoreSnapshot: any;
   } {
+    const templateReviewValues = this.getTemplateReviewValues(input.reviewValues ?? []);
+    const scoringInput = {
+      ...input,
+      reviewValues: templateReviewValues,
+    };
     const mergedReviewValues = this.mergeComputedReviewValues(
-      input.reviewValues ?? [],
-      this.buildComputedReviewValues(input, reviewConfig),
+      templateReviewValues,
+      this.buildComputedReviewValues(scoringInput, reviewConfig),
     );
     const { sectionScores, sectionsSnapshot } = this.scoringService.calculateSectionScores(
       mergedReviewValues,
@@ -1639,7 +1658,7 @@ export class TermReviewService extends BaseService {
     baseValue: Record<string, unknown>,
     isSubmitted: boolean,
   ) {
-    return reviewValues.map((reviewValue) => ({
+    return this.getTemplateReviewValues(reviewValues).map((reviewValue) => ({
       ...baseValue,
       templateFieldId: reviewValue.templateFieldId,
       fieldKey: reviewValue.fieldKey,
@@ -1737,6 +1756,9 @@ export class TermReviewService extends BaseService {
     const context: Record<string, number> = {};
 
     for (const value of input.reviewValues ?? []) {
+      if (this.isSystemManagedReviewValue(value)) {
+        continue;
+      }
       if (
         value.fieldKey?.trim() &&
         value.valueNumber !== undefined &&
@@ -1761,6 +1783,17 @@ export class TermReviewService extends BaseService {
     }
 
     return context;
+  }
+
+  private getTemplateReviewValues(reviewValues: TermReviewValueInput[]): TermReviewValueInput[] {
+    return reviewValues.filter((value) => !this.isSystemManagedReviewValue(value));
+  }
+
+  private isSystemManagedReviewValue(value: TermReviewValueInput): boolean {
+    return (
+      value.sectionKey === 'manager_quarter_review' &&
+      SYSTEM_MANAGED_TERM_REVIEW_FIELD_KEYS.has(value.fieldKey)
+    );
   }
 
   evaluateFormulaExpression(
