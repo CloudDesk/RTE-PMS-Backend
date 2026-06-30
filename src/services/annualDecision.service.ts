@@ -1523,14 +1523,6 @@ export class AnnualDecisionService extends BaseService {
       nextInput.finalRating = existingDecision.finalRating;
     }
 
-    if (isReadOnly(['is_grade_applied', 'isgradeapplied', 'apply_grade_decision', 'applygradedecision'])) {
-      nextInput.isGradeApplied = Boolean(existingDecision.isGradeApplied);
-    }
-
-    if (isReadOnly(['is_merit_applied', 'ismeritapplied', 'apply_merit_decision', 'applymeritdecision'])) {
-      nextInput.isMeritApplied = Boolean(existingDecision.isMeritApplied);
-    }
-
     const existingGradeDetails = existingDecision.gradeDetails as Record<string, unknown> | undefined;
     if (isReadOnly(['grade_details', 'gradedetails'])) {
       nextInput.gradeDetails = existingGradeDetails;

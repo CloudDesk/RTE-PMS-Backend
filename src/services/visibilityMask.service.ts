@@ -95,6 +95,7 @@ export class VisibilityMaskService {
   private canViewGrade(context: VisibilityMaskContext): boolean {
     if (context.hasVisibilityOverride) return true;
     const role = this.getNormalizedRole(context.actorRole);
+    if (role === 'admin' || role === 'director') return true;
     if (role === 'employee') return context.employeeGradeVisible === true;
     if (role === 'manager') return context.managerGradeVisible === true;
     return false;
@@ -103,6 +104,7 @@ export class VisibilityMaskService {
   private canViewMerit(context: VisibilityMaskContext): boolean {
     if (context.hasVisibilityOverride) return true;
     const role = this.getNormalizedRole(context.actorRole);
+    if (role === 'admin' || role === 'director') return true;
     if (role === 'employee') return context.employeeMeritVisible === true;
     if (role === 'manager') return context.managerMeritVisible === true;
     return false;
