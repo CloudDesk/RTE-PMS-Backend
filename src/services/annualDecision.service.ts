@@ -24,6 +24,7 @@ import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
+import { TermReviewValue } from '../models/pms-term-review-value.model';
 import { AuditLog } from '../models/audit-log.model';
 import { auditService } from './audit.service';
 import { visibilityMaskService } from './visibilityMask.service';
@@ -37,7 +38,6 @@ import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IAnnualDecision } from '../models/pms-annual-decision.model';
 import type { IObjective } from '../models/pms-objective.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
-import type { ITermReview } from '../models/pms-term-review.model';
 import type { AppraisalOutcomeType as AppraisalOutcomeTypeType } from '../constants/pms.enums';
 import type { IAnnualDecisionValue } from '../models/pms-annual-decision-value.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
@@ -85,7 +85,7 @@ export interface AnnualSummaryResult {
   };
   termAssignments: Array<Record<string, unknown>>;
   objectives: IObjective[];
-  termReviews: ITermReview[];
+  termReviews: Array<Record<string, unknown>>;
   annualDecisionValues: Array<Record<string, unknown>>;
   calculatedFinalScore?: number;
   finalScoreOverride: Record<string, unknown> | null;
@@ -330,11 +330,29 @@ export class AnnualDecisionService extends BaseService {
 
     const [objectives, termReviews, annualDecision, visibilityConfiguration, cycle] = await Promise.all([
       Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
-      TermReview.find({ termAssignmentId: { $in: termAssignmentIds } }),
+      TermReview.find({ termAssignmentId: { $in: termAssignmentIds }, isDeleted: false }),
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
     ]);
+    const termReviewIds = termReviews.map((review) => review._id);
+    const termReviewValues = termReviewIds.length
+      ? await TermReviewValue.find({
+          termReviewId: { $in: termReviewIds },
+          isDeleted: false,
+        })
+          .sort({ createdAt: 1 })
+          .lean()
+      : [];
+    const termReviewValuesByReviewId = new Map<string, typeof termReviewValues>();
+
+    for (const value of termReviewValues) {
+      const key = value.termReviewId?.toString?.() ?? '';
+      if (!key) continue;
+      const bucket = termReviewValuesByReviewId.get(key) ?? [];
+      bucket.push(value);
+      termReviewValuesByReviewId.set(key, bucket);
+    }
     const calculatedFinalScore = await this.tryCalculateAnnualFinalScore(annualAssignment);
     const finalDecisionStatus =
       annualDecision?.decisionStatus ??
@@ -493,7 +511,30 @@ export class AnnualDecisionService extends BaseService {
         };
       }),
       objectives,
-      termReviews,
+      termReviews: termReviews.map((review) => {
+        const reviewObject =
+          typeof review.toObject === 'function'
+            ? review.toObject()
+            : review;
+        const reviewValues = termReviewValuesByReviewId.get(reviewObject._id.toString()) ?? [];
+
+        return {
+          ...reviewObject,
+          reviewValues: reviewValues.map((value) => ({
+            templateFieldId: value.templateFieldId,
+            fieldKey: value.fieldKey,
+            sectionKey: value.sectionKey,
+            roleCode: value.roleCode,
+            actorUserId: value.actorUserId?.toString?.(),
+            workflowStage: value.workflowStage,
+            valueJson: value.valueJson,
+            valueText: value.valueText,
+            valueNumber: value.valueNumber,
+            valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+            valueStatus: value.valueStatus,
+          })),
+        };
+      }),
       annualDecisionValues: annualDecisionValues.map((value) => ({
         templateFieldId: value.templateFieldId,
         fieldKey: value.fieldKey,
@@ -1596,10 +1637,17 @@ export class AnnualDecisionService extends BaseService {
     if (isReadOnly(['merit_details', 'meritdetails'])) {
       nextInput.meritDetails = existingMeritDetails;
     } else if (nextInput.meritDetails) {
+      const preservedMeritPercentage =
+        existingMeritDetails?.percentage ??
+        existingMeritDetails?.meritPercentage ??
+        existingMeritDetails?.amount;
       nextInput.meritDetails = {
         ...nextInput.meritDetails,
         ...(isReadOnly(['merit_amount', 'meritamount', 'merit_percentage', 'meritpercentage'])
-          ? { amount: existingMeritDetails?.amount }
+          ? {
+              percentage: preservedMeritPercentage,
+              meritPercentage: preservedMeritPercentage,
+            }
           : {}),
         ...(isReadOnly(['merit_notes', 'meritnotes', 'merit_note', 'meritnote'])
           ? { notes: existingMeritDetails?.notes }
@@ -1696,7 +1744,11 @@ export class AnnualDecisionService extends BaseService {
     );
     setAliases(
       ['merit_amount', 'meritamount', 'merit_percentage', 'meritpercentage'],
-      meritDetails.amount ?? '',
+      meritDetails.percentage ??
+        meritDetails.meritPercentage ??
+        meritDetails.amount ??
+        meritDetails.meritAmount ??
+        '',
     );
     setAliases(
       ['merit_notes', 'meritnotes', 'merit_note'],
