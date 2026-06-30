@@ -24,11 +24,7 @@ import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
-import {
-  EmployeeAchievementSubmission,
-  EmployeeAchievementSubmissionStatus,
-  type IEmployeeAchievementSubmission,
-} from '../models/pms-employee-achievement-submission.model';
+import { AuditLog } from '../models/audit-log.model';
 import { auditService } from './audit.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import {
@@ -396,6 +392,52 @@ export class AnnualDecisionService extends BaseService {
           isDeleted: false,
         }).lean()
       : [];
+    const termAssignmentIdsNeedingTemplateValueFallback = effectiveTermAssignments
+      .filter((termAssignment) => {
+        const termAssignmentObject =
+          typeof termAssignment.toObject === 'function'
+            ? termAssignment.toObject()
+            : termAssignment;
+        const termSummary =
+          (termAssignmentObject.termSummary as Record<string, unknown> | undefined) ?? {};
+        const values = termSummary.objectiveTemplateValues;
+        return !Array.isArray(values) || values.length === 0;
+      })
+      .map((termAssignment) => termAssignment._id.toString());
+    const objectiveTemplateValueAuditFallbackByTermId = new Map<string, Array<Record<string, any>>>();
+
+    if (termAssignmentIdsNeedingTemplateValueFallback.length > 0) {
+      const termAssignmentAuditEntityIds = [
+        ...termAssignmentIdsNeedingTemplateValueFallback,
+        ...termAssignmentIdsNeedingTemplateValueFallback
+          .filter((termAssignmentId) => Types.ObjectId.isValid(termAssignmentId))
+          .map((termAssignmentId) => new Types.ObjectId(termAssignmentId)),
+      ];
+      const latestTemplateValueAudits = await AuditLog.find({
+        entityType: 'TERM_ASSIGNMENT',
+        action: 'PMS_OBJECTIVE_TEMPLATE_VALUES_UPDATED',
+        entityId: { $in: termAssignmentAuditEntityIds },
+      })
+        .sort({ timestamp: -1, createdAt: -1 })
+        .lean();
+      const seenTermIds = new Set<string>();
+
+      for (const audit of latestTemplateValueAudits) {
+        const termAssignmentId = String(audit.entityId ?? '');
+        if (!termAssignmentId || seenTermIds.has(termAssignmentId)) continue;
+        seenTermIds.add(termAssignmentId);
+
+        const newValue =
+          audit.newValue && typeof audit.newValue === 'object'
+            ? (audit.newValue as Record<string, unknown>)
+            : {};
+        const values = newValue.objectiveTemplateValues;
+        objectiveTemplateValueAuditFallbackByTermId.set(
+          termAssignmentId,
+          Array.isArray(values) ? (values as Array<Record<string, any>>) : [],
+        );
+      }
+    }
 
     const [correctionHistory, preReopenSnapshots] = annualDecision
       ? await Promise.all([
@@ -451,8 +493,15 @@ export class AnnualDecisionService extends BaseService {
             : termAssignment;
         const termSummary =
           (termAssignmentObject.termSummary as Record<string, unknown> | undefined) ?? {};
+        const summaryTemplateValues = Array.isArray(termSummary.objectiveTemplateValues)
+          ? (termSummary.objectiveTemplateValues as Array<Record<string, any>>)
+          : [];
+        const objectiveTemplateSourceValues =
+          summaryTemplateValues.length > 0
+            ? summaryTemplateValues
+            : objectiveTemplateValueAuditFallbackByTermId.get(termAssignmentObject._id.toString()) ?? [];
         const objectiveTemplateValues = this.mapTemplateObjectiveValues(
-          termSummary.objectiveTemplateValues as Array<Record<string, any>> | undefined,
+          objectiveTemplateSourceValues,
         );
 
         return {

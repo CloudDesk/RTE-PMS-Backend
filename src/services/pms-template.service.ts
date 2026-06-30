@@ -1392,7 +1392,7 @@ export class PmsTemplateService extends BaseService {
     if (source === 'TEMPLATE_PREDEFINED') {
       return {
         bucketKey: 'template_predefined',
-        label: 'Template Predefined Objectives',
+        label: 'Admin Objectives',
         source,
         owner: 'SYSTEM',
         bucketWeightage,
