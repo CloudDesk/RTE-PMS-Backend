@@ -378,17 +378,39 @@ export class PmsCommunicationService extends BaseService {
       employeeName: annualAssignment.employeeSnapshot?.name ?? employee?.name ?? '',
       employeeCode: annualAssignment.employeeSnapshot?.employeeCode ?? employee?.employeeCode ?? '',
       appraisalYear: new Date().getFullYear(),
-      appraisalOutcomeType: annualDecision.appraisalOutcomeType,
+      appraisalOutcomeType: this.formatEnumDisplayValue(annualDecision.appraisalOutcomeType),
       isGradeApplied: annualDecision.isGradeApplied,
       isMeritApplied: annualDecision.isMeritApplied,
-      finalGrade: gradeDetails.gradeValue ?? gradeDetails.finalGrade ?? gradeDetails.grade ?? '',
+      finalGrade: this.formatEnumDisplayValue(
+        gradeDetails.gradeValue ?? gradeDetails.finalGrade ?? gradeDetails.grade ?? '',
+      ),
       meritAmount: meritDetails.meritAmount ?? meritDetails.amount ?? '',
       meritPercentage: meritDetails.meritPercentage ?? meritDetails.percentage ?? '',
       finalScore: annualDecision.finalScore ?? '',
-      finalRating: annualDecision.finalRating ?? '',
-      nilReason: annualDecision.nilReason ?? '',
-      managementRemarks: annualDecision.managementRemarks ?? '',
+      finalRating: this.formatEnumDisplayValue(annualDecision.finalRating ?? ''),
+      nilReason: this.capitalizeFirstLetter(annualDecision.nilReason ?? ''),
+      managementRemarks: this.capitalizeFirstLetter(annualDecision.managementRemarks ?? ''),
     };
+  }
+
+  private formatEnumDisplayValue(value: unknown): string {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+
+    return text
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .toLowerCase()
+      .split(' ')
+      .map((word) => word ? `${word[0].toUpperCase()}${word.slice(1)}` : word)
+      .join(' ');
+  }
+
+  private capitalizeFirstLetter(value: unknown): string {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+
+    return `${text[0].toUpperCase()}${text.slice(1)}`;
   }
 
   private renderTemplate(template: string, data: Record<string, unknown>): string {
