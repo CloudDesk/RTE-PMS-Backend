@@ -458,10 +458,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
             $set: {
               achievementItems: submitItems,
               achievementValues,
-              status: EmployeeAchievementSubmissionStatus.LOCKED,
+              status: EmployeeAchievementSubmissionStatus.SUBMITTED,
               submittedBy: actorObjectId,
               submittedAt: now,
-              lockedAt: now,
+              lockedAt: undefined,
               updatedBy: actorObjectId,
               auditMetadata: {
                 todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
@@ -481,11 +481,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           assessmentTermCode: termAssignment.assessmentTermCode,
           achievementItems: submitItems,
           achievementValues,
-          status: EmployeeAchievementSubmissionStatus.LOCKED,
+          status: EmployeeAchievementSubmissionStatus.SUBMITTED,
           draftSavedAt: now,
           submittedBy: actorObjectId,
           submittedAt: now,
-          lockedAt: now,
+          lockedAt: undefined,
           auditMetadata: {
             todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
           },
