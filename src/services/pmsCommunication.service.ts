@@ -80,7 +80,7 @@ export class PmsCommunicationService extends BaseService {
       dispatchStatus: { $in: ['SENT', 'SKIPPED'] },
       resendOf: input.resendOf ? new Types.ObjectId(input.resendOf) : null,
     });
-    if (existingSent && !input.resendOf) {
+    if (existingSent && !input.resendOf && !input.allowSubmittedDecisionDispatch) {
       throw new Error('Communication already processed for this annual assignment');
     }
 
@@ -109,7 +109,9 @@ export class PmsCommunicationService extends BaseService {
         });
 
         annualAssignment.communicationStatus = 'SKIPPED';
-        annualAssignment.annualState = AnnualWorkflowState.COMMUNICATION_SENT;
+        if (!input.allowSubmittedDecisionDispatch) {
+          annualAssignment.annualState = AnnualWorkflowState.COMMUNICATION_SENT;
+        }
         annualAssignment.version += 1;
         await annualAssignment.save();
 
@@ -191,7 +193,9 @@ export class PmsCommunicationService extends BaseService {
     await dispatch.save();
 
     rendered.annualAssignment.communicationStatus = 'SENT';
-    rendered.annualAssignment.annualState = AnnualWorkflowState.COMMUNICATION_SENT;
+    if (!input.allowSubmittedDecisionDispatch) {
+      rendered.annualAssignment.annualState = AnnualWorkflowState.COMMUNICATION_SENT;
+    }
     rendered.annualAssignment.version += 1;
     await rendered.annualAssignment.save();
 
