@@ -1,0 +1,763 @@
+
+> tendly-api@1.0.0 dev
+> nodemon src/local.ts
+
+[33m[nodemon] 3.1.9[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: ts,json[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+D:\PMS\RTE-PMS-Backend\uploads parenDir 
+D:\PMS\RTE-PMS-Backend\src currentDir
+D:\PMS\RTE-PMS-Backend\src\app.ts filename
+D:\PMS\RTE-PMS-Backend\src dirname
+D:\PMS\RTE-PMS-Backend\src dirname in app.ts
+Starting application...
+PORT environment variable: 5800
+[DB] Connecting to MongoDB (attempt 1/3, serverSelectionTimeoutMS=5000, connectTimeoutMS=10000)...
+{"level":40,"time":1782796890789,"pid":24244,"hostname":"CloudDesk-SriramCD0235","msg":"\"root\" path \"D:\\PMS\\RTE-PMS-Backend\\uploads\" must exist"}
+Attempting to listen on 0.0.0.0:5800
+✅ Server successfully listening at http://127.0.0.1:5800
+{"level":30,"time":1782796891048,"pid":24244,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://127.0.0.1:5800"}
+{"level":30,"time":1782796891048,"pid":24244,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://192.168.0.104:5800"}
+[DB] MongoDB connected successfully in 791ms
+[DB] Dropped old email_1 index; app will use partial unique index (portalAccess: true). No data removed.
+[AccessService] Loaded 17 permissions (TTL refresh every 300s)
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+D:\PMS\RTE-PMS-Backend\uploads parenDir 
+D:\PMS\RTE-PMS-Backend\src currentDir
+D:\PMS\RTE-PMS-Backend\src\app.ts filename
+D:\PMS\RTE-PMS-Backend\src dirname
+D:\PMS\RTE-PMS-Backend\src dirname in app.ts
+Starting application...
+PORT environment variable: 5800
+[DB] Connecting to MongoDB (attempt 1/3, serverSelectionTimeoutMS=5000, connectTimeoutMS=10000)...
+{"level":40,"time":1782796979891,"pid":22816,"hostname":"CloudDesk-SriramCD0235","msg":"\"root\" path \"D:\\PMS\\RTE-PMS-Backend\\uploads\" must exist"}
+Attempting to listen on 0.0.0.0:5800
+✅ Server successfully listening at http://127.0.0.1:5800
+{"level":30,"time":1782796980302,"pid":22816,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://127.0.0.1:5800"}
+{"level":30,"time":1782796980302,"pid":22816,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://192.168.0.104:5800"}
+[DB] MongoDB connected successfully in 1028ms
+[DB] Dropped old email_1 index; app will use partial unique index (portalAccess: true). No data removed.
+[AccessService] Loaded 17 permissions (TTL refresh every 300s)
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+D:\PMS\RTE-PMS-Backend\uploads parenDir 
+D:\PMS\RTE-PMS-Backend\src currentDir
+D:\PMS\RTE-PMS-Backend\src\app.ts filename
+D:\PMS\RTE-PMS-Backend\src dirname
+D:\PMS\RTE-PMS-Backend\src dirname in app.ts
+Starting application...
+PORT environment variable: 5800
+[DB] Connecting to MongoDB (attempt 1/3, serverSelectionTimeoutMS=5000, connectTimeoutMS=10000)...
+{"level":40,"time":1782797008875,"pid":6820,"hostname":"CloudDesk-SriramCD0235","msg":"\"root\" path \"D:\\PMS\\RTE-PMS-Backend\\uploads\" must exist"}
+Attempting to listen on 0.0.0.0:5800
+✅ Server successfully listening at http://127.0.0.1:5800
+{"level":30,"time":1782797009226,"pid":6820,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://127.0.0.1:5800"}
+{"level":30,"time":1782797009226,"pid":6820,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://192.168.0.104:5800"}
+[DB] MongoDB connected successfully in 950ms
+[DB] Dropped old email_1 index; app will use partial unique index (portalAccess: true). No data removed.
+[AccessService] Loaded 17 permissions (TTL refresh every 300s)
+{"level":30,"time":1782797010974,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1","req":{"method":"GET","url":"/lovs?limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51204},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+Empty <[Object: null prototype] {}> { limit: 100, page: 1 } 2 query
+{"level":30,"time":1782797011004,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51206},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797011385,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1","res":{"statusCode":200},"responseTime":409.4936999976635,"msg":"request completed"}
+{"level":30,"time":1782797011541,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2","res":{"statusCode":200},"responseTime":537.3998000025749,"msg":"request completed"}
+{"level":30,"time":1782797011570,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51210},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797012384,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3","res":{"statusCode":200},"responseTime":813.8645000010729,"msg":"request completed"}
+{"level":30,"time":1782797012401,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-4","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":61992},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797012405,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-5","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":61993},"msg":"incoming request"}
+{"level":30,"time":1782797012525,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-4","res":{"statusCode":200},"responseTime":123.58799999952316,"msg":"request completed"}
+{"level":30,"time":1782797012579,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-5","res":{"statusCode":200},"responseTime":173.94220000505447,"msg":"request completed"}
+{"level":30,"time":1782797013645,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-6","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60719},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797013790,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-6","res":{"statusCode":200},"responseTime":144.5194000005722,"msg":"request completed"}
+{"level":30,"time":1782797013800,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-7","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60721},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797013991,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-7","res":{"statusCode":200},"responseTime":191.0992999970913,"msg":"request completed"}
+{"level":30,"time":1782797014899,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-8","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51880},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797014972,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-8","res":{"statusCode":200},"responseTime":72.04630000889301,"msg":"request completed"}
+{"level":30,"time":1782797016046,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-9","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":61440},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797020631,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-9","res":{"statusCode":200},"responseTime":4584.358899995685,"msg":"request completed"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797020635,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-a","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63713},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797020646,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-b","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63936},"msg":"incoming request"}
+{"level":30,"time":1782797020648,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-c","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63937},"msg":"incoming request"}
+{"level":30,"time":1782797027568,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-b","res":{"statusCode":200},"responseTime":6922.337200000882,"msg":"request completed"}
+{"level":30,"time":1782797027569,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-c","res":{"statusCode":200},"responseTime":6921.15110000968,"msg":"request completed"}
+{"level":30,"time":1782797028270,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-a","res":{"statusCode":200},"responseTime":7634.721900001168,"msg":"request completed"}
+{"level":30,"time":1782797028275,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-d","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64966},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797029049,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-d","res":{"statusCode":200},"responseTime":773.8793999999762,"msg":"request completed"}
+{"level":30,"time":1782797037170,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-e","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58549},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797037271,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-e","res":{"statusCode":200},"responseTime":101.69560000300407,"msg":"request completed"}
+{"level":30,"time":1782797037294,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-f","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57175},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797037647,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-f","res":{"statusCode":200},"responseTime":353.0577000081539,"msg":"request completed"}
+{"level":30,"time":1782797037657,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-g","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59560},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797037660,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-h","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59561},"msg":"incoming request"}
+{"level":30,"time":1782797037715,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-g","res":{"statusCode":200},"responseTime":57.14309999346733,"msg":"request completed"}
+{"level":30,"time":1782797037717,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-h","res":{"statusCode":200},"responseTime":56.21999999880791,"msg":"request completed"}
+{"level":30,"time":1782797039855,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-i","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":61283},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797041694,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-i","res":{"statusCode":200},"responseTime":1839.1697999984026,"msg":"request completed"}
+{"level":30,"time":1782797042788,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-j","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57314},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797042867,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-j","res":{"statusCode":200},"responseTime":79.67930001020432,"msg":"request completed"}
+{"level":30,"time":1782797043372,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-k","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57316},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797043571,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-k","res":{"statusCode":200},"responseTime":199.35999999940395,"msg":"request completed"}
+{"level":30,"time":1782797043577,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-l","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57318},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797043965,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-l","res":{"statusCode":200},"responseTime":387.37560001015663,"msg":"request completed"}
+{"level":30,"time":1782797046445,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-m","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64717},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797046606,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-m","res":{"statusCode":200},"responseTime":160.70839999616146,"msg":"request completed"}
+{"level":30,"time":1782797047059,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-n","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56995},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797047659,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-o","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50488},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797047671,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-n","res":{"statusCode":200},"responseTime":611.7386000007391,"msg":"request completed"}
+{"level":30,"time":1782797047707,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-p","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56174},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797047713,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-q","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56176},"msg":"incoming request"}
+{"level":30,"time":1782797047774,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-p","res":{"statusCode":200},"responseTime":66.3973000049591,"msg":"request completed"}
+{"level":30,"time":1782797047789,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-q","res":{"statusCode":200},"responseTime":75.6444000005722,"msg":"request completed"}
+{"level":30,"time":1782797049036,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-o","res":{"statusCode":200},"responseTime":1376.3915000110865,"msg":"request completed"}
+{"level":30,"time":1782797049870,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-r","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56178},"msg":"incoming request"}
+undefined Token ß
+{"level":30,"time":1782797049871,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-r","res":{"statusCode":401},"responseTime":0.7328999936580658,"msg":"request completed"}
+{"level":30,"time":1782797091531,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-s","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63930},"msg":"incoming request"}
+undefined Token ß
+{"level":30,"time":1782797091532,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-s","res":{"statusCode":401},"responseTime":0.6665000021457672,"msg":"request completed"}
+{"level":30,"time":1782797108969,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-t","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60584},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797109295,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-t","res":{"statusCode":200},"responseTime":325.41950000822544,"msg":"request completed"}
+{"level":30,"time":1782797184610,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-u","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64839},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797184664,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-u","res":{"statusCode":200},"responseTime":54.52480000257492,"msg":"request completed"}
+{"level":30,"time":1782797191989,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-v","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":54850},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797192133,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-v","res":{"statusCode":200},"responseTime":143.9860000014305,"msg":"request completed"}
+{"level":30,"time":1782797192152,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-w","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&active=true&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55736},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797192161,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-x","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55737},"msg":"incoming request"}
+{"level":30,"time":1782797192209,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-w","res":{"statusCode":200},"responseTime":56.6363999992609,"msg":"request completed"}
+{"level":30,"time":1782797192212,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-x","res":{"statusCode":200},"responseTime":50.75499999523163,"msg":"request completed"}
+{"level":30,"time":1782797194479,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-y","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64894},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797194622,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-y","res":{"statusCode":200},"responseTime":142.10799999535084,"msg":"request completed"}
+{"level":30,"time":1782797194629,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-z","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51528},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797194804,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-z","res":{"statusCode":200},"responseTime":174.8568000048399,"msg":"request completed"}
+{"level":30,"time":1782797195158,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-10","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":62432},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797195220,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-10","res":{"statusCode":200},"responseTime":62.42159999907017,"msg":"request completed"}
+{"level":30,"time":1782797195321,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-11","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55809},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797195368,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-11","res":{"statusCode":200},"responseTime":46.96979999542236,"msg":"request completed"}
+{"level":30,"time":1782797195380,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-12","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57758},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797195549,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-12","res":{"statusCode":200},"responseTime":168.0591000020504,"msg":"request completed"}
+{"level":30,"time":1782797195561,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-13","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63545},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797195563,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-14","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63546},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797195610,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-13","res":{"statusCode":200},"responseTime":48.86590000987053,"msg":"request completed"}
+{"level":30,"time":1782797195612,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-14","res":{"statusCode":200},"responseTime":48.512600004673004,"msg":"request completed"}
+{"level":30,"time":1782797234206,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-15","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":53041},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797235507,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-15","res":{"statusCode":200},"responseTime":1300.9460000097752,"msg":"request completed"}
+{"level":30,"time":1782797331852,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-16","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57986},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797332000,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-16","res":{"statusCode":200},"responseTime":147.94489999115467,"msg":"request completed"}
+{"level":30,"time":1782797332015,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-17","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57988},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797332201,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-17","res":{"statusCode":200},"responseTime":186.2546000033617,"msg":"request completed"}
+{"level":30,"time":1782797332745,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-18","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64641},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797332806,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-18","res":{"statusCode":200},"responseTime":60.60110001266003,"msg":"request completed"}
+{"level":30,"time":1782797333026,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-19","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64220},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797333086,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-19","res":{"statusCode":200},"responseTime":60.29780000448227,"msg":"request completed"}
+{"level":30,"time":1782797333301,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1a","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60094},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797333435,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1a","res":{"statusCode":200},"responseTime":133.43090000748634,"msg":"request completed"}
+{"level":30,"time":1782797333444,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1b","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":53324},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797333447,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1c","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":53323},"msg":"incoming request"}
+{"level":30,"time":1782797333495,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1b","res":{"statusCode":200},"responseTime":50.11720000207424,"msg":"request completed"}
+{"level":30,"time":1782797333507,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1c","res":{"statusCode":200},"responseTime":59.286300003528595,"msg":"request completed"}
+{"level":30,"time":1782797336159,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1d","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59600},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797336871,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1d","res":{"statusCode":200},"responseTime":711.6282999962568,"msg":"request completed"}
+{"level":30,"time":1782797510577,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1e","req":{"method":"GET","url":"/lovs?limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58121},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+Empty <[Object: null prototype] {}> { limit: 100, page: 1 } 2 query
+{"level":30,"time":1782797510594,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1f","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58123},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797510611,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1e","res":{"statusCode":200},"responseTime":33.338600009679794,"msg":"request completed"}
+{"level":30,"time":1782797511371,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1f","res":{"statusCode":200},"responseTime":777.0251999944448,"msg":"request completed"}
+{"level":30,"time":1782797622964,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1g","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50742},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797623139,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1g","res":{"statusCode":200},"responseTime":174.3095999956131,"msg":"request completed"}
+{"level":30,"time":1782797623149,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1h","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50744},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797623322,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1h","res":{"statusCode":200},"responseTime":172.07060000300407,"msg":"request completed"}
+{"level":30,"time":1782797623402,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1i","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63618},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797623458,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1i","res":{"statusCode":200},"responseTime":55.58519999682903,"msg":"request completed"}
+{"level":30,"time":1782797623849,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1j","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63620},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797623899,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1j","res":{"statusCode":200},"responseTime":49.514899998903275,"msg":"request completed"}
+{"level":30,"time":1782797624131,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1k","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50877},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797624279,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1k","res":{"statusCode":200},"responseTime":148.30539999902248,"msg":"request completed"}
+{"level":30,"time":1782797624289,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1l","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59238},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797624293,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1m","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59237},"msg":"incoming request"}
+{"level":30,"time":1782797624337,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1l","res":{"statusCode":200},"responseTime":48.334700003266335,"msg":"request completed"}
+{"level":30,"time":1782797624343,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1m","res":{"statusCode":200},"responseTime":50.52130000293255,"msg":"request completed"}
+{"level":30,"time":1782797625417,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1n","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58797},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782797626242,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1n","res":{"statusCode":200},"responseTime":824.8520999997854,"msg":"request completed"}
+{"level":30,"time":1782798023940,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1o","req":{"method":"GET","url":"/lovs?limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51753},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+Empty <[Object: null prototype] {}> { limit: 100, page: 1 } 2 query
+{"level":30,"time":1782798023986,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1o","res":{"statusCode":200},"responseTime":45.72909998893738,"msg":"request completed"}
+{"level":30,"time":1782798023995,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1p","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51755},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798024791,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1p","res":{"statusCode":200},"responseTime":795.277199998498,"msg":"request completed"}
+{"level":30,"time":1782798143517,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1q","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55715},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798143692,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1q","res":{"statusCode":200},"responseTime":175.21379999816418,"msg":"request completed"}
+{"level":30,"time":1782798143697,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1r","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55718},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798143904,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1r","res":{"statusCode":200},"responseTime":207.3115999996662,"msg":"request completed"}
+{"level":30,"time":1782798195874,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1s","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50395},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798195921,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1s","res":{"statusCode":200},"responseTime":47.30249999463558,"msg":"request completed"}
+{"level":30,"time":1782798196133,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1t","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50397},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798196318,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1t","res":{"statusCode":200},"responseTime":184.2930999994278,"msg":"request completed"}
+{"level":30,"time":1782798196340,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1u","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":53590},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798196352,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1v","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":53592},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798196405,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1u","res":{"statusCode":200},"responseTime":64.01900000870228,"msg":"request completed"}
+{"level":30,"time":1782798196410,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1v","res":{"statusCode":200},"responseTime":57.565500006079674,"msg":"request completed"}
+{"level":30,"time":1782798197411,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1w","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":54979},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798198155,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1w","res":{"statusCode":200},"responseTime":743.5120999962091,"msg":"request completed"}
+{"level":30,"time":1782798206340,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1x","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64626},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798206395,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1x","res":{"statusCode":200},"responseTime":55.28989998996258,"msg":"request completed"}
+{"level":30,"time":1782798206640,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1y","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51897},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798206768,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1y","res":{"statusCode":200},"responseTime":127.69410000741482,"msg":"request completed"}
+{"level":30,"time":1782798206781,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1z","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58922},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798206953,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-1z","res":{"statusCode":200},"responseTime":171.999200001359,"msg":"request completed"}
+{"level":30,"time":1782798219630,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-20","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":62865},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798219679,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-20","res":{"statusCode":200},"responseTime":48.46150000393391,"msg":"request completed"}
+{"level":30,"time":1782798219877,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-21","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55801},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798219949,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-21","res":{"statusCode":200},"responseTime":71.74570000171661,"msg":"request completed"}
+{"level":30,"time":1782798219986,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-22","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":65446},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798220145,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-22","res":{"statusCode":200},"responseTime":158.62369999289513,"msg":"request completed"}
+{"level":30,"time":1782798220160,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-23","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51306},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798220165,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-24","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":51307},"msg":"incoming request"}
+{"level":30,"time":1782798220215,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-23","res":{"statusCode":200},"responseTime":54.18359999358654,"msg":"request completed"}
+{"level":30,"time":1782798220220,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-24","res":{"statusCode":200},"responseTime":55.10480000078678,"msg":"request completed"}
+{"level":30,"time":1782798223131,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-25","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50106},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798223296,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-25","res":{"statusCode":200},"responseTime":165.46250000596046,"msg":"request completed"}
+{"level":30,"time":1782798223303,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-26","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60057},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782798223476,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-26","res":{"statusCode":200},"responseTime":172.91419999301434,"msg":"request completed"}
+{"level":30,"time":1782799543707,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-27","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55161},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799543763,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-27","res":{"statusCode":200},"responseTime":56.22010000050068,"msg":"request completed"}
+{"level":30,"time":1782799544400,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-28","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":50017},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799544495,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-28","res":{"statusCode":200},"responseTime":93.81019999086857,"msg":"request completed"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+{"level":30,"time":1782799545858,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-29","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64909},"msg":"incoming request"}
+Final in Authß
+{"level":30,"time":1782799546054,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-29","res":{"statusCode":200},"responseTime":195.5383000075817,"msg":"request completed"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799546076,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2a","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60345},"msg":"incoming request"}
+{"level":30,"time":1782799546094,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2b","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60346},"msg":"incoming request"}
+{"level":30,"time":1782799546146,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2a","res":{"statusCode":200},"responseTime":69.88609999418259,"msg":"request completed"}
+{"level":30,"time":1782799546150,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2b","res":{"statusCode":200},"responseTime":55.72820000350475,"msg":"request completed"}
+{"level":30,"time":1782799547381,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2c","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63480},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799547565,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2c","res":{"statusCode":200},"responseTime":183.9028000086546,"msg":"request completed"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+{"level":30,"time":1782799548247,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2d","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":52516},"msg":"incoming request"}
+Final in Authß
+{"level":30,"time":1782799548418,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2d","res":{"statusCode":200},"responseTime":171.10790000855923,"msg":"request completed"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799548431,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2e","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":52911},"msg":"incoming request"}
+{"level":30,"time":1782799548640,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2e","res":{"statusCode":200},"responseTime":208.68819999694824,"msg":"request completed"}
+{"level":30,"time":1782799548749,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2f","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":54442},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799548805,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2f","res":{"statusCode":200},"responseTime":55.92689999938011,"msg":"request completed"}
+{"level":30,"time":1782799549252,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2g","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57312},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799549343,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2g","res":{"statusCode":200},"responseTime":91.34130001068115,"msg":"request completed"}
+{"level":30,"time":1782799553248,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2h","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58530},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799553411,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2h","res":{"statusCode":200},"responseTime":163.17039999365807,"msg":"request completed"}
+{"level":30,"time":1782799553428,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2i","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57644},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799553431,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2j","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57645},"msg":"incoming request"}
+{"level":30,"time":1782799553481,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2i","res":{"statusCode":200},"responseTime":52.2994000017643,"msg":"request completed"}
+{"level":30,"time":1782799553488,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2j","res":{"statusCode":200},"responseTime":56.84749999642372,"msg":"request completed"}
+{"level":30,"time":1782799556384,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2k","req":{"method":"GET","url":"/pms/management/employees/6a3cfc10e02024630468efa2/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59596},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799557301,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2k","res":{"statusCode":200},"responseTime":916.0675999969244,"msg":"request completed"}
+{"level":30,"time":1782799578155,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2l","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56934},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799578254,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2l","res":{"statusCode":200},"responseTime":99.0472000092268,"msg":"request completed"}
+{"level":30,"time":1782799579156,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2m","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":53699},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799579382,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2m","res":{"statusCode":200},"responseTime":224.79969999194145,"msg":"request completed"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782799579409,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2n","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59982},"msg":"incoming request"}
+{"level":30,"time":1782799579602,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2n","res":{"statusCode":200},"responseTime":192.84309999644756,"msg":"request completed"}
+{"level":30,"time":1782801785229,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2o","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":54016},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782801785367,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2o","res":{"statusCode":200},"responseTime":138.2475000023842,"msg":"request completed"}
+{"level":30,"time":1782801785373,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2p","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":54018},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782801785549,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2p","res":{"statusCode":200},"responseTime":176.26009999215603,"msg":"request completed"}
+{"level":30,"time":1782801804455,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2q","req":{"method":"GET","url":"/lovs?limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60993},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+Empty <[Object: null prototype] {}> { limit: 100, page: 1 } 2 query
+{"level":30,"time":1782801804490,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2q","res":{"statusCode":200},"responseTime":34.115099996328354,"msg":"request completed"}
+{"level":30,"time":1782801804520,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2r","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60995},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782801804668,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2r","res":{"statusCode":200},"responseTime":147.81700000166893,"msg":"request completed"}
+{"level":30,"time":1782801804680,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2s","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60997},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782801804866,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2s","res":{"statusCode":200},"responseTime":185.16970001161098,"msg":"request completed"}
+{"level":30,"time":1782801934387,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2t","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":61423},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782801934514,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2t","res":{"statusCode":200},"responseTime":126.8399000018835,"msg":"request completed"}
+{"level":30,"time":1782801934522,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2u","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":61425},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782801934689,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2u","res":{"statusCode":200},"responseTime":167.587700009346,"msg":"request completed"}
+{"level":30,"time":1782802368080,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2v","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63507},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802368179,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2v","res":{"statusCode":200},"responseTime":98.0557000041008,"msg":"request completed"}
+{"level":30,"time":1782802368744,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2w","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63509},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802368803,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2w","res":{"statusCode":200},"responseTime":58.79739999771118,"msg":"request completed"}
+{"level":30,"time":1782802368945,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2x","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63511},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802369059,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2x","res":{"statusCode":200},"responseTime":114.19579999148846,"msg":"request completed"}
+{"level":30,"time":1782802369127,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2y","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64223},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802369925,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2y","res":{"statusCode":200},"responseTime":797.5865999907255,"msg":"request completed"}
+{"level":30,"time":1782802369933,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2z","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55592},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802369936,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-30","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":55593},"msg":"incoming request"}
+{"level":30,"time":1782802370022,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-2z","res":{"statusCode":200},"responseTime":88.94629999995232,"msg":"request completed"}
+{"level":30,"time":1782802370071,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-30","res":{"statusCode":200},"responseTime":135.30779999494553,"msg":"request completed"}
+{"level":30,"time":1782802373075,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-31","req":{"method":"GET","url":"/pms/management/employees/6a3d0c46e02024630468f77b/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":54661},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802374161,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-31","res":{"statusCode":200},"responseTime":1085.9685000032187,"msg":"request completed"}
+{"level":30,"time":1782802402664,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-32","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56706},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802402724,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-32","res":{"statusCode":200},"responseTime":59.331399992108345,"msg":"request completed"}
+{"level":30,"time":1782802402888,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-33","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56632},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802403054,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-33","res":{"statusCode":200},"responseTime":165.6571999937296,"msg":"request completed"}
+{"level":30,"time":1782802403064,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-34","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&active=true&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63338},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802403067,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-35","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63339},"msg":"incoming request"}
+{"level":30,"time":1782802403115,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-34","res":{"statusCode":200},"responseTime":50.32600000500679,"msg":"request completed"}
+{"level":30,"time":1782802403116,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-35","res":{"statusCode":200},"responseTime":49.52009999752045,"msg":"request completed"}
+{"level":30,"time":1782802405786,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-36","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63031},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802405935,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-36","res":{"statusCode":200},"responseTime":148.1224000006914,"msg":"request completed"}
+{"level":30,"time":1782802405943,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-37","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":61393},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802406125,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-37","res":{"statusCode":200},"responseTime":181.84020000696182,"msg":"request completed"}
+{"level":30,"time":1782802406696,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-38","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56744},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802406757,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-38","res":{"statusCode":200},"responseTime":60.91000001132488,"msg":"request completed"}
+{"level":30,"time":1782802406950,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-39","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63192},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802407094,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-39","res":{"statusCode":200},"responseTime":144.13350000977516,"msg":"request completed"}
+{"level":30,"time":1782802407110,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3a","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58095},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802407112,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3b","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58096},"msg":"incoming request"}
+{"level":30,"time":1782802407160,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3a","res":{"statusCode":200},"responseTime":50.066799998283386,"msg":"request completed"}
+{"level":30,"time":1782802407162,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3b","res":{"statusCode":200},"responseTime":50.23929999768734,"msg":"request completed"}
+{"level":30,"time":1782802408240,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3c","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63152},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802408392,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3c","res":{"statusCode":200},"responseTime":151.77920000255108,"msg":"request completed"}
+{"level":30,"time":1782802408397,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3d","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56318},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802408596,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3d","res":{"statusCode":200},"responseTime":199.22109998762608,"msg":"request completed"}
+{"level":30,"time":1782802435983,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3e","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":57305},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802436066,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3e","res":{"statusCode":200},"responseTime":82.62650001049042,"msg":"request completed"}
+{"level":30,"time":1782802436946,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3f","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58047},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802437013,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3f","res":{"statusCode":200},"responseTime":66.55600000917912,"msg":"request completed"}
+{"level":30,"time":1782802437426,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3g","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":63658},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802437491,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3g","res":{"statusCode":200},"responseTime":64.1063000112772,"msg":"request completed"}
+{"level":30,"time":1782802437515,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3h","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56845},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802437645,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3h","res":{"statusCode":200},"responseTime":129.25,"msg":"request completed"}
+{"level":30,"time":1782802437656,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3i","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42608ae8eb0b6b5232c347&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58785},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802437658,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3j","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&role=manager&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":58786},"msg":"incoming request"}
+{"level":30,"time":1782802437706,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3i","res":{"statusCode":200},"responseTime":50.35379999876022,"msg":"request completed"}
+{"level":30,"time":1782802437710,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3j","res":{"statusCode":200},"responseTime":52.282399997115135,"msg":"request completed"}
+{"level":30,"time":1782802441651,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3k","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42494110c26fe9536927be&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":56868},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802441725,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3k","res":{"statusCode":200},"responseTime":74.49920000135899,"msg":"request completed"}
+{"level":30,"time":1782802441829,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3l","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=1000&assignedOnly=true&cycleId=6a42494110c26fe9536927be&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":59062},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802441877,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3l","res":{"statusCode":200},"responseTime":48.290799990296364,"msg":"request completed"}
+{"level":30,"time":1782802441888,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3m","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=5&assignedOnly=true&cycleId=6a42494110c26fe9536927be&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":53570},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802441947,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3m","res":{"statusCode":200},"responseTime":58.500900000333786,"msg":"request completed"}
+{"level":30,"time":1782802449324,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3n","req":{"method":"GET","url":"/pms/management/employees/6a3d0c46e02024630468f77b/performance","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":62384},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802450039,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3n","res":{"statusCode":200},"responseTime":714.5363000035286,"msg":"request completed"}
+{"level":30,"time":1782802457316,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3o","req":{"method":"GET","url":"/pms/management/employees?page=1&limit=10&active=true&assignedOnly=false&sort=name&sortOrder=asc","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64169},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802457380,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3o","res":{"statusCode":200},"responseTime":64.53049999475479,"msg":"request completed"}
+{"level":30,"time":1782802457638,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3p","req":{"method":"GET","url":"/pms/cycles?page=1&limit=100","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":64168},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802457782,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3p","res":{"statusCode":200},"responseTime":144.19280000030994,"msg":"request completed"}
+{"level":30,"time":1782802457795,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3q","req":{"method":"GET","url":"/pms/dashboard/management?cycleId=6a42608ae8eb0b6b5232c347","host":"localhost:5800","remoteAddress":"127.0.0.1","remotePort":60898},"msg":"incoming request"}
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiI2YTNlMjBkMjk2YjU2MGUyMWEzNmIyNmIiLCJlbWFpbCI6ImRpcmVjdG9yQGdtYWlsLmNvbSIsIm5hbWUiOiJEaXJlY3RvciIsInJvbGUiOiJESVJFQ1RPUiIsInNwZWNpZmljUm9sZSI6IkRpcmVjdG9yIiwiZGVwYXJ0bWVudElkIjoicHJvZHVjdGlvbiIsImFjdGl2ZSI6dHJ1ZSwiY291bnRyeSI6IklOIiwiY3VycmVuY3kiOiJJTlIiLCJsaWNlbnNlVHlwZSI6ImVtcGxveWVlIiwicG9ydGFsQWNjZXNzIjp0cnVlLCJzY29wZSI6IkhJRVJBUkNIWSIsInByaW9yaXR5IjozMCwiaWF0IjoxNzgyNzk1OTcwfQ.RPrpbDbNait2X1aXpsfAy4Y1FX4ak9Bw795J4wFkL60 Token ß
+Final in Authß
+{"level":30,"time":1782802457979,"pid":6820,"hostname":"CloudDesk-SriramCD0235","reqId":"req-3q","res":{"statusCode":200},"responseTime":183.34040001034737,"msg":"request completed"}
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/local.ts`[39m
+D:\PMS\RTE-PMS-Backend\uploads parenDir 
+D:\PMS\RTE-PMS-Backend\src currentDir
+D:\PMS\RTE-PMS-Backend\src\app.ts filename
+D:\PMS\RTE-PMS-Backend\src dirname
+D:\PMS\RTE-PMS-Backend\src dirname in app.ts
+Starting application...
+PORT environment variable: 5800
+[DB] Connecting to MongoDB (attempt 1/3, serverSelectionTimeoutMS=5000, connectTimeoutMS=10000)...
+{"level":40,"time":1782802481736,"pid":2564,"hostname":"CloudDesk-SriramCD0235","msg":"\"root\" path \"D:\\PMS\\RTE-PMS-Backend\\uploads\" must exist"}
+Attempting to listen on 0.0.0.0:5800
+✅ Server successfully listening at http://127.0.0.1:5800
+{"level":30,"time":1782802482003,"pid":2564,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://127.0.0.1:5800"}
+{"level":30,"time":1782802482003,"pid":2564,"hostname":"CloudDesk-SriramCD0235","msg":"Server listening at http://192.168.0.104:5800"}
+[DB] MongoDB connected successfully in 848ms
+[DB] Dropped old email_1 index; app will use partial unique index (portalAccess: true). No data removed.
+[AccessService] Loaded 17 permissions (TTL refresh every 300s)

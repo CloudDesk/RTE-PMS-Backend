@@ -17,19 +17,6 @@ import { visibilityMaskService } from './visibilityMask.service';
 import { accessService } from './access.service';
 
 export class PmsDashboardService extends BaseService {
-  private gradeAppliedQuery() {
-    return {
-      annualState: { $in: ['ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'CLOSED'] },
-      isGradeApplied: true,
-      $or: [
-        { 'gradeDetails.grade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-        { 'gradeDetails.finalGrade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-        { 'gradeDetails.gradeValue': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-        { 'gradeDetails.gradeCode': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-      ],
-    };
-  }
-
   /**
    * Get PMS Employee Dashboard Data
    */
@@ -518,28 +505,75 @@ export class PmsDashboardService extends BaseService {
     ]);
 
     // 2. Grade & Merit Distributions (obeying dynamic visibility restrictions for general exports but aggregated for analytics)
+    const releasedAnnualStates = ['ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'CLOSED'];
     const gradeDistribution = await AnnualAssignment.aggregate([
       {
         $match: {
           ...query,
-          ...this.gradeAppliedQuery(),
+          annualState: { $in: releasedAnnualStates },
+        },
+      },
+      {
+        $lookup: {
+          from: 'annual_decisions',
+          localField: '_id',
+          foreignField: 'annualAssignmentId',
+          as: 'decisionRows',
+        },
+      },
+      {
+        $set: {
+          decision: {
+            $first: {
+              $filter: {
+                input: '$decisionRows',
+                as: 'decision',
+                cond: { $ne: ['$$decision.isDeleted', true] },
+              },
+            },
+          },
         },
       },
       {
         $project: {
           grade: {
             $ifNull: [
-              '$gradeDetails.grade',
+              '$decision.gradeDetails.grade',
               {
                 $ifNull: [
-                  '$gradeDetails.finalGrade',
+                  '$decision.gradeDetails.finalGrade',
                   {
-                    $ifNull: ['$gradeDetails.gradeValue', '$gradeDetails.gradeCode'],
+                    $ifNull: [
+                      '$decision.gradeDetails.gradeValue',
+                      {
+                        $ifNull: [
+                          '$decision.gradeDetails.gradeCode',
+                          {
+                            $ifNull: [
+                              '$gradeDetails.grade',
+                              {
+                                $ifNull: [
+                                  '$gradeDetails.finalGrade',
+                                  {
+                                    $ifNull: ['$gradeDetails.gradeValue', '$gradeDetails.gradeCode'],
+                                  },
+                                ],
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
                   },
                 ],
               },
             ],
           },
+        },
+      },
+      {
+        $match: {
+          grade: { $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] },
         },
       },
       {
@@ -550,6 +584,10 @@ export class PmsDashboardService extends BaseService {
       },
       { $sort: { _id: 1 } },
     ]);
+    const gradesAppliedCount = gradeDistribution.reduce(
+      (total, bucket) => total + Number(bucket.count || 0),
+      0,
+    );
 
     const meritStats = await AnnualAssignment.aggregate([
       {
@@ -581,7 +619,7 @@ export class PmsDashboardService extends BaseService {
       annualState: 'VISIBILITY_ENABLED',
     });
 
-    const [decisionDraftCount, frozenDecisionCount, gradesAppliedCount, reopenCount] = await Promise.all([
+    const [decisionDraftCount, frozenDecisionCount, visibleDecisionCount, reopenCount] = await Promise.all([
       AnnualAssignment.countDocuments({
         ...query,
         annualState: 'MANAGEMENT_DECISION_DRAFT',
@@ -592,7 +630,7 @@ export class PmsDashboardService extends BaseService {
       }),
       AnnualAssignment.countDocuments({
         ...query,
-        ...this.gradeAppliedQuery(),
+        annualState: { $in: ['VISIBILITY_ENABLED', 'CLOSED'] },
       }),
       AuditLog.countDocuments({
         action: { $regex: /reopen/i },
@@ -606,8 +644,9 @@ export class PmsDashboardService extends BaseService {
 
     const totalAssignments = annualAssignments.length;
     const employeeManagerCount = assignedManagerIds.length;
+    const finalizedOrVisibleCount = frozenDecisionCount + visibleDecisionCount;
     const cycleCompletionPercentage = totalAssignments > 0 
-      ? Math.round((frozenDecisionCount / totalAssignments) * 100) 
+      ? Math.round((finalizedOrVisibleCount / totalAssignments) * 100) 
       : 0;
 
     return {
@@ -623,8 +662,8 @@ export class PmsDashboardService extends BaseService {
         assignedManagerCount: employeeManagerCount,
         communicationReady: communicationReadinessCount,
         decisionDrafts: decisionDraftCount,
-        decisionsFinalized: frozenDecisionCount,
-        decisionReadiness: decisionDraftCount + frozenDecisionCount,
+        decisionsFinalized: finalizedOrVisibleCount,
+        decisionReadiness: decisionDraftCount + finalizedOrVisibleCount,
         gradesApplied: gradesAppliedCount,
         cycleCompletionPercentage,
       },

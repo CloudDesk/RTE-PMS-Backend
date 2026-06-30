@@ -3,7 +3,7 @@ import { BaseService } from './base.service';
 import { AnnualDecisionService } from './annualDecision.service';
 import { EmployeeAchievementSubmissionService } from './employeeAchievementSubmission.service';
 import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
-import { AnnualAssignment, User } from '../models';
+import { AnnualAssignment, AnnualDecision, User } from '../models';
 
 export interface ManagementEmployeeListQuery {
   page?: number;
@@ -319,17 +319,12 @@ export class PmsManagementEmployeeService extends BaseService {
 
     switch (assignmentScope) {
       case 'decisionReady':
-        assignmentFilter.annualState = { $in: ['MANAGEMENT_DECISION_DRAFT', 'ANNUAL_FINALIZED'] };
+        assignmentFilter.annualState = {
+          $in: ['MANAGEMENT_DECISION_DRAFT', 'MANAGEMENT_DECISION_SUBMITTED', 'ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'CLOSED'],
+        };
         break;
       case 'gradesApplied':
         assignmentFilter.annualState = { $in: ['ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'CLOSED'] };
-        assignmentFilter.isGradeApplied = true;
-        assignmentFilter.$or = [
-          { 'gradeDetails.grade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-          { 'gradeDetails.finalGrade': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-          { 'gradeDetails.gradeValue': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-          { 'gradeDetails.gradeCode': { $exists: true, $nin: [null, '', 'N/A', 'n/a', 'NA', 'na'] } },
-        ];
         break;
       case '':
         break;
@@ -356,8 +351,11 @@ export class PmsManagementEmployeeService extends BaseService {
           .filter((id): id is string => Boolean(id) && Types.ObjectId.isValid(id)),
       ),
     ];
+    const assignmentIds = assignments
+      .map((assignment) => assignment._id?.toString?.())
+      .filter((id): id is string => Boolean(id) && Types.ObjectId.isValid(id));
 
-    const [users, managers] = await Promise.all([
+    const [users, managers, decisions] = await Promise.all([
       employeeIds.length
         ? User.find({ _id: { $in: employeeIds.map((id) => new Types.ObjectId(id)) } })
             .select('_id name email role specificRole departmentId departmentName active managerId managerName employeeCode')
@@ -368,10 +366,19 @@ export class PmsManagementEmployeeService extends BaseService {
             .select('_id name email employeeCode role specificRole departmentId departmentName managerId managerName')
             .lean()
         : [],
+      assignmentIds.length
+        ? AnnualDecision.find({
+            annualAssignmentId: { $in: assignmentIds.map((id) => new Types.ObjectId(id)) },
+            isDeleted: false,
+          })
+            .select('annualAssignmentId decisionStatus isGradeApplied gradeDetails isMeritApplied meritDetails nilReason appraisalOutcomeType')
+            .lean()
+        : [],
     ]);
 
     const userMap = new Map(users.map((user) => [user._id.toString(), user]));
     const managerMap = new Map(managers.map((manager) => [manager._id.toString(), manager]));
+    const decisionMap = new Map(decisions.map((decision) => [decision.annualAssignmentId.toString(), decision]));
     const recordsByEmployee = new Map<string, ManagementEmployeeRecord>();
 
     for (const assignment of assignments) {
@@ -383,6 +390,9 @@ export class PmsManagementEmployeeService extends BaseService {
       const managerId = assignment.assignedManagerId?.toString?.();
       const manager = (managerId ? managerMap.get(managerId) : undefined) as Record<string, any> | undefined;
       const managerSnapshot = assignment.managerSnapshot ?? {};
+      const decision = decisionMap.get(assignment._id.toString()) as Record<string, any> | undefined;
+      const gradeDetails = decision?.gradeDetails ?? assignment.gradeDetails;
+      const isGradeApplied = decision?.isGradeApplied ?? assignment.isGradeApplied;
 
       recordsByEmployee.set(employeeId, {
         _id: employeeId,
@@ -403,8 +413,8 @@ export class PmsManagementEmployeeService extends BaseService {
         managerReportsToName: String(manager?.managerName ?? managerSnapshot.managerName ?? ''),
         annualState: String(assignment.annualState ?? ''),
         finalDecisionStatus: String(assignment.finalDecisionStatus ?? ''),
-        isGradeApplied: Boolean(assignment.isGradeApplied),
-        gradeDetails: assignment.gradeDetails as Record<string, unknown> | undefined,
+        isGradeApplied: Boolean(isGradeApplied),
+        gradeDetails: gradeDetails as Record<string, unknown> | undefined,
         role: String(user?.role ?? employeeSnapshot.role ?? employeeSnapshot.specificRole ?? 'Employee'),
         specificRole: String(user?.specificRole ?? employeeSnapshot.specificRole ?? ''),
         active: user?.active ?? true,
@@ -412,6 +422,12 @@ export class PmsManagementEmployeeService extends BaseService {
     }
 
     let records = Array.from(recordsByEmployee.values());
+    if (assignmentScope === 'gradesApplied') {
+      records = records.filter(
+        (record) => this.hasMeaningfulGrade(record.gradeDetails),
+      );
+    }
+
     const active = this.booleanValue(query.active);
     if (typeof active === 'boolean') {
       records = records.filter((record) => record.active === active);
@@ -508,6 +524,16 @@ export class PmsManagementEmployeeService extends BaseService {
 
   private normalize(value: unknown): string {
     return String(value ?? '').trim().toLowerCase();
+  }
+
+  private hasMeaningfulGrade(gradeDetails: Record<string, unknown> | undefined): boolean {
+    const excludedValues = new Set(['', 'n/a', 'na']);
+    return [
+      gradeDetails?.grade,
+      gradeDetails?.finalGrade,
+      gradeDetails?.gradeValue,
+      gradeDetails?.gradeCode,
+    ].some((value) => !excludedValues.has(String(value ?? '').trim().toLowerCase()));
   }
 
   private exactCaseInsensitiveRegex(value: string): RegExp {
