@@ -2734,6 +2734,8 @@ export class TermReviewService extends BaseService {
     const now = this.getCurrentDate();
     const start = new Date(termCycle.managerReviewWindow.startDate);
     const end = new Date(termCycle.managerReviewWindow.endDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
 
     if (now < start || now > end) {
       throw new Error('Manager review window is closed for this quarter');
