@@ -659,6 +659,9 @@ export class AnnualDecisionService extends BaseService {
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.FROZEN;
     annualAssignment.isGradeApplied = decision.isGradeApplied;
     annualAssignment.isMeritApplied = decision.isMeritApplied;
+    annualAssignment.gradeDetails = decision.gradeDetails;
+    annualAssignment.meritDetails = decision.meritDetails;
+    annualAssignment.nilReason = decision.nilReason;
     annualAssignment.appraisalOutcomeType = decision.appraisalOutcomeType;
     annualAssignment.version += 1;
     await annualAssignment.save();
@@ -1002,6 +1005,12 @@ export class AnnualDecisionService extends BaseService {
       visibilityConfig.managerMeritVisible;
     annualAssignment.annualState = AnnualWorkflowState.VISIBILITY_ENABLED;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.VISIBILITY_ENABLED;
+    annualAssignment.isGradeApplied = decision.isGradeApplied;
+    annualAssignment.isMeritApplied = decision.isMeritApplied;
+    annualAssignment.gradeDetails = decision.gradeDetails;
+    annualAssignment.meritDetails = decision.meritDetails;
+    annualAssignment.nilReason = decision.nilReason;
+    annualAssignment.appraisalOutcomeType = decision.appraisalOutcomeType;
     annualAssignment.version += 1;
     await annualAssignment.save();
 
