@@ -1188,34 +1188,37 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }
 
     const now = this.getCurrentDate();
-    const startDate = window.startDate ? new Date(window.startDate) : undefined;
-    const baseEndDate = window.endDate
-      ? new Date(window.endDate)
+    const currentDateOnly = this.toDateOnlyValue(now);
+    const startDateOnly = window.startDate
+      ? this.toDateOnlyValue(window.startDate)
+      : undefined;
+    const baseEndDateOnly = window.endDate
+      ? this.toDateOnlyValue(window.endDate)
       : window.dueDate
-        ? new Date(window.dueDate)
+        ? this.toDateOnlyValue(window.dueDate)
         : undefined;
-    const allowedEndDate = baseEndDate
-      ? this.applyGraceDays(baseEndDate, window.graceDays)
+    const allowedEndDateOnly = baseEndDateOnly
+      ? this.addDaysToDateOnly(baseEndDateOnly, window.graceDays ?? 0)
       : undefined;
 
-    if (startDate && now < startDate) {
+    if (startDateOnly && currentDateOnly < startDateOnly) {
       await this.auditTermAssignmentBlockedAttempt(
         termAssignment,
         submission,
         'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_BEFORE_WINDOW',
-        { startDate: startDate.toISOString(), currentDate: now.toISOString() },
+        { startDate: startDateOnly, currentDate: currentDateOnly },
       );
       throw new Error('Achievement submission window has not opened yet.');
     }
 
-    if (allowedEndDate && now > allowedEndDate) {
+    if (allowedEndDateOnly && currentDateOnly > allowedEndDateOnly) {
       await this.auditTermAssignmentBlockedAttempt(
         termAssignment,
         submission,
         'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_AFTER_WINDOW',
         {
-          endDate: allowedEndDate.toISOString(),
-          currentDate: now.toISOString(),
+          endDate: allowedEndDateOnly,
+          currentDate: currentDateOnly,
           graceDays: window.graceDays,
         },
       );
@@ -1295,14 +1298,24 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return this.context.pmsCurrentDate ?? new Date();
   }
 
-  private applyGraceDays(baseEndDate: Date, graceDays?: number): Date {
-    if (graceDays === undefined || graceDays === null) {
-      return baseEndDate;
+  private toDateOnlyValue(value: Date | string): string {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('Invalid achievement submission window date');
     }
 
-    const endDateWithGrace = new Date(baseEndDate);
-    endDateWithGrace.setDate(endDateWithGrace.getDate() + graceDays);
-    return endDateWithGrace;
+    return [
+      date.getUTCFullYear(),
+      String(date.getUTCMonth() + 1).padStart(2, '0'),
+      String(date.getUTCDate()).padStart(2, '0'),
+    ].join('-');
+  }
+
+  private addDaysToDateOnly(dateOnly: string, days = 0): string {
+    const [year, month, day] = dateOnly.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day + days));
+
+    return this.toDateOnlyValue(date);
   }
 
   private toObjectId(value: string, fieldName: string): Types.ObjectId {
