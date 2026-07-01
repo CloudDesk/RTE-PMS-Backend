@@ -1260,8 +1260,55 @@ export class TermReviewService extends BaseService {
         if (!this.hasMeaningfulReviewValue(valueMap.get(fieldDef.key))) {
           throw new Error(`Field ${fieldDef.label || fieldDef.key} is required`);
         }
+        if (fieldDef.type === 'matrix') {
+          this.validateRequiredMatrixRows(fieldDef, valueMap.get(fieldDef.key));
+        }
       }
     }
+  }
+
+  private validateRequiredMatrixRows(
+    fieldDef: ResolvedTemplateField,
+    value?: TermReviewValueInput,
+  ): void {
+    const matrixConfig = fieldDef.matrixConfig as { rows?: Array<{ key?: string; id?: string; label?: string }> } | undefined;
+    const rows = Array.isArray(matrixConfig?.rows) ? matrixConfig.rows : [];
+    if (rows.length === 0) return;
+
+    const matrixValue = this.normalizeMatrixReviewValue(value?.valueJson);
+
+    for (const row of rows) {
+      const rowKey = row.key || row.id;
+      if (!rowKey) continue;
+
+      const selectedValue = matrixValue.values?.[rowKey] ?? matrixValue[rowKey];
+      if (!this.hasMeaningfulMatrixSelection(selectedValue)) {
+        throw new Error(`${row.label || fieldDef.label || fieldDef.key} rating is required`);
+      }
+    }
+  }
+
+  private normalizeMatrixReviewValue(valueJson: unknown): Record<string, any> {
+    if (!valueJson) return {};
+    if (typeof valueJson === 'string') {
+      try {
+        const parsed = JSON.parse(valueJson);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    if (typeof valueJson === 'object' && !Array.isArray(valueJson)) {
+      return valueJson as Record<string, any>;
+    }
+    return {};
+  }
+
+  private hasMeaningfulMatrixSelection(value: unknown): boolean {
+    if (value === undefined || value === null) return false;
+    if (Array.isArray(value)) return value.some((item) => this.hasMeaningfulMatrixSelection(item));
+    if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length > 0;
+    return String(value).trim().length > 0;
   }
 
   private hasMeaningfulReviewValue(value?: TermReviewValueInput): boolean {
