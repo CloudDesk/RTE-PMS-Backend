@@ -5,7 +5,9 @@ import { errorResponse, successResponse } from '../utilis/apiResponse';
 import { parseMultipartForm } from '../utilis/parseMultiPartForm';
 import type {
   SaveAchievementDraftInput,
+  SaveAchievementItemInput,
   SubmitAchievementInput,
+  SubmitAchievementItemInput,
 } from '../services/employeeAchievementSubmission.service';
 
 export const employeeAchievementSubmissionRoutes: RouteHandler = async (
@@ -84,6 +86,54 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
     },
   );
 
+  fastify.put(
+    '/:termAssignmentId/items/draft',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
+        const submission = await request.container!.employeeAchievementSubmissionService.saveItemDraft(
+          termAssignmentId,
+          request.body as SaveAchievementItemInput,
+        );
+        return reply.send(
+          successResponse('Achievement item draft saved successfully', submission),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/:termAssignmentId/items/:objectiveId/draft',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId, objectiveId } = request.params as {
+          termAssignmentId: string;
+          objectiveId: string;
+        };
+        const body = (request.body || {}) as SaveAchievementItemInput;
+        const submission = await request.container!.employeeAchievementSubmissionService.saveItemDraft(
+          termAssignmentId,
+          {
+            ...body,
+            achievementItem: {
+              ...(body.achievementItem || {}),
+              objectiveId,
+            },
+          },
+        );
+        return reply.send(
+          successResponse('Objective achievement draft saved successfully', submission),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/:termAssignmentId/submit',
     { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
@@ -96,6 +146,54 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         );
         return reply.send(
           successResponse('Employee achievement submitted successfully', submission),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:termAssignmentId/items/submit',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
+        const submission = await request.container!.employeeAchievementSubmissionService.submitItem(
+          termAssignmentId,
+          request.body as SubmitAchievementItemInput,
+        );
+        return reply.send(
+          successResponse('Achievement item submitted successfully', submission),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:termAssignmentId/items/:objectiveId/submit',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId, objectiveId } = request.params as {
+          termAssignmentId: string;
+          objectiveId: string;
+        };
+        const body = (request.body || {}) as SubmitAchievementItemInput;
+        const submission = await request.container!.employeeAchievementSubmissionService.submitItem(
+          termAssignmentId,
+          {
+            ...body,
+            achievementItem: {
+              ...(body.achievementItem || {}),
+              objectiveId,
+            },
+          },
+        );
+        return reply.send(
+          successResponse('Objective achievement submitted successfully', submission),
         );
       } catch (error: unknown) {
         return sendRouteError(reply, error);
