@@ -15,6 +15,8 @@ export interface ProbationReviewListQuery {
   managerId?: string;
   status?: string;
   search?: string;
+  dateFrom?: string | Date;
+  dateTo?: string | Date;
   page?: string | number;
   limit?: string | number;
 }
@@ -81,8 +83,28 @@ export class ProbationReviewService extends BaseService {
       filter.$or = [{ manager1Id: managerId }, { manager2Id: managerId }];
     }
 
+    if (!this.isPrivilegedActor()) {
+      const actorId = this.requireActorObjectId();
+      filter.$or = [{ manager1Id: actorId }, { manager2Id: actorId }];
+    }
+
     if (query.status?.trim()) {
       filter.status = query.status.trim().toUpperCase();
+    }
+
+    if (query.dateFrom || query.dateTo) {
+      filter.reviewOpenDate = {};
+      if (query.dateFrom) {
+        (filter.reviewOpenDate as Record<string, Date>).$gte = this.parseDate(
+          query.dateFrom,
+          'From date',
+        );
+      }
+      if (query.dateTo) {
+        const dateTo = this.parseDate(query.dateTo, 'To date');
+        dateTo.setHours(23, 59, 59, 999);
+        (filter.reviewOpenDate as Record<string, Date>).$lte = dateTo;
+      }
     }
 
     if (query.search?.trim()) {
@@ -130,6 +152,8 @@ export class ProbationReviewService extends BaseService {
     if (!assignment) {
       throw new Error('Probation review assignment not found.');
     }
+
+    this.assertCanViewAssignment(assignment);
 
     return assignment;
   }
@@ -206,6 +230,7 @@ export class ProbationReviewService extends BaseService {
   }
 
   async syncDueProbationReviews(input: SyncDueProbationReviewsInput = {}) {
+    this.assertPrivilegedActor('Only admin users can sync probation review windows.');
     const actorId = this.getActorObjectId();
     const asOfDate = input.asOfDate
       ? this.parseDate(input.asOfDate, 'Sync date')
@@ -254,6 +279,7 @@ export class ProbationReviewService extends BaseService {
 
   async openAssignment(id: string, input: OpenProbationReviewInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
+    this.assertPrivilegedActor('Only admin users can manually open probation reviews.');
     if (assignment.status !== ProbationReviewStatus.SCHEDULED) {
       throw new Error('Only scheduled probation reviews can be opened.');
     }
@@ -276,6 +302,7 @@ export class ProbationReviewService extends BaseService {
 
   async saveManager1Draft(id: string, input: SaveProbationReviewValuesInput) {
     const assignment = await this.loadMutableAssignment(id);
+    this.assertManager1Actor(assignment);
     this.ensureManager1CanEdit(assignment.status);
     assignment.reviewValues = this.normalizeValues(input);
     this.touch(assignment, 'MANAGER_1_DRAFT_SAVED');
@@ -285,6 +312,7 @@ export class ProbationReviewService extends BaseService {
 
   async submitManager1(id: string, input: SaveProbationReviewValuesInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
+    this.assertManager1Actor(assignment);
     this.ensureManager1CanEdit(assignment.status);
 
     const values = this.normalizeValues(input);
@@ -304,6 +332,7 @@ export class ProbationReviewService extends BaseService {
 
   async approveByManager2(id: string, input: ApproveProbationReviewInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
+    this.assertManager2Actor(assignment);
     if (assignment.status !== ProbationReviewStatus.MANAGER_1_SUBMITTED) {
       throw new Error('Manager 2 can approve only after Manager 1 submits the review.');
     }
@@ -320,6 +349,7 @@ export class ProbationReviewService extends BaseService {
 
   async returnToManager1(id: string, input: ReturnProbationReviewInput) {
     const assignment = await this.loadMutableAssignment(id);
+    this.assertManager2Actor(assignment);
     if (assignment.status !== ProbationReviewStatus.MANAGER_1_SUBMITTED) {
       throw new Error('Manager 2 can return only after Manager 1 submits the review.');
     }
@@ -341,6 +371,7 @@ export class ProbationReviewService extends BaseService {
 
   async cancelAssignment(id: string, input: CancelProbationReviewInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
+    this.assertPrivilegedActor('Only admin users can cancel probation reviews.');
     if (assignment.status === ProbationReviewStatus.FINALIZED) {
       throw new Error('Finalized probation reviews cannot be cancelled.');
     }
@@ -380,6 +411,40 @@ export class ProbationReviewService extends BaseService {
       throw new Error(
         'Manager 1 can edit the review only when the probation review is open or returned.',
       );
+    }
+  }
+
+  private assertCanViewAssignment(assignment: any) {
+    if (this.isPrivilegedActor()) return;
+    const actorId = this.requireActorObjectId();
+    if (
+      this.sameObjectId(actorId, assignment.manager1Id) ||
+      this.sameObjectId(actorId, assignment.manager2Id)
+    ) {
+      return;
+    }
+    throw new Error('You do not have access to this probation review.');
+  }
+
+  private assertManager1Actor(assignment: any) {
+    if (this.isPrivilegedActor()) return;
+    const actorId = this.requireActorObjectId();
+    if (!this.sameObjectId(actorId, assignment.manager1Id)) {
+      throw new Error('Only Manager 1 can edit or submit this probation review.');
+    }
+  }
+
+  private assertManager2Actor(assignment: any) {
+    if (this.isPrivilegedActor()) return;
+    const actorId = this.requireActorObjectId();
+    if (!this.sameObjectId(actorId, assignment.manager2Id)) {
+      throw new Error('Only Manager 2 can approve or return this probation review.');
+    }
+  }
+
+  private assertPrivilegedActor(message: string) {
+    if (!this.isPrivilegedActor()) {
+      throw new Error(message);
     }
   }
 
@@ -429,6 +494,27 @@ export class ProbationReviewService extends BaseService {
       return new Types.ObjectId(actorId.toString());
     }
     return undefined;
+  }
+
+  private requireActorObjectId() {
+    const actorId = this.getActorObjectId();
+    if (!actorId) {
+      throw new Error('Authenticated user is required.');
+    }
+    return actorId;
+  }
+
+  private isPrivilegedActor() {
+    const role = String(this.context.user?.role || this.context.reqRole || '').toLowerCase();
+    return role === 'admin' || role === 'management' || role === 'director';
+  }
+
+  private sameObjectId(left: Types.ObjectId, right: unknown) {
+    const value =
+      right && typeof right === 'object' && '_id' in (right as any)
+        ? (right as any)._id
+        : right;
+    return Boolean(value) && left.toString() === value.toString();
   }
 
   private getCurrentDate() {
