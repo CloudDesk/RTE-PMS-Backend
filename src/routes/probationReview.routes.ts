@@ -6,9 +6,11 @@ import type {
   ApproveProbationReviewInput,
   CancelProbationReviewInput,
   CreateProbationReviewInput,
+  OpenProbationReviewInput,
   ProbationReviewListQuery,
   ReturnProbationReviewInput,
   SaveProbationReviewValuesInput,
+  SyncDueProbationReviewsInput,
 } from '../services/probationReview.service';
 
 export const probationReviewRoutes: RouteHandler = async (
@@ -44,6 +46,21 @@ export const probationReviewRoutes: RouteHandler = async (
     },
   );
 
+  fastify.post(
+    '/sync-due',
+    { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.probationReviewService.syncDueProbationReviews(
+          request.body as SyncDueProbationReviewsInput,
+        );
+        return reply.send(successResponse('Due probation reviews synced successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.get(
     '/:assignmentId',
     { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
@@ -64,7 +81,10 @@ export const probationReviewRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { assignmentId } = request.params as { assignmentId: string };
-        const result = await request.container!.probationReviewService.openAssignment(assignmentId);
+        const result = await request.container!.probationReviewService.openAssignment(
+          assignmentId,
+          request.body as OpenProbationReviewInput,
+        );
         return reply.send(successResponse('Probation review opened successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);

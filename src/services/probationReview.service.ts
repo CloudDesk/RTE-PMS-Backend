@@ -34,6 +34,15 @@ export interface SaveProbationReviewValuesInput {
   reviewValues?: IProbationReviewValue[];
 }
 
+export interface OpenProbationReviewInput {
+  force?: boolean;
+  asOfDate?: string | Date;
+}
+
+export interface SyncDueProbationReviewsInput {
+  asOfDate?: string | Date;
+}
+
 export interface ReturnProbationReviewInput {
   reason: string;
 }
@@ -196,14 +205,71 @@ export class ProbationReviewService extends BaseService {
     return this.getAssignment(assignment._id.toString());
   }
 
-  async openAssignment(id: string) {
+  async syncDueProbationReviews(input: SyncDueProbationReviewsInput = {}) {
+    const actorId = this.getActorObjectId();
+    const asOfDate = input.asOfDate
+      ? this.parseDate(input.asOfDate, 'Sync date')
+      : this.getCurrentDate();
+
+    const dueAssignments = await PmsProbationReviewAssignment.find({
+      status: ProbationReviewStatus.SCHEDULED,
+      reviewOpenDate: { $lte: asOfDate },
+      isDeleted: false,
+    }).select('_id');
+
+    if (dueAssignments.length === 0) {
+      return {
+        asOfDate,
+        openedCount: 0,
+        assignmentIds: [],
+      };
+    }
+
+    const assignmentIds = dueAssignments.map((assignment) => assignment._id);
+    await PmsProbationReviewAssignment.updateMany(
+      { _id: { $in: assignmentIds } },
+      {
+        $set: {
+          status: ProbationReviewStatus.REVIEW_OPEN,
+          updatedBy: actorId,
+        },
+        $inc: { version: 1 },
+        $push: {
+          auditTrail: {
+            action: 'SYNC_OPENED',
+            actorId,
+            comment: `Opened by manual sync as of ${asOfDate.toISOString()}.`,
+            createdAt: this.getCurrentDate(),
+          },
+        },
+      },
+    );
+
+    return {
+      asOfDate,
+      openedCount: assignmentIds.length,
+      assignmentIds: assignmentIds.map((assignmentId) => assignmentId.toString()),
+    };
+  }
+
+  async openAssignment(id: string, input: OpenProbationReviewInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
     if (assignment.status !== ProbationReviewStatus.SCHEDULED) {
       throw new Error('Only scheduled probation reviews can be opened.');
     }
 
+    const asOfDate = input.asOfDate
+      ? this.parseDate(input.asOfDate, 'Open date')
+      : this.getCurrentDate();
+
+    if (!input.force && asOfDate.getTime() < assignment.reviewOpenDate.getTime()) {
+      throw new Error(
+        `This probation review opens on ${assignment.reviewOpenDate.toISOString().slice(0, 10)}. Use sync on or after that date.`,
+      );
+    }
+
     assignment.status = ProbationReviewStatus.REVIEW_OPEN;
-    this.touch(assignment, 'OPENED');
+    this.touch(assignment, input.force ? 'FORCE_OPENED' : 'OPENED');
     await assignment.save();
     return this.getAssignment(id);
   }
