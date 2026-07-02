@@ -1124,9 +1124,23 @@ export class PmsTemplateService extends BaseService {
             label: col.label,
             type: col.type,
             required: !!col.required,
+            editable: typeof col.editable === 'boolean' ? col.editable : undefined,
+            readOnly: typeof col.readOnly === 'boolean' ? col.readOnly : undefined,
+            defaultValue: col.defaultValue,
           })),
           minRows: field.gridConfig.minRows,
           maxRows: field.gridConfig.maxRows,
+          defaultRows: Array.isArray(field.gridConfig.defaultRows)
+            ? field.gridConfig.defaultRows
+            : undefined,
+          allowAddRows:
+            typeof field.gridConfig.allowAddRows === 'boolean'
+              ? field.gridConfig.allowAddRows
+              : undefined,
+          allowDeleteRows:
+            typeof field.gridConfig.allowDeleteRows === 'boolean'
+              ? field.gridConfig.allowDeleteRows
+              : undefined,
         }
         : undefined,
     };
@@ -2092,6 +2106,15 @@ export class PmsTemplateService extends BaseService {
           ) {
             throw new Error(
               `Field ${field.fieldKey} in section ${section.sectionKey} has invalid gridConfig row limits`,
+            );
+          }
+
+          if (
+            gridConfig.defaultRows !== undefined &&
+            !Array.isArray(gridConfig.defaultRows)
+          ) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} has invalid gridConfig.defaultRows`,
             );
           }
         }
