@@ -18,6 +18,7 @@ import { PmsBulkOperationsService } from '../services/pmsBulkOperations.service'
 import { WorkflowSyncService } from '../services/workflow-sync.service';
 import { PmsDocumentService } from '../services/pms-document.service';
 import { ManagerInitiatedReviewService } from '../services/managerInitiatedReview.service';
+import { ProbationReviewService } from '../services/probationReview.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -40,4 +41,5 @@ export interface ServiceContainer {
   workflowSyncService: WorkflowSyncService;
   pmsDocumentService: PmsDocumentService;
   managerInitiatedReviewService: ManagerInitiatedReviewService;
+  probationReviewService: ProbationReviewService;
 }
