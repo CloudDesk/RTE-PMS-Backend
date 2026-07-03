@@ -270,7 +270,25 @@ Objectives should become scoreable only when all conditions are met:
 
 If objective scoring is not enabled, objectives support planning, alignment, achievement capture, evidence, and manager review context only. They must not contribute to marks, weighted score, term score, or final score.
 
-### 7.4 Workflow Status Reuse
+### 7.4 Objective Scoring Modes
+
+When objective scoring is explicitly enabled by template scoring policy, the system should support configurable objective scoring modes.
+
+Recommended scoring modes:
+
+| Objective Scoring Mode | Behavior |
+|---|---|
+| CONTEXT_ONLY | Default behavior. Objectives are visible for planning, achievement, evidence, and manager review context only. No objective score is captured or calculated. |
+| WEIGHTED_OBJECTIVE_SCORE | Manager enters a score for each scoreable objective. Each objective score must be capped at 100, objective weightage must be valid, and weighted objective totals must follow the configured scoring policy. |
+| OVERALL_OBJECTIVE_SCORE | Manager reviews all assigned objectives together and enters one overall objective score for the objective section. The overall score must be capped at 100. |
+
+The template scoring policy should allow only one active objective scoring mode for the same objective section at a time.
+
+Per-objective weighted scoring and one overall objective score should not both contribute to the same objective score total unless a specific override policy is approved. This prevents duplicate counting and conflicting scoring outcomes.
+
+Manager-entered objective scores must not exceed 100. Weighted calculations must not cause the configured objective scoring total or final term score to exceed the configured template scoring total.
+
+### 7.5 Workflow Status Reuse
 
 The system should reuse existing objective workflow states wherever possible.
 
@@ -581,6 +599,9 @@ The system should validate:
 * unauthorized roles cannot create or map Company / Department Objectives
 * objective fill values are allowed for the actor, workflow state, and assessment term
 * score fields are rejected unless objective scoring is explicitly enabled
+* objective scoring mode is one of `CONTEXT_ONLY`, `WEIGHTED_OBJECTIVE_SCORE`, or `OVERALL_OBJECTIVE_SCORE`
+* only one objective scoring mode contributes to the same objective section total unless an approved override policy exists
+* manager-entered objective scores do not exceed 100
 * valid weightage exists before scoreable objectives participate in scoring
 * scoring totals remain valid
 * target direction is one of `HIGHER_IS_BETTER` or `LOWER_IS_BETTER`
@@ -702,6 +723,7 @@ Employee term objective plan generation
 Objective value storage
 Objective permission checks
 Objective scoring validation
+Objective scoring mode configuration
 Actual column rendering
 Template runtime rendering
 Probation review configuration model
@@ -746,21 +768,23 @@ Approval is requested to proceed with the following design enhancements:
 5. Generate actual columns only from the selected cycle term type: Q1-Q4, H1-H2, or Y1.
 6. Add targetDirection values: HIGHER_IS_BETTER and LOWER_IS_BETTER.
 7. Keep objectives context-only by default and make them scoreable only when template scoring policy explicitly enables scoring and valid weightage exists.
-8. Reuse existing objective workflow states unless a new status is absolutely required.
-9. Enhance Probation / Trainee Review using Manager Review Only templates without normal PMS cycle launch.
-10. Add configurable reviewer responsibility modes for Manager 1, Manager 2, and final approver behavior.
-11. Add server-side field-level, section-level, data-grid row, and data-grid column permissions for probation reviews.
-12. Add sharing/delegation support with original Manager 1 / Manager 2 ownership preservation.
-13. Track acting user separately from original Manager 1 / Manager 2 ownership for delegated actions.
-14. Shared/delegated access must support view-only access.
-15. Shared/delegated access must support edit access for selected sections/fields.
-16. Shared/delegated access must support temporary access with start/end date.
-17. Shared/delegated access must support acting Manager 1, acting Manager 2, reviewer, and observer roles.
-18. Shared/delegated access must support revocation.
-19. Shared access must not allow final approval unless the selected configuration explicitly permits it.
-20. Add detailed audit logs for assignment, field, section, row, sharing, delegation, approval, return, revocation, cancellation, and finalization actions.
-21. Preserve locked template version and locked review configuration snapshot at probation assignment creation.
-22. Keep existing PMS and probation review flows unchanged by default.
+8. Support objective scoring modes: CONTEXT_ONLY, WEIGHTED_OBJECTIVE_SCORE, and OVERALL_OBJECTIVE_SCORE.
+9. Cap manager-entered objective scores at 100 and prevent duplicate contribution from both weighted objective score and overall objective score unless an approved override policy exists.
+10. Reuse existing objective workflow states unless a new status is absolutely required.
+11. Enhance Probation / Trainee Review using Manager Review Only templates without normal PMS cycle launch.
+12. Add configurable reviewer responsibility modes for Manager 1, Manager 2, and final approver behavior.
+13. Add server-side field-level, section-level, data-grid row, and data-grid column permissions for probation reviews.
+14. Add sharing/delegation support with original Manager 1 / Manager 2 ownership preservation.
+15. Track acting user separately from original Manager 1 / Manager 2 ownership for delegated actions.
+16. Shared/delegated access must support view-only access.
+17. Shared/delegated access must support edit access for selected sections/fields.
+18. Shared/delegated access must support temporary access with start/end date.
+19. Shared/delegated access must support acting Manager 1, acting Manager 2, reviewer, and observer roles.
+20. Shared/delegated access must support revocation.
+21. Shared access must not allow final approval unless the selected configuration explicitly permits it.
+22. Add detailed audit logs for assignment, field, section, row, sharing, delegation, approval, return, revocation, cancellation, and finalization actions.
+23. Preserve locked template version and locked review configuration snapshot at probation assignment creation.
+24. Keep existing PMS and probation review flows unchanged by default.
 ```
 
 ---
