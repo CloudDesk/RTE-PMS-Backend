@@ -6,6 +6,8 @@ This document captures new PMS enhancement requirements in a manager-approval fo
 
 The current PMS design remains valid for the approved regular PMS use case. These changes are additional configuration and flexibility requirements for objective management and probation / trainee review handling.
 
+The approved baseline PMS flow shall remain unchanged by default. The enhancements in this document shall be implemented only as additional configurable capabilities and shall not replace the existing PMS objective, review, annual decision, or probation review behavior.
+
 This document covers:
 
 * client request summary
@@ -113,7 +115,7 @@ Objective Master
 ↓
 Objective Assignment Rules
 ↓
-Resolved Employee Term Objective Plans
+Employee Term Objective Plans
 ↓
 Template Runtime Rendering and Validation
 ↓
@@ -168,12 +170,12 @@ Objective assignment should support flexible mapping to:
 * reporting manager
 * individual employees
 
-Assignment rules should resolve into employee-level term objective plans when:
+Assignment rules should be applied into Employee Term Objective plans when:
 
 * PMS cycle is launched
 * assessment term is opened
 * assignment is refreshed
-* authorized HR/Admin explicitly synchronizes objective assignments
+* authorized HR/Admin explicitly applies objective assignments
 
 The system should strictly apply objectives only to the selected assessment term type and selected term labels.
 
@@ -187,7 +189,189 @@ Supported term labels:
 
 Selecting Q1-Q4 should not automatically create H1, H2, or Y1 objective assignments.
 
+### 6.1 Objective Master Versioning
+
+Objective Master shall be versioned.
+
+Any edit to Objective Master shall create a new objective version.
+
+Already assigned Employee Term Objectives shall not be updated automatically when Objective Master is edited.
+
+Employee Term Objective shall store:
+
+* objectiveMasterId
+* objectiveVersionId
+* objective snapshot
+* assignment rule references
+* annualAssignmentId
+* assessment term
+
+Future objective assignments shall use the latest active objective version.
+
+### 6.2 Objective Assignment Duplicate and Conflict Handling
+
+The system shall prevent exact duplicate Employee Term Objectives.
+
+Exact duplicate rule:
+
+```text
+same objectiveMasterId + employeeId + assessmentTerm = one Employee Term Objective only
+```
+
+If the same objective reaches the same employee and assessment term through multiple assignment rules, the system shall merge it into one Employee Term Objective and preserve all source assignment references.
+
+Different objective IDs with the same or similar title for the same employee and assessment term shall be allowed, because Company, Department, Manager-created, and Employee-created objectives may use similar business wording while representing different records.
+
+The assignment preview should show a possible duplicate warning for similar titles.
+
+Department or Manager objectives may optionally reference `parentObjectiveId` to show alignment with a Company Objective.
+
+Employee Term Objective should store:
+
+* objectiveMasterId
+* objectiveVersionId
+* sourceType
+* assignmentRuleRefs
+* parentObjectiveId where applicable
+* annualAssignmentId
+* employeeId
+* assessment term
+
+### 6.3 Objective Assignment Application
+
+Objective assignment rules shall be applied to Annual Assignment assessment-term content.
+
+If objective assignment rules are configured before cycle launch, the system shall apply matching rules during cycle launch when Annual Assignments and term assignments are created.
+
+If objective assignment rules are configured after cycle launch, the system shall show an assignment preview and authorized HR/Admin shall explicitly apply the objective assignment to matching existing Annual Assignments and assessment terms.
+
+Applied objectives shall be stored as Employee Term Objectives under the applicable employee Annual Assignment and assessment term.
+
+After an objective plan is approved or finalized, objectives shall not be silently added, removed, or changed. Any change after approval or finalization shall require authorized reopen, correction, or amendment flow.
+
+### 6.4 Objective Assignment Version and Snapshot Behavior
+
+When an objective is assigned to an employee assessment term, the system shall create an Employee Term Objective using the active Objective Master Version at the time of assignment.
+
+The Employee Term Objective shall store both references and a frozen objective snapshot.
+
+References:
+
+* objectiveMasterId
+* objectiveVersionId
+* assignmentRuleId
+* annualAssignmentId
+* employeeId
+* assessmentTerm
+* cycleId
+
+Frozen objective snapshot:
+
+* objective title
+* objective description
+* objective source
+* KPI / measurement guidance
+* target value where applicable
+* target description where applicable
+* target direction
+* priority where applicable
+* attachment policy where applicable
+* scoreable flag where applicable
+* approved weightage where applicable
+* applicable term
+* owner / assigner metadata
+
+The frozen snapshot shall be used for runtime display, review, audit, reporting, and historical rendering.
+
+Later changes to Objective Master or Objective Master Version shall not update existing Employee Term Objectives automatically.
+
+Future assignments shall use the latest active Objective Master Version.
+
+### 6.5 Employee Term Objective Immutability and Correction
+
+Employee Term Objectives shall be immutable after assignment.
+
+Objective Master edits shall create new versions and shall apply only to future assignments.
+
+If an already assigned Employee Term Objective must be changed, the system shall use a controlled correction / amendment flow.
+
+Correction may support:
+
+* mark Employee Term Objective as not applicable
+* replace with another objective version
+* preserve old objective snapshot
+* capture reason
+* capture actor and timestamp
+* preserve audit history
+
+Scoring-related changes such as weightage, scoring mode, target value, or target direction shall not be silently changed after assignment.
+
+### 6.6 Objective Owner, Assigner, and Reviewer Permissions
+
+Objective ownership, assignment, and review shall be treated as separate permission responsibilities.
+
+The system shall not assume that the same user can create, assign, and review an objective unless explicitly allowed by role and scope configuration.
+
+| Responsibility | Meaning | Typical Allowed Actions |
+|---|---|---|
+| Objective Owner | User or role responsible for creating and maintaining Objective Master and Objective Master Versions | Create Objective Master, create new objective version, deactivate objective, maintain title, description, target guidance, KPI guidance, target direction, and scoring-related configuration where permitted |
+| Objective Assigner | User or role responsible for applying an objective to cycle, assessment term, department, team, group, manager, or employee scope | Select cycle, select assessment term, select eligible target population, preview impacted employees, apply objective assignment |
+| Objective Reviewer | User or role responsible for evaluating assigned Employee Term Objectives during review | View assigned objectives, view achievement/evidence, enter comments, enter rating/score only when scoring is enabled, submit review |
+
+Recommended permission rules:
+
+* HR/Admin may own and assign Company Objectives and may override objective assignments according to permission policy.
+* Management may own or activate Company Objectives where configured.
+* Department Head may own Department Objectives and assign them only within permitted department scope.
+* Manager may create or assign Manager-created Objectives only within direct-report, delegated, or configured hierarchy scope.
+* Employee may create Employee-created Objectives only for own assessment term where workflow allows.
+* Reviewer may review, comment, rate, or score assigned Employee Term Objectives according to template scoring policy.
+* Reviewer shall not edit Objective Master, Objective Master Version, or assignment rules unless separately granted owner or assigner permission.
+* Assigner shall not edit Objective Master unless separately granted owner permission.
+* Owner shall not automatically assign objectives outside permitted scope unless separately granted assigner permission.
+
+Department Head rule:
+
+* Department Head shall be introduced as a configurable PMS role / scope where required.
+* Department Head role shall not be assumed from existing user role data unless role mapping is configured.
+* Department Head role shall be treated as department-scoped by default.
+* Department Head may create and maintain Department Objectives for own department where allowed.
+* Department Head may assign Department Objectives only to employees, teams, or roles within permitted department scope.
+* Department Head shall not edit Company Objectives unless explicitly granted permission.
+* Department Head shall not review or score employees unless also configured as Manager / Reviewer for those employees.
+* If Department Head role mapping is not configured, Department Objective ownership and assignment shall remain with HR/Admin or authorized managers only.
+
+Server-side authorization shall enforce all owner, assigner, and reviewer permissions. Frontend-only role hiding shall not be sufficient.
+
+### 6.7 Company and Department Objective Activation
+
+Company Objectives and Department Objectives shall not require a separate submit/approve workflow in the baseline design.
+
+Objective versions created by authorized Objective Owners shall remain in `DRAFT` status until activated.
+
+Activation by an authorized Objective Owner shall be treated as approval.
+
+Only `ACTIVE` objective versions may be assigned to employees, cycles, assessment terms, departments, teams, roles, or groups.
+
+Supported Objective Version statuses:
+
+| Status | Meaning |
+|---|---|
+| DRAFT | Objective version is created but not assignable |
+| ACTIVE | Objective version is approved and assignable |
+| INACTIVE | Objective version is temporarily disabled and not assignable |
+| ARCHIVED | Objective version is retained for history only |
+
+Activation rules:
+
+* HR/Admin or Management may activate Company Objective versions where permitted.
+* HR/Admin, Department Head, or delegated manager may activate Department Objective versions within configured scope.
+* Department Head activation shall be restricted to permitted department scope.
+* Inactive or archived objective versions shall not be assignable.
+* Existing Employee Term Objectives linked to older active versions shall remain unchanged when a new objective version is activated.
+
 ---
+
 
 ## 7. Flexible Objective Filling, Actuals, and Scoring Governance
 
@@ -247,6 +431,69 @@ LOWER_IS_BETTER
 
 Target direction should guide review interpretation and score calculation only when objective scoring is explicitly enabled.
 
+### 7.2.1 Target Direction Impact on Scoring
+
+Target direction shall guide scoring interpretation when objective score is calculated from target value and actual achievement value.
+
+Target direction shall not automatically calculate score unless the locked template scoring policy explicitly enables target-based score calculation.
+
+When manager manually enters objective score, target direction shall be displayed as measurement guidance only.
+
+If target-based score calculation is enabled, recommended formulas are:
+
+```text
+HIGHER_IS_BETTER Score = min((Actual Value / Target Value) x 100, 100)
+LOWER_IS_BETTER Score = min((Target Value / Actual Value) x 100, 100)
+```
+
+The calculated score shall be capped at 100 unless the template explicitly allows overachievement scoring.
+
+If actual value, target value, or target direction is missing, the system shall not auto-calculate objective score and shall follow the configured fallback rule.
+
+In the current design approval, automatic score derivation from actual values is not enabled by default. It may be configured only when explicitly supported by the locked template scoring policy.
+
+### 7.2.2 Achievement Actual Value Validation by Target Direction
+
+Actual achievement value shall be validated for data format and completeness, not for performance success by default.
+
+Target direction shall be used to interpret whether actual performance met the target, but it shall not block actual value entry only because the target was not achieved.
+
+| Area | Gap | Proposed Rule / Entry |
+|---|---|---|
+| Actual value format | Not defined | Validate numeric value when measurement type is numeric |
+| Mandatory actual value | Not defined | Require actual value only when configured as mandatory |
+| Target direction usage | Not defined | Use target direction for interpretation, not default blocking |
+| HIGHER_IS_BETTER interpretation | Not defined | Target met when Actual Value >= Target Value |
+| LOWER_IS_BETTER interpretation | Not defined | Target met when Actual Value <= Target Value |
+| Target not met behavior | Not defined | Allow submission, show Target Not Met, require comment only if configured |
+| Auto score calculation | Not default scope | Apply only when template explicitly enables target-based score calculation |
+| Non-numeric objectives | -- | Do not apply numeric target comparison |
+| Context-only objectives | -- | Actual value may be captured as evidence/context only |
+| Missing target value | Not defined | Do not auto-calculate score; follow configured fallback |
+
+Validation shall ensure:
+
+* actual value is numeric where the objective measurement type is numeric
+* actual value is present where configured as mandatory
+* actual value uses the configured unit or measurement type where applicable
+* actual value is within configured hard data limits where defined
+* target direction is available when target-based interpretation or auto-calculation is enabled
+
+If the actual value does not meet the target, the system shall allow submission but may:
+
+* show status as Target Not Met
+* require employee/manager comment where configured
+* allow manager to consider it during review
+* use it for score calculation only when target-based scoring is explicitly enabled
+
+The system shall block actual value only when:
+
+* required actual value is missing
+* actual value format is invalid
+* numeric value is required but non-numeric data is entered
+* configured hard limit is violated
+* target-based score calculation is enabled but required target/actual/direction data is missing
+
 ### 7.3 Default Scoring Behavior
 
 All objective sources should remain context-only by default.
@@ -284,9 +531,170 @@ Recommended scoring modes:
 
 The template scoring policy should allow only one active objective scoring mode for the same objective section at a time.
 
-Per-objective weighted scoring and one overall objective score should not both contribute to the same objective score total unless a specific override policy is approved. This prevents duplicate counting and conflicting scoring outcomes.
+Per-objective weighted scoring and one overall objective score shall not both contribute to the same objective score total. This prevents duplicate counting and conflicting scoring outcomes.
 
 Manager-entered objective scores must not exceed 100. Weighted calculations must not cause the configured objective scoring total or final term score to exceed the configured template scoring total.
+
+### 7.4.1 Objective Weighted Scoring Formula
+
+Weighted objective scoring shall apply only when objective scoring mode is `WEIGHTED_OBJECTIVE_SCORE`.
+
+Only scoreable objectives shall participate in weighted objective scoring. Non-scoreable objectives shall remain planning, achievement, evidence, and review context only.
+
+Each scoreable objective shall have valid weightage for the applicable assessment term.
+
+Manager-entered score shall be captured from 0 to 100.
+
+Weighted score shall be calculated as:
+
+```text
+Objective Weighted Score = (Manager Score / 100) x Objective Weightage
+```
+
+Objective section score shall be calculated as:
+
+```text
+Objective Section Score = Sum of Objective Weighted Scores
+```
+
+Example:
+
+| Objective | Weightage | Manager Score | Weighted Score |
+|---|---:|---:|---:|
+| Improve Quality | 40 | 80 | 32 |
+| Reduce Rework | 30 | 90 | 27 |
+| Timely Delivery | 30 | 70 | 21 |
+
+```text
+Objective Section Score = 32 + 27 + 21 = 80
+```
+
+If the objective section itself has a configured template weight, the objective section contribution to term score shall be calculated as:
+
+```text
+Objective Section Contribution = (Objective Section Score / 100) x Objective Section Template Weight
+```
+
+If no scoreable objectives exist for the employee and assessment term, the system shall follow the configured no-objective scoring policy.
+
+Supported no-objective scoring policies:
+
+| Policy | Behavior |
+|---|---|
+| NO_OBJECTIVES_NOT_APPLICABLE | Objective scoring is skipped for that employee and term |
+| REALLOCATE_OBJECTIVE_WEIGHT | Objective section weight is reallocated according to configured template policy |
+| BLOCK_REVIEW_SUBMISSION | Review submission is blocked until scoreable objectives are available or scoring configuration is corrected |
+| ALLOW_MANUAL_OVERALL_SCORE | Manager may enter one overall objective score if template policy allows it |
+
+Default policy shall be `NO_OBJECTIVES_NOT_APPLICABLE`.
+
+Weighted scoring validation shall ensure:
+
+* manager score is between 0 and 100
+* only scoreable objectives are included
+* objective weightage is valid for the applicable term
+* total objective weightage does not exceed the configured objective scoring total
+* calculated objective section score does not exceed 100
+* final term score does not exceed the configured template scoring total
+
+### 7.4.2 Overall Objective Score Contribution
+
+Overall objective scoring shall apply only when objective scoring mode is `OVERALL_OBJECTIVE_SCORE`.
+
+In this mode, the manager shall review all applicable objectives together and enter one overall objective score for the objective section.
+
+The overall objective score shall be captured from 0 to 100.
+
+The overall objective score is not the final PMS score. It represents only the objective section score.
+
+If the objective section has a configured template weight, the objective section contribution to the term score shall be calculated as:
+
+```text
+Objective Section Contribution = (Overall Objective Score / 100) x Objective Section Template Weight
+```
+
+Example:
+
+| Template Section | Section Weight |
+|---|---:|
+| Objectives | 40 |
+| Competencies | 30 |
+| Manager Assessment | 30 |
+
+If the manager enters:
+
+```text
+Overall Objective Score = 80
+Objective Section Contribution = (80 / 100) x 40 = 32
+```
+
+The final term score shall include the objective section contribution along with other configured scoring section contributions.
+
+```text
+Final Term Score =
+Objective Section Contribution
++ Competency Section Contribution
++ Manager Assessment Section Contribution
+```
+
+### 7.4.3 Score Override Rule
+
+Score override is not part of this design approval.
+
+Objective scoring shall be controlled only by the locked template scoring policy and the assigned objective scoring configuration.
+
+Managers shall not override objective scoring mode during review.
+
+Managers shall not convert a non-scoreable objective into a scoreable objective during review.
+
+Managers shall not change objective weightage during review.
+
+Managers shall not enter both per-objective weighted scores and overall objective score for the same objective section.
+
+The applicable scoring input shall depend on the configured objective scoring mode:
+
+| Objective Scoring Mode | Manager Scoring Input |
+|---|---|
+| CONTEXT_ONLY | No objective score input |
+| WEIGHTED_OBJECTIVE_SCORE | Score per scoreable objective only |
+| OVERALL_OBJECTIVE_SCORE | One overall objective section score only |
+
+Manual objective score entry is allowed only when the locked template scoring policy permits it.
+
+Any scoring change after assignment, such as scoreable flag, objective weightage, scoring mode, target value, or target direction, shall require controlled correction/amendment flow with reason, actor, timestamp, and audit trail.
+
+No ad hoc score override shall be allowed from the manager review screen.
+
+### 7.4.4 Objective Scoring Mode Storage
+
+Objective scoring mode shall be stored in the locked Template Version, not directly in Objective Master.
+
+The Template Version shall define how assigned objectives are used during review.
+
+The locked Template Version should store:
+
+* objective scoring mode
+* objective section template weight
+* whether objective scoring is enabled
+* whether per-objective score entry is allowed
+* whether overall objective score entry is allowed
+* no-objective scoring policy
+* scoring validation rules
+
+Objective Master Version may store objective business attributes such as title, description, KPI guidance, target value, target direction, and default scoring eligibility reference where required, but it shall not be the primary owner of the review scoring mode.
+
+Employee Term Objective shall store the assigned objective snapshot and scoring-related assignment values where applicable, such as scoreable flag and approved weightage.
+
+Manager Review shall store manager-entered score values and calculated scoring snapshot.
+
+At runtime, the system shall resolve scoring as:
+
+```text
+Locked Template Version
++ Employee Term Objective Snapshot
++ Manager Review Score Inputs
+= Calculated Review Score Snapshot
+```
 
 ### 7.5 Workflow Status Reuse
 
@@ -435,6 +843,88 @@ Shared access should not allow final approval unless the configuration explicitl
 
 Even when an acting user completes work through delegation, the system must preserve the original Manager 1 / Manager 2 ownership and separately record the acting user for audit and reporting.
 
+Sharing and delegation rules shall be controlled by the locked Probation Review Configuration.
+
+Actual sharing and delegation records shall be stored against the Probation Review Assignment.
+
+The configuration shall define:
+
+* whether sharing/delegation is allowed
+* who can grant shared access
+* who can revoke shared access
+* allowed access type: view-only or edit
+* allowed acting role: acting Manager 1, acting Manager 2, reviewer, or observer
+* allowed sections and fields
+* temporary access start and end date
+* whether shared users can approve
+
+Each sharing/delegation record shall store:
+
+* assignment id
+* original owner
+* acting user
+* acting role
+* access type
+* permitted sections and fields
+* valid from date
+* valid to date
+* shared by
+* shared at
+* revoked by
+* revoked at
+* status: ACTIVE, EXPIRED, REVOKED
+
+Revocation rule:
+
+* HR/Admin may revoke shared access where permitted.
+* The user who granted access may revoke that access where permitted.
+* The system shall automatically expire temporary access after the valid-to date.
+
+All share, revoke, expire, and delegated usage actions shall be audited.
+
+### 8.4.1 Delegated User Permission Boundary
+
+Delegated or shared users shall receive only the access explicitly granted in the sharing/delegation record.
+
+Delegation shall not transfer full ownership of the probation review assignment.
+
+Original Manager 1 and Manager 2 ownership shall remain unchanged.
+
+Delegated access shall be limited by:
+
+* locked Probation Review Configuration
+* sharing/delegation record
+* acting role
+* permitted sections
+* permitted fields
+* access type
+* valid from and valid to dates
+* workflow status
+* confidential field rules
+
+Delegated users shall not automatically receive:
+
+* full Manager 1 or Manager 2 permissions
+* final approval rights
+* access to hidden or confidential fields
+* right to share/delegate to another user
+* right to revoke other users' access
+* access after expiry or revocation
+* access outside the assigned sections or fields
+
+Delegated users may approve only when the locked configuration explicitly permits approval by the acting role.
+
+Every delegated action shall store:
+
+* original owner
+* acting user
+* acting role
+* action performed
+* section / field affected
+* timestamp
+* workflow status
+* source channel
+
 ### 8.5 Configurable Submission and Approval Rules
 
 Configuration should support:
@@ -466,6 +956,170 @@ MANAGER_1_SUBMITTED
 → MANAGER_1_SUBMITTED
 ```
 
+### 8.6 Data-Grid Edit Conflict Handling
+
+Data-grid row and field edit ownership shall be controlled by locked Probation Review Configuration.
+
+By default, the same editable field or cell shall have only one editable owner for a given workflow state.
+
+If both Manager 1 and Manager 2 need to provide input for the same review item, the recommended configuration is to use separate columns or fields.
+
+Supported conflict handling modes:
+
+| Mode | Behavior |
+|---|---|
+| SINGLE_OWNER | Only the configured owner can edit the cell or field. This is the default mode. |
+| SEPARATE_COLUMNS | Manager 1 and Manager 2 enter values in separate configured columns or fields. |
+| LOCK_AFTER_SUBMIT | Manager 1 can edit before submission; Manager 2 can edit only after Manager 1 submission where configured. |
+| LAST_WRITE_WINS | Latest permitted edit becomes the current value, with full audit history. Use only when explicitly configured. |
+
+When `LAST_WRITE_WINS` is enabled, the system shall audit:
+
+* previous value
+* new value
+* previous actor
+* new actor
+* timestamp
+* workflow status
+* acting role
+* source channel
+
+The system shall reject edits where the actor is not allowed to edit the cell, field, row, section, or workflow state.
+
+Frontend-only edit restriction shall not be sufficient. Server-side validation is mandatory.
+
+### 8.7 Probation Reviewer Responsibility Configuration Storage
+
+Probation reviewer responsibility rules shall be stored in Probation Review Configuration.
+
+The Manager Review Only Template Version shall store form structure such as sections, fields, grid definitions, and template-level rendering rules.
+
+The Probation Review Configuration shall store workflow and reviewer responsibility behavior such as:
+
+* reviewer responsibility mode
+* Manager 1 input requirement
+* Manager 2 input requirement
+* final approver role
+* whether Manager 1 can approve
+* whether Manager 2 can approve
+* whether same user can act as Manager 1 and Manager 2
+* separation-of-duties rule
+* return-to-Manager-1 rule
+* mandatory return reason
+* mandatory approval comment
+* auto-finalization rule
+* sharing/delegation permission rule
+
+When a Probation Review Assignment is created, the system shall preserve:
+
+* locked Manager Review Only Template Version
+* locked Probation Review Configuration snapshot
+* Manager 1
+* Manager 2
+* configured final approver where applicable
+* reviewer responsibility mode
+* field/section permission snapshot
+* data-grid permission snapshot
+* sharing/delegation policy snapshot
+* approval and return rule snapshot
+
+Later changes to Probation Review Configuration or Template Version shall not alter already-created assignments unless an authorized correction or migration is performed.
+
+Runtime probation review behavior shall be resolved from:
+
+```text
+Locked Template Version
++ Locked Probation Review Configuration Snapshot
++ Probation Review Assignment Actors
+= Allowed reviewer actions
+```
+
+### 8.8 Probation Status Transitions for Configured Reviewer Modes
+
+Probation review status transitions shall be controlled by the locked Probation Review Configuration.
+
+The default two-step flow shall remain:
+
+```text
+DRAFT
+→ SCHEDULED
+→ REVIEW_OPEN
+→ MANAGER_1_SUBMITTED
+→ MANAGER_2_APPROVED
+→ FINALIZED
+```
+
+For single-reviewer or alternate reviewer modes, the configuration may allow simplified transitions.
+
+Supported transition patterns:
+
+| Reviewer Mode | Allowed Transition |
+|---|---|
+| Manager 1 fills, Manager 2 approves | REVIEW_OPEN → MANAGER_1_SUBMITTED → MANAGER_2_APPROVED → FINALIZED |
+| Manager 1 fills and approves | REVIEW_OPEN → FINALIZED |
+| Manager 2 fills and approves | REVIEW_OPEN → FINALIZED |
+| Manager 1 and Manager 2 both fill, Manager 2 approves | REVIEW_OPEN → MANAGER_1_SUBMITTED → MANAGER_2_APPROVED → FINALIZED |
+| Manager 1 and Manager 2 both fill, configured final approver approves | REVIEW_OPEN → MANAGER_1_SUBMITTED → MANAGER_2_APPROVED / FINAL_APPROVER_APPROVED → FINALIZED |
+
+Where the implementation does not store a separate approval status, the system may store:
+
+```text
+status = FINALIZED
+auditAction = MANAGER_1_APPROVED / MANAGER_2_APPROVED / FINAL_APPROVER_APPROVED
+```
+
+The selected status handling shall remain consistent across APIs, UI, audit logs, and reports.
+
+For single-reviewer completion:
+
+* configured reviewer must complete all mandatory fields assigned to that role
+* approval permission must be enabled in locked configuration
+* finalization shall create approval and finalization audit entries
+* same-user Manager 1 / Manager 2 completion shall be allowed only when configuration permits single-reviewer completion
+
+Return flow shall apply only when the selected reviewer mode includes a return step.
+
+Invalid transitions shall be rejected server-side.
+
+### 8.8.1 Finalized Probation Review Protection
+
+Finalized probation reviews shall not be reopened, edited, returned, cancelled, or corrected through the standard flow in this design approval.
+
+Correction and cancellation shall be allowed only before finalization.
+
+If a finalized probation review contains an error, the current approved behavior shall preserve the finalized record as historical audit and require a new authorized review assignment or a separately approved future correction process.
+
+Finalized review values, approval actions, locked template version, locked configuration snapshot, and audit history shall remain immutable.
+
+### 8.9 Field and Section Permission Precedence
+
+Permission evaluation shall follow the most restrictive rule.
+
+When multiple permission rules apply to the same section, field, row, column, or cell, deny / hidden / read-only rules shall override allow / visible / editable rules.
+
+Permission precedence shall be evaluated in this order:
+
+| Priority | Rule Type | Behavior |
+|---|---|---|
+| 1 | Finalized / locked record protection | Blocks standard edits |
+| 2 | Confidential or hidden rule | Hides data and prevents API return where configured |
+| 3 | Assignment ownership / active delegation | Actor must be owner or active delegated/shared user |
+| 4 | Workflow status permission | Actor can act only in allowed workflow status |
+| 5 | Section permission | Controls section visibility and editability |
+| 6 | Field permission | Controls field visibility, editability, and mandatory behavior |
+| 7 | Data-grid row / column / cell permission | Controls row, column, and cell-level edit behavior |
+| 8 | Mandatory rule | Enforced only for visible and applicable fields |
+
+Permission rules:
+
+* Hidden section shall hide all fields inside the section.
+* Read-only section shall make fields read-only unless explicit field-level override is allowed by configuration.
+* Hidden field shall not be returned in API responses where confidentiality requires masking.
+* Field-level hidden/read-only rule shall override section-level editable rule.
+* Data-grid cell edit shall be allowed only when section, field, row, column, workflow status, and actor permission all allow edit.
+* Delegated users shall receive only the permissions explicitly granted and shall still be restricted by confidential, workflow, section, field, row, and column rules.
+* Frontend-only permission enforcement shall not be sufficient. Server-side enforcement is mandatory.
+
 ---
 
 ## 9. Data Design Impact
@@ -476,11 +1130,15 @@ Recommended objective data components:
 
 | Component | Purpose |
 |---|---|
-| Objective Master | Stores company, department, and reusable objective definitions |
+| Objective Master | Stores company, department, and reusable objective identity / ownership |
+| Objective Master Version | Stores versioned objective details such as title, description, target, target direction, and scoring policy references |
 | Objective Assignment Rules | Stores mapping rules by cycle, term, department, role, group, manager, or employee |
-| Employee Term Objective Plan | Stores resolved objectives for each employee and assessment term |
+| Employee Term Objective Plan | Stores objectives assigned to each employee and assessment term |
+| Employee Term Objective Snapshot | Stores the objective version snapshot used at assignment time |
 | Objective Fill Values | Stores target, actual, comments, evidence, and review values |
 | Objective Scoring Policy | Stores scoring participation only where enabled by template policy |
+| Manager Review Score Inputs | Stores manager-entered objective scores where scoring is enabled |
+| Calculated Review Score Snapshot | Stores calculated score results used for review history and reporting |
 
 ### 9.2 Template Relationship
 
@@ -494,6 +1152,9 @@ Templates may control:
 * achievement requirements
 * manager review fields
 * scoring enabled or disabled
+* objective scoring mode
+* objective section template weight
+* no-objective scoring policy
 * scoring validation rules
 
 ### 9.3 Probation Review Data
@@ -503,7 +1164,8 @@ Recommended probation review data components:
 | Component | Purpose |
 |---|---|
 | Probation Review Assignment | Stores employee, dates, managers, status, locked template version |
-| Locked Review Configuration Snapshot | Preserves reviewer responsibility mode, permissions, row/column rules, approval rules |
+| Probation Review Configuration | Stores reviewer responsibility, workflow, sharing, delegation, and approval rules |
+| Locked Review Configuration Snapshot | Preserves reviewer responsibility mode, permissions, row/column rules, sharing/delegation policy, and approval rules |
 | Probation Review Values | Stores dynamic section, field, and grid values |
 | Sharing / Delegation Records | Stores shared access and acting-user metadata |
 | Audit Records | Stores assignment, field, section, row, workflow, sharing, and approval events |
@@ -518,7 +1180,7 @@ Later template or configuration changes should not affect already-created probat
 
 The regular PMS objective workflow should remain compatible with the current approved flow.
 
-Flexible objective assignments should resolve into the employee term objective plan before or during the relevant objective setting / achievement window.
+Flexible objective assignments should be applied into the Employee Term Objective plan before or during the relevant objective setting / achievement window.
 
 Where possible, existing objective workflow states should be reused:
 
@@ -565,8 +1227,9 @@ Recommended screens / UI areas:
 | UI Area | Purpose |
 |---|---|
 | Objective Master | Create and maintain Company / Department / reusable objectives |
+| Objective Version History | View historical versions of Objective Master records |
 | Objective Assignment Rules | Map objectives to cycles, terms, departments, roles, groups, managers, or employees |
-| Assignment Preview | Show resolved employee objective plan before launch or synchronization |
+| Assignment Preview | Show Employee Term Objective plan before launch or assignment application |
 | Objective Fill / Achievement Screen | Capture actuals, achievements, evidence, comments |
 | Manager Review Screen | Review assigned objectives as context or scoreable items where enabled |
 | Scoring Configuration | Enable objective scoring and validate weightage only where required |
@@ -596,15 +1259,47 @@ The system should validate:
 * assignment mapping references valid cycles, terms, employees, departments, roles, or groups
 * selected terms match the selected cycle term type
 * actual columns match only the selected cycle term type
+* Employee Term Objective duplicate key prevents same objectiveMasterId + employee + assessment term from creating duplicate rows
+* Employee Term Objectives cannot be directly edited after assignment
+* Objective Master edits create new objective versions and do not update already assigned Employee Term Objectives
+* Employee Term Objective must store objectiveMasterId and objectiveVersionId
+* Employee Term Objective must preserve frozen objective snapshot at assignment time
+* later Objective Master Version changes must not update existing Employee Term Objectives
+* future assignments use the latest ACTIVE Objective Master Version
+* only ACTIVE objective versions can be assigned
+* activation by authorized Objective Owner is treated as approval
+* DRAFT, INACTIVE, and ARCHIVED objective versions cannot be assigned
+* Department Head activation is restricted to permitted department scope
+* owner, assigner, and reviewer permissions are evaluated separately
+* assigner can apply objectives only within configured scope
+* reviewer cannot edit Objective Master, Objective Master Version, or assignment rules unless separately authorized
+* Department Head assignment is restricted to permitted department scope unless explicit override exists
 * unauthorized roles cannot create or map Company / Department Objectives
 * objective fill values are allowed for the actor, workflow state, and assessment term
 * score fields are rejected unless objective scoring is explicitly enabled
 * objective scoring mode is one of `CONTEXT_ONLY`, `WEIGHTED_OBJECTIVE_SCORE`, or `OVERALL_OBJECTIVE_SCORE`
-* only one objective scoring mode contributes to the same objective section total unless an approved override policy exists
+* only one objective scoring mode contributes to the same objective section total
 * manager-entered objective scores do not exceed 100
+* weighted objective score is calculated as `(managerScore / 100) x objectiveWeightage`
+* non-scoreable objectives are excluded from objective score calculation
+* no-objective scoring policy is applied when no scoreable objectives exist
+* objective section contribution is calculated using template section weight where configured
+* overall objective score is treated as objective section score only, not final PMS score
+* objective section contribution is calculated as `(overallObjectiveScore / 100) x objectiveSectionTemplateWeight`
+* overall objective score cannot bypass configured template scoring totals
+* manager cannot override objective scoring mode during review
+* manager cannot make non-scoreable objectives scoreable during review
+* manager cannot change objective weightage during review
+* score override is not allowed in this design approval
+* scoring input must match the locked template objective scoring mode
 * valid weightage exists before scoreable objectives participate in scoring
 * scoring totals remain valid
 * target direction is one of `HIGHER_IS_BETTER` or `LOWER_IS_BETTER`
+* target direction affects scoring only when target-based score calculation is explicitly enabled
+* manual manager score entry does not require target-based auto-calculation
+* target-based calculated score is capped at 100 unless overachievement scoring is explicitly enabled
+* missing target value, actual value, or target direction prevents target-based auto-calculation
+* actual value is validated for format and completeness, not blocked for target failure by default
 
 ### 12.2 Probation Review Validation
 
@@ -621,7 +1316,15 @@ The system should validate:
 * mandatory fields for the actor are complete before submission or approval
 * return and approval comments are provided where mandatory
 * shared users have active access before acting
-* finalized reviews are immutable except through approved correction workflow
+* delegated users receive only explicitly granted access
+* delegated users cannot approve unless the locked configuration permits approval by acting role
+* data-grid cell edits follow section, field, row, column, workflow, and actor permission rules
+* data-grid edit conflict mode is evaluated before accepting updates
+* permission precedence applies most restrictive rule first
+* hidden/confidential fields are masked server-side
+* single-reviewer finalization is allowed only when locked configuration permits it
+* invalid probation status transitions are rejected server-side
+* finalized probation reviews cannot be reopened, edited, returned, cancelled, or corrected through the standard flow
 
 ---
 
@@ -633,7 +1336,7 @@ Audit should capture:
 
 * objective master create / update / deactivate
 * assignment rule create / update / deactivate
-* objective assignment synchronization
+* objective assignment application
 * employee term objective plan creation
 * objective fill value entry / update
 * achievement submission
@@ -689,6 +1392,181 @@ Reports may need fields for:
 * section completion status
 * finalization date
 
+### 13.4 Audit Visibility Rules
+
+The system shall capture complete audit logs for probation review actions.
+
+Audit capture shall not mean all users can view all audit details.
+
+Audit visibility shall be controlled by role, assignment ownership, delegation access, workflow status, and confidential field rules.
+
+Recommended audit visibility:
+
+| Actor | Audit Visibility |
+|---|---|
+| HR/Admin | Full assignment, field, section, row, sharing, delegation, approval, return, revocation, cancellation, and finalization audit |
+| Manager 1 | Own actions and permitted assignment workflow history |
+| Manager 2 | Own actions, Manager 1 submission summary, return/approval history, and permitted workflow history |
+| Delegated / shared user | Own delegated actions and permitted shared-access history |
+| Final approver | Approval-relevant audit and permitted workflow history |
+| Employee | No internal probation audit by default unless explicitly configured |
+| Director / Management | Read-only audit summary where configured |
+
+Confidential or restricted field values shall be masked in audit views for unauthorized users.
+
+Audit visibility rules shall control:
+
+* whether previous value is visible
+* whether new value is visible
+* whether actor identity is visible
+* whether delegated acting user is visible
+* whether section / field labels are visible
+* whether sharing/delegation details are visible
+
+Full audit data shall remain available for authorized HR/Admin and system compliance use.
+
+Frontend-only audit hiding shall not be sufficient. API-level audit masking is mandatory.
+
+### 13.5 Audit Retention Position
+
+Audit retention duration is not defined in this design approval.
+
+Until a formal retention policy is separately approved, PMS and probation review audit records shall be preserved and shall not be deleted through standard user operations.
+
+Audit preservation shall apply to:
+
+* objective master audit
+* objective assignment audit
+* Employee Term Objective audit
+* achievement audit
+* manager review audit
+* probation assignment audit
+* field and section audit
+* row-level audit
+* sharing/delegation/revocation audit
+* approval, return, cancellation, and finalization audit
+
+Audit records linked to finalized reviews shall remain immutable.
+
+Audit deletion, archival, purge, or retention-duration automation is not included in this approval.
+
+### 13.6 Dashboard Status Calculation Rules
+
+Dashboard status shall be calculated from workflow status, due dates, assignment applicability, submission state, approval/finalization state, and active sharing/delegation where applicable.
+
+Dashboard status shall not be based only on UI labels.
+
+Objective / Employee Term Objective dashboard:
+
+| Dashboard Status | Calculation Rule |
+|---|---|
+| Not Started | Assignment exists but objective/achievement activity has not started |
+| Pending Objective Setup | Objective setting window is open and required objectives are not submitted/approved |
+| Pending Achievement | Achievement window is open and required achievement input is not submitted |
+| Pending Manager Review | Manager review is open and review is not submitted |
+| Returned for Revision | Objective or review is returned for correction |
+| Submitted | Required employee/manager submission is completed but not finalized |
+| Finalized | Applicable term/review is finalized |
+| Closed / Not Applicable | Term or objective is closed by admin or marked not applicable |
+| Overdue | Required action is pending after configured due date |
+| Blocked | Submission/finalization is blocked due to missing configuration, invalid scoring, missing mandatory fields, or permission issue |
+
+Probation review dashboard:
+
+| Dashboard Status | Calculation Rule |
+|---|---|
+| Draft | Assignment created but not scheduled |
+| Scheduled | Assignment scheduled and review open date is in future |
+| Review Open | Review open date reached or manually opened |
+| Pending Manager 1 | Manager 1 input is required and not submitted/completed |
+| Pending Manager 2 | Manager 2 approval/input is required and not completed |
+| Returned | Review returned to Manager 1 for correction |
+| Pending Final Approver | Final approver action is required where configured |
+| Finalized | Review finalized |
+| Cancelled | Assignment cancelled before finalization |
+| Overdue | Required reviewer action is pending after configured due date |
+| Shared / Delegated | Active sharing/delegation exists for the assignment |
+
+Dashboard calculation shall use locked assignment/configuration snapshot so later template or configuration changes do not alter historical status meaning.
+
+Where multiple statuses apply, priority shall be:
+
+```text
+Cancelled
+Finalized
+Overdue
+Returned
+Blocked
+Pending Approver
+Pending Reviewer
+Review Open
+Scheduled
+Draft
+```
+
+Dashboard status shall be calculated server-side and exposed through reporting APIs.
+
+### 13.7 Reporting Export Source Mapping
+
+Reporting export columns shall be mapped to source records so exports remain consistent across dashboard, audit, and operational reports.
+
+Objective reporting source mapping:
+
+| Export Column | Source Record |
+|---|---|
+| Objective Source | Objective Master Version / Employee Term Objective Snapshot |
+| Objective Master ID | Objective Master |
+| Objective Version ID | Objective Master Version |
+| Objective Title | Employee Term Objective Snapshot |
+| Assignment Level | Objective Assignment Rule |
+| Assignment Rule ID | Objective Assignment Rule |
+| Cycle | Annual Cycle / Annual Assignment |
+| Assessment Term | Employee Term Objective |
+| Employee | Annual Assignment / Employee |
+| Department / Group / Role | Objective Assignment Rule / Employee Profile |
+| Target Value | Employee Term Objective Snapshot |
+| Actual Value | Objective Fill Values / Achievement Submission |
+| Target Direction | Employee Term Objective Snapshot |
+| Scoreable Flag | Employee Term Objective Snapshot / Locked Template Version Policy |
+| Objective Weightage | Employee Term Objective Snapshot / Scoring Policy |
+| Manager Score | Manager Review Score Inputs |
+| Calculated Weighted Score | Manager Review Calculated Score Snapshot |
+| Objective Approval Status | Employee Term Objective / Objective Workflow State |
+| Finalized Status | Annual Assignment Term Content / Manager Review |
+
+Probation review reporting source mapping:
+
+| Export Column | Source Record |
+|---|---|
+| Probation Review Assignment ID | Probation Review Assignment |
+| Employee | Probation Review Assignment / Employee |
+| Probation End Date | Probation Review Assignment |
+| Review Open Date | Probation Review Assignment |
+| Review Status | Probation Review Assignment |
+| Manager 1 | Probation Review Assignment |
+| Manager 2 | Probation Review Assignment |
+| Final Approver | Probation Review Assignment / Locked Configuration Snapshot |
+| Reviewer Responsibility Mode | Locked Probation Review Configuration Snapshot |
+| Template Name / Version | Locked Template Version |
+| Section Completion Status | Probation Review Values / Section Completion Records |
+| Field Values | Probation Review Values |
+| Data-grid Row Values | Probation Review Values |
+| Added Rows | Probation Review Values / Row Audit |
+| Deleted Rows | Row Audit |
+| Acting Reviewer | Sharing / Delegation Record / Audit |
+| Shared Access Status | Sharing / Delegation Record |
+| Shared By / Shared At | Sharing / Delegation Record |
+| Revoked By / Revoked At | Sharing / Delegation Record |
+| Submitted By / Submitted At | Workflow Audit |
+| Approved By / Approved At | Workflow Audit |
+| Returned By / Returned At | Workflow Audit |
+| Finalized By / Finalized At | Workflow Audit |
+| Cancellation Details | Probation Review Assignment / Workflow Audit |
+
+Exported reports shall use locked assignment snapshots and locked configuration snapshots for historical records.
+
+Reports shall not recalculate historical field labels, scoring rules, reviewer responsibility, or permission behavior from the latest template/configuration.
+
 ---
 
 ## 14. Backward Compatibility
@@ -696,6 +1574,8 @@ Reports may need fields for:
 Existing PMS flow should not be affected.
 
 The current PMS objective and review flow remains valid for the approved regular PMS use case.
+
+The new objective model, scoring options, probation review configuration, sharing/delegation, and audit enhancements shall be treated as add-on configurable capabilities. If the new configuration is not enabled or not present, the system shall continue using the existing approved PMS and probation review behavior.
 
 Backward compatibility rules:
 
@@ -718,23 +1598,36 @@ Implementation impact includes the following required scope:
 
 ```text
 Objective master data model
+Objective master version model
 Objective assignment rule model
+Objective assignment duplicate/conflict handling
 Employee term objective plan generation
+Employee term objective snapshot storage
 Objective value storage
 Objective permission checks
+Objective owner/assigner/reviewer authorization
 Objective scoring validation
 Objective scoring mode configuration
+Objective weighted scoring formula
+Objective overall score contribution calculation
+Objective no-objective scoring policy handling
+Target direction interpretation and validation
 Actual column rendering
 Template runtime rendering
 Probation review configuration model
 Probation review assignment model
 Probation review permission enforcement
 Data-grid row/column permission handling
+Data-grid edit conflict handling
 Sharing/delegation model
+Delegated user permission boundary enforcement
 Field-level and section-level audit
 Row-level audit
 Sharing/delegation/revocation audit
 Approval/return/finalization audit
+Audit visibility masking
+Dashboard status calculation
+Reporting export source mapping
 Dashboard and reporting
 QA test cases
 ```
@@ -747,6 +1640,8 @@ The following items should be treated as future scope unless separately approved
 
 * automatic recalculation of finalized historical scores
 * complex multi-level appraisal approval outside the configured probation review flow
+* probation review reopen/correction after finalization
+* audit retention duration, archival automation, or purge policy
 * AI-based objective recommendation
 * automated performance score derivation from actual values without explicit scoring policy
 * cross-company objective inheritance rules beyond configured mappings
@@ -762,29 +1657,48 @@ Approval is requested to proceed with the following design enhancements:
 
 ```text
 1. Create Objective Master outside PMS templates.
-2. Support Company, Department, Template-referenced Objectives / Template-linked Objective References, Manager-created, and Employee-created objective sources.
-3. Add flexible objective assignment rules for cycles, terms, organization structures, roles, groups, managers, and employees.
-4. Keep templates responsible for rendering, validation, fillability, review behavior, and scoring policy only.
-5. Generate actual columns only from the selected cycle term type: Q1-Q4, H1-H2, or Y1.
-6. Add targetDirection values: HIGHER_IS_BETTER and LOWER_IS_BETTER.
-7. Keep objectives context-only by default and make them scoreable only when template scoring policy explicitly enables scoring and valid weightage exists.
-8. Support objective scoring modes: CONTEXT_ONLY, WEIGHTED_OBJECTIVE_SCORE, and OVERALL_OBJECTIVE_SCORE.
-9. Cap manager-entered objective scores at 100 and prevent duplicate contribution from both weighted objective score and overall objective score unless an approved override policy exists.
-10. Reuse existing objective workflow states unless a new status is absolutely required.
-11. Enhance Probation / Trainee Review using Manager Review Only templates without normal PMS cycle launch.
-12. Add configurable reviewer responsibility modes for Manager 1, Manager 2, and final approver behavior.
-13. Add server-side field-level, section-level, data-grid row, and data-grid column permissions for probation reviews.
-14. Add sharing/delegation support with original Manager 1 / Manager 2 ownership preservation.
-15. Track acting user separately from original Manager 1 / Manager 2 ownership for delegated actions.
-16. Shared/delegated access must support view-only access.
-17. Shared/delegated access must support edit access for selected sections/fields.
-18. Shared/delegated access must support temporary access with start/end date.
-19. Shared/delegated access must support acting Manager 1, acting Manager 2, reviewer, and observer roles.
-20. Shared/delegated access must support revocation.
-21. Shared access must not allow final approval unless the selected configuration explicitly permits it.
-22. Add detailed audit logs for assignment, field, section, row, sharing, delegation, approval, return, revocation, cancellation, and finalization actions.
-23. Preserve locked template version and locked review configuration snapshot at probation assignment creation.
-24. Keep existing PMS and probation review flows unchanged by default.
+2. Maintain Objective Master versions and create a new version whenever Objective Master is edited.
+3. Store Employee Term Objective snapshots with objectiveMasterId, objectiveVersionId, assignment references, annualAssignmentId, and assessment term.
+4. Prevent direct edits to Employee Term Objectives after assignment; use correction / amendment flow where required.
+5. Prevent exact duplicate Employee Term Objectives while allowing different objective IDs with similar titles.
+6. Preserve all source assignment references when multiple assignment rules apply the same objective.
+7. Separate Objective Owner, Objective Assigner, and Objective Reviewer permissions.
+8. Introduce Department Head as a configurable PMS role / scope where required and enforce department-scoped objective permissions.
+9. Treat Company and Department Objective activation by authorized Objective Owner as approval, without separate submit/approve workflow.
+10. Support Company, Department, Template-referenced Objectives / Template-linked Objective References, Manager-created, and Employee-created objective sources.
+11. Add flexible objective assignment rules for cycles, terms, organization structures, roles, groups, managers, and employees.
+12. Keep templates responsible for rendering, validation, fillability, review behavior, and scoring policy only.
+13. Generate actual columns only from the selected cycle term type: Q1-Q4, H1-H2, or Y1.
+14. Add targetDirection values: HIGHER_IS_BETTER and LOWER_IS_BETTER.
+15. Keep objectives context-only by default and make them scoreable only when template scoring policy explicitly enables scoring and valid weightage exists.
+16. Support objective scoring modes: CONTEXT_ONLY, WEIGHTED_OBJECTIVE_SCORE, and OVERALL_OBJECTIVE_SCORE.
+17. Define weighted objective score as `(managerScore / 100) x objectiveWeightage`.
+18. Define overall objective score contribution using objective section template weight.
+19. Keep score override out of this design approval; managers cannot override scoring mode, scoreable flag, or objective weightage during review.
+20. Store objective scoring mode in the locked Template Version.
+21. Reuse existing objective workflow states unless a new status is absolutely required.
+22. Enhance Probation / Trainee Review using Manager Review Only templates without normal PMS cycle launch.
+23. Add configurable reviewer responsibility modes for Manager 1, Manager 2, and final approver behavior.
+24. Store probation reviewer responsibility rules in Probation Review Configuration and preserve a locked configuration snapshot at assignment creation.
+25. Add server-side field-level, section-level, data-grid row, and data-grid column permissions for probation reviews.
+26. Define field/section permission precedence using most restrictive rule first.
+27. Define data-grid edit conflict handling with SINGLE_OWNER as default.
+28. Add sharing/delegation support with original Manager 1 / Manager 2 ownership preservation.
+29. Track acting user separately from original Manager 1 / Manager 2 ownership for delegated actions.
+30. Shared/delegated access must support view-only access.
+31. Shared/delegated access must support edit access for selected sections/fields.
+32. Shared/delegated access must support temporary access with start/end date.
+33. Shared/delegated access must support acting Manager 1, acting Manager 2, reviewer, and observer roles.
+34. Shared/delegated access must support revocation and automatic expiry.
+35. Shared access must not allow final approval unless the selected configuration explicitly permits it.
+36. Add detailed audit logs for assignment, field, section, row, sharing, delegation, approval, return, revocation, cancellation, and finalization actions.
+37. Add audit visibility rules and API-level masking for restricted audit details.
+38. Keep finalized probation reviews locked with no standard reopen, edit, return, cancellation, or correction flow.
+39. Keep audit retention duration, archival automation, and purge policy outside this approval.
+40. Add dashboard status calculation rules and reporting export source mapping.
+41. Preserve locked template version and locked review configuration snapshot at probation assignment creation.
+42. Keep existing PMS and probation review flows unchanged by default.
+43. Treat all new objective and probation review capabilities as additional configurable enhancements, not replacements for the approved baseline PMS flow.
 ```
 
 ---
