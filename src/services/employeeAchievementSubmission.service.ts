@@ -711,6 +711,36 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       resolvedFields,
     );
     const achievementValues = nextAchievementValues;
+    const promoteToSubmitted = this.canPromoteItemSubmissionToOverall(
+      section,
+      field,
+      nextItems,
+      achievementValues,
+      config,
+      approvedObjectives,
+      resolvedFields,
+    );
+    const nextSubmissionStatus = promoteToSubmitted
+      ? EmployeeAchievementSubmissionStatus.SUBMITTED
+      : existingSubmission?.status ?? EmployeeAchievementSubmissionStatus.DRAFT;
+    const nextSubmittedBy = promoteToSubmitted
+      ? existingSubmission?.submittedBy ?? actorObjectId
+      : existingSubmission?.submittedBy;
+    const nextSubmittedAt = promoteToSubmitted
+      ? existingSubmission?.submittedAt ?? now
+      : existingSubmission?.submittedAt;
+    const submittedAchievementValues = promoteToSubmitted
+      ? achievementValues.map((value) =>
+          value.fieldKey === field.fieldKey
+            ? {
+                ...value,
+                workflowStage: 'ACHIEVEMENT_SUBMITTED',
+                valueStatus: 'ACTIVE',
+                submittedAt: value.submittedAt ?? now,
+              }
+            : value,
+        )
+      : achievementValues;
 
     const previousValue = existingSubmission?.toObject();
     const submission = existingSubmission
@@ -719,10 +749,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           {
             $set: {
               achievementItems: nextItems,
-              achievementValues,
-              status: existingSubmission.status,
-              submittedBy: existingSubmission.submittedBy,
-              submittedAt: existingSubmission.submittedAt,
+              achievementValues: submittedAchievementValues,
+              status: nextSubmissionStatus,
+              submittedBy: nextSubmittedBy,
+              submittedAt: nextSubmittedAt,
               lockedAt: undefined,
               updatedBy: actorObjectId,
             },
@@ -739,9 +769,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           templateVersionId: annualAssignment.templateVersionId,
           assessmentTermCode: termAssignment.assessmentTermCode,
           achievementItems: nextItems,
-          achievementValues,
-          status: EmployeeAchievementSubmissionStatus.DRAFT,
+          achievementValues: submittedAchievementValues,
+          status: nextSubmissionStatus,
           draftSavedAt: now,
+          submittedBy: nextSubmittedBy,
+          submittedAt: nextSubmittedAt,
           lockedAt: undefined,
           createdBy: actorObjectId,
           updatedBy: actorObjectId,
@@ -1104,6 +1136,71 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         }
       }
     }
+  }
+
+  private canPromoteItemSubmissionToOverall(
+    section: ITemplateSection,
+    field: ITemplateField,
+    items: Array<Record<string, any>>,
+    values: Array<Record<string, any>>,
+    config: AchievementTemplateConfig,
+    approvedObjectives: AchievementObjectiveRecord[] = [],
+    resolvedFields: ResolvedTemplateField[] = [],
+  ): boolean {
+    if (config.achievementSubmissionRequired && items.length === 0) {
+      return false;
+    }
+
+    if (items.length === 0) {
+      return false;
+    }
+
+    if (config.objectiveLinkedAchievementRequired) {
+      const submittedObjectiveIds = new Set(
+        items
+          .filter((item) =>
+            item.type === AchievementItemType.OBJECTIVE &&
+            item.objectiveId &&
+            item.description &&
+            this.isAchievementItemSubmittedOrLocked(item)
+          )
+          .map((item) => item.objectiveId.toString()),
+      );
+      const missingObjective = approvedObjectives.find(
+        (objective) => objective.isScoreable && !submittedObjectiveIds.has(objective.id),
+      );
+
+      if (missingObjective) {
+        return false;
+      }
+    }
+
+    if (
+      config.achievementSubmissionRequired &&
+      !items.some((item) => this.isAchievementItemSubmittedOrLocked(item))
+    ) {
+      return false;
+    }
+
+    for (const workUpdateField of this.getWorkUpdateFields(section, field.fieldKey, resolvedFields)) {
+      if (workUpdateField.editable !== true || workUpdateField.isRequired !== true) {
+        continue;
+      }
+
+      const submittedValue = values.find((value) => value.fieldKey === workUpdateField.fieldKey);
+      if (!this.hasMeaningfulAchievementValue(submittedValue)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private isAchievementItemSubmittedOrLocked(item: Record<string, any>): boolean {
+    return (
+      item.itemStatus === EmployeeAchievementSubmissionStatus.SUBMITTED ||
+      item.itemStatus === EmployeeAchievementSubmissionStatus.LOCKED
+    );
   }
 
   private hasMeaningfulAchievementValue(value?: Record<string, any>): boolean {

@@ -545,9 +545,10 @@ export class WorkflowSyncService extends BaseService {
         isDeleted: false,
       }).lean();
 
-      const isSubmittedOrLocked =
-        submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED ||
-        submission?.status === EmployeeAchievementSubmissionStatus.LOCKED;
+      const isSubmittedOrLocked = await this.isAchievementSubmissionReadyForManagerReview(
+        termAssignment,
+        submission,
+      );
 
       if (!isSubmittedOrLocked) {
         return {
@@ -775,6 +776,75 @@ export class WorkflowSyncService extends BaseService {
       canClose: true,
       reason: 'All objectives are approved.',
     };
+  }
+
+  private async isAchievementSubmissionReadyForManagerReview(
+    termAssignment: ITermAssignment,
+    submission: Record<string, any> | null | undefined,
+  ): Promise<boolean> {
+    if (
+      submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED ||
+      submission?.status === EmployeeAchievementSubmissionStatus.LOCKED
+    ) {
+      return true;
+    }
+
+    const achievementItems = Array.isArray(submission?.achievementItems)
+      ? submission.achievementItems
+      : [];
+
+    if (achievementItems.length === 0) {
+      return false;
+    }
+
+    const submittedItems = achievementItems.filter((item) =>
+      this.isAchievementItemSubmittedForSync(item),
+    );
+
+    if (submittedItems.length === 0) {
+      return false;
+    }
+
+    const approvedObjectives = await Objective.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+      status: ObjectiveStatus.OBJECTIVE_APPROVED,
+    })
+      .select('weightage source isPredefined')
+      .lean();
+    const scoreableObjectiveIds = approvedObjectives
+      .filter((objective: Record<string, any>) =>
+        Number.isFinite(Number(objective.weightage)) ||
+        objective.isPredefined === true ||
+        objective.source === 'PREDEFINED'
+      )
+      .map((objective: Record<string, any>) => objective._id.toString());
+
+    if (scoreableObjectiveIds.length === 0) {
+      return true;
+    }
+
+    const submittedObjectiveIds = new Set(
+      submittedItems
+        .filter((item) =>
+          item?.type === 'OBJECTIVE' &&
+          item?.objectiveId &&
+          String(item.description ?? '').trim()
+        )
+        .map((item) => item.objectiveId.toString()),
+    );
+
+    return scoreableObjectiveIds.every((objectiveId) =>
+      submittedObjectiveIds.has(objectiveId),
+    );
+  }
+
+  private isAchievementItemSubmittedForSync(item: Record<string, any>): boolean {
+    return (
+      item?.itemStatus === EmployeeAchievementSubmissionStatus.SUBMITTED ||
+      item?.itemStatus === EmployeeAchievementSubmissionStatus.LOCKED ||
+      Boolean(item?.submittedAt)
+    );
   }
 
   private async validateObjectiveScoringReadyForAchievementOpen(
