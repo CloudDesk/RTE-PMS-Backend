@@ -93,6 +93,9 @@ export class DelegationService extends BaseService {
       delegatorUserId: new Types.ObjectId(delegatorId),
       delegateUserId: new Types.ObjectId(delegateId),
       scopeType: input.scopeType ?? 'ALL',
+      annualAssignmentId: input.annualAssignmentId
+        ? new Types.ObjectId(input.annualAssignmentId)
+        : undefined,
       cycleId: input.cycleId ? new Types.ObjectId(input.cycleId) : undefined,
       validFrom: fromDate,
       validTo: toDate,
@@ -128,6 +131,7 @@ export class DelegationService extends BaseService {
     delegatorUserId?: string;
     delegateUserId?: string;
     status?: string;
+    annualAssignmentId?: string;
     cycleId?: string;
     scopeType?: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
     activeOn?: Date | string;
@@ -158,6 +162,9 @@ export class DelegationService extends BaseService {
     if (query.status) {
       filter.status = query.status;
     }
+    if (query.annualAssignmentId) {
+      filter.annualAssignmentId = this.toObjectId(query.annualAssignmentId, 'annualAssignmentId');
+    }
     if (query.cycleId) {
       filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
     }
@@ -165,7 +172,7 @@ export class DelegationService extends BaseService {
       filter.scopeType = query.scopeType;
     }
 
-    const activeOn = query.activeOn ? new Date(query.activeOn) : new Date();
+    const activeOn = query.activeOn ? new Date(query.activeOn) : this.getCurrentDate();
     const delegations = await Delegation.find(filter)
       .populate('delegatorUserId', 'name email employeeCode')
       .populate('delegateUserId', 'name email employeeCode')
@@ -356,14 +363,23 @@ export class DelegationService extends BaseService {
     delegatorUserId: string,
     scope: string,
     cycleId?: string,
+    annualAssignmentId?: string,
   ): Promise<any | null> {
-    const now = new Date();
+    const now = this.getCurrentDate();
     const delegation = await Delegation.findOne({
       delegateUserId: new Types.ObjectId(delegateUserId),
       delegatorUserId: new Types.ObjectId(delegatorUserId),
       status: 'ACTIVE',
       validFrom: { $lte: now },
       validTo: { $gte: now },
+      ...(annualAssignmentId
+        ? {
+            $or: [
+              { annualAssignmentId: { $exists: false } },
+              { annualAssignmentId: new Types.ObjectId(annualAssignmentId) },
+            ],
+          }
+        : {}),
       isDeleted: false,
     }).lean();
 
@@ -388,18 +404,38 @@ export class DelegationService extends BaseService {
   async getActiveDelegationsForDelegate(
     delegateUserId: string,
     scope: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS',
-    activeOn: Date = new Date(),
+    activeOn?: Date,
   ): Promise<any[]> {
     const scopeCandidates = scope === 'ALL' ? ['ALL'] : ['ALL', scope];
+    const effectiveActiveOn = activeOn ?? this.getCurrentDate();
 
     return Delegation.find({
       delegateUserId: new Types.ObjectId(delegateUserId),
       status: 'ACTIVE',
-      validFrom: { $lte: activeOn },
-      validTo: { $gte: activeOn },
+      validFrom: { $lte: effectiveActiveOn },
+      validTo: { $gte: effectiveActiveOn },
       scopeType: { $in: scopeCandidates },
       isDeleted: false,
     }).lean();
+  }
+
+  async getActivePmsWorkDelegationsForDelegate(
+    delegateUserId: string,
+    activeOn?: Date,
+  ): Promise<any[]> {
+    const effectiveActiveOn = activeOn ?? this.getCurrentDate();
+    return Delegation.find({
+      delegateUserId: new Types.ObjectId(delegateUserId),
+      status: 'ACTIVE',
+      validFrom: { $lte: effectiveActiveOn },
+      validTo: { $gte: effectiveActiveOn },
+      scopeType: { $in: ['ALL', 'PMS_OBJECTIVES', 'PMS_REVIEWS'] },
+      isDeleted: false,
+    }).lean();
+  }
+
+  private getCurrentDate(): Date {
+    return this.context.pmsCurrentDate ?? new Date();
   }
 
   private startOfDay(value: Date | string): Date {

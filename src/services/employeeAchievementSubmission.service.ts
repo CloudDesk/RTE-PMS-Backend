@@ -550,16 +550,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       isDeleted: false,
     });
 
-    const existingItem = this.findExistingAchievementItem(
-      existingSubmission?.achievementItems ?? [],
-      input.achievementItem,
-    );
-    if (
-      this.effectiveAchievementItemStatus(existingItem, existingSubmission?.status) ===
-      EmployeeAchievementSubmissionStatus.SUBMITTED
-    ) {
-      throw new Error('This achievement item is already submitted and cannot be edited.');
-    }
     if (existingSubmission?.status === EmployeeAchievementSubmissionStatus.LOCKED) {
       await this.auditBlockedAttempt(existingSubmission, 'PMS_EMPLOYEE_ACHIEVEMENT_ITEM_UPDATE_BLOCKED');
       throw new Error('Submitted employee achievement is locked and cannot be edited');
@@ -675,17 +665,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (existingSubmission?.status === EmployeeAchievementSubmissionStatus.LOCKED) {
       await this.auditBlockedAttempt(existingSubmission, 'PMS_EMPLOYEE_ACHIEVEMENT_ITEM_SUBMIT_BLOCKED_LOCKED');
       throw new Error('Achievement submission is already locked.');
-    }
-
-    const existingItem = this.findExistingAchievementItem(
-      existingSubmission?.achievementItems ?? [],
-      input.achievementItem,
-    );
-    if (
-      this.effectiveAchievementItemStatus(existingItem, existingSubmission?.status) ===
-      EmployeeAchievementSubmissionStatus.SUBMITTED
-    ) {
-      throw new Error('This achievement item is already submitted.');
     }
 
     await this.assertSubmitWindowOpen(termAssignment, existingSubmission);
@@ -1421,6 +1400,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       actor.actorId,
       termAssignment.assignedManagerId.toString(),
       termAssignment.cycleId?.toString(),
+      termAssignment.annualAssignmentId.toString(),
     );
     if (delegation) {
       return;
@@ -1580,21 +1560,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return EmployeeAchievementSubmissionStatus.DRAFT;
   }
 
-  private effectiveAchievementItemStatus(
-    item: Record<string, any> | undefined,
-    submissionStatus?: string,
-  ) {
-    return item?.itemStatus ?? this.defaultItemStatusForSubmission(submissionStatus);
-  }
-
-  private findExistingAchievementItem(
-    items: Array<Record<string, any>>,
-    target: AchievementItemInput,
-  ) {
-    const targetKey = this.achievementItemIdentity(target);
-    return items.find((item) => this.achievementItemIdentity(item) === targetKey);
-  }
-
   private mergeAchievementItem(
     items: Array<Record<string, any>>,
     nextItem: Record<string, any>,
@@ -1604,9 +1569,15 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const existingIndex = nextItems.findIndex((item) => this.achievementItemIdentity(item) === nextKey);
 
     if (existingIndex >= 0) {
-      nextItems[existingIndex] = {
+      const mergedItem = {
         ...nextItems[existingIndex],
         ...nextItem,
+      };
+      if (Object.prototype.hasOwnProperty.call(nextItem, 'attachments')) {
+        mergedItem.attachments = Array.isArray(nextItem.attachments) ? nextItem.attachments : [];
+      }
+      nextItems[existingIndex] = {
+        ...mergedItem,
       };
       return nextItems;
     }
@@ -1657,12 +1628,14 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     delegateUserId: string,
     delegatorUserId: string,
     cycleId?: string,
+    annualAssignmentId?: string,
   ): Promise<any | null> {
     return new DelegationService(this.context).getActiveDelegation(
       delegateUserId,
       delegatorUserId,
       'PMS_REVIEWS',
       cycleId,
+      annualAssignmentId,
     );
   }
 

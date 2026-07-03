@@ -10,6 +10,10 @@ import type {
   SubmitAchievementItemInput,
 } from '../services/employeeAchievementSubmission.service';
 
+const MAX_ACHIEVEMENT_ATTACHMENT_BYTES = 1024 * 1024;
+const ACHIEVEMENT_ATTACHMENT_SIZE_MESSAGE =
+  'Achievement attachments must be less than 1 MB per file.';
+
 export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
@@ -213,6 +217,15 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
           throw new Error('No attachment file uploaded');
         }
 
+        const oversizedFile = files.find((file) => {
+          const cachedBuffer = (file as any).__cachedBuffer as Buffer | undefined;
+          return (cachedBuffer?.length ?? 0) >= MAX_ACHIEVEMENT_ATTACHMENT_BYTES;
+        });
+
+        if (oversizedFile) {
+          throw new Error(ACHIEVEMENT_ATTACHMENT_SIZE_MESSAGE);
+        }
+
         const attachment = await request.container!.employeeAchievementSubmissionService.uploadAttachment(
           termAssignmentId,
           files[0],
@@ -229,5 +242,8 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
 
 function sendRouteError(reply: FastifyReply, error: unknown) {
   const message = error instanceof Error ? error.message : 'Unexpected error';
+  if (/less than 1 MB|file too large/i.test(message)) {
+    return reply.status(413).send(errorResponse('PMS_EMPLOYEE_ACHIEVEMENT_ERROR', ACHIEVEMENT_ATTACHMENT_SIZE_MESSAGE));
+  }
   return reply.status(400).send(errorResponse('PMS_EMPLOYEE_ACHIEVEMENT_ERROR', message));
 }

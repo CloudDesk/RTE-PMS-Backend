@@ -171,7 +171,17 @@ export class AssignmentService extends BaseService {
     }
 
     if (query.managerId) {
-      filter.assignedManagerId = this.toObjectId(query.managerId, 'managerId');
+      const managerIdFilter = this.toObjectId(query.managerId, 'managerId');
+      if (filter.assignedManagerId) {
+        filter.$and = [
+          ...((filter.$and as Record<string, unknown>[] | undefined) ?? []),
+          { assignedManagerId: filter.assignedManagerId },
+          { assignedManagerId: managerIdFilter },
+        ];
+        delete filter.assignedManagerId;
+      } else {
+        filter.assignedManagerId = managerIdFilter;
+      }
     }
 
     if (query.employeeId) {
@@ -196,7 +206,11 @@ export class AssignmentService extends BaseService {
         { 'managerSnapshot.name': { $regex: search, $options: 'i' } },
       ];
       if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: searchFilter }];
+        filter.$and = [
+          ...((filter.$and as Record<string, unknown>[] | undefined) ?? []),
+          { $or: filter.$or },
+          { $or: searchFilter },
+        ];
         delete filter.$or;
       } else {
         filter.$or = searchFilter;
@@ -1839,7 +1853,16 @@ export class AssignmentService extends BaseService {
     }
 
     if (mappedRole === PmsRole.MANAGER) {
-      filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
+      const managerId = this.toObjectId(actor.actorId, 'actorId');
+      const delegatedClauses = await this.delegatedAssignmentClausesForActor(actor.actorId);
+      if (delegatedClauses.length > 0) {
+        filter.$and = [
+          ...((filter.$and as Record<string, unknown>[] | undefined) ?? []),
+          { $or: [{ assignedManagerId: managerId }, ...delegatedClauses] },
+        ];
+      } else {
+        filter.assignedManagerId = managerId;
+      }
       return;
     }
 
@@ -1878,19 +1901,49 @@ export class AssignmentService extends BaseService {
       return;
     }
 
-    // Check delegation
-    const delegation = await new DelegationService(this.context).getActiveDelegation(
-      actor.actorId,
-      annualAssignment.assignedManagerId.toString(),
-      'ALL',
-      annualAssignment.cycleId.toString(),
-    );
-
-    if (delegation) {
+    if (await this.hasActivePmsWorkDelegationForAssignment(actor.actorId, annualAssignment)) {
       return;
     }
 
     throw new Error(access.message ?? 'Access denied');
+  }
+
+  private async delegatedAssignmentClausesForActor(actorId: string): Promise<Record<string, unknown>[]> {
+    const delegations = await new DelegationService(this.context).getActivePmsWorkDelegationsForDelegate(actorId);
+
+    return delegations.map((delegation) => {
+      if (delegation.annualAssignmentId) {
+        return {
+          _id: delegation.annualAssignmentId,
+          assignedManagerId: delegation.delegatorUserId,
+        };
+      }
+
+      const clause: Record<string, unknown> = {
+        assignedManagerId: delegation.delegatorUserId,
+      };
+      if (delegation.cycleId) {
+        clause.cycleId = delegation.cycleId;
+      }
+      return clause;
+    });
+  }
+
+  private async hasActivePmsWorkDelegationForAssignment(
+    actorId: string,
+    annualAssignment: IAnnualAssignment,
+  ): Promise<boolean> {
+    const delegations = await new DelegationService(this.context).getActivePmsWorkDelegationsForDelegate(actorId);
+    const assignmentId = annualAssignment._id.toString();
+    const managerId = annualAssignment.assignedManagerId.toString();
+    const cycleId = annualAssignment.cycleId.toString();
+
+    return delegations.some((delegation) => {
+      if (delegation.delegatorUserId?.toString() !== managerId) return false;
+      if (delegation.cycleId && delegation.cycleId.toString() !== cycleId) return false;
+      if (delegation.annualAssignmentId && delegation.annualAssignmentId.toString() !== assignmentId) return false;
+      return true;
+    });
   }
 
   private toObjectId(value: string, fieldName: string): Types.ObjectId {
