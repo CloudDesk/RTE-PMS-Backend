@@ -689,7 +689,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       submittedAt: now,
     };
     const nextItems = this.mergeAchievementItem(existingSubmission?.achievementItems ?? [], submittedItem);
-    const normalizedValues = this.normalizeAchievementValues([], nextItems, field, false);
+    const normalizedValues = this.normalizeAchievementValues([], nextItems, field, true);
     const nextAchievementValues = this.mergeExistingNonAchievementValues(
       normalizedValues,
       existingSubmission?.achievementValues ?? [],
@@ -1662,7 +1662,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     nextItem: Record<string, any>,
   ) {
     const nextKey = this.achievementItemIdentity(nextItem);
-    const nextItems = [...items];
+    const nextItems = items.map((item) =>
+      typeof item?.toObject === 'function' ? item.toObject() : { ...item },
+    );
     const existingIndex = nextItems.findIndex((item) => this.achievementItemIdentity(item) === nextKey);
 
     if (existingIndex >= 0) {
