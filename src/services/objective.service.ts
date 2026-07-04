@@ -350,6 +350,14 @@ type BulkCreateManagerObjectiveResult = {
   }>;
 };
 
+const DELEGATED_OBJECTIVE_ASSIGNMENT_STATES = [
+  TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+  TermWorkflowState.OBJECTIVE_DRAFT,
+  TermWorkflowState.OBJECTIVE_SUBMITTED,
+  TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+  TermWorkflowState.REOPENED_BY_ADMIN,
+] as const;
+
 export class ObjectiveService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
@@ -452,8 +460,12 @@ export class ObjectiveService extends BaseService {
           ? {
               annualAssignmentId: delegation.annualAssignmentId,
               assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: DELEGATED_OBJECTIVE_ASSIGNMENT_STATES },
             }
-          : { assignedManagerId: delegation.delegatorUserId };
+          : {
+              assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: DELEGATED_OBJECTIVE_ASSIGNMENT_STATES },
+            };
         if (!delegation.annualAssignmentId && delegation.cycleId) {
           clause.cycleId = delegation.cycleId;
         }

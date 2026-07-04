@@ -84,6 +84,7 @@ export class DelegationService extends BaseService {
       delegatorUserId: delegatorId,
       delegateUserId: delegateId,
       scopeType: input.scopeType ?? 'ALL',
+      annualAssignmentId: input.annualAssignmentId,
       cycleId: input.cycleId,
       validFrom: fromDate,
       validTo: toDate,
@@ -257,6 +258,7 @@ export class DelegationService extends BaseService {
     delegatorUserId: string;
     delegateUserId: string;
     scopeType: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
+    annualAssignmentId?: string;
     cycleId?: string;
     validFrom: Date;
     validTo: Date;
@@ -273,13 +275,27 @@ export class DelegationService extends BaseService {
           { cycleId: null },
         ]
       : [{ cycleId: { $exists: true } }, { cycleId: null }, { cycleId: { $exists: false } }];
+    const assignmentConditions = input.annualAssignmentId
+      ? [
+          { annualAssignmentId: this.toObjectId(input.annualAssignmentId, 'annualAssignmentId') },
+          { annualAssignmentId: { $exists: false } },
+          { annualAssignmentId: null },
+        ]
+      : [
+          { annualAssignmentId: { $exists: true } },
+          { annualAssignmentId: { $exists: false } },
+          { annualAssignmentId: null },
+        ];
 
     const overlappingDelegation = await Delegation.findOne({
       delegatorUserId: this.toObjectId(input.delegatorUserId, 'delegatorUserId'),
       status: 'ACTIVE',
       isDeleted: false,
       scopeType: { $in: scopeCandidates },
-      $or: cycleConditions,
+      $and: [
+        { $or: cycleConditions },
+        { $or: assignmentConditions },
+      ],
       validFrom: { $lte: input.validTo },
       validTo: { $gte: input.validFrom },
     }).lean();
@@ -292,10 +308,10 @@ export class DelegationService extends BaseService {
       overlappingDelegation.delegateUserId?.toString() === input.delegateUserId;
 
     if (isSameDelegate) {
-      throw new Error('An overlapping active delegation already exists for this delegator, delegate, scope, and cycle.');
+      throw new Error('An overlapping active delegation already exists for this delegator, delegate, scope, and assignment.');
     }
 
-    throw new Error('A conflicting active delegation already exists for this delegator within the selected scope, cycle, and date range.');
+    throw new Error('A conflicting active delegation already exists for this delegator within the selected scope, assignment, and date range.');
   }
 
   private async assertAssignmentHasDelegableWork(input: {
@@ -349,8 +365,12 @@ export class DelegationService extends BaseService {
       throw new Error('Review delegation is not allowed because all review actions are already submitted, finalized, or closed for this assignment.');
     }
 
-    if (input.scopeType === 'ALL' && !hasObjectiveWork && !hasReviewWork) {
-      throw new Error('Delegation is not allowed because there are no pending PMS actions for this assignment.');
+    if (input.scopeType === 'ALL' && (!hasObjectiveWork || !hasReviewWork)) {
+      if (!hasObjectiveWork && !hasReviewWork) {
+        throw new Error('Delegation is not allowed because there are no pending PMS actions for this assignment.');
+      }
+
+      throw new Error('All PMS Actions delegation is available only when both objective and review actions are pending for this assignment. Choose the available specific scope instead.');
     }
   }
 
@@ -366,39 +386,45 @@ export class DelegationService extends BaseService {
     annualAssignmentId?: string,
   ): Promise<any | null> {
     const now = this.getCurrentDate();
-    const delegation = await Delegation.findOne({
+    const scopeConditions =
+      scope === 'ALL'
+        ? ['ALL']
+        : ['ALL', scope];
+    const assignmentConditions = annualAssignmentId
+      ? [
+          { annualAssignmentId: { $exists: false } },
+          { annualAssignmentId: null },
+          { annualAssignmentId: new Types.ObjectId(annualAssignmentId) },
+        ]
+      : [];
+    const cycleConditions = cycleId
+      ? [
+          { cycleId: new Types.ObjectId(cycleId) },
+          { cycleId: null },
+          { cycleId: { $exists: false } },
+        ]
+      : [
+          { cycleId: null },
+          { cycleId: { $exists: false } },
+        ];
+    const scopeFilters: Record<string, unknown>[] = [
+      { $or: cycleConditions },
+    ];
+
+    if (assignmentConditions.length > 0) {
+      scopeFilters.push({ $or: assignmentConditions });
+    }
+
+    return Delegation.findOne({
       delegateUserId: new Types.ObjectId(delegateUserId),
       delegatorUserId: new Types.ObjectId(delegatorUserId),
       status: 'ACTIVE',
       validFrom: { $lte: now },
       validTo: { $gte: now },
-      ...(annualAssignmentId
-        ? {
-            $or: [
-              { annualAssignmentId: { $exists: false } },
-              { annualAssignmentId: new Types.ObjectId(annualAssignmentId) },
-            ],
-          }
-        : {}),
+      scopeType: { $in: scopeConditions },
+      $and: scopeFilters,
       isDeleted: false,
     }).lean();
-
-    if (!delegation) return null;
-
-    // Check scope match
-    if (delegation.scopeType !== 'ALL' && delegation.scopeType !== scope) {
-      return null;
-    }
-
-    if (delegation.cycleId && cycleId && delegation.cycleId.toString() !== cycleId) {
-      return null;
-    }
-
-    if (delegation.cycleId && !cycleId) {
-      return null;
-    }
-
-    return delegation;
   }
 
   async getActiveDelegationsForDelegate(
