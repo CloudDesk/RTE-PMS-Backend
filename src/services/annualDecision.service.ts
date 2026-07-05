@@ -1352,17 +1352,11 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('isMeritApplied is required');
     }
 
-    if (
-      (outcomeType === AppraisalOutcomeType.BOTH || outcomeType === AppraisalOutcomeType.GRADE_ONLY) &&
-      !this.hasMeaningfulDecisionDetails(input.gradeDetails)
-    ) {
+    if (input.isGradeApplied && !this.hasMeaningfulDecisionDetails(input.gradeDetails)) {
       throw new Error('gradeDetails is required when grade is applied');
     }
 
-    if (
-      (outcomeType === AppraisalOutcomeType.BOTH || outcomeType === AppraisalOutcomeType.MERIT_ONLY) &&
-      !this.hasMeaningfulDecisionDetails(input.meritDetails)
-    ) {
+    if (input.isMeritApplied && !this.hasMeaningfulDecisionDetails(input.meritDetails)) {
       throw new Error('meritDetails is required when merit is applied');
     }
 
