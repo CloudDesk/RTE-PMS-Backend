@@ -227,6 +227,12 @@ export class AccessService {
     resource: AccessResourceContext | undefined,
     mappedRole: PmsMappedRole,
   ): AccessCheckResult {
+    const employeeId = resource?.employeeId ?? resource?.ownerId;
+
+    if (employeeId && employeeId === actor.actorId) {
+      return { allowed: true, mappedRole };
+    }
+
     const managerIds = [
       resource?.managerId,
       resource?.assignedManagerId,
