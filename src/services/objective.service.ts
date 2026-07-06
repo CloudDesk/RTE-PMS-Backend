@@ -307,6 +307,7 @@ type AssignmentRecord = {
   managerName: string;
   objectiveWeightageCap: number;
   backendConnected: boolean;
+  achievementSubmissionEnabled?: boolean;
   objectiveConfig: ObjectiveConfig;
   objectiveTemplateValues?: Array<{
     templateFieldId?: string;
@@ -568,6 +569,8 @@ export class ObjectiveService extends BaseService {
     }
 
     const configMap = await this.buildObjectiveConfigMap(annualAssignments, termAssignments);
+    const achievementSubmissionEnabledMap =
+      await this.buildAchievementSubmissionEnabledMap(annualAssignments, termAssignments);
     const termAssignmentIdsNeedingTemplateValueFallback = termAssignments
       .filter((termAssignment) => {
         const summary = (termAssignment.termSummary as Record<string, unknown> | undefined) ?? {};
@@ -686,6 +689,8 @@ export class ObjectiveService extends BaseService {
         managerName: this.getManagerName(annualAssignment, termAssignment.assignedManagerId.toString()),
         objectiveWeightageCap: 100,
         backendConnected: true,
+        achievementSubmissionEnabled:
+          achievementSubmissionEnabledMap.get(termAssignment._id.toString()) ?? false,
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         objectiveConfig,
         objectiveTemplateValues: this.mapTemplateObjectiveValues(objectiveTemplateValues),
@@ -2061,6 +2066,82 @@ export class ObjectiveService extends BaseService {
     }
 
     return configMap;
+  }
+
+  private async buildAchievementSubmissionEnabledMap(
+    annualAssignments: Array<IAnnualAssignment | Record<string, any>>,
+    termAssignments: Array<ITermAssignment | Record<string, any>>,
+  ): Promise<Map<string, boolean>> {
+    const templateVersionIds = Array.from(
+      new Set(
+        annualAssignments
+          .map((item) => item.templateVersionId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const templateVersions = await PmsTemplateVersion.find({
+      _id: { $in: templateVersionIds },
+      isDeleted: false,
+    }).lean();
+    const templateVersionMap = new Map(
+      templateVersions.map((item) => [item._id.toString(), item]),
+    );
+    const enabledMap = new Map<string, boolean>();
+    const annualAssignmentMap = new Map(
+      annualAssignments.map((item) => [item._id.toString(), item]),
+    );
+
+    for (const termAssignment of termAssignments) {
+      const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
+      const templateVersion = annualAssignment?.templateVersionId
+        ? templateVersionMap.get(annualAssignment.templateVersionId.toString())
+        : undefined;
+      enabledMap.set(
+        termAssignment._id.toString(),
+        this.templateSupportsAchievementSubmission(
+          templateVersion,
+          termAssignment.assessmentTermCode,
+        ),
+      );
+    }
+
+    return enabledMap;
+  }
+
+  private templateSupportsAchievementSubmission(
+    templateVersion?: Record<string, any>,
+    assessmentTermCode?: AssessmentTermCodeValue,
+  ): boolean {
+    if (!templateVersion) return false;
+
+    const section = (templateVersion.sections ?? []).find((section: ITemplateSection) => {
+      if (section.sectionKey !== 'employee_achievement_submission') return false;
+      if (!this.isTermLevelTemplateSection(section.level)) return false;
+      const termScope = [
+        ...(section.termScope ?? []),
+        ...(section.repeatFor ?? []),
+      ];
+      if (
+        assessmentTermCode &&
+        !this.assessmentTermScopeMatches(termScope, assessmentTermCode)
+      ) {
+        return false;
+      }
+      return (section.fields ?? []).some((field) => field.fieldKey === 'achievement_items');
+    });
+    if (!section) return false;
+
+    const metadata = (templateVersion.metadata ?? {}) as Record<string, any>;
+    const config = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || section
+      ? 'ACHIEVEMENT_THEN_MANAGER'
+      : 'MANAGER_ONLY';
+    const employeeAchievementEnabled =
+      config.employeeAchievementEnabled !== undefined
+        ? Boolean(config.employeeAchievementEnabled)
+        : true;
+
+    return employeeAchievementEnabled && reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER';
   }
 
   private defaultObjectiveConfig(): ObjectiveConfig {
