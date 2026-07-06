@@ -676,6 +676,12 @@ export class ObjectiveService extends BaseService {
         termCode: termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termLabel: termAssignment.termLabel ?? termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termState: effectiveTermState,
+        assessmentStartDate: termCycle?.startDate
+          ? new Date(termCycle.startDate).toISOString()
+          : undefined,
+        assessmentEndDate: termCycle?.endDate
+          ? new Date(termCycle.endDate).toISOString()
+          : undefined,
         termWindows: this.mapTermWindows(termCycle),
         employeeId: termAssignment.employeeId.toString(),
         employeeName: this.getEmployeeName(annualAssignment, termAssignment.employeeId.toString()),
