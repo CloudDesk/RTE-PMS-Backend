@@ -1620,10 +1620,11 @@ export class PmsTemplateService extends BaseService {
       return false;
     }
 
-    const visibleByRules = this.isVisibleByRules(field.visibilityRules, context);
-    if (!visibleByRules && !context.sectionGrantsVisibility) return false;
-
     if (behavior && behavior.visibility !== 'VISIBLE') return false;
+
+    const visibleByBehavior = behavior?.visibility === 'VISIBLE';
+    const visibleByRules = this.isVisibleByRules(field.visibilityRules, context);
+    if (!visibleByBehavior && !visibleByRules && !context.sectionGrantsVisibility) return false;
 
     if (field.conditionalRendering) {
       const conditionMet = this.evaluateCondition(
