@@ -4,6 +4,7 @@ export interface IDelegation extends Document {
   delegatorUserId: Types.ObjectId;
   delegateUserId: Types.ObjectId;
   scopeType: string;
+  annualAssignmentId?: Types.ObjectId;
   cycleId?: Types.ObjectId;
   validFrom: Date;
   validTo: Date;
@@ -38,6 +39,11 @@ const delegationSchema = new Schema<IDelegation>(
       type: String,
       required: true,
       trim: true,
+      index: true,
+    },
+    annualAssignmentId: {
+      type: Schema.Types.ObjectId,
+      ref: 'AnnualAssignment',
       index: true,
     },
     cycleId: {
@@ -79,6 +85,7 @@ const delegationSchema = new Schema<IDelegation>(
 
 delegationSchema.index({ delegateUserId: 1, status: 1, validFrom: 1, validTo: 1 });
 delegationSchema.index({ delegatorUserId: 1, status: 1 });
+delegationSchema.index({ annualAssignmentId: 1, status: 1 });
 delegationSchema.index({ cycleId: 1, status: 1 });
 
 export const Delegation = mongoose.model<IDelegation>(

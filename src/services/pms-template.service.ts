@@ -794,12 +794,23 @@ export class PmsTemplateService extends BaseService {
         }),
       )
       .map((section) => {
+        const sectionFieldAccess = this.resolveSectionFieldAccess(section, {
+          role,
+          workflowState,
+        });
+        const allowEmployeeAssignedCustomObjectiveSetting =
+          role === PmsRole.EMPLOYEE &&
+          workflowState === TermWorkflowState.OBJECTIVE_SETTING_OPEN &&
+          (section.metadata?.customSection === true ||
+            section.metadata?.purpose === 'CUSTOM_SECTION');
         const visibleFieldKeys = this.resolveVisibleFieldKeys(section.fields ?? [], {
           role,
           workflowState,
           hierarchyScope,
           visibilityFlags,
           values,
+          allowEmployeeAssignedCustomObjectiveSetting,
+          sectionGrantsVisibility: sectionFieldAccess.visible,
         });
         const fields = (section.fields ?? [])
           .filter((field) => visibleFieldKeys.has(field.fieldKey))
@@ -809,6 +820,8 @@ export class PmsTemplateService extends BaseService {
               workflowState,
               hierarchyScope,
               visibilityFlags,
+              allowEmployeeAssignedCustomObjectiveSetting,
+              sectionGrantsEditability: sectionFieldAccess.editable,
             }),
           );
 
@@ -1124,9 +1137,23 @@ export class PmsTemplateService extends BaseService {
             label: col.label,
             type: col.type,
             required: !!col.required,
+            editable: typeof col.editable === 'boolean' ? col.editable : undefined,
+            readOnly: typeof col.readOnly === 'boolean' ? col.readOnly : undefined,
+            defaultValue: col.defaultValue,
           })),
           minRows: field.gridConfig.minRows,
           maxRows: field.gridConfig.maxRows,
+          defaultRows: Array.isArray(field.gridConfig.defaultRows)
+            ? field.gridConfig.defaultRows
+            : undefined,
+          allowAddRows:
+            typeof field.gridConfig.allowAddRows === 'boolean'
+              ? field.gridConfig.allowAddRows
+              : undefined,
+          allowDeleteRows:
+            typeof field.gridConfig.allowDeleteRows === 'boolean'
+              ? field.gridConfig.allowDeleteRows
+              : undefined,
         }
         : undefined,
     };
@@ -1526,6 +1553,54 @@ export class PmsTemplateService extends BaseService {
     );
   }
 
+  private resolveSectionFieldAccess(
+    section: ITemplateSection,
+    context: {
+      role: string;
+      workflowState: string;
+    },
+  ): { visible: boolean; editable: boolean } {
+    const visibleTo = this.stringArrayFromRule(section.visibilityRules, 'visibleTo').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    const hiddenFrom = this.stringArrayFromRule(section.visibilityRules, 'hiddenFrom').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    const editableBy = this.stringArrayFromRule(section.editabilityRules, 'editableBy').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    const editableStates = this.stringArrayFromRule(section.editabilityRules, 'editableStates');
+
+    let editableStateMatches = true;
+    if (editableStates.length > 0) {
+      editableStateMatches = editableStates.includes(context.workflowState);
+      if (!editableStateMatches && editableStates.includes('OBJECTIVE_SETTING_OPEN')) {
+        editableStateMatches = [
+          'NOT_STARTED',
+          'OBJECTIVE_SETTING_OPEN',
+          'OBJECTIVE_DRAFT',
+          'OBJECTIVE_REVISION_REQUIRED',
+        ].includes(context.workflowState);
+      }
+    }
+
+    return {
+      visible:
+        visibleTo.includes(context.role) ||
+        (editableBy.includes(context.role) && !hiddenFrom.includes(context.role)),
+      editable: editableBy.includes(context.role) && editableStateMatches,
+    };
+  }
+
+  private isExplicitlyHiddenFromRole(
+    rules: Record<string, unknown> | undefined,
+    role: string,
+  ): boolean {
+    return this.stringArrayFromRule(rules, 'hiddenFrom')
+      .map((item) => this.normalizeRoleCode(item))
+      .includes(role);
+  }
+
   private isFieldVisible(
     field: ITemplateField,
     context: {
@@ -1534,13 +1609,19 @@ export class PmsTemplateService extends BaseService {
       hierarchyScope?: string;
       visibilityFlags: Set<string>;
       values: Record<string, unknown>;
+      allowEmployeeAssignedCustomObjectiveSetting?: boolean;
+      sectionGrantsVisibility?: boolean;
     },
   ): boolean {
     const behavior = this.findBehavior(field, context.role, context.workflowState);
     if (behavior?.visibility === 'HIDDEN') return false;
 
+    if (this.isExplicitlyHiddenFromRole(field.visibilityRules, context.role)) {
+      return false;
+    }
+
     const visibleByRules = this.isVisibleByRules(field.visibilityRules, context);
-    if (!visibleByRules) return false;
+    if (!visibleByRules && !context.sectionGrantsVisibility) return false;
 
     if (behavior && behavior.visibility !== 'VISIBLE') return false;
 
@@ -1563,6 +1644,8 @@ export class PmsTemplateService extends BaseService {
       workflowState: string;
       hierarchyScope?: string;
       visibilityFlags: Set<string>;
+      allowEmployeeAssignedCustomObjectiveSetting?: boolean;
+      sectionGrantsEditability?: boolean;
     },
   ): ResolvedTemplateField {
     const behavior = this.findBehavior(field, context.role, context.workflowState);
@@ -1574,7 +1657,14 @@ export class PmsTemplateService extends BaseService {
       type: this.mapFieldTypeForClient(field.fieldType),
       required: behavior?.mandatory ?? field.isRequired ?? requiredFor.includes(context.role),
       visible: true,
-      editable: this.isFieldEditable(field, context.role, context.workflowState, behavior),
+      editable: this.isFieldEditable(
+        field,
+        context.role,
+        context.workflowState,
+        behavior,
+        context.allowEmployeeAssignedCustomObjectiveSetting,
+        context.sectionGrantsEditability,
+      ),
       placeholder: field.placeholder,
       helpText: field.helpText,
       hideLabel: field.hideLabel,
@@ -1599,6 +1689,8 @@ export class PmsTemplateService extends BaseService {
       hierarchyScope?: string;
       visibilityFlags: Set<string>;
       values: Record<string, unknown>;
+      allowEmployeeAssignedCustomObjectiveSetting?: boolean;
+      sectionGrantsVisibility?: boolean;
     },
   ): Set<string> {
     const fieldByKey = new Map(fields.map((field) => [field.fieldKey, field]));
@@ -1638,6 +1730,7 @@ export class PmsTemplateService extends BaseService {
       workflowState: string;
       hierarchyScope?: string;
       visibilityFlags: Set<string>;
+      allowEmployeeAssignedCustomObjectiveSetting?: boolean;
     },
   ): boolean {
     const hiddenFrom = this.stringArrayFromRule(rules, 'hiddenFrom').map((role) =>
@@ -1670,6 +1763,14 @@ export class PmsTemplateService extends BaseService {
           isMatched = true;
         }
       }
+      if (
+        !isMatched &&
+        context.allowEmployeeAssignedCustomObjectiveSetting &&
+        context.role === PmsRole.EMPLOYEE &&
+        context.workflowState === TermWorkflowState.OBJECTIVE_SETTING_OPEN
+      ) {
+        isMatched = true;
+      }
       if (!isMatched) return false;
     }
 
@@ -1699,14 +1800,15 @@ export class PmsTemplateService extends BaseService {
     role: string,
     workflowState: string,
     behavior?: NonNullable<ITemplateField['behaviors']>[number],
+    allowEmployeeAssignedCustomObjectiveSetting = false,
+    sectionGrantsEditability = false,
   ): boolean {
     if (behavior) return behavior.editability === 'EDITABLE';
 
     const editableBy = this.stringArrayFromRule(field.editabilityRules, 'editableBy').map((item) =>
       this.normalizeRoleCode(item),
     );
-    if (editableBy.length > 0 && !editableBy.includes(role)) return false;
-
+    const fieldRoleEditable = editableBy.includes(role);
     const editableStates = this.stringArrayFromRule(field.editabilityRules, 'editableStates');
     if (editableStates.length > 0) {
       let isMatched = editableStates.includes(workflowState);
@@ -1721,10 +1823,18 @@ export class PmsTemplateService extends BaseService {
           isMatched = true;
         }
       }
+      if (
+        !isMatched &&
+        allowEmployeeAssignedCustomObjectiveSetting &&
+        role === PmsRole.EMPLOYEE &&
+        workflowState === TermWorkflowState.OBJECTIVE_SETTING_OPEN
+      ) {
+        isMatched = true;
+      }
       if (!isMatched) return false;
     }
 
-    return editableBy.includes(role);
+    return fieldRoleEditable || sectionGrantsEditability;
   }
 
   private findBehavior(
@@ -2092,6 +2202,15 @@ export class PmsTemplateService extends BaseService {
           ) {
             throw new Error(
               `Field ${field.fieldKey} in section ${section.sectionKey} has invalid gridConfig row limits`,
+            );
+          }
+
+          if (
+            gridConfig.defaultRows !== undefined &&
+            !Array.isArray(gridConfig.defaultRows)
+          ) {
+            throw new Error(
+              `Field ${field.fieldKey} in section ${section.sectionKey} has invalid gridConfig.defaultRows`,
             );
           }
         }

@@ -34,6 +34,7 @@ export const delegationRoutes: RouteHandler = async (
             delegatorUserId?: string;
             delegateUserId?: string;
             status?: string;
+            annualAssignmentId?: string;
             cycleId?: string;
             scopeType?: 'ALL' | 'PMS_OBJECTIVES' | 'PMS_REVIEWS';
             activeOn?: string;

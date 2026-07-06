@@ -82,14 +82,14 @@ export interface ITemplateBehaviorRule {
 export interface ITemplateConditionalRendering {
   dependsOn: string;
   operator:
-    | 'EQUALS'
-    | 'NOT_EQUALS'
-    | 'IN'
-    | 'NOT_IN'
-    | 'GREATER_THAN'
-    | 'LESS_THAN'
-    | 'IS_EMPTY'
-    | 'IS_NOT_EMPTY';
+  | 'EQUALS'
+  | 'NOT_EQUALS'
+  | 'IN'
+  | 'NOT_IN'
+  | 'GREATER_THAN'
+  | 'LESS_THAN'
+  | 'IS_EMPTY'
+  | 'IS_NOT_EMPTY';
   value?: unknown;
   action: 'SHOW' | 'HIDE';
 }
@@ -110,7 +110,6 @@ export interface ITemplateField {
   editabilityRules?: Record<string, unknown>;
   optionConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
   defaultValue?: unknown;
   colSpan?: 1 | 2 | 3 | 4;
   options?: ITemplateOption[];
@@ -125,9 +124,20 @@ export interface ITemplateField {
     borderStyle?: 'standard' | 'paper';
   };
   gridConfig?: {
-    columns: Array<{ key: string; label: string; type: string; required?: boolean; options?: ITemplateOption[] }>;
+    columns: Array<{
+      key: string;
+      label: string;
+      type: string;
+      required?: boolean;
+      editable?: boolean;
+      readOnly?: boolean;
+      defaultValue?: unknown;
+    }>;
     minRows?: number;
     maxRows?: number;
+    defaultRows?: Array<Record<string, unknown>>;
+    allowAddRows?: boolean;
+    allowDeleteRows?: boolean;
   };
 }
 
@@ -144,7 +154,9 @@ interface IGridColumn {
   type: string;
   weightage?: number;
   required?: boolean;
-  options?: ITemplateOption[];
+  editable?: boolean;
+  readOnly?: boolean;
+  defaultValue?: unknown;
 }
 
 const matrixItemSchema = new Schema<IMatrixItem>(
@@ -175,18 +187,9 @@ const gridColumnSchema = new Schema<IGridColumn>(
     weightage: { type: Number },
     type: { type: String, required: true, trim: true },
     required: { type: Boolean, default: false },
-    options: {
-      type: [
-        {
-          label: { type: String, required: true },
-          value: { type: String, required: true },
-          score: { type: Number },
-          weight: { type: Number },
-          _id: false,
-        },
-      ],
-      default: undefined,
-    },
+    editable: { type: Boolean },
+    readOnly: { type: Boolean },
+    defaultValue: { type: Schema.Types.Mixed },
   },
   { _id: false },
 );
@@ -323,7 +326,6 @@ const templateFieldSchema = new Schema<ITemplateField>(
     editabilityRules: Schema.Types.Mixed,
     optionConfig: Schema.Types.Mixed,
     scoringConfig: Schema.Types.Mixed,
-    metadata: Schema.Types.Mixed,
     defaultValue: Schema.Types.Mixed,
     colSpan: { type: Number, enum: [1, 2, 3, 4], default: 4 },
     behaviors: {
@@ -408,6 +410,9 @@ const templateFieldSchema = new Schema<ITemplateField>(
         columns: IGridColumn[];
         minRows?: number;
         maxRows?: number;
+        defaultRows?: Array<Record<string, unknown>>;
+        allowAddRows?: boolean;
+        allowDeleteRows?: boolean;
       }>(
         {
           columns: {
@@ -416,6 +421,9 @@ const templateFieldSchema = new Schema<ITemplateField>(
           },
           minRows: { type: Number, min: 0 },
           maxRows: { type: Number, min: 0 },
+          defaultRows: { type: [Schema.Types.Mixed], default: undefined },
+          allowAddRows: { type: Boolean },
+          allowDeleteRows: { type: Boolean },
         },
         { _id: false },
       ),

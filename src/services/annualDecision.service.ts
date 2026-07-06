@@ -27,6 +27,7 @@ import { TermReview } from '../models/pms-term-review.model';
 import { TermReviewValue } from '../models/pms-term-review-value.model';
 import { AuditLog } from '../models/audit-log.model';
 import { auditService } from './audit.service';
+import { DelegationService } from './delegation.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import {
   PmsTemplateService,
@@ -1351,17 +1352,11 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('isMeritApplied is required');
     }
 
-    if (
-      (outcomeType === AppraisalOutcomeType.BOTH || outcomeType === AppraisalOutcomeType.GRADE_ONLY) &&
-      !this.hasMeaningfulDecisionDetails(input.gradeDetails)
-    ) {
+    if (input.isGradeApplied && !this.hasMeaningfulDecisionDetails(input.gradeDetails)) {
       throw new Error('gradeDetails is required when grade is applied');
     }
 
-    if (
-      (outcomeType === AppraisalOutcomeType.BOTH || outcomeType === AppraisalOutcomeType.MERIT_ONLY) &&
-      !this.hasMeaningfulDecisionDetails(input.meritDetails)
-    ) {
+    if (input.isMeritApplied && !this.hasMeaningfulDecisionDetails(input.meritDetails)) {
       throw new Error('meritDetails is required when merit is applied');
     }
 
@@ -2648,7 +2643,16 @@ export class AnnualDecisionService extends BaseService {
     }
 
     if (mappedRole === PmsRole.MANAGER) {
-      filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
+      const managerId = this.toObjectId(actor.actorId, 'actorId');
+      const delegatedClauses = await this.delegatedAssignmentClausesForActor(actor.actorId);
+      if (delegatedClauses.length > 0) {
+        filter.$and = [
+          ...((filter.$and as Record<string, unknown>[] | undefined) ?? []),
+          { $or: [{ assignedManagerId: managerId }, ...delegatedClauses] },
+        ];
+      } else {
+        filter.assignedManagerId = managerId;
+      }
       return;
     }
 
@@ -2661,7 +2665,7 @@ export class AnnualDecisionService extends BaseService {
 
   private async assertDecisionReadAccess(
     action: string,
-    _annualAssignment: IAnnualAssignment,
+    annualAssignment: IAnnualAssignment,
   ): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
@@ -2674,7 +2678,56 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
+    if (
+      mappedRole === PmsRole.MANAGER &&
+      annualAssignment.assignedManagerId?.toString() === actor.actorId
+    ) {
+      return;
+    }
+
+    if (await this.hasActivePmsWorkDelegationForAssignment(actor.actorId, annualAssignment)) {
+      return;
+    }
+
     throw new Error(`Access denied for ${action}`);
+  }
+
+  private async delegatedAssignmentClausesForActor(actorId: string): Promise<Record<string, unknown>[]> {
+    const delegations = await new DelegationService(this.context).getActivePmsWorkDelegationsForDelegate(actorId);
+
+    return delegations.map((delegation) => {
+      if (delegation.annualAssignmentId) {
+        return {
+          _id: delegation.annualAssignmentId,
+          assignedManagerId: delegation.delegatorUserId,
+        };
+      }
+
+      const clause: Record<string, unknown> = {
+        assignedManagerId: delegation.delegatorUserId,
+      };
+      if (delegation.cycleId) {
+        clause.cycleId = delegation.cycleId;
+      }
+      return clause;
+    });
+  }
+
+  private async hasActivePmsWorkDelegationForAssignment(
+    actorId: string,
+    annualAssignment: IAnnualAssignment,
+  ): Promise<boolean> {
+    const delegations = await new DelegationService(this.context).getActivePmsWorkDelegationsForDelegate(actorId);
+    const assignmentId = annualAssignment._id.toString();
+    const managerId = annualAssignment.assignedManagerId.toString();
+    const cycleId = annualAssignment.cycleId.toString();
+
+    return delegations.some((delegation) => {
+      if (delegation.delegatorUserId?.toString() !== managerId) return false;
+      if (delegation.cycleId && delegation.cycleId.toString() !== cycleId) return false;
+      if (delegation.annualAssignmentId && delegation.annualAssignmentId.toString() !== assignmentId) return false;
+      return true;
+    });
   }
 
   private assertDecisionAdmin(action: string): void {

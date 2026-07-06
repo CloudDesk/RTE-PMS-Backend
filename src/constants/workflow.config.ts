@@ -5,6 +5,7 @@ import type {
 } from './pms.enums';
 
 const activeClosableTermStates: readonly TermWorkflowStateType[] = [
+  TermWorkflowState.NOT_STARTED,
   TermWorkflowState.OBJECTIVE_SETTING_OPEN,
   TermWorkflowState.OBJECTIVE_DRAFT,
   TermWorkflowState.OBJECTIVE_SUBMITTED,

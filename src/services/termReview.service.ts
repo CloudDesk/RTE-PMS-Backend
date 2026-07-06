@@ -287,10 +287,13 @@ export class TermReviewService extends BaseService {
       const managerClauses: Record<string, unknown>[] = [{ assignedManagerId: managerId }];
 
       for (const delegation of delegations) {
-        const clause: Record<string, unknown> = {
-          assignedManagerId: delegation.delegatorUserId,
-        };
-        if (delegation.cycleId) {
+        const clause: Record<string, unknown> = delegation.annualAssignmentId
+          ? {
+              annualAssignmentId: delegation.annualAssignmentId,
+              assignedManagerId: delegation.delegatorUserId,
+            }
+          : { assignedManagerId: delegation.delegatorUserId };
+        if (!delegation.annualAssignmentId && delegation.cycleId) {
           clause.cycleId = delegation.cycleId;
         }
         managerClauses.push(clause);
@@ -542,6 +545,7 @@ export class TermReviewService extends BaseService {
         actor.actorId,
         termAssignment.assignedManagerId.toString(),
         termAssignment.cycleId?.toString(),
+        termAssignment.annualAssignmentId.toString(),
       );
 
       if (delegation) {
@@ -694,6 +698,7 @@ export class TermReviewService extends BaseService {
         actor.actorId,
         termAssignment.assignedManagerId.toString(),
         termAssignment.cycleId?.toString(),
+        termAssignment.annualAssignmentId.toString(),
       );
 
       if (delegation) {
@@ -2713,6 +2718,7 @@ export class TermReviewService extends BaseService {
       actor.actorId,
       termAssignment.assignedManagerId.toString(),
       termAssignment.cycleId?.toString(),
+      termAssignment.annualAssignmentId.toString(),
     );
 
     if (delegation) {
@@ -2724,7 +2730,7 @@ export class TermReviewService extends BaseService {
 
   private async assertTermAssignmentViewAccess(
     actorRole: string,
-    termAssignment: Pick<ITermAssignment, 'employeeId' | 'assignedManagerId' | 'cycleId'>,
+    termAssignment: Pick<ITermAssignment, 'employeeId' | 'assignedManagerId' | 'cycleId' | 'annualAssignmentId'>,
   ): Promise<void> {
     const mappedRole = normalizePmsRole(actorRole);
     if (mappedRole === PmsRole.ADMIN) {
@@ -2760,6 +2766,7 @@ export class TermReviewService extends BaseService {
       actor.actorId,
       termAssignment.assignedManagerId.toString(),
       termAssignment.cycleId?.toString(),
+      termAssignment.annualAssignmentId.toString(),
     );
 
     if (delegation) {
@@ -2835,12 +2842,14 @@ export class TermReviewService extends BaseService {
     delegateUserId: string,
     delegatorUserId: string,
     cycleId?: string,
+    annualAssignmentId?: string,
   ): Promise<any | null> {
     return new DelegationService(this.context).getActiveDelegation(
       delegateUserId,
       delegatorUserId,
       'PMS_REVIEWS',
       cycleId,
+      annualAssignmentId,
     );
   }
 
@@ -2904,11 +2913,15 @@ export class TermReviewService extends BaseService {
     if (entityType === 'QUARTER_REVIEW') {
       const review = await TermReview.findById(entityId).select('termAssignmentId').lean();
       if (review) {
-        const assignment = await TermAssignment.findById(review.termAssignmentId).select('assignedManagerId').lean();
+        const assignment = await TermAssignment.findById(review.termAssignmentId)
+          .select('assignedManagerId cycleId annualAssignmentId')
+          .lean();
         if (assignment && actor.actorId !== assignment.assignedManagerId?.toString()) {
           const delegation = await this.getReviewDelegation(
             actor.actorId,
-            assignment.assignedManagerId.toString()
+            assignment.assignedManagerId.toString(),
+            assignment.cycleId?.toString(),
+            assignment.annualAssignmentId?.toString(),
           );
           if (delegation) {
             metadata = { actedAsDelegateFor: assignment.assignedManagerId.toString() };

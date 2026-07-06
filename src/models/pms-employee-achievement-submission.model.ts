@@ -49,6 +49,10 @@ export interface IAchievementItem {
   employeeSelfRatingComments?: string;
   outcome?: string;
   attachments?: IAchievementAttachmentMetadata[];
+  itemStatus?: EmployeeAchievementSubmissionStatus;
+  draftSavedAt?: Date;
+  submittedBy?: Types.ObjectId;
+  submittedAt?: Date;
 }
 
 export interface IEmployeeAchievementValue {
@@ -135,10 +139,22 @@ const achievementItemSchema = new Schema<IAchievementItem>(
     },
     subject: { type: String, required: true, trim: true },
     description: { type: String, required: true, trim: true },
-    employeeSelfRating: { type: Number, min: 1, max: 5 },
+    employeeSelfRating: Number,
     employeeSelfRatingComments: { type: String, trim: true },
     outcome: { type: String, trim: true },
     attachments: { type: [achievementAttachmentMetadataSchema], default: [] },
+    itemStatus: {
+      type: String,
+      enum: Object.values(EmployeeAchievementSubmissionStatus),
+      default: EmployeeAchievementSubmissionStatus.DRAFT,
+      index: true,
+    },
+    draftSavedAt: Date,
+    submittedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    submittedAt: Date,
   },
   { _id: false },
 );

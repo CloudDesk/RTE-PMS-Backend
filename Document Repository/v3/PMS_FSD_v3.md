@@ -175,6 +175,102 @@ The starter template shall include:
 
 The starter template shall remain simple and editable. It shall not copy paper forms blindly; it shall map only the business-useful sections needed for appraisal execution.
 
+### FR-TMP-05A.1: Template Type and Starter Template Selection
+
+The Template Builder shall support template type driven starter selection.
+
+The supported template type labels shall be:
+
+* Full PMS Template
+* Manager Review Only
+
+For Full PMS Template, starter selection shall allow:
+
+* blank PMS template creation
+* custom/grouped minimum section templates
+* predefined starter templates
+
+For Manager Review Only, starter selection shall show only manager-review-only compatible starter templates. These templates shall not require objective management, employee achievement submission, annual decision, or scoring unless the selected starter explicitly includes those features.
+
+Starter templates shall remain editable after selection. HR/Admin users shall be able to update labels, sections, fields, permissions, default row values, and layout metadata before activation.
+
+### FR-TMP-05A.2: Manager Review Only Performance Assessment Starter
+
+The system shall provide a Manager Review Only starter based on the paper Performance Assessment form, excluding the company letterhead/brand address, leave information, and page footer content.
+
+The Manager Review Only Performance Assessment starter shall include:
+
+* Employee Information section
+* Performance Assessment section
+* Performance Feedback data grid
+
+Employee Information fields shall be intended for auto-fill from the Employee module where matching employee profile data is available.
+
+The Performance Feedback grid shall contain fixed review points such as rating performance items and manager feedback entry. The default behavior shall be:
+
+* fixed/default serial number column
+* fixed/default rating performance column
+* manager-fillable feedback column
+* fixed row count matching the configured default row values
+* no objective workflow requirement
+* no employee achievement submission requirement
+* no scoring requirement by default
+
+Only the feedback input shall be manager-fillable unless HR/Admin changes the column behavior in the template builder.
+
+### FR-TMP-05A.3: Data Grid Default Row Configuration
+
+Data grid fields shall support admin-configurable default row values.
+
+Each data grid configuration may define:
+
+* columns
+* minimum row count
+* maximum row count
+* whether users may add rows
+* whether users may delete rows
+* default row values
+* per-column behavior
+
+Per-column behavior shall support:
+
+* User fillable
+* Fixed/default
+
+Fixed/default columns shall render configured default values and shall not be editable by end users during form completion unless HR/Admin changes the column behavior.
+
+User-fillable columns shall allow end users with edit permission to enter values during runtime.
+
+Default row values shall be visible and editable in the Template Builder data grid setup modal. HR/Admin users shall be able to:
+
+* review all configured default rows
+* edit default values per cell
+* leave any default cell blank
+* add default rows
+* remove default rows
+* create default rows from the configured row count
+
+Blank default cells are valid and shall mean the user must fill or may optionally fill that cell at runtime according to field/column requirements.
+
+### FR-TMP-05A.4: Data Grid Row Limit and Row Behavior
+
+Minimum rows shall define the minimum number of rows expected in the grid.
+
+Maximum rows shall define the maximum number of rows allowed in the grid.
+
+When `allowAddRows` is false, runtime users shall not be able to add rows.
+
+When `allowDeleteRows` is false, runtime users shall not be able to delete rows.
+
+When minimum rows and maximum rows are both set to the same value, and add/delete row behavior is disabled, the grid shall behave as a fixed-row grid.
+
+For fixed paper-style review templates, the recommended configuration is:
+
+* minimum rows = number of default review rows
+* maximum rows = number of default review rows
+* allow users to add rows = false
+* allow users to delete rows = false
+
 ### FR-TMP-05B: Predefined Objective Configuration
 
 Template owners shall be able to configure predefined objectives inside the Performance Objectives section.
@@ -436,6 +532,44 @@ Admin users may audit manager templates later, but the admin PMS template list s
 
 Confirmation reviews shall not require objective setting, objective approval, or employee achievement submission unless the assigned template explicitly introduces those sections.
 
+### FR-MGR-10: Probation / Trainee Manager Review Flow
+
+The system shall support an admin-created Probation / Trainee Manager Review flow for employees who require a manager review before probation confirmation, trainee completion, or similar employment milestone decision.
+
+This flow shall use the existing Template Builder and the Manager Review Only template type.
+
+Admin users shall be able to create a Manager Review Form template for probation or trainee employees.
+
+Admin users shall be able to create a Probation Review Assignment for an employee.
+
+Each Probation Review Assignment shall store:
+
+* employee
+* probation end date
+* review open date
+* Manager 1 / Reporting Manager
+* Manager 2 / Approver
+* locked template version
+* review status
+
+The review open date shall be calculated as:
+
+```text
+Review Open Date = Probation End Date - 30 days
+```
+
+Manager 1 shall fill and submit the review form.
+
+Manager 2 shall review the submitted form and either approve it or return it to Manager 1 for correction.
+
+Once Manager 2 approves, the probation review shall be finalized.
+
+The employee shall not submit objectives or achievements in this flow.
+
+This flow shall not require normal PMS cycle launch because each employee may have a different joining date, probation end date, and review open date.
+
+The locked template version shall preserve the review form structure used for the assignment, even if the template is later edited.
+
 ---
 
 ## 3.3 HR / Admin
@@ -450,6 +584,10 @@ The system shall allow HR/Admin users to:
 * Configure workflows
 * Activate/deactivate templates
 * Manage template versions
+
+HR/Admin template management shall allow business users to configure data grid fields without code changes. For data grid fields, HR/Admin users shall be able to configure columns, row limits, row add/delete behavior, and default row values from the Template Builder UI.
+
+For Manager Review Only templates, HR/Admin users shall be able to select the default Manager Review Only starter and edit it before activation. The default Manager Review Only starter shall be treated as a normal editable template version after selection.
 
 ### FR-HR-02: Annual Cycle Management
 
@@ -840,6 +978,37 @@ DRAFT
 | COMMUNICATION_SENT | CLOSED | HR/Admin / System |
 | CLOSED | ARCHIVED | HR/Admin / System |
 
+## 6.3 Probation / Trainee Manager Review Workflow
+
+```text
+DRAFT
+→ SCHEDULED
+→ REVIEW_OPEN
+→ MANAGER_1_SUBMITTED
+→ MANAGER_2_APPROVED
+→ FINALIZED
+```
+
+Alternative states:
+
+* RETURNED_TO_MANAGER_1
+* CANCELLED
+
+### 6.3A Probation / Trainee Review Transition Table
+
+| From | To | Actor |
+|---|---|---|
+| DRAFT | SCHEDULED | HR/Admin |
+| SCHEDULED | REVIEW_OPEN | System / HR/Admin |
+| REVIEW_OPEN | MANAGER_1_SUBMITTED | Manager 1 / Reporting Manager |
+| MANAGER_1_SUBMITTED | MANAGER_2_APPROVED | Manager 2 / Approver |
+| MANAGER_1_SUBMITTED | RETURNED_TO_MANAGER_1 | Manager 2 / Approver |
+| RETURNED_TO_MANAGER_1 | MANAGER_1_SUBMITTED | Manager 1 / Reporting Manager |
+| MANAGER_2_APPROVED | FINALIZED | System |
+| Any non-finalized state | CANCELLED | HR/Admin |
+
+The scheduled review shall open on the calculated review open date unless HR/Admin manually opens it earlier according to permission policy.
+
 ---
 
 # 7. Screen-Level Behavior
@@ -853,6 +1022,8 @@ DRAFT
 | Employee Achievement Screen | Submit achievements against approved objectives and add separate additional achievements |
 | Quarterly Review Screen | Quarterly evaluation entry and submission |
 | Manager Confirmation Reviews Screen | Manager-created confirmation templates, eligible employee assignment, and active confirmation reviews |
+| Probation Review Assignment Screen | Admin-created probation/trainee review assignments, probation end date capture, calculated review open date, Manager 1/Manager 2 assignment, locked template version selection, and review status tracking |
+| Probation Review Workspace | Manager 1 review form entry, Manager 1 submission, Manager 2 approval or return, and finalized probation review view |
 | Annual Appraisal Screen | Grade/merit decision capture and freeze |
 | Visibility Governance Screen | Publish employee/manager visibility |
 | Communication Dispatch Screen | Preview, send, and resend backend-prepared appraisal communication |
@@ -895,6 +1066,19 @@ DRAFT
 * GET `/pms/manager-initiated-reviews/templates/{templateId}`
 * PUT `/pms/manager-initiated-reviews/templates/{templateId}`
 * POST `/pms/manager-initiated-reviews/launch`
+
+## 8.2C Probation / Trainee Manager Review APIs
+
+* GET `/pms/probation-reviews`
+* POST `/pms/probation-reviews`
+* GET `/pms/probation-reviews/{assignmentId}`
+* PUT `/pms/probation-reviews/{assignmentId}`
+* POST `/pms/probation-reviews/{assignmentId}/open`
+* PUT `/pms/probation-reviews/{assignmentId}/manager-1/draft`
+* POST `/pms/probation-reviews/{assignmentId}/manager-1/submit`
+* POST `/pms/probation-reviews/{assignmentId}/manager-2/approve`
+* POST `/pms/probation-reviews/{assignmentId}/manager-2/return`
+* POST `/pms/probation-reviews/{assignmentId}/cancel`
 
 ## 8.3 Annual Appraisal APIs
 
@@ -940,6 +1124,15 @@ OR
 
 Manager Review Submission
 → Quarter Finalization
+
+## 9.2A Probation / Trainee Review Flow
+
+Manager 1 Draft
+→ Manager 1 Submission
+→ Manager 2 Approval
+→ Finalization
+
+If Manager 2 returns the review, the flow shall move back to Manager 1 correction and resubmission.
 
 ## 9.3 Annual Appraisal Flow
 
@@ -1184,11 +1377,25 @@ Ratings, scores, and weighted marks shall be entered only against template-confi
 
 Where the template defines scoreable predefined objectives, managers shall rate those objectives during review. Submitted employee achievements and proof files shall be visible as evidence for the related objective.
 
+Where the template defines a data grid review field, managers shall enter data only into columns configured as user-fillable and editable for the manager role.
+
+For fixed/default data grids:
+
+* configured default rows shall render at runtime
+* fixed/default columns shall display default values and remain read-only
+* user-fillable columns shall accept manager input according to permissions
+* add-row and delete-row controls shall follow the configured row behavior
+* row limits shall prevent users from exceeding configured maximum rows or going below configured minimum rows
+
+For the Manager Review Only Performance Assessment starter, managers shall fill the Feedback column against each default rating performance item. Serial number and rating performance values shall remain fixed/default unless changed by HR/Admin in the template configuration.
+
 ### FR-MQR-03: Manager Review Validation
 
 Submission requires all mandatory review fields.
 
 The system shall validate that submitted scoring field ids belong to the locked template version assigned to the Annual Assignment.
+
+For data grid review fields, submission shall validate required grid columns only for rows that are part of the rendered grid and visible/editable according to template metadata.
 
 ### FR-MQR-04: Review Submission
 
@@ -1682,6 +1889,38 @@ The system shall calculate term score only from template-configured scoring sect
 
 Non-scoreable objectives, comments, additional achievements, and attachments shall not be included in score calculation.
 
+### FR-VAL-10: Data Grid Configuration Validation
+
+The system shall validate data grid configuration before template activation or save where applicable.
+
+Data grid validation shall ensure:
+
+* at least one column exists
+* column keys are unique
+* minimum row count is not greater than maximum row count
+* default row values are stored as row objects
+* fixed/default row grids do not allow runtime row additions or deletions unless explicitly enabled
+
+For Manager Review Only fixed Performance Assessment grids, the configured default row count should match the configured minimum and maximum row count.
+
+### FR-VAL-11: Probation / Trainee Review Assignment Validation
+
+The system shall validate Probation / Trainee Review Assignments before creation, update, opening, submission, approval, or finalization.
+
+Validation shall ensure:
+
+* employee exists and is eligible for probation/trainee review
+* probation end date is present
+* review open date is calculated as probation end date minus 30 days unless explicitly overridden by an authorized admin policy
+* Manager 1 / Reporting Manager is present
+* Manager 2 / Approver is present
+* locked template version exists and belongs to a Manager Review Only template
+* locked template version is preserved after assignment creation
+* Manager 1 can draft and submit only while review status allows Manager 1 input
+* Manager 2 can approve or return only after Manager 1 submission
+* finalized reviews cannot be edited through standard edit operations
+* normal PMS cycle, objective submission, objective approval, and employee achievement submission are not required for this flow
+
 ---
 
 # 23. Error Handling Expectations
@@ -1703,6 +1942,15 @@ Non-scoreable objectives, comments, additional achievements, and attachments sha
 | Invalid template scoring weightage | Prevent template activation or scoring configuration save |
 | Invalid objective applicable term selection | Prevent template activation |
 | Invalid term review scoring field | Reject manager review submission |
+| Invalid data grid configuration | Prevent template activation or grid configuration save |
+| Data grid row limit exceeded | Reject runtime row addition or submission |
+| Required data grid cell missing | Prevent review submission where the cell is required and editable/visible |
+| Missing probation end date | Prevent probation review assignment creation |
+| Invalid probation review open date | Prevent assignment creation or require authorized override |
+| Missing Manager 1 or Manager 2 | Prevent probation review assignment creation |
+| Invalid probation review template type | Prevent assignment creation |
+| Manager 2 approval before Manager 1 submission | Reject transition |
+| Edit finalized probation review | Reject modification |
 
 ---
 
@@ -1712,7 +1960,8 @@ Non-scoreable objectives, comments, additional achievements, and attachments sha
 |---|---|
 | Objective Management | Annual Assignment term content + locked template objective configuration |
 | Employee Achievement Submission | Approved objectives + term assignment + employee proof attachments |
-| Manager Review | Approved objectives + employee achievements + locked template scoring fields + scoreable predefined objectives |
+| Manager Review | Approved objectives + employee achievements + locked template scoring fields + scoreable predefined objectives + configured data grid review fields |
+| Probation / Trainee Review | Employee profile + probation end date + Manager Review Only locked template version + Manager 1/Manager 2 assignment |
 | Annual Appraisal Decision | Finalized or Closed quarter content |
 | Visibility Governance | Annual Finalization |
 | Communication Dispatch | Visibility Enablement + Backend-Managed Static Communication Rules |

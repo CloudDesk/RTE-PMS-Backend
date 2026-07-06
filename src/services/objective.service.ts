@@ -350,6 +350,14 @@ type BulkCreateManagerObjectiveResult = {
   }>;
 };
 
+const DELEGATED_OBJECTIVE_ASSIGNMENT_STATES = [
+  TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+  TermWorkflowState.OBJECTIVE_DRAFT,
+  TermWorkflowState.OBJECTIVE_SUBMITTED,
+  TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+  TermWorkflowState.REOPENED_BY_ADMIN,
+] as const;
+
 export class ObjectiveService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
@@ -448,10 +456,17 @@ export class ObjectiveService extends BaseService {
       const managerClauses: Record<string, unknown>[] = [{ assignedManagerId: managerId }];
 
       for (const delegation of delegations) {
-        const clause: Record<string, unknown> = {
-          assignedManagerId: delegation.delegatorUserId,
-        };
-        if (delegation.cycleId) {
+        const clause: Record<string, unknown> = delegation.annualAssignmentId
+          ? {
+              annualAssignmentId: delegation.annualAssignmentId,
+              assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: DELEGATED_OBJECTIVE_ASSIGNMENT_STATES },
+            }
+          : {
+              assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: DELEGATED_OBJECTIVE_ASSIGNMENT_STATES },
+            };
+        if (!delegation.annualAssignmentId && delegation.cycleId) {
           clause.cycleId = delegation.cycleId;
         }
         managerClauses.push(clause);
@@ -790,6 +805,7 @@ export class ObjectiveService extends BaseService {
         actor.actorId,
         termAssignment.assignedManagerId.toString(),
         termAssignment.cycleId?.toString(),
+        termAssignment.annualAssignmentId.toString(),
       );
       if (!isManager && !isDelegate && accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
         throw new Error('Only the manager or their delegate can add objectives to the manager-owned bucket');
@@ -844,6 +860,7 @@ export class ObjectiveService extends BaseService {
         actor.actorId,
         termAssignment.assignedManagerId.toString(),
         termAssignment.cycleId?.toString(),
+        termAssignment.annualAssignmentId.toString(),
       );
 
       if (delegation) {
@@ -955,6 +972,7 @@ export class ObjectiveService extends BaseService {
           actor.actorId,
           termAssignment.assignedManagerId.toString(),
           termAssignment.cycleId?.toString(),
+          termAssignment.annualAssignmentId.toString(),
         );
 
         if (!isManager && !isDelegate && accessService.mapRole(actor.actorRole) !== PmsRole.ADMIN) {
@@ -1109,6 +1127,7 @@ export class ObjectiveService extends BaseService {
       actor.actorId,
       termAssignment.assignedManagerId.toString(),
       termAssignment.cycleId?.toString(),
+      termAssignment.annualAssignmentId.toString(),
     );
 
     if (!isAdmin && !isAssignedManager && !isDelegate) {
@@ -1288,6 +1307,7 @@ export class ObjectiveService extends BaseService {
         actor.actorId,
         objective.assignedManagerId.toString(),
         objective.cycleId?.toString(),
+        objective.annualAssignmentId?.toString(),
       );
 
       if (delegation) {
@@ -1590,6 +1610,7 @@ export class ObjectiveService extends BaseService {
         actor.actorId,
         objective.assignedManagerId.toString(),
         objective.cycleId?.toString(),
+        objective.annualAssignmentId?.toString(),
       );
 
       if (delegation) {
@@ -1651,6 +1672,7 @@ export class ObjectiveService extends BaseService {
         actor.actorId,
         objective.assignedManagerId.toString(),
         objective.cycleId?.toString(),
+        objective.annualAssignmentId?.toString(),
       );
 
       if (delegation) {
@@ -3427,6 +3449,7 @@ export class ObjectiveService extends BaseService {
       actor.actorId,
       termAssignment.assignedManagerId.toString(),
       termAssignment.cycleId?.toString(),
+      termAssignment.annualAssignmentId.toString(),
     );
 
     if (delegation) {
@@ -3470,6 +3493,7 @@ export class ObjectiveService extends BaseService {
       actor.actorId,
       objective.assignedManagerId.toString(),
       objective.cycleId?.toString(),
+      objective.annualAssignmentId?.toString(),
     );
 
     if (delegation) {
@@ -3624,12 +3648,14 @@ export class ObjectiveService extends BaseService {
     delegateUserId: string,
     delegatorUserId: string,
     cycleId?: string,
+    annualAssignmentId?: string,
   ): Promise<any | null> {
     return new DelegationService(this.context).getActiveDelegation(
       delegateUserId,
       delegatorUserId,
       'PMS_OBJECTIVES',
       cycleId,
+      annualAssignmentId,
     );
   }
 
@@ -3712,11 +3738,13 @@ export class ObjectiveService extends BaseService {
     let metadata: Record<string, unknown> | undefined = undefined;
 
     if (entityType === 'OBJECTIVE') {
-      const objective = await Objective.findById(entityId).select('assignedManagerId').lean();
+      const objective = await Objective.findById(entityId).select('assignedManagerId cycleId annualAssignmentId').lean();
       if (objective && actor.actorId !== objective.assignedManagerId?.toString()) {
         const delegation = await this.getObjectiveDelegation(
           actor.actorId,
-          objective.assignedManagerId.toString()
+          objective.assignedManagerId.toString(),
+          objective.cycleId?.toString(),
+          objective.annualAssignmentId?.toString(),
         );
         if (delegation) {
           metadata = { actedAsDelegateFor: objective.assignedManagerId.toString() };
