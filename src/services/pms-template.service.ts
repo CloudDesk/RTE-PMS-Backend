@@ -794,6 +794,10 @@ export class PmsTemplateService extends BaseService {
         }),
       )
       .map((section) => {
+        const sectionFieldAccess = this.resolveSectionFieldAccess(section, {
+          role,
+          workflowState,
+        });
         const allowEmployeeAssignedCustomObjectiveSetting =
           role === PmsRole.EMPLOYEE &&
           workflowState === TermWorkflowState.OBJECTIVE_SETTING_OPEN &&
@@ -806,6 +810,7 @@ export class PmsTemplateService extends BaseService {
           visibilityFlags,
           values,
           allowEmployeeAssignedCustomObjectiveSetting,
+          sectionGrantsVisibility: sectionFieldAccess.visible,
         });
         const fields = (section.fields ?? [])
           .filter((field) => visibleFieldKeys.has(field.fieldKey))
@@ -816,6 +821,7 @@ export class PmsTemplateService extends BaseService {
               hierarchyScope,
               visibilityFlags,
               allowEmployeeAssignedCustomObjectiveSetting,
+              sectionGrantsEditability: sectionFieldAccess.editable,
             }),
           );
 
@@ -1547,6 +1553,54 @@ export class PmsTemplateService extends BaseService {
     );
   }
 
+  private resolveSectionFieldAccess(
+    section: ITemplateSection,
+    context: {
+      role: string;
+      workflowState: string;
+    },
+  ): { visible: boolean; editable: boolean } {
+    const visibleTo = this.stringArrayFromRule(section.visibilityRules, 'visibleTo').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    const hiddenFrom = this.stringArrayFromRule(section.visibilityRules, 'hiddenFrom').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    const editableBy = this.stringArrayFromRule(section.editabilityRules, 'editableBy').map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    const editableStates = this.stringArrayFromRule(section.editabilityRules, 'editableStates');
+
+    let editableStateMatches = true;
+    if (editableStates.length > 0) {
+      editableStateMatches = editableStates.includes(context.workflowState);
+      if (!editableStateMatches && editableStates.includes('OBJECTIVE_SETTING_OPEN')) {
+        editableStateMatches = [
+          'NOT_STARTED',
+          'OBJECTIVE_SETTING_OPEN',
+          'OBJECTIVE_DRAFT',
+          'OBJECTIVE_REVISION_REQUIRED',
+        ].includes(context.workflowState);
+      }
+    }
+
+    return {
+      visible:
+        visibleTo.includes(context.role) ||
+        (editableBy.includes(context.role) && !hiddenFrom.includes(context.role)),
+      editable: editableBy.includes(context.role) && editableStateMatches,
+    };
+  }
+
+  private isExplicitlyHiddenFromRole(
+    rules: Record<string, unknown> | undefined,
+    role: string,
+  ): boolean {
+    return this.stringArrayFromRule(rules, 'hiddenFrom')
+      .map((item) => this.normalizeRoleCode(item))
+      .includes(role);
+  }
+
   private isFieldVisible(
     field: ITemplateField,
     context: {
@@ -1556,13 +1610,18 @@ export class PmsTemplateService extends BaseService {
       visibilityFlags: Set<string>;
       values: Record<string, unknown>;
       allowEmployeeAssignedCustomObjectiveSetting?: boolean;
+      sectionGrantsVisibility?: boolean;
     },
   ): boolean {
     const behavior = this.findBehavior(field, context.role, context.workflowState);
     if (behavior?.visibility === 'HIDDEN') return false;
 
+    if (this.isExplicitlyHiddenFromRole(field.visibilityRules, context.role)) {
+      return false;
+    }
+
     const visibleByRules = this.isVisibleByRules(field.visibilityRules, context);
-    if (!visibleByRules) return false;
+    if (!visibleByRules && !context.sectionGrantsVisibility) return false;
 
     if (behavior && behavior.visibility !== 'VISIBLE') return false;
 
@@ -1586,6 +1645,7 @@ export class PmsTemplateService extends BaseService {
       hierarchyScope?: string;
       visibilityFlags: Set<string>;
       allowEmployeeAssignedCustomObjectiveSetting?: boolean;
+      sectionGrantsEditability?: boolean;
     },
   ): ResolvedTemplateField {
     const behavior = this.findBehavior(field, context.role, context.workflowState);
@@ -1603,6 +1663,7 @@ export class PmsTemplateService extends BaseService {
         context.workflowState,
         behavior,
         context.allowEmployeeAssignedCustomObjectiveSetting,
+        context.sectionGrantsEditability,
       ),
       placeholder: field.placeholder,
       helpText: field.helpText,
@@ -1629,6 +1690,7 @@ export class PmsTemplateService extends BaseService {
       visibilityFlags: Set<string>;
       values: Record<string, unknown>;
       allowEmployeeAssignedCustomObjectiveSetting?: boolean;
+      sectionGrantsVisibility?: boolean;
     },
   ): Set<string> {
     const fieldByKey = new Map(fields.map((field) => [field.fieldKey, field]));
@@ -1739,14 +1801,14 @@ export class PmsTemplateService extends BaseService {
     workflowState: string,
     behavior?: NonNullable<ITemplateField['behaviors']>[number],
     allowEmployeeAssignedCustomObjectiveSetting = false,
+    sectionGrantsEditability = false,
   ): boolean {
     if (behavior) return behavior.editability === 'EDITABLE';
 
     const editableBy = this.stringArrayFromRule(field.editabilityRules, 'editableBy').map((item) =>
       this.normalizeRoleCode(item),
     );
-    if (editableBy.length > 0 && !editableBy.includes(role)) return false;
-
+    const fieldRoleEditable = editableBy.includes(role);
     const editableStates = this.stringArrayFromRule(field.editabilityRules, 'editableStates');
     if (editableStates.length > 0) {
       let isMatched = editableStates.includes(workflowState);
@@ -1772,7 +1834,7 @@ export class PmsTemplateService extends BaseService {
       if (!isMatched) return false;
     }
 
-    return editableBy.includes(role);
+    return fieldRoleEditable || sectionGrantsEditability;
   }
 
   private findBehavior(
