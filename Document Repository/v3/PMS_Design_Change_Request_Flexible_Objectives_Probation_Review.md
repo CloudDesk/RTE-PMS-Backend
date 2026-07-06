@@ -1,4 +1,4 @@
-# PMS Design Change Request: Flexible Objective Model and Configurable Probation Review Flow
+# PMS Design Change Request: Flexible Objective Model, Mid-Cycle Assignment Windows, and Configurable Probation Review Flow
 
 ## 1. Purpose
 
@@ -29,13 +29,14 @@ This document is separate from the "Configurable Section Timing and Manager Revi
 
 ## 2. Client Request Summary
 
-The requested changes can be grouped into three main requirement areas.
+The requested changes can be grouped into four main requirement areas.
 
 | Requirement Area | Summary |
 |---|---|
 | Flexible Objective Master and Assignment Model | Objectives should live outside PMS templates as independent business objects and should be assignable through flexible mapping rules. |
 | Flexible Objective Filling, Actuals, and Scoring Governance | Assigned objectives should be fillable by different actors based on role, workflow state, assessment term, and permission policy. Objectives remain context-only unless scoring is explicitly enabled. |
 | Configurable Probation / Trainee Manager Review Flow | Probation review should support configurable reviewer responsibility, field-level security, data-grid permissions, sharing/delegation, detailed audit, and flexible approval rules without normal PMS cycle launch. |
+| Configurable Assignment Window Timing for Mid-Cycle Employees | Employees added after cycle launch should support assignment-level objective, achievement, review, and due-date windows without changing the baseline cycle windows. |
 
 ---
 
@@ -104,6 +105,12 @@ Probation review should support configurable Manager 1 / Manager 2 responsibilit
 
 The system should also support field-level and section-level security, data-grid row and column permissions, assignment sharing/delegation, detailed audit, and configurable submission / approval rules.
 
+### 4.4 Mid-Cycle Assignment Window Timing
+
+When an employee joins after the PMS cycle has already been launched, the system should support assignment-level window timing for that employee.
+
+This should allow HR/Admin to assign the employee to applicable remaining assessment terms and configure objective setting, achievement submission, manager review, and due-date windows without changing the global annual cycle configuration for other employees.
+
 ---
 
 ## 5. Proposed Dynamic Solution
@@ -136,6 +143,22 @@ Locked Template + Locked Configuration Snapshot
 Configured Reviewer Input / Approval Flow
 ↓
 Finalized Review with Audit
+```
+
+For mid-cycle employee assignment windows:
+
+```text
+Annual Cycle Already Launched
+↓
+Employee Added / Becomes Eligible
+↓
+Annual Assignment Created for Applicable Terms
+↓
+Assignment Window Policy Applied
+↓
+Term Window Snapshot Locked
+↓
+Objective / Achievement / Review Flow Runs for That Employee
 ```
 
 ---
@@ -423,11 +446,16 @@ Supported values:
 ```text
 HIGHER_IS_BETTER
 LOWER_IS_BETTER
+NOT_APPLICABLE
 ```
 
 `HIGHER_IS_BETTER` applies where better performance means meeting or exceeding the target value.
 
 `LOWER_IS_BETTER` applies where better performance means meeting or staying below the target value.
+
+`NOT_APPLICABLE` applies where the objective is descriptive, context-only, manually reviewed, or does not require numeric target interpretation.
+
+Target direction should be required only when the objective uses numeric target-based interpretation or target-based score calculation.
 
 Target direction should guide review interpretation and score calculation only when objective scoring is explicitly enabled.
 
@@ -448,7 +476,7 @@ LOWER_IS_BETTER Score = min((Target Value / Actual Value) x 100, 100)
 
 The calculated score shall be capped at 100 unless the template explicitly allows overachievement scoring.
 
-If actual value, target value, or target direction is missing, the system shall not auto-calculate objective score and shall follow the configured fallback rule.
+If target-based score calculation is enabled and actual value, target value, or applicable target direction is missing, the system shall not auto-calculate objective score and shall follow the configured fallback rule.
 
 In the current design approval, automatic score derivation from actual values is not enabled by default. It may be configured only when explicitly supported by the locked template scoring policy.
 
@@ -478,6 +506,7 @@ Validation shall ensure:
 * actual value uses the configured unit or measurement type where applicable
 * actual value is within configured hard data limits where defined
 * target direction is available when target-based interpretation or auto-calculation is enabled
+* target direction may be `NOT_APPLICABLE` when the objective does not use numeric target interpretation
 
 If the actual value does not meet the target, the system shall allow submission but may:
 
@@ -492,7 +521,53 @@ The system shall block actual value only when:
 * actual value format is invalid
 * numeric value is required but non-numeric data is entered
 * configured hard limit is violated
-* target-based score calculation is enabled but required target/actual/direction data is missing
+* target-based score calculation is enabled but required target/actual/applicable direction data is missing
+
+### 7.2.3 Actual Aggregation Mode for Multi-Term Objectives
+
+When the same measurable objective has actual values across multiple assessment terms, the system shall use a configured actual aggregation mode before target-based auto score calculation.
+
+Actual aggregation mode determines which actual value is used for the objective score calculation. It is different from term aggregation policy, which combines already-calculated term scores for grouped or annual reviews.
+
+Supported actual aggregation modes:
+
+| Mode | Behavior |
+|---|---|
+| LATEST_VALUE | Uses the latest applicable term actual value |
+| SUM_OF_TERMS | Adds actual values from included terms |
+| AVERAGE_OF_TERMS | Uses the average actual value across included terms |
+| MAX_OF_TERMS | Uses the highest actual value across included terms |
+| MIN_OF_TERMS | Uses the lowest actual value across included terms |
+
+Default actual aggregation mode shall be `LATEST_VALUE`.
+
+Example for `HIGHER_IS_BETTER` with `LATEST_VALUE`:
+
+```text
+Target = 100
+Q1 Actual = 10
+Q2 Actual = 30
+Q3 Actual = 60
+Q4 Actual = 85
+Aggregated Actual = 85
+Score = min((85 / 100) x 100, 100) = 85
+```
+
+Example for `LOWER_IS_BETTER` with `LATEST_VALUE`:
+
+```text
+Target = 5
+Q1 Actual = 20
+Q2 Actual = 12
+Q3 Actual = 8
+Q4 Actual = 4
+Aggregated Actual = 4
+Score = min((5 / 4) x 100, 100) = 100
+```
+
+The selected actual aggregation mode shall be stored in the locked template scoring policy or assigned objective scoring snapshot where target-based auto score calculation is enabled.
+
+If target-based auto score calculation is not enabled, actual aggregation mode may still be stored for reporting or comparison, but it shall not affect score calculation.
 
 ### 7.3 Default Scoring Behavior
 
@@ -679,6 +754,9 @@ The locked Template Version should store:
 * whether per-objective score entry is allowed
 * whether overall objective score entry is allowed
 * no-objective scoring policy
+* review timing policy
+* included assessment term grouping policy
+* term aggregation policy
 * scoring validation rules
 
 Objective Master Version may store objective business attributes such as title, description, KPI guidance, target value, target direction, and default scoring eligibility reference where required, but it shall not be the primary owner of the review scoring mode.
@@ -695,6 +773,87 @@ Locked Template Version
 + Manager Review Score Inputs
 = Calculated Review Score Snapshot
 ```
+
+### 7.4.5 Objective Scoring Across Configurable Review Timing
+
+Objective assignment term and manager review timing shall be treated as separate configuration concepts.
+
+Objectives shall remain linked to their assigned assessment terms such as Q1, Q2, Q3, Q4, H1, H2, or Y1.
+
+The manager review instance shall define which assessment terms are included for review and scoring.
+
+Examples:
+
+| Review Timing | Included Objective Terms |
+|---|---|
+| TERM_WISE | Current assessment term only, such as Q1 only |
+| GROUPED_TERMS | Configured group of terms, such as Q1 + Q2 |
+| ANNUAL | All applicable terms for the annual cycle, such as Q1 + Q2 + Q3 + Q4 |
+| CUSTOM_GROUPED | Configured custom term group |
+
+When a review instance includes multiple assessment terms, the manager review screen shall display included objectives grouped by assessment term.
+
+Objective score shall first be calculated at the included assessment-term level.
+
+For `WEIGHTED_OBJECTIVE_SCORE`:
+
+```text
+Term Objective Score = Sum of Objective Weighted Scores for that included term
+```
+
+For `OVERALL_OBJECTIVE_SCORE`:
+
+```text
+Term Objective Score = Manager-entered overall objective score for that included term or review group, according to locked template policy
+```
+
+If a review instance includes multiple terms, the objective section score shall be aggregated using the configured term aggregation policy.
+
+Supported term aggregation policies:
+
+| Policy | Behavior |
+|---|---|
+| EQUAL_TERM_AVERAGE | Average all included term objective scores equally |
+| TERM_WEIGHTED_AVERAGE | Apply configured term weights to included term objective scores |
+| MANUAL_GROUP_OVERALL_SCORE | Manager enters one overall objective score for the full review group where template policy permits |
+
+Default policy shall be `EQUAL_TERM_AVERAGE`.
+
+Example for annual review with equal term average:
+
+```text
+Included terms = Q1 + Q2 + Q3 + Q4
+Q1 Objective Score = 80
+Q2 Objective Score = 70
+Q3 Objective Score = 90
+Q4 Objective Score = 85
+
+Objective Section Score = (80 + 70 + 90 + 85) / 4 = 81.25
+```
+
+Example for annual review with configured term weights:
+
+```text
+Objective Section Score =
+(Q1 Objective Score x Q1 Term Weight)
++ (Q2 Objective Score x Q2 Term Weight)
++ (Q3 Objective Score x Q3 Term Weight)
++ (Q4 Objective Score x Q4 Term Weight)
+```
+
+Term weights must total 100% for the included review group when `TERM_WEIGHTED_AVERAGE` is used.
+
+Non-scoreable objectives from included terms shall remain visible as planning, achievement, evidence, and review context only.
+
+If an included term has no scoreable objectives, the configured no-objective scoring policy shall apply for that term before review group aggregation.
+
+The calculated objective section score from a grouped or annual review shall then contribute to final term/review score using the objective section template weight.
+
+```text
+Objective Section Contribution = (Objective Section Score / 100) x Objective Section Template Weight
+```
+
+Later changes to review timing, term grouping, or term aggregation policy shall not recalculate finalized historical review scores.
 
 ### 7.5 Workflow Status Reuse
 
@@ -1122,25 +1281,139 @@ Permission rules:
 
 ---
 
-## 9. Data Design Impact
+## 9. Configurable Assignment Window Timing for Mid-Cycle Employees
 
-### 9.1 Objective Data
+This enhancement supports employees who join, become eligible, transfer into scope, or are added to PMS after the annual cycle has already been launched.
+
+The approved baseline cycle windows shall remain unchanged for existing employees. Mid-cycle window timing shall apply only to the affected employee assignment where configured.
+
+### 9.1 Assignment-Level Window Policy
+
+The system shall support assignment-level window policy for Annual Assignments created after cycle launch.
+
+Assignment-level windows may override cycle-level default windows only for the selected employee assignment and selected assessment terms.
+
+Supported assignment window types:
+
+| Window Type | Purpose |
+|---|---|
+| Objective Setting Window | Allows objective creation / assignment for the employee's applicable term |
+| Objective Approval Window | Allows manager approval / return for employee objectives where required |
+| Achievement Submission Window | Allows employee or manager achievement / actual value entry where enabled |
+| Manager Review Window | Allows manager review input for the configured review timing |
+| Finalization Due Date | Defines due date for term or review finalization tracking |
+| SLA / Reminder Dates | Defines assignment-specific due dates for dashboard and reminder calculation |
+
+### 9.2 Window Timing Modes
+
+Assignment-level windows shall support configurable timing modes.
+
+Supported timing modes:
+
+| Timing Mode | Behavior |
+|---|---|
+| INHERIT_CYCLE_WINDOW | Use existing cycle-level window timing |
+| FIXED_DATE_RANGE | HR/Admin enters explicit start and end dates |
+| RELATIVE_TO_ASSIGNMENT_DATE | Window opens/closes based on assignment creation date |
+| RELATIVE_TO_JOINING_DATE | Window opens/closes based on employee joining date |
+| RELATIVE_TO_TERM_DATE | Window opens/closes based on selected assessment term date |
+| MANUAL_OPEN_CLOSE | Authorized HR/Admin manually opens or closes the assignment window |
+
+Default behavior shall be `INHERIT_CYCLE_WINDOW` for existing assignments.
+
+For mid-cycle assignments, HR/Admin may select another timing mode without changing the annual cycle windows for other employees.
+
+### 9.3 Applicable Term Selection for Mid-Cycle Employees
+
+When an employee is added after cycle launch, HR/Admin shall select applicable assessment terms for that employee assignment.
+
+Examples:
+
+| Employee Join / Eligibility Scenario | Recommended Term Handling |
+|---|---|
+| Employee joins before Q1 closes | Q1 may be included if HR/Admin configures an assignment window |
+| Employee joins after Q1 closes | Q1 should be marked not applicable or closed for that employee |
+| Employee joins during Q2 | Q2, Q3, Q4 may be assigned based on policy |
+| Half-yearly cycle mid-entry | H1 or H2 assignment depends on join/eligibility date and HR/Admin selection |
+| Yearly cycle mid-entry | Y1 may be assigned with assignment-level windows |
+
+At least one applicable term must remain selected when creating a mid-cycle Annual Assignment.
+
+Past terms shall not be silently included. HR/Admin must explicitly include a current or past term and configure valid assignment-level windows if late objective, achievement, or review activity is allowed.
+
+### 9.4 Assignment Window Snapshot
+
+Each mid-cycle Annual Assignment shall preserve the window configuration used at assignment creation.
+
+The assignment window snapshot shall store:
+
+* window policy mode
+* selected applicable terms
+* objective setting window per applicable term
+* objective approval window per applicable term where required
+* achievement submission window per applicable term where enabled
+* manager review window or review group window
+* finalization due date
+* SLA / reminder dates where configured
+* created by
+* created at
+* reason or note where configured
+
+Later changes to annual cycle default windows shall not alter already-created assignment window snapshots unless an authorized correction or migration is explicitly performed.
+
+### 9.5 Interaction with Objective Assignment and Review Timing
+
+Mid-cycle assignment windows shall work with the flexible objective assignment model.
+
+When an assignment is created after cycle launch:
+
+* objective assignment rules shall be evaluated only for the employee's selected applicable terms
+* Employee Term Objectives shall be created only for applicable terms
+* objective snapshots shall be preserved at assignment time
+* achievement and actual value columns shall follow the selected cycle term type
+* manager review timing shall include only configured applicable terms
+* annual or grouped review scoring shall aggregate only included applicable terms
+
+If review timing is annual or grouped and the employee has only partial-year applicable terms, the review instance shall include only those applicable terms.
+
+Example:
+
+```text
+Employee joins in Q2
+Applicable terms = Q2 + Q3 + Q4
+Annual review objective scoring includes Q2 + Q3 + Q4 only
+Q1 is not applicable for that employee
+```
+
+### 9.6 Backward Compatibility
+
+Existing cycle-level window behavior shall remain unchanged.
+
+Assignment-level window timing shall apply only when explicitly configured for a specific Annual Assignment or assignment batch.
+
+If no assignment-level window policy exists, the system shall continue using the existing cycle-level windows.
+
+## 10. Data Design Impact
+
+### 10.1 Objective Data
 
 Recommended objective data components:
 
 | Component | Purpose |
 |---|---|
 | Objective Master | Stores company, department, and reusable objective identity / ownership |
-| Objective Master Version | Stores versioned objective details such as title, description, target, target direction, and scoring policy references |
+| Objective Master Version | Stores versioned objective details such as title, description, target, target direction, actual aggregation guidance, and scoring policy references |
 | Objective Assignment Rules | Stores mapping rules by cycle, term, department, role, group, manager, or employee |
 | Employee Term Objective Plan | Stores objectives assigned to each employee and assessment term |
 | Employee Term Objective Snapshot | Stores the objective version snapshot used at assignment time |
 | Objective Fill Values | Stores target, actual, comments, evidence, and review values |
 | Objective Scoring Policy | Stores scoring participation only where enabled by template policy |
+| Actual Aggregation Mode | Stores how multi-term actual values are combined before target-based auto score calculation |
 | Manager Review Score Inputs | Stores manager-entered objective scores where scoring is enabled |
 | Calculated Review Score Snapshot | Stores calculated score results used for review history and reporting |
+| Review Timing / Term Grouping Policy | Stores included assessment terms and aggregation policy for grouped or annual reviews |
 
-### 9.2 Template Relationship
+### 10.2 Template Relationship
 
 Templates should store rendering and policy references, not objective master ownership.
 
@@ -1155,9 +1428,11 @@ Templates may control:
 * objective scoring mode
 * objective section template weight
 * no-objective scoring policy
+* actual aggregation mode for target-based auto scoring where configured
+* review timing and term aggregation policy where objective scoring is enabled
 * scoring validation rules
 
-### 9.3 Probation Review Data
+### 10.3 Probation Review Data
 
 Recommended probation review data components:
 
@@ -1172,11 +1447,23 @@ Recommended probation review data components:
 
 Later template or configuration changes should not affect already-created probation review assignments unless controlled migration or correction is explicitly approved.
 
+### 10.4 Assignment Window Timing Data
+
+Recommended assignment window timing data components:
+
+| Component | Purpose |
+|---|---|
+| Assignment Window Policy | Stores timing mode and default assignment-level window behavior |
+| Assignment Window Snapshot | Stores locked windows for the selected Annual Assignment and applicable terms |
+| Applicable Term Selection | Stores selected Q/H/Y terms for the employee assignment |
+| Assignment SLA / Reminder Dates | Stores assignment-specific due dates for dashboard and reminders |
+| Assignment Window Audit | Stores create/update/correction actions for assignment-level windows |
+
 ---
 
-## 10. Workflow Impact
+## 11. Workflow Impact
 
-### 10.1 Regular PMS Objective Workflow
+### 11.1 Regular PMS Objective Workflow
 
 The regular PMS objective workflow should remain compatible with the current approved flow.
 
@@ -1199,7 +1486,7 @@ OBJECTIVE_REVISION_REQUIRED
 
 Company and Department Objectives mapped to an employee term may become part of the objective plan using the configured approval / locking model.
 
-### 10.2 Probation Review Workflow
+### 11.2 Probation Review Workflow
 
 The probation review flow remains independent from normal PMS cycle launch.
 
@@ -1216,11 +1503,29 @@ DRAFT
 
 Configured responsibility modes may simplify or extend this flow, but the selected status model must remain consistent across APIs, UI, audit logs, and reports.
 
+### 11.3 Mid-Cycle Assignment Workflow
+
+Mid-cycle assignment workflow shall remain part of the regular PMS Annual Assignment flow.
+
+Recommended flow:
+
+```text
+Employee joins / becomes eligible
+→ HR/Admin creates Annual Assignment
+→ HR/Admin selects applicable assessment terms
+→ Assignment window policy is applied
+→ Assignment window snapshot is locked
+→ Objective assignment rules apply to selected terms
+→ Objective / achievement / manager review flow continues for applicable terms
+```
+
+If no assignment-level window policy is configured, the existing cycle-level windows shall apply.
+
 ---
 
-## 11. UI Approach
+## 12. UI Approach
 
-### 11.1 Objective UI
+### 12.1 Objective UI
 
 Recommended screens / UI areas:
 
@@ -1234,7 +1539,7 @@ Recommended screens / UI areas:
 | Manager Review Screen | Review assigned objectives as context or scoreable items where enabled |
 | Scoring Configuration | Enable objective scoring and validate weightage only where required |
 
-### 11.2 Probation Review UI
+### 12.2 Probation Review UI
 
 Recommended screens / UI areas:
 
@@ -1247,11 +1552,22 @@ Recommended screens / UI areas:
 | Sharing / Delegation Panel | Grant, revoke, and audit shared access |
 | Audit View | Show assignment, field, section, row, sharing, and approval history |
 
+### 12.3 Mid-Cycle Assignment Window UI
+
+Recommended screens / UI areas:
+
+| UI Area | Purpose |
+|---|---|
+| Annual Assignment Create / Edit | Select applicable terms for mid-cycle employees |
+| Assignment Window Policy Panel | Configure assignment-level windows and timing mode |
+| Assignment Window Preview | Show objective, achievement, review, due-date, and SLA windows before assignment confirmation |
+| Assignment Window Audit View | Show who configured or changed assignment-level windows |
+
 ---
 
-## 12. Validation Rules
+## 13. Validation Rules
 
-### 12.1 Objective Validation
+### 13.1 Objective Validation
 
 The system should validate:
 
@@ -1287,6 +1603,10 @@ The system should validate:
 * overall objective score is treated as objective section score only, not final PMS score
 * objective section contribution is calculated as `(overallObjectiveScore / 100) x objectiveSectionTemplateWeight`
 * overall objective score cannot bypass configured template scoring totals
+* review instance includes only configured assessment terms for objective scoring
+* grouped or annual review objective score is aggregated using configured term aggregation policy
+* term weights total 100% when `TERM_WEIGHTED_AVERAGE` is used
+* no-objective scoring policy is applied per included term before grouped or annual aggregation
 * manager cannot override objective scoring mode during review
 * manager cannot make non-scoreable objectives scoreable during review
 * manager cannot change objective weightage during review
@@ -1294,14 +1614,19 @@ The system should validate:
 * scoring input must match the locked template objective scoring mode
 * valid weightage exists before scoreable objectives participate in scoring
 * scoring totals remain valid
-* target direction is one of `HIGHER_IS_BETTER` or `LOWER_IS_BETTER`
+* target direction is one of `HIGHER_IS_BETTER`, `LOWER_IS_BETTER`, or `NOT_APPLICABLE`
+* target direction is mandatory only when numeric target-based interpretation or target-based score calculation is configured
 * target direction affects scoring only when target-based score calculation is explicitly enabled
 * manual manager score entry does not require target-based auto-calculation
+* actual aggregation mode is one of `LATEST_VALUE`, `SUM_OF_TERMS`, `AVERAGE_OF_TERMS`, `MAX_OF_TERMS`, or `MIN_OF_TERMS`
+* actual aggregation mode defaults to `LATEST_VALUE` where target-based auto scoring uses multiple term actual values
+* actual aggregation mode is applied before target-based score calculation
+* actual aggregation mode shall not be confused with term aggregation policy, which combines review term scores
 * target-based calculated score is capped at 100 unless overachievement scoring is explicitly enabled
-* missing target value, actual value, or target direction prevents target-based auto-calculation
+* missing target value, actual value, or applicable target direction prevents target-based auto-calculation
 * actual value is validated for format and completeness, not blocked for target failure by default
 
-### 12.2 Probation Review Validation
+### 13.2 Probation Review Validation
 
 The system should validate:
 
@@ -1326,11 +1651,26 @@ The system should validate:
 * invalid probation status transitions are rejected server-side
 * finalized probation reviews cannot be reopened, edited, returned, cancelled, or corrected through the standard flow
 
+### 13.3 Assignment Window Timing Validation
+
+The system should validate:
+
+* assignment-level windows apply only to the selected Annual Assignment or assignment batch
+* at least one applicable assessment term is selected
+* selected applicable terms match the cycle term type
+* assignment window start date is not after assignment window end date
+* objective, achievement, and manager review windows do not conflict with finalized or closed term status
+* past terms are included only when HR/Admin explicitly selects them and provides valid windows
+* assignment-level window snapshot is preserved at assignment creation
+* later cycle window changes do not update locked assignment window snapshots
+* dashboard and SLA dates use assignment-level windows when present
+* existing cycle-level windows are used when assignment-level windows are not configured
+
 ---
 
-## 13. Audit and Reporting Impact
+## 14. Audit and Reporting Impact
 
-### 13.1 Objective Audit
+### 14.1 Objective Audit
 
 Audit should capture:
 
@@ -1344,8 +1684,9 @@ Audit should capture:
 * scoring participation change
 * objective approval / return
 * scoring calculation inputs where scoring is enabled
+* assignment-level window creation / update / correction
 
-### 13.2 Probation Review Audit
+### 14.2 Probation Review Audit
 
 Audit should capture:
 
@@ -1374,7 +1715,7 @@ Field and section audit logs should preserve:
 * workflow status at time of change
 * source channel
 
-### 13.3 Reporting
+### 14.3 Reporting
 
 Reports may need fields for:
 
@@ -1391,8 +1732,11 @@ Reports may need fields for:
 * shared access status
 * section completion status
 * finalization date
+* assignment window policy mode
+* assignment-level objective / achievement / review window dates
+* applicable terms for mid-cycle assignment
 
-### 13.4 Audit Visibility Rules
+### 14.4 Audit Visibility Rules
 
 The system shall capture complete audit logs for probation review actions.
 
@@ -1427,7 +1771,7 @@ Full audit data shall remain available for authorized HR/Admin and system compli
 
 Frontend-only audit hiding shall not be sufficient. API-level audit masking is mandatory.
 
-### 13.5 Audit Retention Position
+### 14.5 Audit Retention Position
 
 Audit retention duration is not defined in this design approval.
 
@@ -1450,11 +1794,13 @@ Audit records linked to finalized reviews shall remain immutable.
 
 Audit deletion, archival, purge, or retention-duration automation is not included in this approval.
 
-### 13.6 Dashboard Status Calculation Rules
+### 14.6 Dashboard Status Calculation Rules
 
 Dashboard status shall be calculated from workflow status, due dates, assignment applicability, submission state, approval/finalization state, and active sharing/delegation where applicable.
 
 Dashboard status shall not be based only on UI labels.
+
+When assignment-level windows exist, dashboard due dates and overdue status shall use the assignment-level window snapshot instead of the cycle-level default window.
 
 Objective / Employee Term Objective dashboard:
 
@@ -1506,7 +1852,7 @@ Draft
 
 Dashboard status shall be calculated server-side and exposed through reporting APIs.
 
-### 13.7 Reporting Export Source Mapping
+### 14.7 Reporting Export Source Mapping
 
 Reporting export columns shall be mapped to source records so exports remain consistent across dashboard, audit, and operational reports.
 
@@ -1523,10 +1869,17 @@ Objective reporting source mapping:
 | Cycle | Annual Cycle / Annual Assignment |
 | Assessment Term | Employee Term Objective |
 | Employee | Annual Assignment / Employee |
+| Applicable Terms | Annual Assignment / Assignment Window Snapshot |
+| Assignment Window Policy Mode | Assignment Window Snapshot |
+| Objective Setting Window | Assignment Window Snapshot |
+| Achievement Submission Window | Assignment Window Snapshot |
+| Manager Review Window | Assignment Window Snapshot |
+| Assignment Due / SLA Dates | Assignment Window Snapshot |
 | Department / Group / Role | Objective Assignment Rule / Employee Profile |
 | Target Value | Employee Term Objective Snapshot |
 | Actual Value | Objective Fill Values / Achievement Submission |
 | Target Direction | Employee Term Objective Snapshot |
+| Actual Aggregation Mode | Employee Term Objective Snapshot / Locked Template Version Policy |
 | Scoreable Flag | Employee Term Objective Snapshot / Locked Template Version Policy |
 | Objective Weightage | Employee Term Objective Snapshot / Scoring Policy |
 | Manager Score | Manager Review Score Inputs |
@@ -1569,7 +1922,7 @@ Reports shall not recalculate historical field labels, scoring rules, reviewer r
 
 ---
 
-## 14. Backward Compatibility
+## 15. Backward Compatibility
 
 Existing PMS flow should not be affected.
 
@@ -1586,13 +1939,14 @@ Backward compatibility rules:
 4. Existing employee-created and manager-created objective behavior remains unchanged by default.
 5. Existing probation review flow remains Manager 1 fill + Manager 2 approve unless a different configuration is selected.
 6. Locked template versions and locked assignment snapshots preserve historical behavior.
+7. Existing cycle-level windows remain the default unless assignment-level windows are explicitly configured.
 ```
 
 No existing finalized records should be recalculated or reinterpreted because of these changes.
 
 ---
 
-## 15. Implementation Impact
+## 16. Implementation Impact
 
 Implementation impact includes the following required scope:
 
@@ -1611,7 +1965,15 @@ Objective scoring mode configuration
 Objective weighted scoring formula
 Objective overall score contribution calculation
 Objective no-objective scoring policy handling
+Objective grouped/yearly review score aggregation
+Review timing and term aggregation policy handling
+Mid-cycle Annual Assignment creation support
+Assignment-level window policy model
+Assignment window snapshot storage
+Applicable term selection for mid-cycle employees
+Assignment-level SLA / dashboard due-date calculation
 Target direction interpretation and validation
+Actual aggregation mode configuration and validation
 Actual column rendering
 Template runtime rendering
 Probation review configuration model
@@ -1634,7 +1996,7 @@ QA test cases
 
 ---
 
-## 16. Items Not Included / Future Scope
+## 17. Items Not Included / Future Scope
 
 The following items should be treated as future scope unless separately approved:
 
@@ -1642,6 +2004,7 @@ The following items should be treated as future scope unless separately approved
 * complex multi-level appraisal approval outside the configured probation review flow
 * probation review reopen/correction after finalization
 * audit retention duration, archival automation, or purge policy
+* automatic retroactive recalculation of assignment windows for existing assignments
 * AI-based objective recommendation
 * automated performance score derivation from actual values without explicit scoring policy
 * cross-company objective inheritance rules beyond configured mappings
@@ -1651,7 +2014,7 @@ The following items should be treated as future scope unless separately approved
 
 ---
 
-## 17. Approval Required
+## 18. Approval Required
 
 Approval is requested to proceed with the following design enhancements:
 
@@ -1669,51 +2032,62 @@ Approval is requested to proceed with the following design enhancements:
 11. Add flexible objective assignment rules for cycles, terms, organization structures, roles, groups, managers, and employees.
 12. Keep templates responsible for rendering, validation, fillability, review behavior, and scoring policy only.
 13. Generate actual columns only from the selected cycle term type: Q1-Q4, H1-H2, or Y1.
-14. Add targetDirection values: HIGHER_IS_BETTER and LOWER_IS_BETTER.
-15. Keep objectives context-only by default and make them scoreable only when template scoring policy explicitly enables scoring and valid weightage exists.
-16. Support objective scoring modes: CONTEXT_ONLY, WEIGHTED_OBJECTIVE_SCORE, and OVERALL_OBJECTIVE_SCORE.
-17. Define weighted objective score as `(managerScore / 100) x objectiveWeightage`.
-18. Define overall objective score contribution using objective section template weight.
-19. Keep score override out of this design approval; managers cannot override scoring mode, scoreable flag, or objective weightage during review.
-20. Store objective scoring mode in the locked Template Version.
-21. Reuse existing objective workflow states unless a new status is absolutely required.
-22. Enhance Probation / Trainee Review using Manager Review Only templates without normal PMS cycle launch.
-23. Add configurable reviewer responsibility modes for Manager 1, Manager 2, and final approver behavior.
-24. Store probation reviewer responsibility rules in Probation Review Configuration and preserve a locked configuration snapshot at assignment creation.
-25. Add server-side field-level, section-level, data-grid row, and data-grid column permissions for probation reviews.
-26. Define field/section permission precedence using most restrictive rule first.
-27. Define data-grid edit conflict handling with SINGLE_OWNER as default.
-28. Add sharing/delegation support with original Manager 1 / Manager 2 ownership preservation.
-29. Track acting user separately from original Manager 1 / Manager 2 ownership for delegated actions.
-30. Shared/delegated access must support view-only access.
-31. Shared/delegated access must support edit access for selected sections/fields.
-32. Shared/delegated access must support temporary access with start/end date.
-33. Shared/delegated access must support acting Manager 1, acting Manager 2, reviewer, and observer roles.
-34. Shared/delegated access must support revocation and automatic expiry.
-35. Shared access must not allow final approval unless the selected configuration explicitly permits it.
-36. Add detailed audit logs for assignment, field, section, row, sharing, delegation, approval, return, revocation, cancellation, and finalization actions.
-37. Add audit visibility rules and API-level masking for restricted audit details.
-38. Keep finalized probation reviews locked with no standard reopen, edit, return, cancellation, or correction flow.
-39. Keep audit retention duration, archival automation, and purge policy outside this approval.
-40. Add dashboard status calculation rules and reporting export source mapping.
-41. Preserve locked template version and locked review configuration snapshot at probation assignment creation.
-42. Keep existing PMS and probation review flows unchanged by default.
-43. Treat all new objective and probation review capabilities as additional configurable enhancements, not replacements for the approved baseline PMS flow.
+14. Add targetDirection values: HIGHER_IS_BETTER, LOWER_IS_BETTER, and NOT_APPLICABLE.
+15. Require targetDirection only for numeric target-based interpretation or target-based score calculation.
+16. Add actualAggregationMode values: LATEST_VALUE, SUM_OF_TERMS, AVERAGE_OF_TERMS, MAX_OF_TERMS, and MIN_OF_TERMS.
+17. Use `LATEST_VALUE` as the default actual aggregation mode for target-based auto scoring across multiple term actual values.
+18. Keep objectives context-only by default and make them scoreable only when template scoring policy explicitly enables scoring and valid weightage exists.
+19. Support objective scoring modes: CONTEXT_ONLY, WEIGHTED_OBJECTIVE_SCORE, and OVERALL_OBJECTIVE_SCORE.
+20. Define weighted objective score as `(managerScore / 100) x objectiveWeightage`.
+21. Define overall objective score contribution using objective section template weight.
+22. Keep score override out of this design approval; managers cannot override scoring mode, scoreable flag, or objective weightage during review.
+23. Store objective scoring mode in the locked Template Version.
+24. Support objective score aggregation across configurable review timing where review instances include term-wise, grouped, annual, or custom grouped assessment terms.
+25. Apply configured term aggregation policy for grouped or annual objective scoring.
+26. Add assignment-level window timing for employees added after cycle launch.
+27. Allow HR/Admin to select applicable assessment terms for mid-cycle Annual Assignments.
+28. Preserve assignment-level objective, achievement, manager review, due-date, and SLA window snapshots.
+29. Use assignment-level windows for dashboard and overdue calculation when present.
+30. Keep cycle-level windows unchanged for existing employees and assignments by default.
+31. Reuse existing objective workflow states unless a new status is absolutely required.
+32. Enhance Probation / Trainee Review using Manager Review Only templates without normal PMS cycle launch.
+33. Add configurable reviewer responsibility modes for Manager 1, Manager 2, and final approver behavior.
+34. Store probation reviewer responsibility rules in Probation Review Configuration and preserve a locked configuration snapshot at assignment creation.
+35. Add server-side field-level, section-level, data-grid row, and data-grid column permissions for probation reviews.
+36. Define field/section permission precedence using most restrictive rule first.
+37. Define data-grid edit conflict handling with SINGLE_OWNER as default.
+38. Add sharing/delegation support with original Manager 1 / Manager 2 ownership preservation.
+39. Track acting user separately from original Manager 1 / Manager 2 ownership for delegated actions.
+40. Shared/delegated access must support view-only access.
+41. Shared/delegated access must support edit access for selected sections/fields.
+42. Shared/delegated access must support temporary access with start/end date.
+43. Shared/delegated access must support acting Manager 1, acting Manager 2, reviewer, and observer roles.
+44. Shared/delegated access must support revocation and automatic expiry.
+45. Shared access must not allow final approval unless the selected configuration explicitly permits it.
+46. Add detailed audit logs for assignment, field, section, row, sharing, delegation, approval, return, revocation, cancellation, and finalization actions.
+47. Add audit visibility rules and API-level masking for restricted audit details.
+48. Keep finalized probation reviews locked with no standard reopen, edit, return, cancellation, or correction flow.
+49. Keep audit retention duration, archival automation, and purge policy outside this approval.
+50. Add dashboard status calculation rules and reporting export source mapping.
+51. Preserve locked template version and locked review configuration snapshot at probation assignment creation.
+52. Keep existing PMS and probation review flows unchanged by default.
+53. Treat all new objective, mid-cycle assignment, and probation review capabilities as additional configurable enhancements, not replacements for the approved baseline PMS flow.
 ```
 
 ---
 
-## 18. Final Recommendation
+## 19. Final Recommendation
 
 Proceed with these as separate PMS design enhancements.
 
-The recommended approach keeps the current approved PMS flow intact while adding flexible objective assignment and configurable probation review capability.
+The recommended approach keeps the current approved PMS flow intact while adding flexible objective assignment, mid-cycle assignment window timing, and configurable probation review capability.
 
 The key design principle is:
 
 ```text
 Objective ownership and assignment should be flexible outside templates.
 Templates should control rendering, validation, permissions, review behavior, and scoring policy.
+Mid-cycle assignment windows should be assignment-level configurable snapshots without changing baseline cycle windows.
 Probation review should use locked template and configuration snapshots so historical assignments remain stable.
 ```
 
