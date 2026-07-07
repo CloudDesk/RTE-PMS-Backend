@@ -8,6 +8,8 @@ import {
   ObjectiveAssignmentRuleStatus,
   ObjectiveApplicabilityStatus,
   ObjectiveAttachmentPolicy,
+  ObjectiveActualAggregationMode,
+  ObjectiveScoringMode,
   ObjectiveMasterStatus,
   ObjectiveMasterVersionStatus,
   ObjectiveSource,
@@ -31,6 +33,8 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
+import { TermReview } from '../models/pms-term-review.model';
+import { EmployeeAchievementSubmission } from '../models/pms-employee-achievement-submission.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { AuditLog } from '../models/audit-log.model';
@@ -38,6 +42,7 @@ import { User } from '../models/user.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
+import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import type { IObjective } from '../models/pms-objective.model';
 import type { IManagerObjectiveLibraryItem } from '../models/pms-manager-objective-library.model';
@@ -167,6 +172,36 @@ export interface SaveAssignmentTemplateValuesInput {
   objectiveValues?: ObjectiveValueInput[];
 }
 
+export interface ObjectiveFillabilityFieldPolicy {
+  templateFieldId?: string;
+  fieldKey: string;
+  sectionKey: string;
+  fieldLabel: string;
+  fieldType: string;
+  visible: boolean;
+  editable: boolean;
+  required: boolean;
+  roleCode: string;
+  workflowState: string;
+  denialReason?: string;
+}
+
+export interface ObjectiveFillabilityPolicy {
+  objectiveId?: string;
+  termAssignmentId: string;
+  annualAssignmentId: string;
+  cycleId?: string;
+  employeeId: string;
+  assignedManagerId: string;
+  assessmentTermCode?: string;
+  actorRole: string;
+  actorUserId: string;
+  workflowState: string;
+  canEditAnyField: boolean;
+  source: 'TEMPLATE' | 'LEGACY_NO_TEMPLATE';
+  fields: ObjectiveFillabilityFieldPolicy[];
+}
+
 export interface ReturnObjectiveInput {
   reason: string;
 }
@@ -248,7 +283,15 @@ export interface ObjectiveReportingRecord {
   approvedWeightage?: number;
   scoreable?: boolean;
   targetValue?: string;
+  actualValue?: unknown;
   targetDirection?: string;
+  actualAggregationMode?: string;
+  managerScore?: number;
+  calculatedWeightedScore?: number;
+  objectiveSectionScore?: number;
+  objectiveSectionContribution?: number;
+  objectiveScoringMode?: string;
+  finalizedStatus?: boolean;
 }
 
 export interface ObjectiveDashboardStatusRecord {
@@ -264,10 +307,13 @@ export interface ObjectiveDashboardStatusRecord {
   dashboardStatus:
     | 'not_started'
     | 'pending_objective_setup'
+    | 'pending_achievement'
+    | 'pending_manager_review'
     | 'submitted'
     | 'approved'
     | 'returned_for_revision'
     | 'finalized'
+    | 'overdue'
     | 'closed_not_applicable'
     | 'blocked';
   blockedReason?: string;
@@ -537,12 +583,23 @@ type ObjectiveConfig = {
   allowEmployeeCreated: boolean;
   allowManagerCreated: boolean;
   objectiveScoringPolicy: {
+    objectiveScoringEnabled: boolean;
+    objectiveScoringMode: string;
+    objectiveSectionWeight: number;
+    perObjectiveScoreEntryAllowed: boolean;
+    overallScoreEntryAllowed: boolean;
+    noObjectiveScoringPolicy: string;
+    reviewTimingPolicy: Record<string, unknown>;
+    includedAssessmentTermGroupingPolicy: Record<string, unknown>;
+    termAggregationPolicy: Record<string, unknown>;
+    scoringValidationRules: Record<string, unknown>;
     predefinedObjectivesScoreable: boolean;
     managerCreatedScoreable: boolean;
     employeeCreatedScoreable: boolean;
     requireManagerApprovalForEmployeeScore: boolean;
     requireWeightageBeforeAchievement: boolean;
     allowManagerOverallForRemainingWeightage: boolean;
+    actualAggregationMode: string;
   };
   predefinedObjectives: Array<{
     key: string;
@@ -1581,6 +1638,8 @@ export class ObjectiveService extends BaseService {
     const objectives = await Objective.find(filter)
       .select('termAssignmentId annualAssignmentId cycleId employeeId assignedManagerId assessmentTerm assessmentTermCode source sourceType objectiveMasterId objectiveVersionId assignmentRuleRefs title status applicabilityStatus objectiveSnapshot weightage targetValue')
       .lean();
+    const objectiveIds = objectives.map((objective) => objective._id.toString());
+    const termAssignmentIds = Array.from(new Set(objectives.map((objective) => objective.termAssignmentId.toString())));
 
     const annualAssignmentIds = Array.from(
       new Set(
@@ -1594,6 +1653,43 @@ export class ObjectiveService extends BaseService {
       isDeleted: false,
     }).select('employeeSnapshot orgSnapshot').lean();
     const annualById = new Map(annualAssignments.map((assignment) => [assignment._id.toString(), assignment]));
+    const [achievementSubmissions, termReviews, termAssignments] = await Promise.all([
+      EmployeeAchievementSubmission.find({
+        termAssignmentId: { $in: termAssignmentIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
+        isDeleted: false,
+      })
+        .select('termAssignmentId achievementItems achievementValues status submittedAt lockedAt updatedAt')
+        .sort({ lockedAt: -1, submittedAt: -1, updatedAt: -1 })
+        .lean(),
+      TermReview.find({
+        termAssignmentId: { $in: termAssignmentIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
+        isDeleted: false,
+      })
+        .select('termAssignmentId ratings scoreSnapshot reviewStatus finalizedAt submittedAt updatedAt')
+        .sort({ finalizedAt: -1, submittedAt: -1, updatedAt: -1 })
+        .lean(),
+      TermAssignment.find({
+        _id: { $in: termAssignmentIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
+        isDeleted: false,
+      }).select('termState').lean(),
+    ]);
+    const achievementByTerm = this.firstByStringKey(achievementSubmissions, 'termAssignmentId');
+    const reviewByTerm = this.firstByStringKey(termReviews, 'termAssignmentId');
+    const termById = new Map(termAssignments.map((termAssignment) => [termAssignment._id.toString(), termAssignment]));
+    const reportingSnapshotByObjectiveId = new Map(
+      objectiveIds.map((objectiveId) => {
+        const objective = objectives.find((item) => item._id.toString() === objectiveId);
+        const termAssignmentId = objective?.termAssignmentId.toString() ?? '';
+        return [
+          objectiveId,
+          {
+            actualValue: this.resolveReportingActualValue(objectiveId, achievementByTerm.get(termAssignmentId)),
+            scoring: this.resolveReportingScoreSnapshot(objectiveId, reviewByTerm.get(termAssignmentId)),
+            finalizedStatus: isTermFinalized(termById.get(termAssignmentId)?.termState),
+          },
+        ];
+      }),
+    );
 
     return objectives.map((objective) => {
       const annualAssignment = objective.annualAssignmentId
@@ -1602,6 +1698,7 @@ export class ObjectiveService extends BaseService {
       const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
       const orgSnapshot = annualAssignment?.orgSnapshot ?? {};
       const snapshot = (objective.objectiveSnapshot ?? {}) as Record<string, any>;
+      const reportingSnapshot = reportingSnapshotByObjectiveId.get(objective._id.toString());
       return {
         objectiveId: objective._id.toString(),
         objectiveSource: objective.sourceType ?? objective.source,
@@ -1631,7 +1728,15 @@ export class ObjectiveService extends BaseService {
         approvedWeightage: snapshot.approvedWeightage ?? objective.weightage,
         scoreable: snapshot.scoreable,
         targetValue: snapshot.targetValue ?? objective.targetValue,
+        actualValue: reportingSnapshot?.actualValue,
         targetDirection: snapshot.targetDirection,
+        actualAggregationMode: snapshot.actualAggregationMode,
+        managerScore: reportingSnapshot?.scoring.managerScore,
+        calculatedWeightedScore: reportingSnapshot?.scoring.calculatedWeightedScore,
+        objectiveSectionScore: reportingSnapshot?.scoring.objectiveSectionScore,
+        objectiveSectionContribution: reportingSnapshot?.scoring.objectiveSectionContribution,
+        objectiveScoringMode: reportingSnapshot?.scoring.objectiveScoringMode,
+        finalizedStatus: reportingSnapshot?.finalizedStatus,
       };
     });
   }
@@ -1658,15 +1763,32 @@ export class ObjectiveService extends BaseService {
     const termAssignments = await TermAssignment.find({
       _id: { $in: termAssignmentIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
       isDeleted: false,
-    }).select('termState').lean();
+    }).select('termState cycleTermId').lean();
     const termById = new Map(termAssignments.map((termAssignment) => [termAssignment._id.toString(), termAssignment]));
+    const termCycleIds = Array.from(
+      new Set(
+        termAssignments
+          .map((termAssignment) => termAssignment.cycleTermId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const termCycles = await TermCycle.find({
+      _id: { $in: termCycleIds.map((id) => this.toObjectId(id, 'cycleTermId')) },
+      isDeleted: false,
+    }).select('achievementSubmissionWindow managerReviewWindow').lean();
+    const termCycleById = new Map(termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]));
 
     return objectives.map((objective) => {
       const termAssignment = termById.get(objective.termAssignmentId.toString());
+      const termCycle = termAssignment?.cycleTermId
+        ? termCycleById.get(termAssignment.cycleTermId.toString())
+        : undefined;
       const dashboard = this.resolveObjectiveDashboardStatus(
         objective.status,
         objective.applicabilityStatus ?? ObjectiveApplicabilityStatus.ACTIVE,
         termAssignment?.termState,
+        objective.objectiveSnapshot,
+        this.isObjectiveDashboardOverdue(termAssignment?.termState, termCycle),
       );
       return {
         objectiveId: objective._id.toString(),
@@ -2061,6 +2183,13 @@ export class ObjectiveService extends BaseService {
     );
   }
 
+  async getObjectiveFillabilityPolicy(objectiveId: string): Promise<ObjectiveFillabilityPolicy> {
+    const objective = await this.getObjective(objectiveId);
+    await this.assertObjectiveAccess('objective.view', objective, false);
+    const termAssignment = await this.getTermAssignment(objective.termAssignmentId.toString());
+    return this.resolveObjectiveFillabilityPolicy(termAssignment, objective);
+  }
+
   async saveAssignmentTemplateValues(
     termAssignmentId: string,
     input: SaveAssignmentTemplateValuesInput,
@@ -2072,7 +2201,10 @@ export class ObjectiveService extends BaseService {
     await this.assertAssignmentAccess('objective.create', termAssignment);
     await this.assertObjectiveWindow(termAssignment, 'setting');
 
+    const policy = await this.resolveObjectiveFillabilityPolicy(termAssignment);
+    const hasTemplatePolicy = policy.source === 'TEMPLATE';
     if (
+      !hasTemplatePolicy &&
       mappedRole !== PmsRole.ADMIN &&
       actor.actorId !== termAssignment.employeeId.toString()
     ) {
@@ -2094,6 +2226,8 @@ export class ObjectiveService extends BaseService {
         valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
         valueStatus: value.valueStatus ?? 'ACTIVE',
       }));
+
+    this.assertObjectiveValuesFillable(normalizedValues, policy);
 
     const previousSummary = (termAssignment.termSummary ?? {}) as Record<string, unknown>;
     termAssignment.termSummary = {
@@ -3523,12 +3657,23 @@ export class ObjectiveService extends BaseService {
 
   private defaultObjectiveScoringPolicy(): ObjectiveConfig['objectiveScoringPolicy'] {
     return {
+      objectiveScoringEnabled: false,
+      objectiveScoringMode: ObjectiveScoringMode.CONTEXT_ONLY,
+      objectiveSectionWeight: 0,
+      perObjectiveScoreEntryAllowed: false,
+      overallScoreEntryAllowed: false,
+      noObjectiveScoringPolicy: 'NO_OBJECTIVES_NOT_APPLICABLE',
+      reviewTimingPolicy: {},
+      includedAssessmentTermGroupingPolicy: {},
+      termAggregationPolicy: {},
+      scoringValidationRules: {},
       predefinedObjectivesScoreable: true,
       managerCreatedScoreable: false,
       employeeCreatedScoreable: false,
       requireManagerApprovalForEmployeeScore: true,
       requireWeightageBeforeAchievement: true,
       allowManagerOverallForRemainingWeightage: true,
+      actualAggregationMode: ObjectiveActualAggregationMode.LATEST_VALUE,
     };
   }
 
@@ -3595,11 +3740,52 @@ export class ObjectiveService extends BaseService {
       allowEmployeeCreated: objectiveSection.objectiveConfig.allowEmployeeCreated !== false,
       allowManagerCreated: objectiveSection.objectiveConfig.allowManagerCreated !== false,
       objectiveScoringPolicy: {
+        objectiveScoringEnabled:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY,
+        objectiveScoringMode:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true
+            ? objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode ??
+              ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE
+            : ObjectiveScoringMode.CONTEXT_ONLY,
+        objectiveSectionWeight: Number(
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveSectionWeight ?? 0,
+        ),
+        perObjectiveScoreEntryAllowed:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode ===
+            ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.perObjectiveScoreEntryAllowed !== false,
+        overallScoreEntryAllowed:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode ===
+            ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.overallScoreEntryAllowed !== false,
+        noObjectiveScoringPolicy:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.noObjectiveScoringPolicy ??
+          'NO_OBJECTIVES_NOT_APPLICABLE',
+        reviewTimingPolicy:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.reviewTimingPolicy ?? {},
+        includedAssessmentTermGroupingPolicy:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.includedAssessmentTermGroupingPolicy ?? {},
+        termAggregationPolicy:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.termAggregationPolicy ?? {},
+        scoringValidationRules:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.scoringValidationRules ?? {},
         predefinedObjectivesScoreable:
-          objectiveSection.objectiveConfig.objectiveScoringPolicy?.predefinedObjectivesScoreable !== false,
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode !==
+            ObjectiveScoringMode.CONTEXT_ONLY &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.predefinedObjectivesScoreable === true,
         managerCreatedScoreable:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode !==
+            ObjectiveScoringMode.CONTEXT_ONLY &&
           objectiveSection.objectiveConfig.objectiveScoringPolicy?.managerCreatedScoreable === true,
         employeeCreatedScoreable:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode !==
+            ObjectiveScoringMode.CONTEXT_ONLY &&
           objectiveSection.objectiveConfig.objectiveScoringPolicy?.employeeCreatedScoreable === true,
         requireManagerApprovalForEmployeeScore:
           objectiveSection.objectiveConfig.objectiveScoringPolicy?.requireManagerApprovalForEmployeeScore !== false,
@@ -3607,6 +3793,9 @@ export class ObjectiveService extends BaseService {
           objectiveSection.objectiveConfig.objectiveScoringPolicy?.requireWeightageBeforeAchievement !== false,
         allowManagerOverallForRemainingWeightage:
           objectiveSection.objectiveConfig.objectiveScoringPolicy?.allowManagerOverallForRemainingWeightage !== false,
+        actualAggregationMode:
+          objectiveSection.objectiveConfig.objectiveScoringPolicy?.actualAggregationMode ??
+          ObjectiveActualAggregationMode.LATEST_VALUE,
       },
       objectiveBuckets: objectiveSection.objectiveBuckets?.length
         ? objectiveSection.objectiveBuckets
@@ -3826,6 +4015,125 @@ export class ObjectiveService extends BaseService {
       valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
       valueStatus: value.valueStatus,
     }));
+  }
+
+  private async resolveObjectiveFillabilityPolicy(
+    termAssignment: ITermAssignment,
+    objective?: IObjective,
+  ): Promise<ObjectiveFillabilityPolicy> {
+    const actor = this.requireActor();
+    const templateVersionId = termAssignment.templateVersionId?.toString()
+      || (await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString()))
+        .templateVersionId?.toString();
+
+    const basePolicy = {
+      objectiveId: objective?._id.toString(),
+      termAssignmentId: termAssignment._id.toString(),
+      annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+      cycleId: termAssignment.cycleId?.toString(),
+      employeeId: termAssignment.employeeId.toString(),
+      assignedManagerId: termAssignment.assignedManagerId.toString(),
+      assessmentTermCode: termAssignment.assessmentTermCode,
+      actorRole: actor.actorRole,
+      actorUserId: actor.actorId,
+      workflowState: termAssignment.termState,
+    };
+
+    if (!templateVersionId) {
+      return {
+        ...basePolicy,
+        canEditAnyField: true,
+        source: 'LEGACY_NO_TEMPLATE',
+        fields: [],
+      };
+    }
+
+    const resolvedTemplate = await new PmsTemplateService(this.context).resolveTemplateVersion(
+      templateVersionId,
+      {
+        role: actor.actorRole,
+        workflowState: termAssignment.termState,
+        quarter: termAssignment.assessmentTermCode,
+        annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+        termAssignmentId: termAssignment._id.toString(),
+      },
+    );
+
+    const fields = resolvedTemplate.sections.flatMap((section) =>
+      section.fields.map((field) =>
+        this.toObjectiveFillabilityFieldPolicy(
+          field,
+          section.key,
+          actor.actorRole,
+          termAssignment.termState,
+        ),
+      ),
+    );
+
+    return {
+      ...basePolicy,
+      canEditAnyField: fields.some((field) =>
+        field.editable || (accessService.mapRole(actor.actorRole) === PmsRole.ADMIN && field.visible),
+      ),
+      source: 'TEMPLATE',
+      fields,
+    };
+  }
+
+  private toObjectiveFillabilityFieldPolicy(
+    field: ResolvedTemplateField,
+    sectionKey: string,
+    roleCode: string,
+    workflowState: string,
+  ): ObjectiveFillabilityFieldPolicy {
+    const editable = field.editable === true;
+    return {
+      templateFieldId: field.id,
+      fieldKey: field.key,
+      sectionKey,
+      fieldLabel: field.label,
+      fieldType: field.type,
+      visible: field.visible !== false,
+      editable,
+      required: field.required === true,
+      roleCode,
+      workflowState,
+      denialReason: editable ? undefined : 'Field is read-only for this role and workflow state',
+    };
+  }
+
+  private assertObjectiveValuesFillable(
+    values: Array<Record<string, any>>,
+    policy: ObjectiveFillabilityPolicy,
+  ): void {
+    if (values.length === 0 || policy.source === 'LEGACY_NO_TEMPLATE') {
+      return;
+    }
+
+    const actorRole = accessService.mapRole(policy.actorRole);
+    const fieldPolicyByKey = new Map(
+      policy.fields.map((field) => [`${field.sectionKey}:${field.fieldKey}`, field]),
+    );
+
+    for (const value of values) {
+      const fieldKey = String(value.fieldKey ?? '').trim();
+      const sectionKey = String(value.sectionKey ?? '').trim();
+      if (!fieldKey || !sectionKey) {
+        continue;
+      }
+
+      const fieldPolicy = fieldPolicyByKey.get(`${sectionKey}:${fieldKey}`);
+      if (!fieldPolicy || fieldPolicy.visible === false) {
+        throw new Error(`Field "${fieldKey}" is not visible for objective entry`);
+      }
+
+      const adminVisibleFallback = actorRole === PmsRole.ADMIN && fieldPolicy.visible === true;
+      if (fieldPolicy.editable !== true && !adminVisibleFallback) {
+        throw new Error(
+          `Field "${fieldPolicy.fieldLabel || fieldKey}" is read-only for ${policy.actorRole} in ${policy.workflowState}`,
+        );
+      }
+    }
   }
 
   private groupCommentsByObjective(comments: Array<Record<string, any>>) {
@@ -4171,6 +4479,8 @@ export class ObjectiveService extends BaseService {
       baseValue,
       isSubmitted,
     );
+    const policy = await this.resolveObjectiveFillabilityPolicy(termAssignment, objective);
+    this.assertObjectiveValuesFillable(valuesToCreate, policy);
 
     await ObjectiveValue.deleteMany({ objectiveId: objective._id });
     if (valuesToCreate.length > 0) {
@@ -6295,10 +6605,149 @@ export class ObjectiveService extends BaseService {
     return 'DIRECT';
   }
 
+  private firstByStringKey<T extends Record<string, any>>(records: T[], fieldKey: string): Map<string, T> {
+    const map = new Map<string, T>();
+    for (const record of records) {
+      const key = record[fieldKey]?.toString?.() ?? String(record[fieldKey] ?? '');
+      if (key && !map.has(key)) {
+        map.set(key, record);
+      }
+    }
+    return map;
+  }
+
+  private resolveReportingActualValue(
+    objectiveId: string,
+    achievementSubmission?: Record<string, any>,
+  ): unknown {
+    if (!achievementSubmission) return undefined;
+
+    const objectiveItem = (achievementSubmission.achievementItems ?? []).find((item: Record<string, any>) =>
+      item.objectiveId?.toString?.() === objectiveId,
+    );
+    const directActual =
+      objectiveItem?.actual ??
+      objectiveItem?.actualValue ??
+      objectiveItem?.outcome ??
+      objectiveItem?.description;
+    if (directActual !== undefined && directActual !== null && String(directActual).trim() !== '') {
+      return directActual;
+    }
+
+    for (const value of achievementSubmission.achievementValues ?? []) {
+      const fromJson = this.findReportingActualValueInJson(objectiveId, value.valueJson);
+      if (fromJson !== undefined) return fromJson;
+
+      if (this.isActualFieldKey(value.fieldKey)) {
+        const valueRecord = value as Record<string, unknown>;
+        const rawValue = valueRecord.valueNumber ?? valueRecord.valueText ?? valueRecord.valueJson;
+        if (rawValue !== undefined && rawValue !== null && String(rawValue).trim() !== '') {
+          return rawValue;
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  private findReportingActualValueInJson(objectiveId: string, value: unknown): unknown {
+    if (!value || typeof value !== 'object') return undefined;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const actual = this.findReportingActualValueInJson(objectiveId, item);
+        if (actual !== undefined) return actual;
+      }
+      return undefined;
+    }
+
+    const record = value as Record<string, unknown>;
+    const rowObjectiveId = record.objectiveId?.toString?.() ?? String(record.objectiveId ?? '');
+    if (rowObjectiveId && rowObjectiveId !== objectiveId) {
+      return undefined;
+    }
+
+    if (rowObjectiveId === objectiveId) {
+      const actual = record.actual ?? record.actualValue ?? record.actual_value;
+      if (actual !== undefined && actual !== null && String(actual).trim() !== '') {
+        return actual;
+      }
+    }
+
+    for (const nestedValue of Object.values(record)) {
+      const actual = this.findReportingActualValueInJson(objectiveId, nestedValue);
+      if (actual !== undefined) return actual;
+    }
+    return undefined;
+  }
+
+  private isActualFieldKey(fieldKey?: string): boolean {
+    const normalized = String(fieldKey ?? '').trim().toLowerCase();
+    return normalized === 'actual' || normalized === 'actualvalue' || normalized === 'actual_value';
+  }
+
+  private resolveReportingScoreSnapshot(
+    objectiveId: string,
+    review?: Record<string, any>,
+  ): {
+    managerScore?: number;
+    calculatedWeightedScore?: number;
+    objectiveSectionScore?: number;
+    objectiveSectionContribution?: number;
+    objectiveScoringMode?: string;
+  } {
+    const sections = review?.scoreSnapshot?.sections ?? [];
+    for (const section of sections) {
+      const objectiveMatch = (section.objectives ?? []).find((objective: Record<string, any>) =>
+        objective.objectiveId?.toString?.() === objectiveId,
+      );
+      if (objectiveMatch) {
+        return {
+          managerScore: Number.isFinite(Number(objectiveMatch.managerScore))
+            ? Number(objectiveMatch.managerScore)
+            : undefined,
+          calculatedWeightedScore: Number.isFinite(Number(objectiveMatch.contribution))
+            ? Number(objectiveMatch.contribution)
+            : undefined,
+          objectiveSectionScore: Number.isFinite(Number(section.objectiveSectionScore))
+            ? Number(section.objectiveSectionScore)
+            : undefined,
+          objectiveSectionContribution: Number.isFinite(Number(section.objectiveSectionContribution))
+            ? Number(section.objectiveSectionContribution)
+            : undefined,
+          objectiveScoringMode: section.objectiveScoringMode,
+        };
+      }
+
+      if (section.objectiveScoringMode === ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE) {
+        return {
+          managerScore: Number.isFinite(Number(section.overallObjectiveScore))
+            ? Number(section.overallObjectiveScore)
+            : undefined,
+          objectiveSectionScore: Number.isFinite(Number(section.objectiveSectionScore))
+            ? Number(section.objectiveSectionScore)
+            : undefined,
+          objectiveSectionContribution: Number.isFinite(Number(section.objectiveSectionContribution))
+            ? Number(section.objectiveSectionContribution)
+            : undefined,
+          objectiveScoringMode: section.objectiveScoringMode,
+        };
+      }
+    }
+
+    const ratingMatch = (review?.ratings ?? []).find((rating: Record<string, any>) =>
+      rating.objectiveId?.toString?.() === objectiveId,
+    );
+    return {
+      managerScore: Number.isFinite(Number(ratingMatch?.rating)) ? Number(ratingMatch.rating) : undefined,
+    };
+  }
+
   private resolveObjectiveDashboardStatus(
     objectiveStatus: string,
     applicabilityStatus: string,
     termState?: string,
+    objectiveSnapshot?: Record<string, any>,
+    isOverdue = false,
   ): {
     dashboardStatus: ObjectiveDashboardStatusRecord['dashboardStatus'];
     blockedReason?: string;
@@ -6309,6 +6758,10 @@ export class ObjectiveService extends BaseService {
       termState === TermWorkflowState.CLOSED_BY_ADMIN
     ) {
       return { dashboardStatus: 'closed_not_applicable' };
+    }
+
+    if (isOverdue) {
+      return { dashboardStatus: 'overdue' };
     }
 
     if (termState && isTermFinalized(termState)) {
@@ -6324,6 +6777,17 @@ export class ObjectiveService extends BaseService {
       objectiveStatus === ObjectiveStatus.OBJECTIVE_DRAFT
     ) {
       return { dashboardStatus: 'pending_objective_setup' };
+    }
+
+    if (termState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      return { dashboardStatus: 'pending_achievement' };
+    }
+
+    if (termState === TermWorkflowState.MANAGER_REVIEW_OPEN) {
+      const blockedReason = this.resolveObjectiveScoringBlockedReason(objectiveSnapshot);
+      return blockedReason
+        ? { dashboardStatus: 'blocked', blockedReason }
+        : { dashboardStatus: 'pending_manager_review' };
     }
 
     if (objectiveStatus === ObjectiveStatus.OBJECTIVE_SUBMITTED) {
@@ -6342,6 +6806,47 @@ export class ObjectiveService extends BaseService {
       dashboardStatus: 'blocked',
       blockedReason: `Unsupported objective status: ${objectiveStatus}`,
     };
+  }
+
+  private resolveObjectiveScoringBlockedReason(objectiveSnapshot?: Record<string, any>): string | undefined {
+    if (!objectiveSnapshot?.scoreable) {
+      return undefined;
+    }
+
+    const weightage = Number(objectiveSnapshot.approvedWeightage);
+    if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
+      return 'Scoreable objective is missing valid approved weightage.';
+    }
+
+    const targetDirection = objectiveSnapshot.targetDirection;
+    const requiresNumericTarget =
+      targetDirection === ObjectiveTargetDirection.HIGHER_IS_BETTER ||
+      targetDirection === ObjectiveTargetDirection.LOWER_IS_BETTER;
+    if (requiresNumericTarget && !String(objectiveSnapshot.targetValue ?? '').trim()) {
+      return 'Scoreable objective is missing target value for target-based validation.';
+    }
+
+    return undefined;
+  }
+
+  private isObjectiveDashboardOverdue(
+    termState?: string,
+    termCycle?: Record<string, any>,
+  ): boolean {
+    const now = Date.now();
+    if (termState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      const dueDate =
+        termCycle?.achievementSubmissionWindow?.dueDate ??
+        termCycle?.achievementSubmissionWindow?.endDate;
+      return dueDate ? new Date(dueDate).getTime() < now : false;
+    }
+
+    if (termState === TermWorkflowState.MANAGER_REVIEW_OPEN) {
+      const dueDate = termCycle?.managerReviewWindow?.endDate;
+      return dueDate ? new Date(dueDate).getTime() < now : false;
+    }
+
+    return false;
   }
 
   private async assertAssignmentAccess(action: string, termAssignment: ITermAssignment): Promise<void> {

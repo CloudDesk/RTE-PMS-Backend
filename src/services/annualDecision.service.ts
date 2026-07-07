@@ -1417,9 +1417,14 @@ export class AnnualDecisionService extends BaseService {
   private async calculateAnnualFinalScore(
     annualAssignment: IAnnualAssignment,
   ): Promise<number> {
+    const annualScoringConfig = await this.resolveAnnualScoringConfig(annualAssignment);
+    const includedAssessmentTerms = this.resolveIncludedAnnualScoringTerms(
+      annualAssignment,
+      annualScoringConfig,
+    );
     const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
-      assessmentTermCode: { $in: annualAssignment.applicableTerms },
+      assessmentTermCode: { $in: includedAssessmentTerms },
       isDeleted: false,
     });
 
@@ -1436,14 +1441,13 @@ export class AnnualDecisionService extends BaseService {
       termScores[quarter.assessmentTermCode] = Number(quarter.termScore);
     }
 
-    const missingQuarter = annualAssignment.applicableTerms.find(
+    const missingQuarter = includedAssessmentTerms.find(
       (assessmentTermCode) => !Number.isFinite(termScores[assessmentTermCode]),
     );
     if (missingQuarter) {
       throw new Error(`Annual final score requires a score for ${missingQuarter}`);
     }
 
-    const annualScoringConfig = await this.resolveAnnualScoringConfig(annualAssignment);
     const score = this.scoringService.calculateAnnualRollup(
       termScores,
       annualScoringConfig,
@@ -1514,12 +1518,178 @@ export class AnnualDecisionService extends BaseService {
     const templateVersion = await PmsTemplateVersion.findById(
       annualAssignment.templateVersionId,
     ).lean();
-    const config = templateVersion?.annualScoringConfig;
-    if (!config || typeof config !== 'object') {
-      return undefined;
+    const annualConfig =
+      templateVersion?.annualScoringConfig && typeof templateVersion.annualScoringConfig === 'object'
+        ? templateVersion.annualScoringConfig as Record<string, unknown>
+        : {};
+    const objectiveScoringPolicy = this.resolveObjectiveScoringPolicy(templateVersion?.sections ?? []);
+    const reviewTimingPolicy =
+      this.asRecord(objectiveScoringPolicy?.reviewTimingPolicy) ??
+      this.asRecord(templateVersion?.flowPolicy);
+    const groupingPolicy = this.asRecord(objectiveScoringPolicy?.includedAssessmentTermGroupingPolicy);
+    const aggregationPolicy = this.asRecord(objectiveScoringPolicy?.termAggregationPolicy);
+
+    const resolvedConfig: Parameters<PmsScoringService['calculateAnnualRollup']>[1] = {
+      ...annualConfig,
+      ...(aggregationPolicy ?? {}),
+    };
+
+    const aggregationMethod = this.resolveTermAggregationMethod(aggregationPolicy, annualConfig);
+    if (aggregationMethod) {
+      resolvedConfig.aggregationMethod = aggregationMethod;
     }
 
-    return config as Parameters<PmsScoringService['calculateAnnualRollup']>[1];
+    const termWeights =
+      this.asNumberRecord(aggregationPolicy?.termWeights) ??
+      this.asNumberRecord(aggregationPolicy?.weights) ??
+      this.asNumberRecord(annualConfig.termWeights) ??
+      this.asNumberRecord(annualConfig.quarterWeights);
+    if (termWeights) {
+      resolvedConfig.termWeights = termWeights;
+    }
+
+    const includedTerms = this.resolvePolicyIncludedTerms(
+      annualAssignment,
+      reviewTimingPolicy,
+      groupingPolicy,
+    );
+    if (includedTerms.length > 0) {
+      resolvedConfig.includedTerms = includedTerms;
+    }
+
+    return Object.keys(resolvedConfig).length > 0 ? resolvedConfig : undefined;
+  }
+
+  private resolveIncludedAnnualScoringTerms(
+    annualAssignment: IAnnualAssignment,
+    annualScoringConfig: Parameters<PmsScoringService['calculateAnnualRollup']>[1],
+  ): string[] {
+    const configuredTerms = annualScoringConfig?.includedTerms ?? [];
+    const applicableTerms = new Set((annualAssignment.applicableTerms ?? []).map(String));
+    const includedTerms = configuredTerms
+      .map(String)
+      .filter((term) => applicableTerms.has(term));
+    return includedTerms.length > 0 ? includedTerms : (annualAssignment.applicableTerms ?? []).map(String);
+  }
+
+  private resolveObjectiveScoringPolicy(sections: any[]): Record<string, unknown> | undefined {
+    return sections
+      .filter((section) => section.sectionType === 'OBJECTIVES')
+      .map((section) => section.objectiveConfig?.objectiveScoringPolicy)
+      .find((policy) => policy && typeof policy === 'object');
+  }
+
+  private resolvePolicyIncludedTerms(
+    annualAssignment: IAnnualAssignment,
+    reviewTimingPolicy?: Record<string, unknown>,
+    groupingPolicy?: Record<string, unknown>,
+  ): string[] {
+    const applicableTerms = (annualAssignment.applicableTerms ?? []).map(String);
+    const applicableSet = new Set(applicableTerms);
+    const explicitTerms = this.readTermList(
+      groupingPolicy?.includedTerms ??
+      groupingPolicy?.assessmentTerms ??
+      groupingPolicy?.terms ??
+      reviewTimingPolicy?.includedTerms,
+    );
+    if (explicitTerms.length > 0) {
+      return explicitTerms.filter((term) => applicableSet.has(term));
+    }
+
+    const timing = String(
+      reviewTimingPolicy?.reviewTiming ??
+      reviewTimingPolicy?.managerReviewTiming ??
+      reviewTimingPolicy?.timing ??
+      '',
+    ).toUpperCase();
+    if (timing === 'ANNUAL') {
+      return applicableTerms;
+    }
+
+    const groupKey = String(
+      groupingPolicy?.reviewGroupKey ??
+      groupingPolicy?.groupKey ??
+      reviewTimingPolicy?.reviewGroupKey ??
+      '',
+    );
+    const groupedTerms = this.resolveReviewGroupTerms(
+      groupingPolicy?.reviewGroups ?? reviewTimingPolicy?.managerReviewGroups,
+      groupKey,
+    );
+    if (groupedTerms.length > 0) {
+      return groupedTerms.filter((term) => applicableSet.has(term));
+    }
+
+    return [];
+  }
+
+  private resolveReviewGroupTerms(groups: unknown, groupKey: string): string[] {
+    if (!Array.isArray(groups)) {
+      return [];
+    }
+
+    const group = groups.find((item) => {
+      const record = this.asRecord(item);
+      if (!record) return false;
+      if (!groupKey) return true;
+      return [record.reviewGroupKey, record.groupKey, record.key].map(String).includes(groupKey);
+    });
+    const record = this.asRecord(group);
+    return this.readTermList(record?.inputTerms ?? record?.includedTerms ?? record?.terms);
+  }
+
+  private resolveTermAggregationMethod(
+    aggregationPolicy?: Record<string, unknown>,
+    annualConfig?: Record<string, unknown>,
+  ): NonNullable<Parameters<PmsScoringService['calculateAnnualRollup']>[1]>['aggregationMethod'] | undefined {
+    const value = String(
+      aggregationPolicy?.aggregationMethod ??
+      aggregationPolicy?.method ??
+      annualConfig?.aggregationMethod ??
+      '',
+    ).toUpperCase();
+    if (
+      value === 'EQUAL_TERM_AVERAGE' ||
+      value === 'TERM_WEIGHTED_AVERAGE' ||
+      value === 'MANUAL_GROUP_OVERALL_SCORE' ||
+      value === 'WEIGHTED_AVERAGE' ||
+      value === 'SIMPLE_AVERAGE'
+    ) {
+      return value;
+    }
+    return aggregationPolicy ? 'EQUAL_TERM_AVERAGE' : undefined;
+  }
+
+  private readTermList(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value.map(String).filter(Boolean);
+    }
+    if (typeof value === 'string') {
+      return value
+        .split(',')
+        .map((term) => term.trim())
+        .filter(Boolean);
+    }
+    return [];
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined;
+  }
+
+  private asNumberRecord(value: unknown): Record<string, number> | undefined {
+    const record = this.asRecord(value);
+    if (!record) return undefined;
+    const numberRecord = Object.entries(record).reduce<Record<string, number>>((acc, [key, rawValue]) => {
+      const numericValue = Number(rawValue);
+      if (Number.isFinite(numericValue)) {
+        acc[key] = numericValue;
+      }
+      return acc;
+    }, {});
+    return Object.keys(numberRecord).length > 0 ? numberRecord : undefined;
   }
 
   private roundAnnualScore(score: number): number {

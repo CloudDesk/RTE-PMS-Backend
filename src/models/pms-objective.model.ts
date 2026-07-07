@@ -4,6 +4,7 @@ import {
   FlexibleObjectiveSourceType,
   ObjectiveApplicabilityStatus,
   ObjectiveAttachmentPolicy,
+  ObjectiveActualAggregationMode,
   ObjectiveSource,
   ObjectiveStatus,
   ObjectiveTargetDirection,
@@ -13,6 +14,7 @@ import type {
   FlexibleObjectiveSourceType as FlexibleObjectiveSourceTypeType,
   ObjectiveApplicabilityStatus as ObjectiveApplicabilityStatusType,
   ObjectiveAttachmentPolicy as ObjectiveAttachmentPolicyType,
+  ObjectiveActualAggregationMode as ObjectiveActualAggregationModeType,
   ObjectiveSource as ObjectiveSourceType,
   ObjectiveStatus as ObjectiveStatusType,
   ObjectiveTargetDirection as ObjectiveTargetDirectionType,
@@ -34,6 +36,7 @@ export interface IAssignedObjectiveSnapshot {
   targetValue?: string;
   targetDescription?: string;
   targetDirection?: ObjectiveTargetDirectionType;
+  actualAggregationMode?: ObjectiveActualAggregationModeType;
   priority?: string;
   attachmentPolicy?: ObjectiveAttachmentPolicyType;
   scoreable?: boolean;
@@ -125,6 +128,11 @@ const assignedObjectiveSnapshotSchema = new Schema<IAssignedObjectiveSnapshot>(
     targetDirection: {
       type: String,
       enum: Object.values(ObjectiveTargetDirection),
+    },
+    actualAggregationMode: {
+      type: String,
+      enum: Object.values(ObjectiveActualAggregationMode),
+      default: ObjectiveActualAggregationMode.LATEST_VALUE,
     },
     priority: {
       type: String,
