@@ -211,6 +211,9 @@ export type ObjectiveAssignmentRuleStatus =
   (typeof ObjectiveAssignmentRuleStatus)[keyof typeof ObjectiveAssignmentRuleStatus];
 
 export const ObjectiveTargetDirection = {
+  HIGHER_IS_BETTER: 'HIGHER_IS_BETTER',
+  LOWER_IS_BETTER: 'LOWER_IS_BETTER',
+  NOT_APPLICABLE: 'NOT_APPLICABLE',
   INCREASE: 'INCREASE',
   DECREASE: 'DECREASE',
   MAINTAIN: 'MAINTAIN',
@@ -219,6 +222,36 @@ export const ObjectiveTargetDirection = {
 
 export type ObjectiveTargetDirection =
   (typeof ObjectiveTargetDirection)[keyof typeof ObjectiveTargetDirection];
+
+export const ObjectiveActualAggregationMode = {
+  LATEST_VALUE: 'LATEST_VALUE',
+  SUM_OF_TERMS: 'SUM_OF_TERMS',
+  AVERAGE_OF_TERMS: 'AVERAGE_OF_TERMS',
+  MAX_OF_TERMS: 'MAX_OF_TERMS',
+  MIN_OF_TERMS: 'MIN_OF_TERMS',
+} as const;
+
+export type ObjectiveActualAggregationMode =
+  (typeof ObjectiveActualAggregationMode)[keyof typeof ObjectiveActualAggregationMode];
+
+export const ObjectiveScoringMode = {
+  CONTEXT_ONLY: 'CONTEXT_ONLY',
+  WEIGHTED_OBJECTIVE_SCORE: 'WEIGHTED_OBJECTIVE_SCORE',
+  OVERALL_OBJECTIVE_SCORE: 'OVERALL_OBJECTIVE_SCORE',
+} as const;
+
+export type ObjectiveScoringMode =
+  (typeof ObjectiveScoringMode)[keyof typeof ObjectiveScoringMode];
+
+export const NoObjectiveScoringPolicy = {
+  NO_OBJECTIVES_NOT_APPLICABLE: 'NO_OBJECTIVES_NOT_APPLICABLE',
+  REALLOCATE_OBJECTIVE_WEIGHT: 'REALLOCATE_OBJECTIVE_WEIGHT',
+  BLOCK_REVIEW_SUBMISSION: 'BLOCK_REVIEW_SUBMISSION',
+  ALLOW_MANUAL_OVERALL_SCORE: 'ALLOW_MANUAL_OVERALL_SCORE',
+} as const;
+
+export type NoObjectiveScoringPolicy =
+  (typeof NoObjectiveScoringPolicy)[keyof typeof NoObjectiveScoringPolicy];
 
 export const ObjectiveAttachmentPolicy = {
   NOT_ALLOWED: 'NOT_ALLOWED',
@@ -331,6 +364,7 @@ export const SemanticRole = {
   OBJECTIVE_TARGET: 'OBJECTIVE_TARGET',
   OBJECTIVE_WEIGHTAGE: 'OBJECTIVE_WEIGHTAGE',
   OBJECTIVE_ACHIEVEMENT: 'OBJECTIVE_ACHIEVEMENT',
+  OVERALL_OBJECTIVE_SCORE: 'OVERALL_OBJECTIVE_SCORE',
   MANAGER_RATING: 'MANAGER_RATING',
   MANAGER_SCORE: 'MANAGER_SCORE',
   MANAGER_COMMENT: 'MANAGER_COMMENT',

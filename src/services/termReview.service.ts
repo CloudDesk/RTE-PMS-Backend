@@ -5,8 +5,10 @@ import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
   normalizePmsRole,
+  NoObjectiveScoringPolicy,
   ObjectiveStatus,
   ObjectiveSource,
+  ObjectiveScoringMode,
   PmsRole,
   PmsTemplateFieldType,
   PmsTemplateSectionLevel,
@@ -14,7 +16,11 @@ import {
   TermReviewStatus,
   TermWorkflowState,
 } from '../constants/pms.enums';
-import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  NoObjectiveScoringPolicy as NoObjectiveScoringPolicyType,
+  ObjectiveScoringMode as ObjectiveScoringModeType,
+} from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { Objective } from '../models/pms-objective.model';
@@ -230,6 +236,7 @@ type ReviewScoringRule = {
 type TermReviewScoringFieldConfig = {
   fieldKey: string;
   sectionKey: string;
+  fieldLabel?: string;
   fieldType: string;
   scoreType: string;
   weightage: number;
@@ -251,11 +258,23 @@ type TermReviewSectionConfig = {
   maxSectionScore: number | null;
   scoringFields: TermReviewScoringFieldConfig[];
   objectiveBuckets?: any[];
+  objectiveScoringEnabled?: boolean;
+  objectiveScoringMode?: ObjectiveScoringModeType;
+  perObjectiveScoreEntryAllowed?: boolean;
+  overallScoreEntryAllowed?: boolean;
+  overallObjectiveScoreFieldKey?: string;
+  useObjectiveWeightageScoring?: boolean;
+  noObjectiveScoringPolicy?: NoObjectiveScoringPolicyType;
 };
 
 type TermReviewConfig = {
   mode?: 'AUTO' | 'MANUAL';
   objectiveRatingRule: ReviewScoringRule | null;
+  objectiveScoringMode: ObjectiveScoringModeType;
+  objectiveScoringEnabled: boolean;
+  perObjectiveScoreEntryAllowed: boolean;
+  overallScoreEntryAllowed: boolean;
+  noObjectiveScoringPolicy: NoObjectiveScoringPolicyType;
   overallScoreMax: number | null;
   scoringPolicy?: any;
   sections: TermReviewSectionConfig[];
@@ -613,6 +632,13 @@ export class TermReviewService extends BaseService {
       existingReview?.toObject(),
       termReview.toObject(),
     );
+    await this.audit(
+      'PMS_TERM_REVIEW_SCORE_SNAPSHOT_CALCULATED',
+      'QUARTER_REVIEW',
+      termReview._id.toString(),
+      existingReview?.scoreSnapshot,
+      scoringResolution.scoreSnapshot,
+    );
 
     return {
       termReview,
@@ -773,6 +799,13 @@ export class TermReviewService extends BaseService {
       termReview._id.toString(),
       existingReview?.toObject(),
       termReview.toObject(),
+    );
+    await this.audit(
+      'PMS_TERM_REVIEW_SCORE_SNAPSHOT_CALCULATED',
+      'QUARTER_REVIEW',
+      termReview._id.toString(),
+      existingReview?.scoreSnapshot,
+      scoringResolution.scoreSnapshot,
     );
 
     const finalizedTermAssignment = await this.finalizeSubmittedTermReview(
@@ -1386,6 +1419,10 @@ export class TermReviewService extends BaseService {
 
     const rateableObjectives = this.getRateableObjectives(approvedObjectives);
 
+    if (!this.allowsObjectiveRatings(reviewConfig) && (input.ratings ?? []).length > 0) {
+      throw new Error('Objective ratings are not allowed when objectives are context-only or overall-scored.');
+    }
+
     if (this.requiresObjectiveRatings(reviewConfig) && rateableObjectives.length > 0) {
       this.validateRatingsAgainstObjectives(
         input.ratings ?? [],
@@ -1394,6 +1431,8 @@ export class TermReviewService extends BaseService {
         reviewConfig,
       );
     }
+    this.validateWeightedObjectiveScoringSetup(rateableObjectives, reviewConfig, false);
+    this.validateOverallObjectiveScoreInput(input.reviewValues ?? [], reviewConfig, false);
     this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
   }
 
@@ -1404,6 +1443,10 @@ export class TermReviewService extends BaseService {
     resolvedScore?: number,
   ): void {
     const rateableObjectives = this.getRateableObjectives(approvedObjectives);
+
+    if (!this.allowsObjectiveRatings(reviewConfig) && (input.ratings ?? []).length > 0) {
+      throw new Error('Objective ratings are not allowed when objectives are context-only or overall-scored.');
+    }
 
     if (this.requiresObjectiveRatings(reviewConfig) && rateableObjectives.length > 0 && (!Array.isArray(input.ratings) || input.ratings.length === 0)) {
       throw new Error('At least one review rating is required');
@@ -1429,11 +1472,92 @@ export class TermReviewService extends BaseService {
         reviewConfig,
       );
     }
+    this.validateWeightedObjectiveScoringSetup(rateableObjectives, reviewConfig, true);
+    this.validateOverallObjectiveScoreInput(input.reviewValues ?? [], reviewConfig, true);
     this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
   }
 
   private requiresObjectiveRatings(reviewConfig: TermReviewConfig): boolean {
-    return reviewConfig.objectiveRatingRule !== null;
+    return this.allowsObjectiveRatings(reviewConfig) && reviewConfig.objectiveRatingRule !== null;
+  }
+
+  private allowsObjectiveRatings(reviewConfig: TermReviewConfig): boolean {
+    return (
+      reviewConfig.objectiveScoringEnabled === true &&
+      reviewConfig.objectiveScoringMode === ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE &&
+      reviewConfig.perObjectiveScoreEntryAllowed === true
+    );
+  }
+
+  private allowsOverallObjectiveScore(reviewConfig: TermReviewConfig): boolean {
+    return (
+      reviewConfig.objectiveScoringEnabled === true &&
+      reviewConfig.objectiveScoringMode === ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE &&
+      reviewConfig.overallScoreEntryAllowed === true
+    );
+  }
+
+  private validateOverallObjectiveScoreInput(
+    reviewValues: TermReviewValueInput[],
+    reviewConfig: TermReviewConfig,
+    isSubmit: boolean,
+  ): void {
+    if (!this.allowsOverallObjectiveScore(reviewConfig)) {
+      return;
+    }
+
+    const score = this.resolveOverallObjectiveScoreValue(reviewValues, reviewConfig);
+    if (score === undefined) {
+      if (isSubmit) {
+        throw new Error('Overall objective score is required for overall objective scoring mode.');
+      }
+      return;
+    }
+
+    if (score < 0 || score > 100) {
+      throw new Error('Overall objective score must be between 0 and 100.');
+    }
+  }
+
+  private resolveOverallObjectiveScoreValue(
+    reviewValues: TermReviewValueInput[],
+    reviewConfig: TermReviewConfig,
+  ): number | undefined {
+    const objectiveSections = reviewConfig.sections.filter(
+      (section) =>
+        section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
+        section.objectiveScoringMode === ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE,
+    );
+
+    for (const section of objectiveSections) {
+      const candidateKeys = [
+        section.overallObjectiveScoreFieldKey,
+        ...section.scoringFields
+          .filter((field) => this.isOverallObjectiveScoreField(field))
+          .map((field) => field.fieldKey),
+        'overall_objective_score',
+        'objective_overall_score',
+        'overall_score',
+      ].filter((key): key is string => Boolean(key?.trim()));
+
+      for (const fieldKey of candidateKeys) {
+        const matchedValue = reviewValues.find(
+          (value) => value.sectionKey === section.sectionKey && value.fieldKey === fieldKey,
+        );
+        const score = this.parseReviewNumericValue(matchedValue);
+        if (score !== undefined) return score;
+      }
+
+      const matchedValue = reviewValues.find(
+        (value) =>
+          value.sectionKey === section.sectionKey &&
+          this.isOverallObjectiveScoreKey(value.fieldKey),
+      );
+      const score = this.parseReviewNumericValue(matchedValue);
+      if (score !== undefined) return score;
+    }
+
+    return undefined;
   }
 
   private resolveTermReviewScoring(
@@ -1457,7 +1581,9 @@ export class TermReviewService extends BaseService {
     const { sectionScores, sectionsSnapshot } = this.scoringService.calculateSectionScores(
       mergedReviewValues,
       reviewConfig,
-      this.getRateableObjectives(approvedObjectives),
+      this.allowsObjectiveRatings(reviewConfig)
+        ? this.getRateableObjectives(approvedObjectives)
+        : [],
       input.ratings ?? [],
     );
     const computedOverallScore = this.scoringService.calculateOverallScore(sectionScores, reviewConfig);
@@ -1516,6 +1642,10 @@ export class TermReviewService extends BaseService {
         throw new Error('Objective rating cannot be negative');
       }
 
+      if (Number(rating.rating) > 100) {
+        throw new Error('Objective rating cannot exceed 100');
+      }
+
       this.validateObjectiveRatingAgainstTemplate(Number(rating.rating), reviewConfig);
 
       ratedObjectiveIds.add(rating.objectiveId);
@@ -1526,8 +1656,58 @@ export class TermReviewService extends BaseService {
     }
   }
 
+  private validateWeightedObjectiveScoringSetup(
+    rateableObjectives: Array<Record<string, any>>,
+    reviewConfig: TermReviewConfig,
+    isSubmit: boolean,
+  ): void {
+    if (!this.allowsObjectiveRatings(reviewConfig)) {
+      return;
+    }
+
+    if (rateableObjectives.length === 0) {
+      if (
+        isSubmit &&
+        reviewConfig.noObjectiveScoringPolicy === NoObjectiveScoringPolicy.BLOCK_REVIEW_SUBMISSION
+      ) {
+        throw new Error('Scoreable objectives are required before weighted objective review can be submitted.');
+      }
+      return;
+    }
+
+    const invalidWeightObjective = rateableObjectives.find((objective) => {
+      const weightage = this.getObjectiveWeightage(objective);
+      return weightage === undefined || weightage < 0 || weightage > 100;
+    });
+    if (invalidWeightObjective) {
+      throw new Error('Each scoreable objective must have valid weightage between 0 and 100.');
+    }
+
+    const totalWeightage = rateableObjectives.reduce(
+      (sum, objective) => sum + (this.getObjectiveWeightage(objective) ?? 0),
+      0,
+    );
+    if (totalWeightage > 100) {
+      throw new Error(`Total scoreable objective weightage cannot exceed 100%. Current total is ${totalWeightage}%.`);
+    }
+  }
+
+  private getObjectiveWeightage(objective: Record<string, any>): number | undefined {
+    const value = objective.objectiveSnapshot?.approvedWeightage ?? objective.weightage;
+    if (value === undefined || value === null || value === '') {
+      return undefined;
+    }
+    const weightage = Number(value);
+    return Number.isFinite(weightage) ? weightage : undefined;
+  }
+
   private getRateableObjectives<T extends Record<string, any>>(approvedObjectives: T[]): T[] {
-    return approvedObjectives.filter((objective) => objective.source === ObjectiveSource.PREDEFINED);
+    return approvedObjectives.filter((objective) => {
+      if (objective.objectiveSnapshot?.scoreable !== undefined) {
+        return objective.objectiveSnapshot.scoreable === true;
+      }
+      return Number.isFinite(Number(objective.weightage ?? objective.objectiveSnapshot?.approvedWeightage));
+    });
   }
 
   private validateObjectiveRatingAgainstTemplate(
@@ -2500,6 +2680,23 @@ export class TermReviewService extends BaseService {
         section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
         section.sectionScoringConfig?.participatesInScoring === true,
     );
+    const objectivePolicy = objectiveScoringSections
+      .map((section) => section.objectiveConfig?.objectiveScoringPolicy)
+      .find(Boolean);
+    const objectiveScoringMode = this.resolveObjectiveScoringMode(objectivePolicy);
+    const objectiveScoringEnabled =
+      objectivePolicy?.objectiveScoringEnabled === true &&
+      objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY;
+    const perObjectiveScoreEntryAllowed =
+      objectiveScoringEnabled &&
+      objectiveScoringMode === ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE &&
+      objectivePolicy?.perObjectiveScoreEntryAllowed !== false;
+    const overallScoreEntryAllowed =
+      objectiveScoringEnabled &&
+      objectiveScoringMode === ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE &&
+      objectivePolicy?.overallScoreEntryAllowed !== false;
+    const noObjectiveScoringPolicy =
+      objectivePolicy?.noObjectiveScoringPolicy ?? NoObjectiveScoringPolicy.NO_OBJECTIVES_NOT_APPLICABLE;
 
     const objectiveScoringFields = objectiveScoringSections
       .filter(
@@ -2538,9 +2735,9 @@ export class TermReviewService extends BaseService {
         .filter((value) => Number.isFinite(value) && value > 0)
         .sort((left, right) => right - left)[0] ?? 100;
 
-    const objectiveRatingRule = objectiveRatingField
+    const objectiveRatingRule = perObjectiveScoreEntryAllowed && objectiveRatingField
       ? this.buildRatingRuleFromTemplateField(objectiveRatingField)
-      : objectiveScoringSections.length > 0
+      : perObjectiveScoreEntryAllowed && objectiveScoringSections.length > 0
         ? {
             scoreType: 'MANUAL',
             minScore: 0,
@@ -2572,6 +2769,34 @@ export class TermReviewService extends BaseService {
           : null,
         scoringPolicy: (section.sectionScoringConfig as Record<string, unknown> | undefined)?.scoringPolicy,
         objectiveBuckets: section.objectiveBuckets,
+        objectiveScoringEnabled:
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES
+            ? objectiveScoringEnabled
+            : undefined,
+        objectiveScoringMode:
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES
+            ? objectiveScoringMode
+            : undefined,
+        perObjectiveScoreEntryAllowed:
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES
+            ? perObjectiveScoreEntryAllowed
+            : undefined,
+        overallScoreEntryAllowed:
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES
+            ? overallScoreEntryAllowed
+            : undefined,
+        overallObjectiveScoreFieldKey:
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES
+            ? this.resolveOverallObjectiveScoreFieldKey(section)
+            : undefined,
+        useObjectiveWeightageScoring:
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES
+            ? objectiveScoringEnabled && objectiveScoringMode === ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE
+            : undefined,
+        noObjectiveScoringPolicy:
+          section.sectionType === PmsTemplateSectionType.OBJECTIVES
+            ? noObjectiveScoringPolicy
+            : undefined,
         scoringFields: (section.fields ?? [])
           .filter(
             (field) =>
@@ -2581,6 +2806,7 @@ export class TermReviewService extends BaseService {
           .map((field) => ({
             fieldKey: field.fieldKey,
             sectionKey: section.sectionKey,
+            fieldLabel: field.fieldLabel,
             fieldType: String(field.fieldType),
             scoreType: String(field.scoringConfig?.scoreType ?? 'MANUAL'),
             weightage: Number(field.scoringConfig?.weight ?? field.scoringConfig?.weightage ?? 0),
@@ -2604,6 +2830,11 @@ export class TermReviewService extends BaseService {
 
     return {
       objectiveRatingRule,
+      objectiveScoringMode,
+      objectiveScoringEnabled,
+      perObjectiveScoreEntryAllowed,
+      overallScoreEntryAllowed,
+      noObjectiveScoringPolicy,
       overallScoreMax,
       mode: (templateVersion.scoringConfig as Record<string, unknown> | undefined)?.mode === 'MANUAL' ? 'MANUAL' : 'AUTO',
       scoringPolicy: (templateVersion.scoringConfig as Record<string, unknown> | undefined)?.scoringPolicy as any,
@@ -2614,11 +2845,57 @@ export class TermReviewService extends BaseService {
   private defaultTermReviewConfig(): TermReviewConfig {
     return {
       objectiveRatingRule: null,
+      objectiveScoringMode: ObjectiveScoringMode.CONTEXT_ONLY,
+      objectiveScoringEnabled: false,
+      perObjectiveScoreEntryAllowed: false,
+      overallScoreEntryAllowed: false,
+      noObjectiveScoringPolicy: NoObjectiveScoringPolicy.NO_OBJECTIVES_NOT_APPLICABLE,
       overallScoreMax: null,
       mode: 'MANUAL',
       scoringPolicy: undefined,
       sections: [],
     };
+  }
+
+  private resolveOverallObjectiveScoreFieldKey(section: ITemplateSection): string | undefined {
+    const field = (section.fields ?? []).find((templateField) =>
+      this.isManagerEditableReviewField(templateField) &&
+      this.isOverallObjectiveScoreField(templateField),
+    );
+    return field?.fieldKey;
+  }
+
+  private isOverallObjectiveScoreField(field: Pick<ITemplateField, 'fieldKey' | 'fieldLabel' | 'semanticRole'> | TermReviewScoringFieldConfig): boolean {
+    return (
+      field.semanticRole === 'OVERALL_OBJECTIVE_SCORE' ||
+      this.isOverallObjectiveScoreKey(field.fieldKey) ||
+      this.isOverallObjectiveScoreKey('fieldLabel' in field ? field.fieldLabel : undefined)
+    );
+  }
+
+  private isOverallObjectiveScoreKey(value?: string): boolean {
+    const normalized = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return [
+      'overall_objective_score',
+      'objective_overall_score',
+      'overall_score',
+      'objective_score',
+    ].includes(normalized);
+  }
+
+  private parseReviewNumericValue(value?: TermReviewValueInput): number | undefined {
+    if (!value) return undefined;
+    const rawValue = value.valueNumber ?? value.valueJson ?? value.valueText;
+    if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
+    const score = Number(rawValue);
+    return Number.isFinite(score) ? score : undefined;
+  }
+
+  private resolveObjectiveScoringMode(policy?: Record<string, any>): ObjectiveScoringModeType {
+    const mode = policy?.objectiveScoringMode;
+    return Object.values(ObjectiveScoringMode).includes(mode as ObjectiveScoringModeType)
+      ? mode as ObjectiveScoringModeType
+      : ObjectiveScoringMode.CONTEXT_ONLY;
   }
 
   private isTermReviewSectionInScope(

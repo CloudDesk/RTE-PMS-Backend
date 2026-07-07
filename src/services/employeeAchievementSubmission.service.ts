@@ -5,13 +5,22 @@ import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
   AssessmentTermCode,
+  AssessmentTermType,
+  getAssessmentTerms,
   normalizePmsRole,
+  ObjectiveActualAggregationMode,
   ObjectiveSource,
   ObjectiveStatus,
+  ObjectiveTargetDirection,
   PmsRole,
   TermWorkflowState,
 } from '../constants/pms.enums';
-import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  AssessmentTermType as AssessmentTermTypeType,
+  ObjectiveActualAggregationMode as ObjectiveActualAggregationModeType,
+  ObjectiveTargetDirection as ObjectiveTargetDirectionType,
+} from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { Objective } from '../models/pms-objective.model';
@@ -61,6 +70,8 @@ interface AchievementObjectiveSnapshotInput {
   expectedOutcome?: string;
   targetMetric?: string;
   targetValue?: string;
+  targetDirection?: ObjectiveTargetDirectionType;
+  actualAggregationMode?: ObjectiveActualAggregationModeType;
   targetDate?: Date | string;
   weightage?: number;
   source?: string;
@@ -111,6 +122,10 @@ type AchievementObjectiveRecord = {
   expectedOutcome?: string;
   targetMetric?: string;
   targetValue?: string;
+  targetDirection?: ObjectiveTargetDirectionType;
+  actualAggregationMode?: ObjectiveActualAggregationModeType;
+  targetDirectionLabel?: string;
+  targetInterpretation?: ObjectiveTargetInterpretation;
   targetDate?: string;
   weightage?: number;
   source?: string;
@@ -177,11 +192,13 @@ type AchievementSubmissionDetail = {
   annualAssignmentId: string;
   cycleId?: string;
   assessmentTermCode: AssessmentTermCodeType;
+  assessmentTermType?: AssessmentTermTypeType;
   employeeId: string;
   managerId: string;
   templateVersionId?: string;
   reviewFlowMode: 'MANAGER_ONLY' | 'ACHIEVEMENT_THEN_MANAGER';
   employeeAchievementConfig: AchievementTemplateConfig;
+  actualColumnMetadata: ActualColumnMetadata;
   section: {
     key: string;
     title: string;
@@ -192,6 +209,48 @@ type AchievementSubmissionDetail = {
   objectives: AchievementObjectiveRecord[];
   submission: AchievementSubmissionRecord | null;
   canEdit: boolean;
+};
+
+type ActualColumnMetadata = {
+  assessmentTermType: AssessmentTermTypeType;
+  allowedTerms: AssessmentTermCodeType[];
+  currentTerm: AssessmentTermCodeType;
+  configuredActualColumns: Array<{
+    key: string;
+    label: string;
+    term: AssessmentTermCodeType;
+    source: 'FIELD' | 'GRID_COLUMN';
+    allowed: boolean;
+  }>;
+};
+
+type NormalizedTargetDirection =
+  | typeof ObjectiveTargetDirection.HIGHER_IS_BETTER
+  | typeof ObjectiveTargetDirection.LOWER_IS_BETTER
+  | typeof ObjectiveTargetDirection.NOT_APPLICABLE;
+
+type ObjectiveTargetInterpretation = {
+  targetDirection?: NormalizedTargetDirection;
+  targetDirectionLabel: string;
+  actualAggregationMode: ObjectiveActualAggregationModeType;
+  targetValue?: number;
+  actualValue?: number;
+  targetMet?: boolean;
+  status:
+    | 'NOT_APPLICABLE'
+    | 'MET'
+    | 'NOT_MET'
+    | 'MISSING_TARGET'
+    | 'MISSING_ACTUAL'
+    | 'MISSING_TARGET_DIRECTION'
+    | 'INVALID_ACTUAL';
+  message: string;
+};
+
+type ObjectiveActualValueCandidate = {
+  value: unknown;
+  term?: AssessmentTermCodeType;
+  order: number;
 };
 
 type EmployeeWorkUpdateFieldRecord = {
@@ -251,17 +310,24 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }).lean();
     const actor = this.requireActor();
     const objectives = await this.getApprovedObjectives(termAssignment._id);
+    const actualColumnMetadata = await this.resolveActualColumnMetadata(
+      termAssignment,
+      section,
+      field,
+    );
 
     return {
       termAssignmentId: termAssignment._id.toString(),
       annualAssignmentId: termAssignment.annualAssignmentId.toString(),
       cycleId: termAssignment.cycleId?.toString(),
       assessmentTermCode: termAssignment.assessmentTermCode,
+      assessmentTermType: actualColumnMetadata.assessmentTermType,
       employeeId: termAssignment.employeeId.toString(),
       managerId: termAssignment.assignedManagerId.toString(),
       templateVersionId: annualAssignment.templateVersionId?.toString(),
       reviewFlowMode: config.reviewFlowMode,
       employeeAchievementConfig: config,
+      actualColumnMetadata,
       section: {
         key: section.sectionKey,
         title: section.sectionLabel,
@@ -320,6 +386,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       field,
       false,
     );
+    await this.assertActualColumnsAllowedForCycleTermType(termAssignment, section, field, normalizedValues);
     const resolvedFields = await this.resolveEmployeeAchievementFields(
       annualAssignment,
       termAssignment,
@@ -447,6 +514,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       field,
       true,
     );
+    await this.assertActualColumnsAllowedForCycleTermType(termAssignment, section, field, submitValues);
     const resolvedFields = await this.resolveEmployeeAchievementFields(
       annualAssignment,
       termAssignment,
@@ -579,6 +647,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       },
     );
     const normalizedValues = this.normalizeAchievementValues([], nextItems, field, false);
+    await this.assertActualColumnsAllowedForCycleTermType(termAssignment, section, field, normalizedValues);
     const nextAchievementValues = this.mergeExistingNonAchievementValues(
       normalizedValues,
       existingSubmission?.achievementValues ?? [],
@@ -690,6 +759,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     };
     const nextItems = this.mergeAchievementItem(existingSubmission?.achievementItems ?? [], submittedItem);
     const normalizedValues = this.normalizeAchievementValues([], nextItems, field, true);
+    await this.assertActualColumnsAllowedForCycleTermType(termAssignment, section, field, normalizedValues);
     const nextAchievementValues = this.mergeExistingNonAchievementValues(
       normalizedValues,
       existingSubmission?.achievementValues ?? [],
@@ -876,6 +946,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
               expectedOutcome: item.objectiveSnapshot.expectedOutcome,
               targetMetric: item.objectiveSnapshot.targetMetric,
               targetValue: item.objectiveSnapshot.targetValue,
+              targetDirection: item.objectiveSnapshot.targetDirection,
+              actualAggregationMode: item.objectiveSnapshot.actualAggregationMode,
               targetDate: item.objectiveSnapshot.targetDate
                 ? new Date(item.objectiveSnapshot.targetDate).toISOString()
                 : undefined,
@@ -1116,6 +1188,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       }
     }
 
+    this.validateObjectiveActualValues(items, values, isSubmit, approvedObjectives);
+
     const gridColumns = Array.isArray(field.gridConfig?.columns) ? field.gridConfig.columns : [];
     const subjectColumn = gridColumns.find((column) => column.key === 'achievement_subject');
     const descriptionColumn = gridColumns.find((column) => column.key === 'achievement_description');
@@ -1136,6 +1210,500 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         }
       }
     }
+  }
+
+  private async assertActualColumnsAllowedForCycleTermType(
+    termAssignment: any,
+    section: ITemplateSection,
+    field: ITemplateField,
+    values: Array<Record<string, any>>,
+  ): Promise<void> {
+    const metadata = await this.resolveActualColumnMetadata(termAssignment, section, field);
+    const allowedTerms = new Set(metadata.allowedTerms);
+    const invalidTerms = new Set<AssessmentTermCodeType>();
+
+    for (const value of values) {
+      const termFromField = this.extractActualTermFromKeyOrLabel(value.fieldKey);
+      if (termFromField && !allowedTerms.has(termFromField)) {
+        invalidTerms.add(termFromField);
+      }
+
+      for (const termFromValue of this.extractActualTermsFromValue(value.valueJson)) {
+        if (!allowedTerms.has(termFromValue)) {
+          invalidTerms.add(termFromValue);
+        }
+      }
+    }
+
+    if (invalidTerms.size > 0) {
+      throw new Error(
+        `Actual columns ${[...invalidTerms].join(', ')} are not allowed for ${metadata.assessmentTermType} cycle. Allowed actual columns: ${metadata.allowedTerms.join(', ')}`,
+      );
+    }
+  }
+
+  private validateObjectiveActualValues(
+    items: Array<Record<string, any>>,
+    values: Array<Record<string, any>>,
+    isSubmit: boolean,
+    approvedObjectives: AchievementObjectiveRecord[] = [],
+  ): void {
+    if (!isSubmit || approvedObjectives.length === 0) {
+      return;
+    }
+
+    const objectiveById = new Map(approvedObjectives.map((objective) => [objective.id, objective]));
+    const submittedObjectiveItems = items.filter((item) =>
+      item.type === AchievementItemType.OBJECTIVE &&
+      item.objectiveId &&
+      item.description,
+    );
+
+    for (const item of submittedObjectiveItems) {
+      const objectiveId = item.objectiveId.toString();
+      const objective = objectiveById.get(objectiveId);
+      if (!objective) {
+        continue;
+      }
+
+      const targetNumber = this.parseNumericTargetValue(objective.targetValue);
+      const targetDirection = this.normalizeTargetDirection(objective.targetDirection);
+      if (targetNumber === undefined && !this.isNumericTargetDirection(targetDirection)) {
+        continue;
+      }
+      if (targetNumber === undefined) {
+        throw new Error(`Numeric target value is required for target-based validation: ${objective.title}`);
+      }
+      if (!this.isNumericTargetDirection(targetDirection)) {
+        throw new Error(`Target direction is required for objective: ${objective.title}`);
+      }
+
+      const actualCandidates = this.findObjectiveActualValues(objectiveId, item, values);
+      if (actualCandidates.length === 0) {
+        throw new Error(`Actual value is required for objective: ${objective.title}`);
+      }
+
+      const actualNumbers = actualCandidates
+        .map((candidate) => ({
+          ...candidate,
+          numericValue: this.parseNumericTargetValue(candidate.value),
+        }));
+      const invalidActual = actualNumbers.find((candidate) => candidate.numericValue === undefined);
+      if (invalidActual) {
+        throw new Error(`Actual value must be numeric for objective: ${objective.title}`);
+      }
+
+      const actualNumber = this.aggregateObjectiveActualValues(
+        actualNumbers.map((candidate) => ({
+          value: candidate.numericValue as number,
+          term: candidate.term,
+          order: candidate.order,
+        })),
+        objective.actualAggregationMode,
+      );
+      if (actualNumber === undefined) {
+        throw new Error(`Actual value is required for objective: ${objective.title}`);
+      }
+
+      this.interpretObjectiveTarget(objective, actualNumber);
+    }
+  }
+
+  private findObjectiveActualValues(
+    objectiveId: string,
+    item: Record<string, any>,
+    values: Array<Record<string, any>>,
+  ): ObjectiveActualValueCandidate[] {
+    const candidates: ObjectiveActualValueCandidate[] = [];
+    candidates.push(...this.extractActualValuesFromRecord(item, candidates.length));
+
+    for (const value of values) {
+      candidates.push(...this.extractActualValuesFromRecord(value, candidates.length));
+      candidates.push(...this.extractActualValuesForObjective(objectiveId, value.valueJson, candidates.length));
+    }
+
+    return candidates.filter((candidate) =>
+      candidate.value !== undefined &&
+      candidate.value !== null &&
+      String(candidate.value).trim() !== '',
+    );
+  }
+
+  private extractActualValuesForObjective(
+    objectiveId: string,
+    value: unknown,
+    startOrder = 0,
+  ): ObjectiveActualValueCandidate[] {
+    if (!value || typeof value !== 'object') {
+      return [];
+    }
+
+    const candidates: ObjectiveActualValueCandidate[] = [];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        candidates.push(...this.extractActualValuesForObjective(objectiveId, item, startOrder + candidates.length));
+      }
+      return candidates;
+    }
+
+    const record = value as Record<string, unknown>;
+    const rowObjectiveId = record.objectiveId?.toString?.() ?? String(record.objectiveId ?? '');
+    if (rowObjectiveId && rowObjectiveId !== objectiveId) {
+      return [];
+    }
+
+    if (rowObjectiveId === objectiveId) {
+      candidates.push(...this.extractActualValuesFromRecord(record, startOrder + candidates.length));
+    }
+
+    for (const nestedValue of Object.values(record)) {
+      candidates.push(...this.extractActualValuesForObjective(objectiveId, nestedValue, startOrder + candidates.length));
+    }
+
+    return candidates;
+  }
+
+  private extractActualValuesFromRecord(
+    record: Record<string, any>,
+    startOrder = 0,
+  ): ObjectiveActualValueCandidate[] {
+    const candidates: ObjectiveActualValueCandidate[] = [];
+    const recordFieldTerm = this.extractActualTermFromKeyOrLabel(record.fieldKey);
+    if (recordFieldTerm) {
+      candidates.push({
+        value: record.valueNumber ?? record.valueText ?? record.valueJson,
+        term: recordFieldTerm,
+        order: startOrder,
+      });
+    }
+
+    for (const [key, value] of Object.entries(record)) {
+      if (key === 'fieldKey' || key === 'valueNumber' || key === 'valueText' || key === 'valueJson') {
+        continue;
+      }
+      const normalizedKey = key.trim().toLowerCase();
+      const term = this.extractActualTermFromKeyOrLabel(key);
+      if (
+        normalizedKey === 'actual' ||
+        normalizedKey === 'actualvalue' ||
+        normalizedKey === 'actual_value' ||
+        term
+      ) {
+        candidates.push({
+          value,
+          term,
+          order: startOrder + candidates.length,
+        });
+      }
+    }
+
+    return candidates;
+  }
+
+  private aggregateObjectiveActualValues(
+    candidates: Array<{ value: number; term?: AssessmentTermCodeType; order: number }>,
+    configuredMode?: unknown,
+  ): number | undefined {
+    if (candidates.length === 0) {
+      return undefined;
+    }
+
+    const sortedCandidates = [...candidates].sort((left, right) => {
+      const leftRank = this.actualTermRank(left.term);
+      const rightRank = this.actualTermRank(right.term);
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return left.order - right.order;
+    });
+    const values = sortedCandidates.map((candidate) => candidate.value);
+
+    switch (this.normalizeActualAggregationMode(configuredMode)) {
+      case ObjectiveActualAggregationMode.SUM_OF_TERMS:
+        return values.reduce((sum, value) => sum + value, 0);
+      case ObjectiveActualAggregationMode.AVERAGE_OF_TERMS:
+        return values.reduce((sum, value) => sum + value, 0) / values.length;
+      case ObjectiveActualAggregationMode.MAX_OF_TERMS:
+        return Math.max(...values);
+      case ObjectiveActualAggregationMode.MIN_OF_TERMS:
+        return Math.min(...values);
+      case ObjectiveActualAggregationMode.LATEST_VALUE:
+      default:
+        return sortedCandidates[sortedCandidates.length - 1].value;
+    }
+  }
+
+  private normalizeActualAggregationMode(mode?: unknown): ObjectiveActualAggregationModeType {
+    return Object.values(ObjectiveActualAggregationMode).includes(mode as ObjectiveActualAggregationModeType)
+      ? mode as ObjectiveActualAggregationModeType
+      : ObjectiveActualAggregationMode.LATEST_VALUE;
+  }
+
+  private actualTermRank(term?: AssessmentTermCodeType): number {
+    const rank: Record<string, number> = {
+      [AssessmentTermCode.Q1]: 1,
+      [AssessmentTermCode.Q2]: 2,
+      [AssessmentTermCode.Q3]: 3,
+      [AssessmentTermCode.Q4]: 4,
+      [AssessmentTermCode.H1]: 5,
+      [AssessmentTermCode.H2]: 6,
+      [AssessmentTermCode.Y1]: 7,
+    };
+
+    return rank[term ?? ''] ?? 100;
+  }
+
+  private interpretObjectiveTarget(
+    objective: Pick<AchievementObjectiveRecord, 'targetValue' | 'targetDirection' | 'actualAggregationMode'>,
+    actualValue: unknown,
+  ): ObjectiveTargetInterpretation {
+    const targetDirection = this.normalizeTargetDirection(objective.targetDirection);
+    const targetDirectionLabel = this.getTargetDirectionLabel(objective.targetDirection);
+    const actualAggregationMode = this.normalizeActualAggregationMode(objective.actualAggregationMode);
+    const targetValue = this.parseNumericTargetValue(objective.targetValue);
+
+    if (!this.isNumericTargetDirection(targetDirection)) {
+      return {
+        targetDirection,
+        targetDirectionLabel,
+        actualAggregationMode,
+        status: 'NOT_APPLICABLE',
+        message: 'No numeric target interpretation is required.',
+      };
+    }
+
+    if (targetValue === undefined) {
+      return {
+        targetDirection,
+        targetDirectionLabel,
+        actualAggregationMode,
+        status: 'MISSING_TARGET',
+        message: 'Numeric target value is required before target status can be shown.',
+      };
+    }
+
+    if (actualValue === undefined || actualValue === null || String(actualValue).trim() === '') {
+      return {
+        targetDirection,
+        targetDirectionLabel,
+        actualAggregationMode,
+        targetValue,
+        status: 'MISSING_ACTUAL',
+        message: 'Actual value is required before target status can be shown.',
+      };
+    }
+
+    const actualNumber = this.parseNumericTargetValue(actualValue);
+    if (actualNumber === undefined) {
+      return {
+        targetDirection,
+        targetDirectionLabel,
+        actualAggregationMode,
+        targetValue,
+        status: 'INVALID_ACTUAL',
+        message: 'Actual value must be numeric.',
+      };
+    }
+
+    const targetMet = targetDirection === ObjectiveTargetDirection.HIGHER_IS_BETTER
+      ? actualNumber >= targetValue
+      : actualNumber <= targetValue;
+
+    return {
+      targetDirection,
+      targetDirectionLabel,
+      actualAggregationMode,
+      targetValue,
+      actualValue: actualNumber,
+      targetMet,
+      status: targetMet ? 'MET' : 'NOT_MET',
+      message: targetMet ? 'Target met.' : 'Target not met.',
+    };
+  }
+
+  private normalizeTargetDirection(direction?: unknown): NormalizedTargetDirection | undefined {
+    switch (direction) {
+      case ObjectiveTargetDirection.HIGHER_IS_BETTER:
+      case ObjectiveTargetDirection.INCREASE:
+      case ObjectiveTargetDirection.ACHIEVE:
+        return ObjectiveTargetDirection.HIGHER_IS_BETTER;
+      case ObjectiveTargetDirection.LOWER_IS_BETTER:
+      case ObjectiveTargetDirection.DECREASE:
+        return ObjectiveTargetDirection.LOWER_IS_BETTER;
+      case ObjectiveTargetDirection.NOT_APPLICABLE:
+      case ObjectiveTargetDirection.MAINTAIN:
+        return ObjectiveTargetDirection.NOT_APPLICABLE;
+      default:
+        return undefined;
+    }
+  }
+
+  private isNumericTargetDirection(direction?: NormalizedTargetDirection): boolean {
+    return (
+      direction === ObjectiveTargetDirection.HIGHER_IS_BETTER ||
+      direction === ObjectiveTargetDirection.LOWER_IS_BETTER
+    );
+  }
+
+  private getTargetDirectionLabel(direction?: unknown): string {
+    const normalized = this.normalizeTargetDirection(direction);
+    switch (normalized) {
+      case ObjectiveTargetDirection.HIGHER_IS_BETTER:
+        return 'Higher value is better';
+      case ObjectiveTargetDirection.LOWER_IS_BETTER:
+        return 'Lower value is better';
+      case ObjectiveTargetDirection.NOT_APPLICABLE:
+      default:
+        return 'No numeric target';
+    }
+  }
+
+  private parseNumericTargetValue(value: unknown): number | undefined {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      return undefined;
+    }
+
+    const numberValue = typeof value === 'number'
+      ? value
+      : Number(String(value).replace(/,/g, '').trim());
+
+    return Number.isFinite(numberValue) ? numberValue : undefined;
+  }
+
+  private async resolveActualColumnMetadata(
+    termAssignment: any,
+    section: ITemplateSection,
+    achievementField: ITemplateField,
+  ): Promise<ActualColumnMetadata> {
+    const assessmentTermType = await this.resolveAssessmentTermType(termAssignment);
+    const allowedTerms = getAssessmentTerms(assessmentTermType) as AssessmentTermCodeType[];
+    const allowedTermSet = new Set(allowedTerms);
+    const configuredActualColumns = this.getConfiguredActualColumns(section, achievementField)
+      .map((column) => ({
+        ...column,
+        allowed: allowedTermSet.has(column.term),
+      }));
+
+    return {
+      assessmentTermType,
+      allowedTerms,
+      currentTerm: termAssignment.assessmentTermCode,
+      configuredActualColumns,
+    };
+  }
+
+  private async resolveAssessmentTermType(termAssignment: any): Promise<AssessmentTermTypeType> {
+    if (termAssignment.assessmentTermType) {
+      return termAssignment.assessmentTermType;
+    }
+
+    if (termAssignment.cycleTermId) {
+      const termCycle = await TermCycle.findById(termAssignment.cycleTermId)
+        .select('assessmentTermType')
+        .lean();
+      if (termCycle?.assessmentTermType) {
+        return termCycle.assessmentTermType;
+      }
+    }
+
+    if (termAssignment.cycleId) {
+      const cycle = await AnnualCycle.findById(termAssignment.cycleId)
+        .select('assessmentTermType')
+        .lean();
+      if (cycle?.assessmentTermType) {
+        return cycle.assessmentTermType;
+      }
+    }
+
+    return AssessmentTermType.QUARTERLY;
+  }
+
+  private getConfiguredActualColumns(
+    section: ITemplateSection,
+    achievementField: ITemplateField,
+  ): ActualColumnMetadata['configuredActualColumns'] {
+    const actualColumns: ActualColumnMetadata['configuredActualColumns'] = [];
+
+    for (const field of section.fields ?? []) {
+      if (field.fieldKey === achievementField.fieldKey) {
+        continue;
+      }
+      const term = this.extractActualTermFromKeyOrLabel(field.fieldKey, field.fieldLabel);
+      if (term) {
+        actualColumns.push({
+          key: field.fieldKey,
+          label: field.fieldLabel,
+          term,
+          source: 'FIELD',
+          allowed: false,
+        });
+      }
+    }
+
+    for (const column of achievementField.gridConfig?.columns ?? []) {
+      const term = this.extractActualTermFromKeyOrLabel(column.key, column.label);
+      if (term) {
+        actualColumns.push({
+          key: column.key,
+          label: column.label,
+          term,
+          source: 'GRID_COLUMN',
+          allowed: false,
+        });
+      }
+    }
+
+    return actualColumns;
+  }
+
+  private extractActualTermsFromValue(value: unknown): AssessmentTermCodeType[] {
+    const terms = new Set<AssessmentTermCodeType>();
+    const visit = (node: unknown): void => {
+      if (!node || typeof node !== 'object') {
+        return;
+      }
+
+      if (Array.isArray(node)) {
+        for (const item of node) visit(item);
+        return;
+      }
+
+      for (const [key, nestedValue] of Object.entries(node as Record<string, unknown>)) {
+        const term = this.extractActualTermFromKeyOrLabel(key);
+        if (term) {
+          terms.add(term);
+        }
+        visit(nestedValue);
+      }
+    };
+
+    visit(value);
+    return [...terms];
+  }
+
+  private extractActualTermFromKeyOrLabel(
+    key?: unknown,
+    label?: unknown,
+  ): AssessmentTermCodeType | undefined {
+    const text = `${String(key ?? '')} ${String(label ?? '')}`.toUpperCase();
+    if (!text.includes('ACTUAL')) {
+      return undefined;
+    }
+
+    const compact = text.replace(/[^A-Z0-9]/g, '_');
+    const candidates: AssessmentTermCodeType[] = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+      AssessmentTermCode.H1,
+      AssessmentTermCode.H2,
+      AssessmentTermCode.Y1,
+    ];
+
+    return candidates.find((term) =>
+      new RegExp(`(^|_)${term}(_|$)`).test(compact) ||
+      new RegExp(`(^|_)ACTUAL_${term}(_|$)`).test(compact) ||
+      new RegExp(`(^|_)${term}_ACTUAL(_|$)`).test(compact),
+    );
   }
 
   private canPromoteItemSubmissionToOverall(
@@ -1265,7 +1833,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       isDeleted: false,
     })
       .select(
-        'objectiveNo title description expectedOutcome targetMetric targetValue targetDate weightage source isPredefined',
+        'objectiveNo title description expectedOutcome targetMetric targetValue targetDate weightage source isPredefined objectiveSnapshot',
       )
       .sort({ objectiveNo: 1, createdAt: 1 })
       .lean();
@@ -1282,7 +1850,20 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         description: objective.description,
         expectedOutcome: objective.expectedOutcome,
         targetMetric: objective.targetMetric,
-        targetValue: objective.targetValue,
+        targetValue: objective.objectiveSnapshot?.targetValue ?? objective.targetValue,
+        targetDirection: objective.objectiveSnapshot?.targetDirection,
+        actualAggregationMode:
+          objective.objectiveSnapshot?.actualAggregationMode ?? ObjectiveActualAggregationMode.LATEST_VALUE,
+        targetDirectionLabel: this.getTargetDirectionLabel(objective.objectiveSnapshot?.targetDirection),
+        targetInterpretation: this.interpretObjectiveTarget(
+          {
+            targetValue: objective.objectiveSnapshot?.targetValue ?? objective.targetValue,
+            targetDirection: objective.objectiveSnapshot?.targetDirection,
+            actualAggregationMode:
+              objective.objectiveSnapshot?.actualAggregationMode ?? ObjectiveActualAggregationMode.LATEST_VALUE,
+          },
+          undefined,
+        ),
         targetDate: objective.targetDate ? new Date(objective.targetDate).toISOString() : undefined,
         weightage,
         source: objective.source,
@@ -1302,6 +1883,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       expectedOutcome: objective.expectedOutcome,
       targetMetric: objective.targetMetric,
       targetValue: objective.targetValue,
+      targetDirection: objective.targetDirection,
+      actualAggregationMode: objective.actualAggregationMode ?? ObjectiveActualAggregationMode.LATEST_VALUE,
       targetDate: objective.targetDate ? new Date(objective.targetDate) : undefined,
       weightage: objective.weightage,
       source: objective.source,

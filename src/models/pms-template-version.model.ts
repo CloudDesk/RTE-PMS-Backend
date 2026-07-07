@@ -7,6 +7,9 @@ import {
   FieldCategory,
   SemanticRole,
   AssessmentTermCode,
+  NoObjectiveScoringPolicy,
+  ObjectiveActualAggregationMode,
+  ObjectiveScoringMode,
 } from '../constants/pms.enums';
 import type {
   PmsTemplateFieldType as PmsTemplateFieldTypeType,
@@ -16,6 +19,9 @@ import type {
   FieldCategory as FieldCategoryType,
   SemanticRole as SemanticRoleType,
   AssessmentTermCode as AssessmentTermCodeType,
+  NoObjectiveScoringPolicy as NoObjectiveScoringPolicyType,
+  ObjectiveActualAggregationMode as ObjectiveActualAggregationModeType,
+  ObjectiveScoringMode as ObjectiveScoringModeType,
 } from '../constants/pms.enums';
 
 export interface ITemplateOption {
@@ -49,12 +55,23 @@ export interface ITemplateObjectiveConfig {
   allowManagerCreated?: boolean;
   managerCreatedAutoApprove?: boolean;
   objectiveScoringPolicy?: {
+    objectiveScoringEnabled?: boolean;
+    objectiveScoringMode?: ObjectiveScoringModeType;
+    objectiveSectionWeight?: number;
+    perObjectiveScoreEntryAllowed?: boolean;
+    overallScoreEntryAllowed?: boolean;
+    noObjectiveScoringPolicy?: NoObjectiveScoringPolicyType;
+    reviewTimingPolicy?: Record<string, unknown>;
+    includedAssessmentTermGroupingPolicy?: Record<string, unknown>;
+    termAggregationPolicy?: Record<string, unknown>;
+    scoringValidationRules?: Record<string, unknown>;
     predefinedObjectivesScoreable?: boolean;
     managerCreatedScoreable?: boolean;
     employeeCreatedScoreable?: boolean;
     requireManagerApprovalForEmployeeScore?: boolean;
     requireWeightageBeforeAchievement?: boolean;
     allowManagerOverallForRemainingWeightage?: boolean;
+    actualAggregationMode?: ObjectiveActualAggregationModeType;
   };
   predefinedObjectives?: ITemplatePredefinedObjective[];
 }
@@ -235,12 +252,35 @@ const objectiveConfigSchema = new Schema<ITemplateObjectiveConfig>(
     allowManagerCreated: { type: Boolean, default: true },
     managerCreatedAutoApprove: { type: Boolean, default: true },
     objectiveScoringPolicy: {
+      objectiveScoringEnabled: { type: Boolean, default: false },
+      objectiveScoringMode: {
+        type: String,
+        enum: Object.values(ObjectiveScoringMode),
+        default: ObjectiveScoringMode.CONTEXT_ONLY,
+      },
+      objectiveSectionWeight: { type: Number, min: 0, max: 100, default: 0 },
+      perObjectiveScoreEntryAllowed: { type: Boolean, default: false },
+      overallScoreEntryAllowed: { type: Boolean, default: false },
+      noObjectiveScoringPolicy: {
+        type: String,
+        enum: Object.values(NoObjectiveScoringPolicy),
+        default: NoObjectiveScoringPolicy.NO_OBJECTIVES_NOT_APPLICABLE,
+      },
+      reviewTimingPolicy: { type: Schema.Types.Mixed, default: {} },
+      includedAssessmentTermGroupingPolicy: { type: Schema.Types.Mixed, default: {} },
+      termAggregationPolicy: { type: Schema.Types.Mixed, default: {} },
+      scoringValidationRules: { type: Schema.Types.Mixed, default: {} },
       predefinedObjectivesScoreable: { type: Boolean, default: true },
       managerCreatedScoreable: { type: Boolean, default: false },
       employeeCreatedScoreable: { type: Boolean, default: false },
       requireManagerApprovalForEmployeeScore: { type: Boolean, default: true },
       requireWeightageBeforeAchievement: { type: Boolean, default: true },
       allowManagerOverallForRemainingWeightage: { type: Boolean, default: true },
+      actualAggregationMode: {
+        type: String,
+        enum: Object.values(ObjectiveActualAggregationMode),
+        default: ObjectiveActualAggregationMode.LATEST_VALUE,
+      },
     },
     predefinedObjectives: { type: [predefinedObjectiveSchema], default: [] },
   },

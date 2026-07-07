@@ -456,6 +456,20 @@ export const objectiveRoutes: RouteHandler = async (
   );
 
   fastify.get(
+    '/:id/fillability',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const policy = await request.container!.objectiveService.getObjectiveFillabilityPolicy(id);
+        return reply.send(successResponse('Objective fillability policy fetched successfully', policy));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
     '/:id',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
     async (request, reply) => {
