@@ -457,3 +457,470 @@ Objective Section Contribution = (Overall Objective Score / 100) x Objective Sec
 - Existing manager review continues to work.
 - Existing templates without new scoring config remain valid.
 - Existing finalized scores are unchanged.
+
+## Detailed Implementation Notes
+
+Use this section as the detailed handoff checklist for developers before coding Task 2.
+
+### Runtime Data Resolution
+
+Runtime objective filling and scoring must resolve from these sources in this order:
+
+```text
+Locked Template Version policy
++ Employee Term Objective frozen snapshot
++ Runtime objective fill values / achievement values
++ Manager review score inputs
+= Calculated review score snapshot
+```
+
+Do not read latest Objective Master Version for an already assigned Employee Term Objective. Runtime display, validation, review, audit, reporting, and historical rendering must use the frozen snapshot stored at assignment time.
+
+### Field Categories To Handle
+
+Task 2 must handle these objective value categories:
+
+| Category | Typical Actor | Storage / Source |
+|---|---|---|
+| Target value | HR/Admin, Management, Department Head, Manager where permitted | Employee Term Objective snapshot or objective fill value where editable |
+| Target description / guidance | HR/Admin, Management, Department Head, Manager where permitted | Snapshot or fill value |
+| KPI / measurement guidance | Objective owner / assigner | Snapshot |
+| Target direction | Objective owner / assigner | Snapshot |
+| Actual achievement value | Employee or Manager where permitted | Objective value / achievement value |
+| Achievement summary | Employee or Manager where permitted | Objective value / achievement value |
+| Evidence / attachments | Employee or Manager where permitted | Existing objective evidence/attachment storage where possible |
+| Employee comments | Employee | Objective value/comment storage |
+| Manager comments | Manager | Review/objective value storage |
+| Rating / score | Manager only when scoring is enabled | Manager review score input |
+| Calculated score | System | Calculated review score snapshot |
+
+### Actual Value Validation Detail
+
+Actual values must be validated for data correctness, not for business success by default.
+
+Block submission only when:
+
+- required actual value is missing
+- actual value format is invalid
+- numeric value is required but non-numeric data is entered
+- configured hard data limit is violated
+- target-based auto score calculation is enabled but target value, actual value, or applicable target direction is missing
+- actor does not have permission for the term, field, workflow state, or assignment window
+
+Do not block submission only because the target was not achieved.
+
+When target is not met:
+
+- show "Target Not Met" or equivalent guidance
+- require employee/manager comment only if configured
+- allow manager to consider it during review
+- use it in score calculation only when target-based scoring is explicitly enabled
+
+### Target Direction Formula Detail
+
+Target direction guides calculation only when the locked template scoring policy explicitly enables target-based auto score calculation.
+
+Recommended formulas:
+
+```text
+HIGHER_IS_BETTER Score = min((Actual Value / Target Value) x 100, 100)
+LOWER_IS_BETTER Score = min((Target Value / Actual Value) x 100, 100)
+```
+
+Rules:
+
+- Default cap is 100.
+- Overachievement above 100 is allowed only if locked template policy explicitly allows it.
+- `NOT_APPLICABLE` means no numeric target comparison.
+- If manager manually enters objective score, target direction is guidance only.
+- Automatic score derivation from actual values is not default behavior.
+
+### Actual Aggregation Detail
+
+Actual aggregation mode applies before target-based auto score calculation.
+
+Supported values:
+
+| Mode | Behavior |
+|---|---|
+| `LATEST_VALUE` | Uses latest applicable term actual value |
+| `SUM_OF_TERMS` | Adds actual values from included terms |
+| `AVERAGE_OF_TERMS` | Uses average actual value across included terms |
+| `MAX_OF_TERMS` | Uses highest actual value across included terms |
+| `MIN_OF_TERMS` | Uses lowest actual value across included terms |
+
+Default:
+
+```text
+LATEST_VALUE
+```
+
+Do not confuse actual aggregation with term aggregation:
+
+- actual aggregation combines raw actual values before target-based score calculation
+- term aggregation combines already calculated term objective scores for grouped/annual reviews
+
+### Scoring Storage Ownership
+
+Scoring mode is owned by the locked Template Version, not Objective Master.
+
+Locked Template Version should own:
+
+- objective scoring enabled flag
+- objective scoring mode
+- objective section template weight
+- per-objective score entry allowed flag
+- overall objective score entry allowed flag
+- no-objective scoring policy
+- review timing policy
+- included assessment term grouping policy
+- term aggregation policy
+- scoring validation rules
+
+Employee Term Objective snapshot may store:
+
+- scoreable flag
+- approved weightage
+- target value
+- target direction
+- actual aggregation mode where applicable
+
+Manager review stores:
+
+- manager-entered score values
+- calculated score snapshot
+- calculation inputs used at finalization time
+
+### Scoring Mode Boundary
+
+Only one objective scoring mode can contribute to the same objective section.
+
+| Mode | Runtime Input |
+|---|---|
+| `CONTEXT_ONLY` | No score input |
+| `WEIGHTED_OBJECTIVE_SCORE` | Score per scoreable objective only |
+| `OVERALL_OBJECTIVE_SCORE` | One overall objective section score only |
+
+Rules:
+
+- Managers cannot override scoring mode during review.
+- Managers cannot convert non-scoreable objectives into scoreable objectives.
+- Managers cannot change objective weightage during review.
+- Managers cannot enter both per-objective weighted scores and overall objective score for the same objective section.
+- Manual score entry is allowed only when locked template policy permits it.
+- Any scoring change after assignment requires controlled correction/amendment flow with reason, actor, timestamp, and audit trail.
+
+### Weighted Scoring Detail
+
+Weighted objective scoring applies only when objective scoring mode is `WEIGHTED_OBJECTIVE_SCORE`.
+
+Formula:
+
+```text
+Objective Weighted Score = (Manager Score / 100) x Objective Weightage
+Objective Section Score = Sum of Objective Weighted Scores
+```
+
+If objective section has template weight:
+
+```text
+Objective Section Contribution = (Objective Section Score / 100) x Objective Section Template Weight
+```
+
+Validation:
+
+- manager score must be between 0 and 100
+- only scoreable objectives participate
+- each scoreable objective must have valid weightage
+- total objective weightage must not exceed configured objective scoring total
+- objective section score must not exceed 100
+- final term score must not exceed configured template scoring total
+
+### Overall Objective Score Detail
+
+Overall objective scoring applies only when objective scoring mode is `OVERALL_OBJECTIVE_SCORE`.
+
+Formula:
+
+```text
+Objective Section Contribution = (Overall Objective Score / 100) x Objective Section Template Weight
+```
+
+Rules:
+
+- overall objective score is objective section score only
+- it is not final PMS score
+- score must be between 0 and 100
+- per-objective score inputs must not be accepted in this mode
+
+### No-Objective Scoring Policy Detail
+
+Supported policies:
+
+| Policy | Behavior |
+|---|---|
+| `NO_OBJECTIVES_NOT_APPLICABLE` | Objective scoring is skipped for that employee and term |
+| `REALLOCATE_OBJECTIVE_WEIGHT` | Objective section weight is reallocated according to configured template policy |
+| `BLOCK_REVIEW_SUBMISSION` | Review submission is blocked until scoreable objectives are available or scoring config is corrected |
+| `ALLOW_MANUAL_OVERALL_SCORE` | Manager may enter one overall objective score if template policy allows it |
+
+Default:
+
+```text
+NO_OBJECTIVES_NOT_APPLICABLE
+```
+
+### Review Timing and Term Aggregation Detail
+
+Objective assignment term and manager review timing are separate.
+
+Objectives stay linked to assigned terms:
+
+- Q1, Q2, Q3, Q4
+- H1, H2
+- Y1
+
+Review instance decides included terms:
+
+- `TERM_WISE`
+- `GROUPED_TERMS`
+- `ANNUAL`
+- `CUSTOM_GROUPED`
+
+Term aggregation policies:
+
+| Policy | Behavior |
+|---|---|
+| `EQUAL_TERM_AVERAGE` | Average included term objective scores equally |
+| `TERM_WEIGHTED_AVERAGE` | Apply configured term weights |
+| `MANUAL_GROUP_OVERALL_SCORE` | Manager enters one group score where template permits |
+
+Default:
+
+```text
+EQUAL_TERM_AVERAGE
+```
+
+Rules:
+
+- term weights must total 100% for `TERM_WEIGHTED_AVERAGE`
+- included term with no scoreable objectives uses no-objective scoring policy before aggregation
+- non-scoreable objectives remain visible as context
+- finalized historical scores must not recalculate when timing/grouping policy changes later
+
+### Evidence and Attachment Detail
+
+Evidence/attachments are part of objective achievement context.
+
+Rules:
+
+- Keep existing evidence/attachment behavior working.
+- Do not create a separate attachment system unless existing storage cannot support the requirement.
+- Enforce actor, workflow, term, assignment window, and template policy before upload/delete.
+- Audit upload, delete, and download actions.
+- Show attachment indicators in UI for objective rows.
+- Do not let attachment changes alter finalized score snapshots.
+
+### Dashboard and Reporting Detail
+
+Dashboard/reporting must use locked snapshots and calculated score snapshots.
+
+Expose:
+
+- objective source
+- objective master id
+- objective version id
+- objective title from Employee Term Objective snapshot
+- assessment term
+- target value
+- actual value
+- target direction
+- actual aggregation mode
+- scoreable flag
+- objective weightage
+- manager score
+- calculated weighted score
+- objective approval status
+- finalized status
+- blocked status and reason where validation prevents submission/finalization
+
+Dashboard status must be server-calculated, not derived only from UI labels.
+
+## Team Split for Parallel Work
+
+Task 2 should start after Task 1 model and API contracts for Employee Term Objective snapshots are stable. Suresh and Vinith can still work in parallel if backend contracts are defined first and UI uses mocked/static data until live APIs are ready.
+
+### Suresh Ownership
+
+Suresh owns backend scoring, validation, runtime permission enforcement, and calculated snapshots.
+
+Primary responsibilities:
+
+- Confirm Task 1 dependency contracts:
+  - Employee Term Objective snapshot shape
+  - objectiveMasterId/objectiveVersionId references
+  - assignment term references
+  - scoreable flag and approved weightage source
+  - target value and target direction source
+- Implement objective fillability backend:
+  - role-based field edit rules
+  - workflow-state checks
+  - assessment-term checks
+  - assignment-window checks from Task 4 where applicable
+- Implement actual column backend rules:
+  - Quarterly: Q1-Q4 only
+  - Half-yearly: H1-H2 only
+  - Yearly: Y1 only
+  - reject actual values for non-applicable term types
+- Implement target direction validation:
+  - `HIGHER_IS_BETTER`
+  - `LOWER_IS_BETTER`
+  - `NOT_APPLICABLE`
+  - numeric format and mandatory actual validation
+- Implement actual aggregation modes:
+  - `LATEST_VALUE`
+  - `SUM_OF_TERMS`
+  - `AVERAGE_OF_TERMS`
+  - `MAX_OF_TERMS`
+  - `MIN_OF_TERMS`
+- Implement scoring mode backend:
+  - `CONTEXT_ONLY`
+  - `WEIGHTED_OBJECTIVE_SCORE`
+  - `OVERALL_OBJECTIVE_SCORE`
+- Implement weighted objective formula and validation.
+- Implement overall objective score contribution.
+- Implement no-objective scoring policies.
+- Implement review timing and term aggregation backend:
+  - term-wise
+  - grouped terms
+  - annual
+  - custom grouped
+- Store calculated review score snapshots.
+- Ensure finalized scores do not recalculate from later template/config changes.
+- Add backend tests for:
+  - fill permission rejection
+  - actual column term-type validation
+  - target direction validation
+  - actual aggregation
+  - weighted scoring
+  - overall scoring
+  - term aggregation
+  - context-only behavior
+  - finalized score immutability
+
+### Vinith Ownership
+
+Vinith owns Task 2 frontend runtime screens, scoring configuration UI, and user-friendly validation display based on Suresh's API contracts.
+
+Primary responsibilities:
+
+- Build objective fill/achievement UI components:
+  - objective grouped by term
+  - target value display
+  - target direction display
+  - actual value inputs
+  - achievement summary
+  - evidence/attachment controls
+  - employee comments
+  - manager comments
+- Build actual-column UI behavior:
+  - show Q fields only for quarterly cycles
+  - show H fields only for half-yearly cycles
+  - show Y field only for yearly cycles
+  - hide non-applicable terms instead of showing confusing disabled fields
+- Build target direction UI:
+  - "Higher value is better"
+  - "Lower value is better"
+  - "No numeric target"
+  - target met / target not met guidance
+- Build scoring configuration UI in template builder:
+  - context-only mode
+  - weighted objective score mode
+  - overall objective score mode
+  - no-objective scoring policy
+  - actual aggregation mode
+  - term aggregation policy
+- Build manager scoring UI:
+  - per-objective score input for weighted mode
+  - one overall objective score input for overall mode
+  - no score input for context-only mode
+  - running score/contribution preview
+- Build validation summary components:
+  - missing mandatory actuals
+  - invalid numeric values
+  - score above 100
+  - invalid weightage total
+  - missing target/actual/direction for auto-calculation
+- Keep UI components split around `1000-1500+` lines maximum.
+- Use child components and props/events for:
+  - ObjectiveTermGroup
+  - ObjectiveActualsGrid
+  - ObjectiveTargetGuidance
+  - ObjectiveEvidencePanel
+  - ObjectiveScoreInput
+  - ObjectiveScoringSummary
+  - ObjectiveScoringConfigPanel
+  - ObjectiveValidationSummary
+- Execute Task 2 frontend acceptance and manual checklist items.
+
+### Phase Split By Workstream
+
+| Task 2 Phase | Suresh | Vinith | Dependency |
+|---|---|---|---|
+| Phase 1: Fillability Policy | Own backend authorization and validation | Build editable/read-only UI states | Task 1 snapshot and permission contract |
+| Phase 2: Actual Columns | Own server term-type validation | Build cycle-type based actual field rendering | Cycle term type from assignment/cycle API |
+| Phase 3: Target Direction | Own validation and interpretation rules | Build guidance labels and inline validation | Target fields from snapshot/API |
+| Phase 4: Actual Aggregation | Own aggregation service/calculation | Build config selector and preview text | Scoring config contract |
+| Phase 5: Scoring Modes | Own backend mode enforcement | Build scoring mode config UI | Template version scoring contract |
+| Phase 6: Weighted Scoring | Own formula and validation | Build per-objective score UI | Scoreable/weightage fields |
+| Phase 7: Overall Scoring | Own contribution calculation | Build single overall score UI | Objective section weight contract |
+| Phase 8: Review Timing | Own term aggregation backend | Build grouped/annual term display | Review timing policy contract |
+| Phase 9: Audit/Reporting/Dashboard | Own audit, reporting, dashboard data | Display status/summary where needed | Backend status contract |
+| Phase 10: QA | Own backend tests | Own UI/manual checks | Integrated environment |
+
+### Parallel Work Order
+
+| Step | Owner | Output |
+|---|---|---|
+| 1 | Suresh | Confirm Task 1 snapshot fields and Task 2 API contracts |
+| 2 | Vinith | Start UI components with mocked/static API data |
+| 3 | Suresh | Implement fillability, actuals, target direction, and scoring services |
+| 4 | Vinith | Build scoring configuration and runtime review UI states |
+| 5 | Suresh | Implement calculated score snapshot, audit, reporting, dashboard outputs |
+| 6 | Vinith | Connect UI to real APIs and replace mocked data |
+| 7 | Suresh | Review integration for permission, scoring, aggregation, and finalization edge cases |
+| 8 | Suresh and Vinith | Run Task 2 manual checklist and regression checks |
+
+### Contract Handoff Checklist
+
+Suresh should provide these before Vinith connects to live APIs:
+
+| Contract Item | Status |
+|---|---|
+| Employee Term Objective runtime response | [ ] |
+| Objective fill permission response | [ ] |
+| Actual column metadata by cycle term type | [ ] |
+| Target direction and target guidance fields | [ ] |
+| Actual value save payload and validation error format | [ ] |
+| Evidence/attachment payload and response format | [ ] |
+| Scoring mode configuration payload | [ ] |
+| Weighted score input payload and calculated response | [ ] |
+| Overall score input payload and calculated response | [ ] |
+| Actual aggregation mode config and preview response | [ ] |
+| Term aggregation policy config and calculated response | [ ] |
+| No-objective scoring policy response | [ ] |
+| Runtime validation summary response | [ ] |
+| Calculated review score snapshot response | [ ] |
+| Dashboard/status response fields | [ ] |
+| Friendly backend error codes/messages | [ ] |
+
+### Integration Rules
+
+- Task 2 must not create its own objective identity model; it must consume Task 1 Employee Term Objective snapshots.
+- Vinith should not assume missing scoring or validation fields; mark the field as pending and confirm with Suresh.
+- Suresh should keep response fields stable once Vinith starts live API integration.
+- Backend remains the source of truth for edit permissions and scoring validation.
+- UI must not show score inputs when backend returns `CONTEXT_ONLY`.
+- UI must not allow per-objective and overall score entry at the same time.
+- Existing achievement and manager review screens must remain compatible when new scoring modes are not enabled.
+- Finalized score snapshots must be displayed from stored calculation results, not recalculated in UI.
