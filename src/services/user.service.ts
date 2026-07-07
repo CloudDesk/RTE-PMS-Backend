@@ -69,7 +69,9 @@ interface IUserCreate {
   active?: boolean;
   joiningDate: Date; // Required
   confirmationDate?: Date; // Optional - defaults to joiningDate if not provided
-  probationDate?: Date; // Optional - defaults to joiningDate if not provided
+  probationStartDate?: Date; // Optional - defaults to joiningDate if not provided
+  probationEndDate?: Date; // Optional - defaults to one year from probationStartDate
+  probationDate?: Date; // Legacy probation end date alias
   location?: string;
   phone?: string;
   emergencyContact?: {
@@ -135,6 +137,8 @@ interface IUserUpdate {
   active?: boolean;
   joiningDate?: Date;
   confirmationDate?: Date;
+  probationStartDate?: Date;
+  probationEndDate?: Date;
   probationDate?: Date;
   location?: string;
   phone?: string;
@@ -535,7 +539,7 @@ export class UserService extends BaseService {
     sortObj[sort] = sortOrder === 'desc' ? -1 : 1;
 
     // Build select string
-    const selectFields = select || 'name email role specificRole departmentId active joiningDate managerId managerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId holidayCalendarHistory weekendId createdAt updatedAt country currency licenseType portalAccess visaDetails isConsultancy isIntern';
+    const selectFields = select || 'name email role specificRole departmentId active joiningDate probationStartDate probationEndDate probationDate managerId managerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId holidayCalendarHistory weekendId createdAt updatedAt country currency licenseType portalAccess visaDetails isConsultancy isIntern';
 
     console.log('Unified getUsers query:', { filter, page, limit, sort: sortObj, select: selectFields });
 
@@ -991,7 +995,7 @@ export class UserService extends BaseService {
     // Execute queries
     const [users, total] = await Promise.all([
       User.find(filter)
-        .select('name email role specificRole departmentId active joiningDate managerId managerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId weekendId createdAt updatedAt nationality employmentStatus country currency licenseType portalAccess')
+        .select('name email role specificRole departmentId active joiningDate probationStartDate probationEndDate probationDate managerId managerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId weekendId createdAt updatedAt nationality employmentStatus country currency licenseType portalAccess')
         .sort(sortObj)
         .skip(skip)
         .limit(limit)
@@ -1129,11 +1133,34 @@ export class UserService extends BaseService {
     // Store plain password before hashing (for email notification if it's default password)
     const plainPassword = data.password === '123456' ? data.password : undefined;
 
-    // Set default confirmationDate and probationDate if not provided (optional fields)
+    const addOneYear = (value?: Date) => {
+      const date = value ? new Date(value) : undefined;
+      if (!date || Number.isNaN(date.getTime())) return value;
+      date.setFullYear(date.getFullYear() + 1);
+      return date;
+    };
+
+    const isProbationStatus =
+      String((data as any).employmentStatus || '').trim().toLowerCase() === 'probation';
+    const probationStartDate = isProbationStatus
+      ? (data as any).probationStartDate || data.joiningDate || undefined
+      : undefined;
+    const probationEndDate =
+      isProbationStatus
+        ? (data as any).probationEndDate ||
+          (data as any).probationDate ||
+          addOneYear(probationStartDate) ||
+          data.joiningDate ||
+          undefined
+        : undefined;
+
+    // Set default confirmationDate and probation dates if not provided (optional fields)
     const userDataWithDefaults = {
       ...data,
       confirmationDate: (data as any).confirmationDate || data.joiningDate || undefined,
-      probationDate: (data as any).probationDate || data.joiningDate || undefined,
+      probationStartDate,
+      probationEndDate,
+      probationDate: probationEndDate,
     };
 
     const user = new User(userDataWithDefaults);
@@ -1294,6 +1321,22 @@ export class UserService extends BaseService {
     console.log('🔄 [User Update] data.active:', data.active);
     console.log('🔄 [User Update] Before Object.assign - user.emergencyContact:', user.emergencyContact, '(type:', typeof user.emergencyContact, ')');
     console.log('🔄 [User Update] Before Object.assign - data.emergencyContact:', data.emergencyContact, '(type:', typeof data.emergencyContact, ')');
+
+    const nextEmploymentStatus =
+      data.employmentStatus !== undefined ? data.employmentStatus : user.employmentStatus;
+    const updatingToNonProbation =
+      data.employmentStatus !== undefined &&
+      String(nextEmploymentStatus || '').trim().toLowerCase() !== 'probation';
+
+    if (updatingToNonProbation) {
+      (data as any).probationStartDate = null;
+      (data as any).probationEndDate = null;
+      (data as any).probationDate = null;
+    } else if ((data as any).probationEndDate !== undefined && (data as any).probationDate === undefined) {
+      (data as any).probationDate = (data as any).probationEndDate;
+    } else if ((data as any).probationDate !== undefined && (data as any).probationEndDate === undefined) {
+      (data as any).probationEndDate = (data as any).probationDate;
+    }
 
     Object.assign(user, data);
 

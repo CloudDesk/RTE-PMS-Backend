@@ -240,6 +240,8 @@ const userResponseSchema = {
     isIntern: { type: 'boolean' },
     // Employee detail fields (63-70)
     confirmationDate: { type: 'string', format: 'date-time' },
+    probationStartDate: { type: 'string', format: 'date-time' },
+    probationEndDate: { type: 'string', format: 'date-time' },
     probationDate: { type: 'string', format: 'date-time' },
     separationDate: { type: 'string', format: 'date-time' },
     fatherName: { type: 'string' },
@@ -690,7 +692,7 @@ export const userRoutes: RouteHandler = async (
         description: 'Create a new user with specified details',
         body: {
           type: 'object',
-          required: ['name', 'email', 'password', 'role', 'departmentId', 'costCenter', 'currency', 'employmentStatus', 'probationDate', 'noticePeriod'],
+          required: ['name', 'email', 'password', 'role', 'departmentId', 'costCenter', 'currency', 'employmentStatus', 'noticePeriod'],
           properties: {
             name: {
               type: 'string',
@@ -887,10 +889,20 @@ export const userRoutes: RouteHandler = async (
               format: 'date-time',
               description: 'Employee confirmation date'
             },
+            probationStartDate: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Probation start date'
+            },
+            probationEndDate: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Probation end date'
+            },
             probationDate: {
               type: 'string',
               maxLength: 100,
-              description: 'Probation date (e.g. 2025-01-01 or date-time string)'
+              description: 'Legacy probation end date alias (e.g. 2025-01-01 or date-time string)'
             },
             separationDate: {
               type: 'string',
@@ -1128,10 +1140,20 @@ export const userRoutes: RouteHandler = async (
               format: 'date-time',
               description: 'Employee confirmation date'
             },
+            probationStartDate: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Probation start date'
+            },
+            probationEndDate: {
+              type: 'string',
+              format: 'date-time',
+              description: 'Probation end date'
+            },
             probationDate: {
               type: 'string',
               maxLength: 100,
-              description: 'Probation date (as string)'
+              description: 'Legacy probation end date alias'
             },
             separationDate: {
               type: 'string',

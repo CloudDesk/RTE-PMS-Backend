@@ -100,7 +100,9 @@ export interface IUser extends Document {
   resetTokenExpiry?: Date;
   joiningDate: Date;
   confirmationDate?: Date; // Optional - defaults to joiningDate if not provided
-  probationDate: string; // Mandatory - changed to string
+  probationStartDate?: Date; // Optional - defaults to joiningDate if not provided
+  probationEndDate?: Date; // Clear probation end date field
+  probationDate?: string; // Legacy probation end date alias
   location: string;
   phone?: string;
   emergencyContact?: IEmergencyContact;
@@ -315,9 +317,17 @@ const userSchema = new Schema<IUser>(
       type: Date,
       required: false, // Optional - defaults to joiningDate if not provided
     },
+    probationStartDate: {
+      type: Date,
+      required: false, // Optional - defaults to joiningDate if not provided
+    },
+    probationEndDate: {
+      type: Date,
+      required: false,
+    },
     probationDate: {
       type: String,
-      required: true,
+      required: false,
       trim: true,
       maxlength: 100,
     },
