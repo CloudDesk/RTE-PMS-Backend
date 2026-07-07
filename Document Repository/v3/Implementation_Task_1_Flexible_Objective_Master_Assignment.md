@@ -59,6 +59,156 @@ This task must keep the existing PMS objective behavior working by default. New 
 - Task 3 is mostly independent, but shares audit, permission, template locking, and dashboard/reporting patterns with this task.
 - Do Task 1 first before building Task 2 scoring or Task 4 mid-cycle objective application.
 
+## Objective Field Scope and Existing Compatibility
+
+### Existing Objective Fields To Preserve
+
+The current implementation already has an objective table/model. Do not remove, rename, or repurpose existing fields without a separate migration and regression approval.
+
+Existing objective fields that must continue to work:
+
+- assignment references:
+  - `termAssignmentId`
+  - `annualAssignmentId`
+  - `cycleId`
+  - `templateVersionId`
+  - `assessmentTermCode`
+- actor references:
+  - `employeeId`
+  - `assignedManagerId`
+  - `createdByRole`
+  - `createdByUserId`
+  - `createdBy`
+  - `updatedBy`
+  - `actingDelegateUserId`
+  - `originalOwnerUserId`
+- objective identity/display:
+  - `objectiveNo`
+  - `source`
+  - `templateObjectiveKey`
+  - `isPredefined`
+  - `title`
+  - `description`
+  - `priority`
+  - `expectedOutcome`
+  - `targetMetric`
+  - `targetValue`
+  - `targetDate`
+  - `weightage`
+  - `successCriteria`
+- workflow/status:
+  - `status`
+  - `submittedAt`
+  - `approvedAt`
+  - `approvedBy`
+  - `returnedReason`
+  - `returnedAt`
+- attachments and lifecycle:
+  - `attachments`
+  - `isDeleted`
+  - `version`
+  - `createdAt`
+  - `updatedAt`
+
+Existing objective value storage must also continue to work:
+
+- `objectiveId`
+- `termAssignmentId`
+- `annualAssignmentId`
+- `cycleId`
+- `employeeId`
+- `templateFieldId`
+- `fieldKey`
+- `sectionKey`
+- `roleCode`
+- `actorUserId`
+- `workflowStage`
+- `valueJson`
+- `valueText`
+- `valueNumber`
+- `valueDate`
+- `valueStatus`
+- `submittedAt`
+- `isDeleted`
+- `version`
+
+### New Objective Fields Required By The Reference Design
+
+The new flexible objective model should add fields through new models or additive fields, not by breaking the existing objective table behavior.
+
+Required new Objective Master / Objective Version fields:
+
+- `objectiveMasterId`
+- `objectiveVersionId`
+- objective source type:
+  - Company Objective
+  - Department Objective
+  - Template-referenced Objective
+  - Manager-created Objective
+  - Employee-created Objective
+- owner metadata:
+  - owner user
+  - owner role
+  - owner department/scope
+  - assigner metadata where applicable
+- version status:
+  - `DRAFT`
+  - `ACTIVE`
+  - `INACTIVE`
+  - `ARCHIVED`
+- business fields:
+  - objective title
+  - objective description
+  - KPI / measurement guidance
+  - target value
+  - target description
+  - target direction
+  - priority
+  - attachment policy
+  - scoreable flag where applicable
+  - default scoring eligibility reference where applicable
+  - approved weightage where applicable
+  - applicable term labels
+
+Required Employee Term Objective snapshot fields:
+
+- `objectiveMasterId`
+- `objectiveVersionId`
+- `assignmentRuleRefs`
+- `annualAssignmentId`
+- `cycleId`
+- `employeeId`
+- `assessmentTerm`
+- `sourceType`
+- `parentObjectiveId` where applicable
+- frozen objective snapshot:
+  - title
+  - description
+  - source
+  - KPI / measurement guidance
+  - target value
+  - target description
+  - target direction
+  - priority
+  - attachment policy
+  - scoreable flag where applicable
+  - approved weightage where applicable
+  - applicable term
+  - owner / assigner metadata
+
+### Field Handling Rules
+
+- Do not touch old objective behavior unless needed for additive compatibility.
+- Do not remove existing objective fields.
+- Do not rename existing objective fields.
+- Do not change old field meaning, especially `source`, `templateObjectiveKey`, `isPredefined`, `targetValue`, `weightage`, and `status`.
+- Add new master/version/snapshot structures for the new flexible model.
+- Existing template-owned objectives should continue using the old path unless flexible Objective Master is enabled.
+- Existing employee-created and manager-created objectives should continue to work by default.
+- If old objectives need to participate in the new model later, create a separate migration plan. Bulk migration is out of scope for this task.
+- Assigned objective snapshots must be frozen. Later Objective Master edits must not update old assigned Employee Term Objectives.
+- Scoring-related values such as scoreable flag, weightage, target value, target direction, and scoring mode must not be silently changed after assignment.
+
 ## Global Implementation Rules
 
 - Follow existing PMS service, model, route, and API response patterns.
