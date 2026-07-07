@@ -16,6 +16,7 @@ export interface IObjectiveOwnerMetadata {
 }
 
 export interface IObjectiveMaster extends Document, IObjectiveOwnerMetadata {
+  code?: string;
   sourceType: FlexibleObjectiveSourceTypeType;
   status: ObjectiveMasterStatusType;
   currentVersionId?: Types.ObjectId;
@@ -39,6 +40,7 @@ export const objectiveOwnerMetadataSchema = new Schema<IObjectiveOwnerMetadata>(
 
 const objectiveMasterSchema = new Schema<IObjectiveMaster>(
   {
+    code: { type: String, trim: true, index: true },
     sourceType: {
       type: String,
       required: true,
@@ -78,6 +80,7 @@ const objectiveMasterSchema = new Schema<IObjectiveMaster>(
 );
 
 objectiveMasterSchema.index({ sourceType: 1, status: 1, isDeleted: 1 });
+objectiveMasterSchema.index({ code: 1, status: 1, isDeleted: 1 });
 objectiveMasterSchema.index({ ownerDepartment: 1, status: 1, isDeleted: 1 });
 objectiveMasterSchema.index({ ownerUserId: 1, status: 1, isDeleted: 1 });
 

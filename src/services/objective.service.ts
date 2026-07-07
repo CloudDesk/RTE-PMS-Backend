@@ -313,6 +313,7 @@ export interface ObjectiveMasterVersionDetailsInput
 }
 
 export interface CreateObjectiveMasterInput extends ObjectiveMasterVersionDetailsInput {
+  code?: string;
   sourceType: FlexibleObjectiveSourceTypeType;
 }
 
@@ -320,6 +321,7 @@ export type UpdateObjectiveMasterVersionInput = Partial<ObjectiveMasterVersionDe
 
 export interface ObjectiveMasterRecord {
   id: string;
+  code?: string;
   sourceType: string;
   status: ObjectiveMasterStatusType;
   currentVersionId?: string;
@@ -328,7 +330,9 @@ export interface ObjectiveMasterRecord {
   ownerDepartment?: string;
   ownerScope?: Record<string, unknown>;
   createdBy: string;
+  createdByName?: string;
   updatedBy?: string;
+  updatedByName?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -364,12 +368,17 @@ export interface ObjectiveMasterVersionRecord {
   reviewerScope?: Record<string, unknown>;
   activatedAt?: string;
   activatedBy?: string;
+  activatedByName?: string;
   deactivatedAt?: string;
   deactivatedBy?: string;
+  deactivatedByName?: string;
   archivedAt?: string;
   archivedBy?: string;
+  archivedByName?: string;
   createdBy: string;
+  createdByName?: string;
   updatedBy?: string;
+  updatedByName?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -755,6 +764,7 @@ export class ObjectiveService extends BaseService {
       }
 
       filter.$or = [
+        { code: { $regex: search, $options: 'i' } },
         { ownerRole: { $regex: search, $options: 'i' } },
         { ownerDepartment: { $regex: search, $options: 'i' } },
         ...(searchableMasterIds.size
@@ -781,6 +791,10 @@ export class ObjectiveService extends BaseService {
           .sort({ versionNo: -1 })
           .lean()
       : [];
+    const auditUserNames = await this.buildUserNameMapForObjectiveAudit([
+      ...candidateMasters,
+      ...versions,
+    ]);
 
     const versionsByMaster = new Map<string, typeof versions>();
     for (const version of versions) {
@@ -797,7 +811,7 @@ export class ObjectiveService extends BaseService {
       if (!(await this.canViewObjectiveVersionHistory(master.sourceType, master, masterVersions))) {
         continue;
       }
-      items.push(await this.toObjectiveMasterSummaryRecord(master, masterVersions));
+      items.push(await this.toObjectiveMasterSummaryRecord(master, masterVersions, auditUserNames));
     }
 
     return {
@@ -823,7 +837,11 @@ export class ObjectiveService extends BaseService {
 
     const versions = await this.listObjectiveMasterVersions(objectiveMasterId);
     return {
-      ...(await this.toObjectiveMasterSummaryRecord(master, versions)),
+      ...(await this.toObjectiveMasterSummaryRecord(
+        master,
+        versions,
+        await this.buildUserNameMapForObjectiveAudit([master, ...versions]),
+      )),
       versions,
     };
   }
@@ -839,6 +857,7 @@ export class ObjectiveService extends BaseService {
     await this.assertObjectiveOwnerPermission(sourceType, owner);
 
     const master = await ObjectiveMaster.create({
+      code: input.code?.trim() || undefined,
       sourceType,
       status: ObjectiveMasterStatus.ACTIVE,
       ...owner,
@@ -1237,7 +1256,7 @@ export class ObjectiveService extends BaseService {
     }
     const versionIds = versions.map((version) => version._id);
 
-    const [assignedObjectives, assignmentRules] = await Promise.all([
+    const [assignedObjectives, assignmentRules, auditUserNames] = await Promise.all([
       Objective.find({
         objectiveVersionId: { $in: versionIds },
         isDeleted: false,
@@ -1250,6 +1269,7 @@ export class ObjectiveService extends BaseService {
       })
         .select('_id objectiveVersionId')
         .lean(),
+      this.buildUserNameMapForObjectiveAudit([master, ...versions]),
     ]);
 
     const usageByVersion = new Map<string, ObjectiveVersionUsageRecord[]>();
@@ -1277,7 +1297,7 @@ export class ObjectiveService extends BaseService {
     }
 
     return versions.map((version) => {
-      const record = this.mapObjectiveMasterVersionRecord(version);
+      const record = this.mapObjectiveMasterVersionRecord(version, auditUserNames);
       const versionId = version._id.toString();
       const usage = usageByVersion.get(versionId) ?? [];
       return {
@@ -5311,9 +5331,75 @@ export class ObjectiveService extends BaseService {
     return Array.from(new Set(terms.filter((term) => validTerms.includes(term))));
   }
 
-  private mapObjectiveMasterRecord(master: any): ObjectiveMasterRecord {
+  private userIdString(value: any): string {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (value._id) return value._id?.toString?.() ?? String(value._id);
+    return value.toString?.() ?? '';
+  }
+
+  private userDisplayName(value: any): string {
+    if (!value || typeof value === 'string') return '';
+    return String(value.name || value.employeeCode || value.email || '').trim();
+  }
+
+  private resolveUserDisplayName(value: any, userNamesById: Map<string, string>): string | undefined {
+    const populatedName = this.userDisplayName(value);
+    if (populatedName) return populatedName;
+
+    const id = this.userIdString(value);
+    if (!id) return undefined;
+
+    const contextUser = this.context.user;
+    if (contextUser?._id?.toString?.() === id && contextUser.name) {
+      return contextUser.name;
+    }
+
+    return userNamesById.get(id);
+  }
+
+  private collectUserId(value: any, userIds: Set<string>) {
+    const id = this.userIdString(value);
+    if (id && Types.ObjectId.isValid(id)) {
+      userIds.add(id);
+    }
+  }
+
+  private async buildUserNameMapForObjectiveAudit(records: any[]): Promise<Map<string, string>> {
+    const userIds = new Set<string>();
+    for (const record of records) {
+      this.collectUserId(record?.createdBy, userIds);
+      this.collectUserId(record?.updatedBy, userIds);
+      this.collectUserId(record?.activatedBy, userIds);
+      this.collectUserId(record?.deactivatedBy, userIds);
+      this.collectUserId(record?.archivedBy, userIds);
+    }
+
+    if (!userIds.size) {
+      return new Map();
+    }
+
+    const users = await User.find({
+      _id: { $in: Array.from(userIds).map((id) => new Types.ObjectId(id)) },
+    })
+      .select('name employeeCode email')
+      .lean();
+
+    return new Map(
+      users.map((user: any) => [
+        user._id.toString(),
+        String(user.name || user.employeeCode || user.email || '').trim(),
+      ]),
+    );
+  }
+
+  private mapObjectiveMasterRecord(
+    master: any,
+    userNamesById: Map<string, string> = new Map(),
+  ): ObjectiveMasterRecord {
     return {
-      id: master._id?.toString?.() ?? '',
+      id: master._id?.toString?.() ?? master.id ?? '',
+      code: master.code,
       sourceType: master.sourceType,
       status: master.status,
       currentVersionId: master.currentVersionId?.toString?.(),
@@ -5321,17 +5407,22 @@ export class ObjectiveService extends BaseService {
       ownerRole: master.ownerRole,
       ownerDepartment: master.ownerDepartment,
       ownerScope: master.ownerScope ?? {},
-      createdBy: master.createdBy?.toString?.() ?? '',
-      updatedBy: master.updatedBy?.toString?.(),
-      createdAt: master.createdAt?.toISOString?.(),
-      updatedAt: master.updatedAt?.toISOString?.(),
+      createdBy: this.userIdString(master.createdBy),
+      createdByName: master.createdByName || this.resolveUserDisplayName(master.createdBy, userNamesById),
+      updatedBy: this.userIdString(master.updatedBy) || undefined,
+      updatedByName: master.updatedByName || this.resolveUserDisplayName(master.updatedBy, userNamesById),
+      createdAt: typeof master.createdAt === 'string' ? master.createdAt : master.createdAt?.toISOString?.(),
+      updatedAt: typeof master.updatedAt === 'string' ? master.updatedAt : master.updatedAt?.toISOString?.(),
     };
   }
 
-  private mapObjectiveMasterVersionRecord(version: any): ObjectiveMasterVersionRecord {
+  private mapObjectiveMasterVersionRecord(
+    version: any,
+    userNamesById: Map<string, string> = new Map(),
+  ): ObjectiveMasterVersionRecord {
     return {
-      id: version._id?.toString?.() ?? '',
-      objectiveMasterId: version.objectiveMasterId?.toString?.() ?? '',
+      id: version._id?.toString?.() ?? version.id ?? '',
+      objectiveMasterId: this.userIdString(version.objectiveMasterId),
       versionNo: version.versionNo,
       status: version.status,
       title: version.title,
@@ -5358,30 +5449,38 @@ export class ObjectiveService extends BaseService {
       reviewerRole: version.reviewerRole,
       reviewerDepartment: version.reviewerDepartment,
       reviewerScope: version.reviewerScope ?? {},
-      activatedAt: version.activatedAt?.toISOString?.(),
-      activatedBy: version.activatedBy?.toString?.(),
-      deactivatedAt: version.deactivatedAt?.toISOString?.(),
-      deactivatedBy: version.deactivatedBy?.toString?.(),
-      archivedAt: version.archivedAt?.toISOString?.(),
-      archivedBy: version.archivedBy?.toString?.(),
-      createdBy: version.createdBy?.toString?.() ?? '',
-      updatedBy: version.updatedBy?.toString?.(),
-      createdAt: version.createdAt?.toISOString?.(),
-      updatedAt: version.updatedAt?.toISOString?.(),
+      activatedAt: typeof version.activatedAt === 'string' ? version.activatedAt : version.activatedAt?.toISOString?.(),
+      activatedBy: this.userIdString(version.activatedBy) || undefined,
+      activatedByName: version.activatedByName || this.resolveUserDisplayName(version.activatedBy, userNamesById),
+      deactivatedAt: typeof version.deactivatedAt === 'string' ? version.deactivatedAt : version.deactivatedAt?.toISOString?.(),
+      deactivatedBy: this.userIdString(version.deactivatedBy) || undefined,
+      deactivatedByName: version.deactivatedByName || this.resolveUserDisplayName(version.deactivatedBy, userNamesById),
+      archivedAt: typeof version.archivedAt === 'string' ? version.archivedAt : version.archivedAt?.toISOString?.(),
+      archivedBy: this.userIdString(version.archivedBy) || undefined,
+      archivedByName: version.archivedByName || this.resolveUserDisplayName(version.archivedBy, userNamesById),
+      createdBy: this.userIdString(version.createdBy),
+      createdByName: version.createdByName || this.resolveUserDisplayName(version.createdBy, userNamesById),
+      updatedBy: this.userIdString(version.updatedBy) || undefined,
+      updatedByName: version.updatedByName || this.resolveUserDisplayName(version.updatedBy, userNamesById),
+      createdAt: typeof version.createdAt === 'string' ? version.createdAt : version.createdAt?.toISOString?.(),
+      updatedAt: typeof version.updatedAt === 'string' ? version.updatedAt : version.updatedAt?.toISOString?.(),
     };
   }
 
   private async toObjectiveMasterSummaryRecord(
     master: any,
     versions: any[],
+    userNamesById: Map<string, string> = new Map(),
   ): Promise<ObjectiveMasterSummaryRecord> {
-    const mappedVersions = versions.map((version) => this.mapObjectiveMasterVersionRecord(version));
+    const mappedVersions = versions.map((version) =>
+      this.mapObjectiveMasterVersionRecord(version, userNamesById),
+    );
     const currentVersionId = master.currentVersionId?.toString?.();
     const currentVersion = mappedVersions.find((version) => version.id === currentVersionId);
     const latestVersion = mappedVersions[0];
 
     return {
-      master: this.mapObjectiveMasterRecord(master),
+      master: this.mapObjectiveMasterRecord(master, userNamesById),
       currentVersion,
       latestVersion,
       versionCount: mappedVersions.length,
