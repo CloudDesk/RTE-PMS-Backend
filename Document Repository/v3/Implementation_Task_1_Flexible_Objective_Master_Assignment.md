@@ -381,3 +381,127 @@ This task must keep the existing PMS objective behavior working by default. New 
 - Existing template-defined objectives still render.
 - Existing employee and manager objective screens still work.
 - Existing finalized records remain unchanged.
+
+## Team Split for Parallel Work
+
+This split allows Suresh and Vinith to work in parallel while keeping the core objective foundation consistent.
+
+### Suresh Ownership
+
+Suresh owns the backend foundation, contracts, and integration rules.
+
+Primary responsibilities:
+
+- Define Objective Master, Objective Master Version, Objective Assignment Rule, and Employee Term Objective snapshot model changes.
+- Define enums, DTOs, API contracts, validation rules, and response shapes before UI integration starts.
+- Implement objective versioning:
+  - draft version
+  - active version
+  - inactive version
+  - archived version
+  - edit creates new version
+- Implement activation rules:
+  - only active versions are assignable
+  - activation is approval
+  - older assigned snapshots remain unchanged
+- Implement owner, assigner, reviewer, and Department Head permission enforcement.
+- Implement assignment preview backend:
+  - impacted employees
+  - impacted terms
+  - duplicate status
+  - similar-title warning
+  - blocked assignment reason
+- Implement assignment apply backend:
+  - create Employee Term Objectives
+  - prevent exact duplicates
+  - preserve all matching assignment rule references
+  - assign only selected term labels for the cycle term type
+- Implement correction/amendment backend:
+  - mark not applicable
+  - replace objective version
+  - preserve old snapshot
+  - require reason
+  - audit actor and timestamp
+- Implement backend tests for:
+  - versioning
+  - activation
+  - duplicate handling
+  - permission checks
+  - immutable snapshots
+  - existing PMS compatibility
+
+### Vinith Ownership
+
+Vinith owns Task 1 frontend screens, user-friendly workflow, and UI validation based on Suresh's API contracts.
+
+Primary responsibilities:
+
+- Build Objective Master list UI.
+- Build Objective Master create/edit draft UI.
+- Build Objective detail and version history UI.
+- Build activation/deactivation UI using permissions from API response.
+- Build Objective Assignment Rule wizard:
+  - choose objective
+  - choose cycle and terms
+  - choose organization/employee scope
+  - preview impacted employees
+  - confirm assignment
+- Build Assignment Preview table:
+  - new assignments
+  - already assigned
+  - similar-title warnings
+  - blocked rows
+  - filters and summary counts
+- Build user-friendly status and warning labels.
+- Build correction confirmation UI:
+  - before/after values
+  - reason required
+  - confirmation before apply
+- Keep UI components split around `1000-1500+` lines maximum.
+- Use child components and props/events for:
+  - ObjectiveMasterList
+  - ObjectiveMasterForm
+  - ObjectiveVersionTimeline
+  - ObjectiveAssignmentWizard
+  - ObjectiveAssignmentPreviewTable
+  - ObjectiveStatusBadge
+  - ObjectiveCorrectionDialog
+- Execute Task 1 frontend acceptance and manual checklist items.
+
+### Parallel Work Order
+
+| Step | Owner | Output |
+|---|---|---|
+| 1 | Suresh | Confirm model shape, enums, DTOs, and API response contracts |
+| 2 | Vinith | Start UI with mocked/static contract data and reusable child components |
+| 3 | Suresh | Implement backend models, services, routes, permissions, preview, and apply logic |
+| 4 | Vinith | Connect UI to real API clients and replace mocked data |
+| 5 | Suresh | Review integration for snapshot, duplicate, permission, and correction edge cases |
+| 6 | Vinith | Complete UI validation, friendly labels, and manual checklist execution |
+| 7 | Suresh and Vinith | Run regression checks and close Task 1 acceptance items |
+
+### Contract Handoff Checklist
+
+Suresh should provide these before Vinith connects to live APIs:
+
+| Contract Item | Status |
+|---|---|
+| Objective Master list response | [ ] |
+| Objective Master detail response | [ ] |
+| Objective Version history response | [ ] |
+| Create/update draft payload | [ ] |
+| Activate/deactivate payload | [ ] |
+| Assignment Rule create/update payload | [ ] |
+| Assignment Preview response with warning/block reason format | [ ] |
+| Assignment Apply response | [ ] |
+| Correction/amendment payload and response | [ ] |
+| Permission/action availability fields for UI buttons | [ ] |
+| Friendly backend error codes/messages | [ ] |
+
+### Integration Rules
+
+- Vinith should not create separate backend assumptions if an API contract is missing; mark the field as pending and confirm with Suresh.
+- Suresh should keep response fields stable once Vinith starts API integration.
+- Both should use the same friendly status label map for objective version, assignment preview, and Employee Term Objective status.
+- Backend remains the source of truth for permissions; UI hiding is only for usability.
+- Existing PMS objective screens must remain compatible until the new workflow is fully verified.
