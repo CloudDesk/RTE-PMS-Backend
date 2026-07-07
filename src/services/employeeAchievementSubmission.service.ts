@@ -1519,7 +1519,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       },
     });
 
-    if (!access.allowed || normalizePmsRole(actor.actorRole) !== PmsRole.EMPLOYEE) {
+    if (!access.allowed) {
       throw new Error('Only the employee can edit employee achievement submission');
     }
 
