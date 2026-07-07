@@ -8,6 +8,46 @@ Create a flexible objective model where objectives live outside PMS templates, c
 
 This task must keep the existing PMS objective behavior working by default. New behavior is enabled only when the flexible objective configuration is used.
 
+## Implementation Status
+
+Last updated: 2026-07-07
+
+### Overall Status
+
+- Suresh backend ownership: development complete for Phase 1 through Phase 6.
+- Vinith frontend ownership: development complete for Task 1 frontend workflow.
+- Phase 7 final acceptance: manual regression and UAT pending.
+
+### Phase Status Checklist
+
+| Phase | Scope | Status | Notes |
+|---|---|---|---|
+| Phase 1 | Data model and compatibility foundation | [x] Backend complete | Added Objective Master, Objective Master Version, Objective Assignment Rule, additive assigned-objective snapshot/amendment fields, and compatibility tests. |
+| Phase 2 | Objective versioning and activation | [x] Backend complete | Added create/version/update-draft/activate/deactivate/archive/history and active-version assignability guard. |
+| Phase 3 | Permissions | [x] Backend complete | Added owner, assigner, reviewer, explicit Department Head scope checks, and UI action-availability hints. |
+| Phase 4 | Assignment preview and application | [x] Backend complete | Added rule create/update/deactivate, preview, confirmed apply, duplicate handling, warning/block output, assignment-rule refs, frozen snapshots, and cycle-launch application hook. |
+| Phase 5 | Correction/amendment | [x] Backend complete | Added flexible objective amendment endpoint for not-applicable and replacement flows with correction layer, comments, audit, and finalized-term protection. |
+| Phase 6 | Audit/reporting/dashboard readiness | [x] Backend complete | Added objective reporting and dashboard-status endpoints. Audit actions are captured through lifecycle/apply/amendment flows. |
+| Phase 7 | QA and acceptance | [~] Development complete; manual QA pending | Focused backend tests and server/client builds pass. Full test suite has unrelated legacy failures. Manual regression and UAT are pending. |
+| Frontend UI | Version UI, assignment wizard, correction UI, reporting readiness | [x] Development complete | Vinith Phase 1 added the Objective Master workspace, route, sidebar entry, list, form, status badge, and version timeline. Phase 2 connects Objective Master list/detail/create/update draft/create draft version/activate/deactivate to live APIs with mock fallback. Phase 3 adds the assignment wizard, preview table, and live create rule/preview/apply integration. Phase 4 adds the correction dialog for mark-not-applicable and replacement amendments on flexible assigned objectives. Phase 5 adds reporting/dashboard readiness UI using objective reporting and dashboard-status APIs. Final acceptance remains pending manual QA/UAT. |
+
+### Verification Run
+
+- `npm run build` passed in `Server`.
+- Focused tests passed:
+  - `test/models/flexibleObjectiveModels.test.ts`
+  - `test/services/objectiveMasterVersioning.test.ts`
+  - `test/services/objectiveAssignmentPreview.test.ts`
+  - `test/services/objectiveAmendment.test.ts`
+  - `test/services/objectiveReportingDashboard.test.ts`
+- Full `npm test` was not clean before/alongside this work due to unrelated legacy failures in old cycle/quarter/scoring/bulk-operation tests. Do not use full-suite failure alone as Task 1 failure without separating those legacy test issues.
+- `npm run build` passed in `Client` after Vinith Phase 2 live Objective Master API integration.
+- `npm run build` passed in `Client` after Vinith Phase 3 assignment wizard, preview table, and apply integration.
+- `npm run build` passed in `Server` and `Client` after Vinith Phase 4 correction/amendment UI integration.
+- `npm run build` passed in `Server` and `Client` after Vinith Phase 5 reporting/dashboard readiness UI integration.
+- `npm run build` passed in `Server` and `Client` after final Task 1 contract closure for assignment rule update/deactivate endpoints and Objective Master action-availability hints.
+- `npm run check` in `Client` is still blocked by unrelated legacy diagnostics, but no diagnostics were reported for the new `objective-masters` frontend files when filtered.
+
 ## References and Dependencies
 
 ### Source Design References
@@ -636,17 +676,46 @@ Suresh should provide these before Vinith connects to live APIs:
 
 | Contract Item | Status |
 |---|---|
-| Objective Master list response | [ ] |
-| Objective Master detail response | [ ] |
-| Objective Version history response | [ ] |
-| Create/update draft payload | [ ] |
-| Activate/deactivate payload | [ ] |
-| Assignment Rule create/update payload | [ ] |
-| Assignment Preview response with warning/block reason format | [ ] |
-| Assignment Apply response | [ ] |
-| Correction/amendment payload and response | [ ] |
-| Permission/action availability fields for UI buttons | [ ] |
-| Friendly backend error codes/messages | [ ] |
+| Objective Master list response | [x] Implemented: `GET /pms/objectives/masters` |
+| Objective Master detail response | [x] Implemented: `GET /pms/objectives/masters/:objectiveMasterId` |
+| Objective Version history response | [x] Implemented: `GET /pms/objectives/masters/:objectiveMasterId/versions` |
+| Create/update draft payload | [x] Implemented for create master, create version, and update draft version |
+| Activate/deactivate payload | [x] Implemented for activate, deactivate, and archive version |
+| Assignment Rule create/update payload | [x] Implemented: create, update, and deactivate assignment rule |
+| Assignment Preview response with warning/block reason format | [x] Implemented: `POST /pms/objectives/assignment-rules/preview` |
+| Assignment Apply response | [x] Implemented: `POST /pms/objectives/assignment-rules/apply` |
+| Correction/amendment payload and response | [x] Implemented: `POST /pms/objectives/:id/amendment` |
+| Permission/action availability fields for UI buttons | [x] Implemented: Objective Master responses include `actions` availability hints for UI buttons |
+| Friendly backend error codes/messages | [~] Plain-language messages implemented; structured error codes are still generic route-level codes |
+
+### Backend API Contract Summary
+
+Implemented endpoints for Suresh backend handoff:
+
+- `POST /pms/objectives/masters`
+- `GET /pms/objectives/masters`
+- `GET /pms/objectives/masters/:objectiveMasterId`
+- `GET /pms/objectives/masters/:objectiveMasterId/versions`
+- `POST /pms/objectives/masters/:objectiveMasterId/versions`
+- `PUT /pms/objectives/master-versions/:objectiveVersionId`
+- `POST /pms/objectives/master-versions/:objectiveVersionId/activate`
+- `POST /pms/objectives/master-versions/:objectiveVersionId/deactivate`
+- `POST /pms/objectives/master-versions/:objectiveVersionId/archive`
+- `GET /pms/objectives/master-versions/:objectiveVersionId/assignable`
+- `GET /pms/objectives/master-versions/:objectiveVersionId/reviewable`
+- `POST /pms/objectives/assignment-rules`
+- `PUT /pms/objectives/assignment-rules/:assignmentRuleId`
+- `POST /pms/objectives/assignment-rules/:assignmentRuleId/deactivate`
+- `POST /pms/objectives/assignment-rules/preview`
+- `POST /pms/objectives/assignment-rules/apply`
+- `POST /pms/objectives/:id/amendment`
+- `GET /pms/objectives/reporting`
+- `GET /pms/objectives/dashboard-statuses`
+
+Known backend contract gaps before manual QA:
+
+- No known blocking backend contract gaps for Task 1 manual QA.
+- Structured per-condition backend error codes remain generic route-level codes, but plain-language messages are implemented for Task 1 user flows.
 
 ### Integration Rules
 

@@ -170,6 +170,74 @@ export const ObjectiveSource = {
 
 export type ObjectiveSource = (typeof ObjectiveSource)[keyof typeof ObjectiveSource];
 
+export const FlexibleObjectiveSourceType = {
+  COMPANY_OBJECTIVE: 'COMPANY_OBJECTIVE',
+  DEPARTMENT_OBJECTIVE: 'DEPARTMENT_OBJECTIVE',
+  TEMPLATE_REFERENCED_OBJECTIVE: 'TEMPLATE_REFERENCED_OBJECTIVE',
+  MANAGER_CREATED_OBJECTIVE: 'MANAGER_CREATED_OBJECTIVE',
+  EMPLOYEE_CREATED_OBJECTIVE: 'EMPLOYEE_CREATED_OBJECTIVE',
+} as const;
+
+export type FlexibleObjectiveSourceType =
+  (typeof FlexibleObjectiveSourceType)[keyof typeof FlexibleObjectiveSourceType];
+
+export const ObjectiveMasterStatus = {
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type ObjectiveMasterStatus =
+  (typeof ObjectiveMasterStatus)[keyof typeof ObjectiveMasterStatus];
+
+export const ObjectiveMasterVersionStatus = {
+  DRAFT: 'DRAFT',
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type ObjectiveMasterVersionStatus =
+  (typeof ObjectiveMasterVersionStatus)[keyof typeof ObjectiveMasterVersionStatus];
+
+export const ObjectiveAssignmentRuleStatus = {
+  DRAFT: 'DRAFT',
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type ObjectiveAssignmentRuleStatus =
+  (typeof ObjectiveAssignmentRuleStatus)[keyof typeof ObjectiveAssignmentRuleStatus];
+
+export const ObjectiveTargetDirection = {
+  INCREASE: 'INCREASE',
+  DECREASE: 'DECREASE',
+  MAINTAIN: 'MAINTAIN',
+  ACHIEVE: 'ACHIEVE',
+} as const;
+
+export type ObjectiveTargetDirection =
+  (typeof ObjectiveTargetDirection)[keyof typeof ObjectiveTargetDirection];
+
+export const ObjectiveAttachmentPolicy = {
+  NOT_ALLOWED: 'NOT_ALLOWED',
+  OPTIONAL: 'OPTIONAL',
+  REQUIRED: 'REQUIRED',
+} as const;
+
+export type ObjectiveAttachmentPolicy =
+  (typeof ObjectiveAttachmentPolicy)[keyof typeof ObjectiveAttachmentPolicy];
+
+export const ObjectiveApplicabilityStatus = {
+  ACTIVE: 'ACTIVE',
+  NOT_APPLICABLE: 'NOT_APPLICABLE',
+  REPLACED: 'REPLACED',
+} as const;
+
+export type ObjectiveApplicabilityStatus =
+  (typeof ObjectiveApplicabilityStatus)[keyof typeof ObjectiveApplicabilityStatus];
+
 export const AppraisalOutcomeType = {
   BOTH: 'BOTH',
   MERIT_ONLY: 'MERIT_ONLY',

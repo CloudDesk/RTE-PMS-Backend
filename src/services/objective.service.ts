@@ -4,13 +4,24 @@ import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
   AssessmentTermCode,
+  FlexibleObjectiveSourceType,
+  ObjectiveAssignmentRuleStatus,
+  ObjectiveApplicabilityStatus,
+  ObjectiveAttachmentPolicy,
+  ObjectiveMasterStatus,
+  ObjectiveMasterVersionStatus,
   ObjectiveSource,
   ObjectiveStatus,
+  ObjectiveTargetDirection,
   PmsRole,
   PmsTemplateSectionType,
   TermWorkflowState,
+  isTermFinalized,
 } from '../constants/pms.enums';
 import { Objective } from '../models/pms-objective.model';
+import { ObjectiveAssignmentRule } from '../models/pms-objective-assignment-rule.model';
+import { ObjectiveMaster } from '../models/pms-objective-master.model';
+import { ObjectiveMasterVersion } from '../models/pms-objective-master-version.model';
 import { ObjectiveValue } from '../models/pms-objective-value.model';
 import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
 import { ObjectiveComment } from '../models/pms-objective-comment.model';
@@ -23,6 +34,7 @@ import { TermCycle } from '../models/pms-term-cycle.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { AuditLog } from '../models/audit-log.model';
+import { User } from '../models/user.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -38,7 +50,15 @@ import type {
 } from '../models/pms-template-version.model';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
+  AssessmentTermType as AssessmentTermTypeType,
+  FlexibleObjectiveSourceType as FlexibleObjectiveSourceTypeType,
+  ObjectiveAssignmentRuleStatus as ObjectiveAssignmentRuleStatusType,
+  ObjectiveApplicabilityStatus as ObjectiveApplicabilityStatusType,
+  ObjectiveAttachmentPolicy as ObjectiveAttachmentPolicyType,
+  ObjectiveMasterStatus as ObjectiveMasterStatusType,
+  ObjectiveMasterVersionStatus as ObjectiveMasterVersionStatusType,
   ObjectiveSource as ObjectiveSourceType,
+  ObjectiveTargetDirection as ObjectiveTargetDirectionType,
 } from '../constants/pms.enums';
 
 type AssessmentTermCodeValue = AssessmentTermCodeType;
@@ -181,6 +201,326 @@ export interface CorrectObjectiveInput {
   objectiveValues?: ObjectiveValueInput[];
 }
 
+export interface AmendFlexibleObjectiveInput {
+  action: 'MARK_NOT_APPLICABLE' | 'REPLACE_OBJECTIVE';
+  reason: string;
+  replacementObjectiveVersionId?: string;
+  assignmentRuleRefs?: string[];
+}
+
+export interface FlexibleObjectiveAmendmentResult {
+  previousObjective: IObjective;
+  replacementObjective?: IObjective;
+  action: string;
+  applicabilityStatus: ObjectiveApplicabilityStatusType;
+}
+
+export interface ObjectiveReportingQuery {
+  cycleId?: string;
+  annualAssignmentId?: string;
+  employeeId?: string;
+  assessmentTerm?: AssessmentTermCodeType;
+  sourceType?: FlexibleObjectiveSourceTypeType;
+  objectiveMasterId?: string;
+  objectiveVersionId?: string;
+  status?: string;
+}
+
+export interface ObjectiveReportingRecord {
+  objectiveId: string;
+  objectiveSource: string;
+  objectiveMasterId?: string;
+  objectiveVersionId?: string;
+  objectiveTitle: string;
+  assignmentLevel: string;
+  assignmentRuleIds: string[];
+  cycleId?: string;
+  annualAssignmentId?: string;
+  termAssignmentId: string;
+  assessmentTerm?: string;
+  employeeId: string;
+  assignedManagerId: string;
+  employeeDepartment?: string;
+  employeeGroup?: string;
+  employeeRole?: string;
+  objectiveApprovalStatus: string;
+  applicabilityStatus: string;
+  approvedWeightage?: number;
+  scoreable?: boolean;
+  targetValue?: string;
+  targetDirection?: string;
+}
+
+export interface ObjectiveDashboardStatusRecord {
+  objectiveId: string;
+  termAssignmentId: string;
+  annualAssignmentId?: string;
+  cycleId?: string;
+  employeeId: string;
+  assessmentTerm?: string;
+  objectiveTitle: string;
+  workflowStatus: string;
+  applicabilityStatus: string;
+  dashboardStatus:
+    | 'not_started'
+    | 'pending_objective_setup'
+    | 'submitted'
+    | 'approved'
+    | 'returned_for_revision'
+    | 'finalized'
+    | 'closed_not_applicable'
+    | 'blocked';
+  blockedReason?: string;
+}
+
+interface ObjectiveOwnerInput {
+  ownerUserId?: string;
+  ownerRole?: string;
+  ownerDepartment?: string;
+  ownerScope?: Record<string, unknown>;
+}
+
+interface ObjectiveAssignerInput {
+  assignerUserId?: string;
+  assignerRole?: string;
+  assignerDepartment?: string;
+  assignerScope?: Record<string, unknown>;
+}
+
+interface ObjectiveReviewerInput {
+  reviewerUserId?: string;
+  reviewerRole?: string;
+  reviewerDepartment?: string;
+  reviewerScope?: Record<string, unknown>;
+}
+
+export interface ObjectiveMasterVersionDetailsInput
+  extends ObjectiveOwnerInput,
+    ObjectiveAssignerInput,
+    ObjectiveReviewerInput {
+  title: string;
+  description?: string;
+  measurementGuidance?: string;
+  targetValue?: string;
+  targetDescription?: string;
+  targetDirection?: ObjectiveTargetDirectionType;
+  priority?: string;
+  attachmentPolicy?: ObjectiveAttachmentPolicyType;
+  scoreable?: boolean;
+  defaultScoringEligibilityRef?: string;
+  approvedWeightage?: number;
+  applicableTermLabels?: AssessmentTermCodeType[];
+}
+
+export interface CreateObjectiveMasterInput extends ObjectiveMasterVersionDetailsInput {
+  sourceType: FlexibleObjectiveSourceTypeType;
+}
+
+export type UpdateObjectiveMasterVersionInput = Partial<ObjectiveMasterVersionDetailsInput>;
+
+export interface ObjectiveMasterRecord {
+  id: string;
+  sourceType: string;
+  status: ObjectiveMasterStatusType;
+  currentVersionId?: string;
+  ownerUserId?: string;
+  ownerRole?: string;
+  ownerDepartment?: string;
+  ownerScope?: Record<string, unknown>;
+  createdBy: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ObjectiveMasterVersionRecord {
+  id: string;
+  objectiveMasterId: string;
+  versionNo: number;
+  status: ObjectiveMasterVersionStatusType;
+  title: string;
+  description?: string;
+  measurementGuidance?: string;
+  targetValue?: string;
+  targetDescription?: string;
+  targetDirection?: string;
+  priority?: string;
+  attachmentPolicy?: string;
+  scoreable?: boolean;
+  defaultScoringEligibilityRef?: string;
+  approvedWeightage?: number;
+  applicableTermLabels: string[];
+  ownerUserId?: string;
+  ownerRole?: string;
+  ownerDepartment?: string;
+  ownerScope?: Record<string, unknown>;
+  assignerUserId?: string;
+  assignerRole?: string;
+  assignerDepartment?: string;
+  assignerScope?: Record<string, unknown>;
+  reviewerUserId?: string;
+  reviewerRole?: string;
+  reviewerDepartment?: string;
+  reviewerScope?: Record<string, unknown>;
+  activatedAt?: string;
+  activatedBy?: string;
+  deactivatedAt?: string;
+  deactivatedBy?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  createdBy: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ObjectiveVersionUsageRecord {
+  objectiveId: string;
+  annualAssignmentId?: string;
+  cycleId?: string;
+  employeeId?: string;
+  assessmentTerm?: string;
+  status?: string;
+  title?: string;
+}
+
+export interface ObjectiveVersionHistoryRecord extends ObjectiveMasterVersionRecord {
+  isCurrentActive: boolean;
+  usageCount: number;
+  assignmentRuleCount: number;
+  usage: ObjectiveVersionUsageRecord[];
+}
+
+export interface ObjectiveMasterSummaryRecord {
+  master: ObjectiveMasterRecord;
+  currentVersion?: ObjectiveMasterVersionRecord;
+  latestVersion?: ObjectiveMasterVersionRecord;
+  versionCount: number;
+  activeVersionCount: number;
+  draftVersionCount: number;
+  actions?: ObjectiveMasterActionAvailability;
+}
+
+export interface ObjectiveMasterDetailRecord extends ObjectiveMasterSummaryRecord {
+  versions: ObjectiveVersionHistoryRecord[];
+}
+
+export interface ObjectiveMasterListQuery {
+  search?: string;
+  status?: ObjectiveMasterStatusType | string;
+  sourceType?: FlexibleObjectiveSourceTypeType | string;
+  ownerDepartment?: string;
+  limit?: number | string;
+  page?: number | string;
+}
+
+export interface ObjectiveMasterListResult {
+  items: ObjectiveMasterSummaryRecord[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface ObjectiveMasterWithVersionRecord {
+  master: ObjectiveMasterRecord;
+  version: ObjectiveMasterVersionRecord;
+}
+
+export interface ObjectiveMasterActionAvailability {
+  canCreateDraftVersion: boolean;
+  canEditDraft: boolean;
+  canActivateDraft: boolean;
+  canDeactivateActive: boolean;
+  canArchiveVersion: boolean;
+  canCreateAssignmentRule: boolean;
+  canReviewActiveVersion: boolean;
+}
+
+export interface ObjectiveAssignmentCriteriaInput {
+  company?: string;
+  businessUnit?: string;
+  location?: string;
+  department?: string;
+  team?: string;
+  role?: string;
+  designation?: string;
+  grade?: string;
+  employeeGroup?: string;
+  reportingManagerId?: string;
+  employeeIds?: string[];
+}
+
+export interface CreateObjectiveAssignmentRuleInput {
+  objectiveVersionId: string;
+  cycleId?: string;
+  assessmentTermType?: AssessmentTermTypeType;
+  termLabels?: AssessmentTermCodeType[];
+  criteria?: ObjectiveAssignmentCriteriaInput;
+  status?: ObjectiveAssignmentRuleStatusType;
+  effectiveFrom?: Date | string;
+  effectiveTo?: Date | string;
+  note?: string;
+}
+
+export type UpdateObjectiveAssignmentRuleInput = Partial<CreateObjectiveAssignmentRuleInput>;
+
+export interface ObjectiveAssignmentPreviewInput {
+  cycleId: string;
+  termLabels?: AssessmentTermCodeType[];
+  assignmentRuleIds?: string[];
+  objectiveVersionId?: string;
+}
+
+export interface ApplyObjectiveAssignmentsInput extends ObjectiveAssignmentPreviewInput {
+  confirm?: boolean;
+}
+
+export interface ObjectiveAssignmentRuleRecord {
+  id: string;
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  cycleId?: string;
+  assessmentTermType?: string;
+  termLabels: string[];
+  criteria: Record<string, unknown>;
+  status: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  note?: string;
+}
+
+export interface ObjectiveAssignmentPreviewRow {
+  key: string;
+  assignmentRuleIds: string[];
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  objectiveTitle: string;
+  annualAssignmentId: string;
+  termAssignmentId: string;
+  cycleId: string;
+  employeeId: string;
+  assessmentTerm: string;
+  status: 'NEW' | 'ALREADY_ASSIGNED' | 'WARNING' | 'BLOCKED';
+  warnings: string[];
+  blockedReason?: string;
+}
+
+export interface ObjectiveAssignmentPreviewResult {
+  cycleId: string;
+  totalEmployees: number;
+  totalTerms: number;
+  newAssignments: number;
+  alreadyAssigned: number;
+  warnings: number;
+  blocked: number;
+  rows: ObjectiveAssignmentPreviewRow[];
+}
+
+export interface ObjectiveAssignmentApplyResult extends ObjectiveAssignmentPreviewResult {
+  createdObjectiveIds: string[];
+  updatedObjectiveIds: string[];
+}
+
 type AssignmentMode = 'employee' | 'manager';
 
 type ObjectiveConfig = {
@@ -279,6 +619,17 @@ type ObjectiveRecord = {
   approvedAt?: string;
   returnedReason?: string;
   returnedAt?: string;
+  objectiveMasterId?: string;
+  objectiveVersionId?: string;
+  assignmentRuleRefs?: string[];
+  sourceType?: string;
+  objectiveSnapshot?: Record<string, unknown>;
+  applicabilityStatus?: string;
+  amendmentReason?: string;
+  amendmentAction?: string;
+  amendmentAt?: string;
+  amendmentBy?: string;
+  replacementObjectiveId?: string;
   updatedAt: string;
   createdAt: string;
 };
@@ -362,6 +713,955 @@ const DELEGATED_OBJECTIVE_ASSIGNMENT_STATES = [
 export class ObjectiveService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
+  }
+
+  async listObjectiveMasters(
+    query: ObjectiveMasterListQuery = {},
+  ): Promise<ObjectiveMasterListResult> {
+    const page = this.normalizePositiveInteger(query.page, 1);
+    const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
+    const filter: Record<string, unknown> = { isDeleted: false };
+
+    if (query.status && Object.values(ObjectiveMasterStatus).includes(query.status as ObjectiveMasterStatusType)) {
+      filter.status = query.status;
+    }
+    if (
+      query.sourceType &&
+      Object.values(FlexibleObjectiveSourceType).includes(query.sourceType as FlexibleObjectiveSourceTypeType)
+    ) {
+      filter.sourceType = query.sourceType;
+    }
+    if (query.ownerDepartment?.trim()) {
+      filter.ownerDepartment = { $regex: query.ownerDepartment.trim(), $options: 'i' };
+    }
+
+    const search = query.search?.trim();
+    const searchableMasterIds = new Set<string>();
+    if (search) {
+      const matchingVersions = await ObjectiveMasterVersion.find({
+        isDeleted: false,
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } },
+          { targetValue: { $regex: search, $options: 'i' } },
+          { ownerDepartment: { $regex: search, $options: 'i' } },
+        ],
+      })
+        .select('objectiveMasterId')
+        .lean();
+      for (const version of matchingVersions) {
+        const masterId = version.objectiveMasterId?.toString();
+        if (masterId) searchableMasterIds.add(masterId);
+      }
+
+      filter.$or = [
+        { ownerRole: { $regex: search, $options: 'i' } },
+        { ownerDepartment: { $regex: search, $options: 'i' } },
+        ...(searchableMasterIds.size
+          ? [{ _id: { $in: Array.from(searchableMasterIds).map((id) => this.toObjectId(id, 'objectiveMasterId')) } }]
+          : []),
+      ];
+    }
+
+    const [candidateMasters, totalCandidates] = await Promise.all([
+      ObjectiveMaster.find(filter)
+        .sort({ updatedAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ObjectiveMaster.countDocuments(filter),
+    ]);
+
+    const masterIds = candidateMasters.map((master) => master._id);
+    const versions = masterIds.length
+      ? await ObjectiveMasterVersion.find({
+          objectiveMasterId: { $in: masterIds },
+          isDeleted: false,
+        })
+          .sort({ versionNo: -1 })
+          .lean()
+      : [];
+
+    const versionsByMaster = new Map<string, typeof versions>();
+    for (const version of versions) {
+      const masterId = version.objectiveMasterId?.toString();
+      if (!masterId) continue;
+      const grouped = versionsByMaster.get(masterId) ?? [];
+      grouped.push(version);
+      versionsByMaster.set(masterId, grouped);
+    }
+
+    const items: ObjectiveMasterSummaryRecord[] = [];
+    for (const master of candidateMasters) {
+      const masterVersions = versionsByMaster.get(master._id.toString()) ?? [];
+      if (!(await this.canViewObjectiveVersionHistory(master.sourceType, master, masterVersions))) {
+        continue;
+      }
+      items.push(await this.toObjectiveMasterSummaryRecord(master, masterVersions));
+    }
+
+    return {
+      items,
+      total: totalCandidates,
+      page,
+      limit,
+    };
+  }
+
+  async getObjectiveMasterDetail(
+    objectiveMasterId: string,
+  ): Promise<ObjectiveMasterDetailRecord> {
+    const masterObjectId = this.toObjectId(objectiveMasterId, 'objectiveMasterId');
+    const master = await ObjectiveMaster.findOne({
+      _id: masterObjectId,
+      isDeleted: false,
+    }).lean();
+
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    const versions = await this.listObjectiveMasterVersions(objectiveMasterId);
+    return {
+      ...(await this.toObjectiveMasterSummaryRecord(master, versions)),
+      versions,
+    };
+  }
+
+  async createObjectiveMaster(
+    input: CreateObjectiveMasterInput,
+  ): Promise<ObjectiveMasterWithVersionRecord> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const sourceType = this.requireFlexibleObjectiveSourceType(input.sourceType);
+    const owner = this.normalizeObjectiveOwnerInput(input, actor);
+
+    await this.assertObjectiveOwnerPermission(sourceType, owner);
+
+    const master = await ObjectiveMaster.create({
+      sourceType,
+      status: ObjectiveMasterStatus.ACTIVE,
+      ...owner,
+      createdBy: actorId,
+    });
+
+    const version = await ObjectiveMasterVersion.create({
+      objectiveMasterId: master._id,
+      versionNo: 1,
+      status: ObjectiveMasterVersionStatus.DRAFT,
+      ...this.normalizeObjectiveMasterVersionDetails(input, actor),
+      createdBy: actorId,
+    });
+
+    await this.audit(
+      'PMS_OBJECTIVE_MASTER_CREATED',
+      'OBJECTIVE_MASTER',
+      master._id.toString(),
+      undefined,
+      this.mapObjectiveMasterRecord(master),
+    );
+    await this.audit(
+      'PMS_OBJECTIVE_VERSION_CREATED',
+      'OBJECTIVE_MASTER_VERSION',
+      version._id.toString(),
+      undefined,
+      this.mapObjectiveMasterVersionRecord(version),
+    );
+
+    return {
+      master: this.mapObjectiveMasterRecord(master),
+      version: this.mapObjectiveMasterVersionRecord(version),
+    };
+  }
+
+  async createObjectiveMasterVersion(
+    objectiveMasterId: string,
+    sourceVersionId?: string,
+  ): Promise<ObjectiveMasterVersionRecord> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const masterObjectId = this.toObjectId(objectiveMasterId, 'objectiveMasterId');
+    const master = await ObjectiveMaster.findOne({
+      _id: masterObjectId,
+      isDeleted: false,
+    });
+
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveOwnerPermission(master.sourceType, master);
+
+    const sourceVersion = sourceVersionId
+      ? await ObjectiveMasterVersion.findOne({
+        _id: this.toObjectId(sourceVersionId, 'sourceVersionId'),
+        objectiveMasterId: master._id,
+        isDeleted: false,
+      })
+      : await ObjectiveMasterVersion.findOne({
+        objectiveMasterId: master._id,
+        isDeleted: false,
+      }).sort({ versionNo: -1 });
+
+    if (!sourceVersion) {
+      throw new Error('Source Objective Master Version not found');
+    }
+
+    const latestVersion = await ObjectiveMasterVersion.findOne({
+      objectiveMasterId: master._id,
+      isDeleted: false,
+    }).sort({ versionNo: -1 }).select('versionNo');
+    const nextVersionNo = Number(latestVersion?.versionNo ?? 0) + 1;
+
+    const version = await ObjectiveMasterVersion.create({
+      objectiveMasterId: master._id,
+      versionNo: nextVersionNo,
+      status: ObjectiveMasterVersionStatus.DRAFT,
+      ...this.cloneObjectiveMasterVersionDetails(sourceVersion, actor),
+      createdBy: actorId,
+    });
+
+    await this.audit(
+      'PMS_OBJECTIVE_VERSION_CREATED',
+      'OBJECTIVE_MASTER_VERSION',
+      version._id.toString(),
+      { sourceVersionId: sourceVersion._id.toString() },
+      this.mapObjectiveMasterVersionRecord(version),
+    );
+
+    return this.mapObjectiveMasterVersionRecord(version);
+  }
+
+  async updateDraftObjectiveMasterVersion(
+    objectiveVersionId: string,
+    input: UpdateObjectiveMasterVersionInput,
+  ): Promise<ObjectiveMasterVersionRecord> {
+    const actor = this.requireActor();
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    });
+
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    if (version.status !== ObjectiveMasterVersionStatus.DRAFT) {
+      throw new Error('Only Draft objective versions can be updated');
+    }
+
+    const assignedCount = await Objective.countDocuments({
+      objectiveVersionId: version._id,
+      isDeleted: false,
+    });
+    if (assignedCount > 0) {
+      throw new Error('Assigned objective snapshots cannot be changed through Objective Master edits');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    });
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveOwnerPermission(
+      master.sourceType,
+      this.mergeObjectiveOwnerMetadata(version, master),
+    );
+
+    const previousValue = this.mapObjectiveMasterVersionRecord(version);
+    const normalized = this.normalizeObjectiveMasterVersionPatch(input, actor);
+
+    Object.assign(version, normalized, {
+      updatedBy: this.toObjectId(actor.actorId, 'actorId'),
+    });
+
+    await version.save();
+
+    await this.audit(
+      'PMS_OBJECTIVE_VERSION_DRAFT_UPDATED',
+      'OBJECTIVE_MASTER_VERSION',
+      version._id.toString(),
+      previousValue,
+      this.mapObjectiveMasterVersionRecord(version),
+    );
+
+    return this.mapObjectiveMasterVersionRecord(version);
+  }
+
+  async activateObjectiveMasterVersion(
+    objectiveVersionId: string,
+  ): Promise<ObjectiveMasterWithVersionRecord> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    });
+
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    if (version.status === ObjectiveMasterVersionStatus.ARCHIVED) {
+      throw new Error('Archived objective versions cannot be activated');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    });
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveOwnerPermission(
+      master.sourceType,
+      this.mergeObjectiveOwnerMetadata(version, master),
+    );
+
+    const previousValue = {
+      master: this.mapObjectiveMasterRecord(master),
+      version: this.mapObjectiveMasterVersionRecord(version),
+    };
+
+    await ObjectiveMasterVersion.updateMany(
+      {
+        objectiveMasterId: master._id,
+        _id: { $ne: version._id },
+        status: ObjectiveMasterVersionStatus.ACTIVE,
+        isDeleted: false,
+      },
+      {
+        $set: {
+          status: ObjectiveMasterVersionStatus.INACTIVE,
+          deactivatedAt: this.getCurrentDate(),
+          deactivatedBy: actorId,
+          updatedBy: actorId,
+        },
+      },
+    );
+
+    version.status = ObjectiveMasterVersionStatus.ACTIVE;
+    version.activatedAt = this.getCurrentDate();
+    version.activatedBy = actorId;
+    version.deactivatedAt = undefined;
+    version.deactivatedBy = undefined;
+    version.updatedBy = actorId;
+    await version.save();
+
+    master.status = ObjectiveMasterStatus.ACTIVE;
+    master.currentVersionId = version._id;
+    master.updatedBy = actorId;
+    await master.save();
+
+    await this.audit(
+      'PMS_OBJECTIVE_VERSION_ACTIVATED',
+      'OBJECTIVE_MASTER_VERSION',
+      version._id.toString(),
+      previousValue,
+      {
+        master: this.mapObjectiveMasterRecord(master),
+        version: this.mapObjectiveMasterVersionRecord(version),
+      },
+    );
+
+    return {
+      master: this.mapObjectiveMasterRecord(master),
+      version: this.mapObjectiveMasterVersionRecord(version),
+    };
+  }
+
+  async deactivateObjectiveMasterVersion(
+    objectiveVersionId: string,
+  ): Promise<ObjectiveMasterWithVersionRecord> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    });
+
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    if (version.status === ObjectiveMasterVersionStatus.ARCHIVED) {
+      throw new Error('Archived objective versions are already history-only');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    });
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveOwnerPermission(
+      master.sourceType,
+      this.mergeObjectiveOwnerMetadata(version, master),
+    );
+
+    const previousValue = {
+      master: this.mapObjectiveMasterRecord(master),
+      version: this.mapObjectiveMasterVersionRecord(version),
+    };
+
+    version.status = ObjectiveMasterVersionStatus.INACTIVE;
+    version.deactivatedAt = this.getCurrentDate();
+    version.deactivatedBy = actorId;
+    version.updatedBy = actorId;
+    await version.save();
+
+    if (master.currentVersionId?.toString() === version._id.toString()) {
+      master.currentVersionId = undefined;
+      master.status = ObjectiveMasterStatus.INACTIVE;
+      master.updatedBy = actorId;
+      await master.save();
+    }
+
+    await this.audit(
+      'PMS_OBJECTIVE_VERSION_DEACTIVATED',
+      'OBJECTIVE_MASTER_VERSION',
+      version._id.toString(),
+      previousValue,
+      {
+        master: this.mapObjectiveMasterRecord(master),
+        version: this.mapObjectiveMasterVersionRecord(version),
+      },
+    );
+
+    return {
+      master: this.mapObjectiveMasterRecord(master),
+      version: this.mapObjectiveMasterVersionRecord(version),
+    };
+  }
+
+  async archiveObjectiveMasterVersion(
+    objectiveVersionId: string,
+  ): Promise<ObjectiveMasterWithVersionRecord> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    });
+
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    });
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveOwnerPermission(
+      master.sourceType,
+      this.mergeObjectiveOwnerMetadata(version, master),
+    );
+
+    const previousValue = {
+      master: this.mapObjectiveMasterRecord(master),
+      version: this.mapObjectiveMasterVersionRecord(version),
+    };
+
+    version.status = ObjectiveMasterVersionStatus.ARCHIVED;
+    version.archivedAt = this.getCurrentDate();
+    version.archivedBy = actorId;
+    version.updatedBy = actorId;
+    await version.save();
+
+    if (master.currentVersionId?.toString() === version._id.toString()) {
+      master.currentVersionId = undefined;
+      const activeReplacement = await ObjectiveMasterVersion.findOne({
+        objectiveMasterId: master._id,
+        status: ObjectiveMasterVersionStatus.ACTIVE,
+        isDeleted: false,
+        _id: { $ne: version._id },
+      }).sort({ versionNo: -1 });
+      master.currentVersionId = activeReplacement?._id;
+      master.status = activeReplacement ? ObjectiveMasterStatus.ACTIVE : ObjectiveMasterStatus.INACTIVE;
+      master.updatedBy = actorId;
+      await master.save();
+    }
+
+    await this.audit(
+      'PMS_OBJECTIVE_VERSION_ARCHIVED',
+      'OBJECTIVE_MASTER_VERSION',
+      version._id.toString(),
+      previousValue,
+      {
+        master: this.mapObjectiveMasterRecord(master),
+        version: this.mapObjectiveMasterVersionRecord(version),
+      },
+    );
+
+    return {
+      master: this.mapObjectiveMasterRecord(master),
+      version: this.mapObjectiveMasterVersionRecord(version),
+    };
+  }
+
+  async listObjectiveMasterVersions(
+    objectiveMasterId: string,
+  ): Promise<ObjectiveVersionHistoryRecord[]> {
+    const masterObjectId = this.toObjectId(objectiveMasterId, 'objectiveMasterId');
+    const master = await ObjectiveMaster.findOne({
+      _id: masterObjectId,
+      isDeleted: false,
+    }).lean();
+
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    const versions = await ObjectiveMasterVersion.find({
+      objectiveMasterId: masterObjectId,
+      isDeleted: false,
+    }).sort({ versionNo: -1 }).lean();
+
+    const canViewMasterHistory = await this.canViewObjectiveVersionHistory(
+      master.sourceType,
+      master,
+      versions,
+    );
+    if (!canViewMasterHistory) {
+      throw new Error('Only configured Objective Owner, Assigner, Reviewer, or Admin can view objective version history');
+    }
+    const versionIds = versions.map((version) => version._id);
+
+    const [assignedObjectives, assignmentRules] = await Promise.all([
+      Objective.find({
+        objectiveVersionId: { $in: versionIds },
+        isDeleted: false,
+      })
+        .select('_id objectiveVersionId annualAssignmentId cycleId employeeId assessmentTerm assessmentTermCode status title')
+        .lean(),
+      ObjectiveAssignmentRule.find({
+        objectiveVersionId: { $in: versionIds },
+        isDeleted: false,
+      })
+        .select('_id objectiveVersionId')
+        .lean(),
+    ]);
+
+    const usageByVersion = new Map<string, ObjectiveVersionUsageRecord[]>();
+    for (const objective of assignedObjectives) {
+      const versionId = objective.objectiveVersionId?.toString();
+      if (!versionId) continue;
+      const usage = usageByVersion.get(versionId) ?? [];
+      usage.push({
+        objectiveId: objective._id.toString(),
+        annualAssignmentId: objective.annualAssignmentId?.toString(),
+        cycleId: objective.cycleId?.toString(),
+        employeeId: objective.employeeId?.toString(),
+        assessmentTerm: objective.assessmentTerm ?? objective.assessmentTermCode,
+        status: objective.status,
+        title: objective.title,
+      });
+      usageByVersion.set(versionId, usage);
+    }
+
+    const ruleCountByVersion = new Map<string, number>();
+    for (const rule of assignmentRules) {
+      const versionId = rule.objectiveVersionId?.toString();
+      if (!versionId) continue;
+      ruleCountByVersion.set(versionId, (ruleCountByVersion.get(versionId) ?? 0) + 1);
+    }
+
+    return versions.map((version) => {
+      const record = this.mapObjectiveMasterVersionRecord(version);
+      const versionId = version._id.toString();
+      const usage = usageByVersion.get(versionId) ?? [];
+      return {
+        ...record,
+        isCurrentActive: master.currentVersionId?.toString() === versionId,
+        usageCount: usage.length,
+        assignmentRuleCount: ruleCountByVersion.get(versionId) ?? 0,
+        usage,
+      };
+    });
+  }
+
+  async assertObjectiveVersionAssignable(
+    objectiveVersionId: string,
+  ): Promise<ObjectiveMasterVersionRecord> {
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    }).lean();
+
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    if (version.status !== ObjectiveMasterVersionStatus.ACTIVE) {
+      throw new Error('Only Active objective versions can be assigned');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      currentVersionId: version._id,
+      status: ObjectiveMasterStatus.ACTIVE,
+      isDeleted: false,
+    }).lean();
+
+    if (!master) {
+      throw new Error('Objective version is not the active version for its Objective Master');
+    }
+
+    await this.assertObjectiveAssignerPermission(master.sourceType, version);
+
+    return this.mapObjectiveMasterVersionRecord(version);
+  }
+
+  async assertObjectiveVersionReviewable(
+    objectiveVersionId: string,
+  ): Promise<ObjectiveMasterVersionRecord> {
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    }).lean();
+
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    }).lean();
+
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveReviewerPermission(master.sourceType, version);
+
+    return this.mapObjectiveMasterVersionRecord(version);
+  }
+
+  async createObjectiveAssignmentRule(
+    input: CreateObjectiveAssignmentRuleInput,
+  ): Promise<ObjectiveAssignmentRuleRecord> {
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(input.objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    }).lean();
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    }).lean();
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveAssignerPermission(master.sourceType, version);
+
+    if (version.status !== ObjectiveMasterVersionStatus.ACTIVE) {
+      throw new Error('Only Active objective versions can be used in assignment rules');
+    }
+
+    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    const rule = await ObjectiveAssignmentRule.create({
+      objectiveMasterId: version.objectiveMasterId,
+      objectiveVersionId: version._id,
+      cycleId: input.cycleId ? this.toObjectId(input.cycleId, 'cycleId') : undefined,
+      assessmentTermType: input.assessmentTermType,
+      termLabels: this.normalizeApplicableTermLabels(input.termLabels),
+      criteria: this.normalizeObjectiveAssignmentCriteria(input.criteria),
+      status: input.status ?? ObjectiveAssignmentRuleStatus.DRAFT,
+      effectiveFrom: input.effectiveFrom ? new Date(input.effectiveFrom) : undefined,
+      effectiveTo: input.effectiveTo ? new Date(input.effectiveTo) : undefined,
+      note: input.note?.trim() || undefined,
+      createdBy: actorId,
+    });
+
+    await this.audit(
+      'PMS_OBJECTIVE_ASSIGNMENT_RULE_CREATED',
+      'OBJECTIVE_ASSIGNMENT_RULE',
+      rule._id.toString(),
+      undefined,
+      this.mapObjectiveAssignmentRuleRecord(rule),
+    );
+
+    return this.mapObjectiveAssignmentRuleRecord(rule);
+  }
+
+  async updateObjectiveAssignmentRule(
+    assignmentRuleId: string,
+    input: UpdateObjectiveAssignmentRuleInput,
+  ): Promise<ObjectiveAssignmentRuleRecord> {
+    const rule = await ObjectiveAssignmentRule.findOne({
+      _id: this.toObjectId(assignmentRuleId, 'assignmentRuleId'),
+      isDeleted: false,
+    });
+    if (!rule) {
+      throw new Error('Objective assignment rule not found');
+    }
+
+    const targetVersionId = input.objectiveVersionId
+      ? this.toObjectId(input.objectiveVersionId, 'objectiveVersionId')
+      : rule.objectiveVersionId;
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: targetVersionId,
+      isDeleted: false,
+    }).lean();
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    }).lean();
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+
+    await this.assertObjectiveAssignerPermission(master.sourceType, version);
+
+    if (version.status !== ObjectiveMasterVersionStatus.ACTIVE) {
+      throw new Error('Only Active objective versions can be used in assignment rules');
+    }
+
+    const previousValue = this.mapObjectiveAssignmentRuleRecord(rule);
+    rule.objectiveMasterId = version.objectiveMasterId;
+    rule.objectiveVersionId = version._id;
+    if (input.cycleId !== undefined) {
+      rule.cycleId = input.cycleId ? this.toObjectId(input.cycleId, 'cycleId') : undefined;
+    }
+    if (input.assessmentTermType !== undefined) {
+      rule.assessmentTermType = input.assessmentTermType;
+    }
+    if (input.termLabels !== undefined) {
+      rule.termLabels = this.normalizeApplicableTermLabels(input.termLabels);
+    }
+    if (input.criteria !== undefined) {
+      rule.criteria = this.normalizeObjectiveAssignmentCriteria(input.criteria);
+    }
+    if (input.status !== undefined) {
+      if (!Object.values(ObjectiveAssignmentRuleStatus).includes(input.status)) {
+        throw new Error('Invalid objective assignment rule status');
+      }
+      rule.status = input.status;
+    }
+    if (input.effectiveFrom !== undefined) {
+      rule.effectiveFrom = input.effectiveFrom ? new Date(input.effectiveFrom) : undefined;
+    }
+    if (input.effectiveTo !== undefined) {
+      rule.effectiveTo = input.effectiveTo ? new Date(input.effectiveTo) : undefined;
+    }
+    if (input.note !== undefined) {
+      rule.note = input.note?.trim() || undefined;
+    }
+    rule.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    rule.version += 1;
+    await rule.save();
+
+    const nextValue = this.mapObjectiveAssignmentRuleRecord(rule);
+    await this.audit(
+      'PMS_OBJECTIVE_ASSIGNMENT_RULE_UPDATED',
+      'OBJECTIVE_ASSIGNMENT_RULE',
+      rule._id.toString(),
+      previousValue,
+      nextValue,
+    );
+
+    return nextValue;
+  }
+
+  async deactivateObjectiveAssignmentRule(
+    assignmentRuleId: string,
+  ): Promise<ObjectiveAssignmentRuleRecord> {
+    const rule = await ObjectiveAssignmentRule.findOne({
+      _id: this.toObjectId(assignmentRuleId, 'assignmentRuleId'),
+      isDeleted: false,
+    });
+    if (!rule) {
+      throw new Error('Objective assignment rule not found');
+    }
+
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: rule.objectiveVersionId,
+      isDeleted: false,
+    }).lean();
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    }).lean();
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+    await this.assertObjectiveAssignerPermission(master.sourceType, version);
+
+    const previousValue = this.mapObjectiveAssignmentRuleRecord(rule);
+    rule.status = ObjectiveAssignmentRuleStatus.INACTIVE;
+    rule.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    rule.version += 1;
+    await rule.save();
+
+    const nextValue = this.mapObjectiveAssignmentRuleRecord(rule);
+    await this.audit(
+      'PMS_OBJECTIVE_ASSIGNMENT_RULE_DEACTIVATED',
+      'OBJECTIVE_ASSIGNMENT_RULE',
+      rule._id.toString(),
+      previousValue,
+      nextValue,
+    );
+
+    return nextValue;
+  }
+
+  async previewObjectiveAssignments(
+    input: ObjectiveAssignmentPreviewInput,
+  ): Promise<ObjectiveAssignmentPreviewResult> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignment.preview');
+    return this.buildObjectiveAssignmentPreview(input);
+  }
+
+  async applyObjectiveAssignments(
+    input: ApplyObjectiveAssignmentsInput,
+  ): Promise<ObjectiveAssignmentApplyResult> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignment.apply');
+    if (input.confirm !== true) {
+      throw new Error('Confirmation is required before applying objective assignments');
+    }
+
+    return this.applyObjectiveAssignmentPreview(input, 'MANUAL_CONFIRMATION');
+  }
+
+  async applyObjectiveRulesForCycleLaunch(cycleId: string): Promise<ObjectiveAssignmentApplyResult> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignment.applyOnLaunch');
+    return this.applyObjectiveAssignmentPreview(
+      { cycleId },
+      'CYCLE_LAUNCH',
+    );
+  }
+
+  async getObjectiveReportingData(
+    query: ObjectiveReportingQuery = {},
+  ): Promise<ObjectiveReportingRecord[]> {
+    await this.requireAdminForObjectiveReporting('objective.reporting');
+    const filter = this.buildObjectiveReportingFilter(query);
+    const objectives = await Objective.find(filter)
+      .select('termAssignmentId annualAssignmentId cycleId employeeId assignedManagerId assessmentTerm assessmentTermCode source sourceType objectiveMasterId objectiveVersionId assignmentRuleRefs title status applicabilityStatus objectiveSnapshot weightage targetValue')
+      .lean();
+
+    const annualAssignmentIds = Array.from(
+      new Set(
+        objectives
+          .map((objective) => objective.annualAssignmentId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const annualAssignments = await AnnualAssignment.find({
+      _id: { $in: annualAssignmentIds.map((id) => this.toObjectId(id, 'annualAssignmentId')) },
+      isDeleted: false,
+    }).select('employeeSnapshot orgSnapshot').lean();
+    const annualById = new Map(annualAssignments.map((assignment) => [assignment._id.toString(), assignment]));
+
+    return objectives.map((objective) => {
+      const annualAssignment = objective.annualAssignmentId
+        ? annualById.get(objective.annualAssignmentId.toString())
+        : undefined;
+      const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
+      const orgSnapshot = annualAssignment?.orgSnapshot ?? {};
+      const snapshot = (objective.objectiveSnapshot ?? {}) as Record<string, any>;
+      return {
+        objectiveId: objective._id.toString(),
+        objectiveSource: objective.sourceType ?? objective.source,
+        objectiveMasterId: objective.objectiveMasterId?.toString(),
+        objectiveVersionId: objective.objectiveVersionId?.toString(),
+        objectiveTitle: snapshot.title ?? objective.title,
+        assignmentLevel: this.resolveObjectiveAssignmentLevel(objective),
+        assignmentRuleIds: (objective.assignmentRuleRefs ?? []).map((id: Types.ObjectId) => id.toString()),
+        cycleId: objective.cycleId?.toString(),
+        annualAssignmentId: objective.annualAssignmentId?.toString(),
+        termAssignmentId: objective.termAssignmentId.toString(),
+        assessmentTerm: objective.assessmentTerm ?? objective.assessmentTermCode,
+        employeeId: objective.employeeId.toString(),
+        assignedManagerId: objective.assignedManagerId.toString(),
+        employeeDepartment: String(
+          employeeSnapshot.department ??
+          employeeSnapshot.departmentName ??
+          employeeSnapshot.departmentId ??
+          orgSnapshot.department ??
+          orgSnapshot.departmentId ??
+          '',
+        ) || undefined,
+        employeeGroup: String(employeeSnapshot.employeeGroup ?? employeeSnapshot.employmentStatus ?? '') || undefined,
+        employeeRole: String(employeeSnapshot.specificRole ?? employeeSnapshot.role ?? '') || undefined,
+        objectiveApprovalStatus: objective.status,
+        applicabilityStatus: objective.applicabilityStatus ?? ObjectiveApplicabilityStatus.ACTIVE,
+        approvedWeightage: snapshot.approvedWeightage ?? objective.weightage,
+        scoreable: snapshot.scoreable,
+        targetValue: snapshot.targetValue ?? objective.targetValue,
+        targetDirection: snapshot.targetDirection,
+      };
+    });
+  }
+
+  async getObjectiveDashboardStatuses(
+    query: ObjectiveReportingQuery = {},
+  ): Promise<ObjectiveDashboardStatusRecord[]> {
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    const filter = this.buildObjectiveReportingFilter(query);
+
+    if (mappedRole === PmsRole.EMPLOYEE) {
+      filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
+    } else if (mappedRole === PmsRole.MANAGER) {
+      filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
+    } else if (mappedRole !== PmsRole.ADMIN && mappedRole !== PmsRole.MANAGEMENT && mappedRole !== PmsRole.DIRECTOR) {
+      throw new Error('PMS access denied');
+    }
+
+    const objectives = await Objective.find(filter)
+      .select('termAssignmentId annualAssignmentId cycleId employeeId assessmentTerm assessmentTermCode title status applicabilityStatus objectiveSnapshot')
+      .lean();
+    const termAssignmentIds = Array.from(new Set(objectives.map((objective) => objective.termAssignmentId.toString())));
+    const termAssignments = await TermAssignment.find({
+      _id: { $in: termAssignmentIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
+      isDeleted: false,
+    }).select('termState').lean();
+    const termById = new Map(termAssignments.map((termAssignment) => [termAssignment._id.toString(), termAssignment]));
+
+    return objectives.map((objective) => {
+      const termAssignment = termById.get(objective.termAssignmentId.toString());
+      const dashboard = this.resolveObjectiveDashboardStatus(
+        objective.status,
+        objective.applicabilityStatus ?? ObjectiveApplicabilityStatus.ACTIVE,
+        termAssignment?.termState,
+      );
+      return {
+        objectiveId: objective._id.toString(),
+        termAssignmentId: objective.termAssignmentId.toString(),
+        annualAssignmentId: objective.annualAssignmentId?.toString(),
+        cycleId: objective.cycleId?.toString(),
+        employeeId: objective.employeeId.toString(),
+        assessmentTerm: objective.assessmentTerm ?? objective.assessmentTermCode,
+        objectiveTitle: objective.objectiveSnapshot?.title ?? objective.title,
+        workflowStatus: objective.status,
+        applicabilityStatus: objective.applicabilityStatus ?? ObjectiveApplicabilityStatus.ACTIVE,
+        dashboardStatus: dashboard.dashboardStatus,
+        blockedReason: dashboard.blockedReason,
+      };
+    });
   }
 
   async listManagerObjectiveLibrary(): Promise<IManagerObjectiveLibraryItem[]> {
@@ -1864,6 +3164,46 @@ export class ObjectiveService extends BaseService {
     return objective;
   }
 
+  async amendFlexibleObjective(
+    objectiveId: string,
+    input: AmendFlexibleObjectiveInput,
+  ): Promise<FlexibleObjectiveAmendmentResult> {
+    await this.assertAdmin('objective.amendment');
+
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Amendment reason is required');
+    }
+
+    const objective = await this.getObjective(objectiveId);
+    if (!objective.objectiveMasterId || !objective.objectiveVersionId || !objective.objectiveSnapshot) {
+      throw new Error('Only flexible assigned objectives can use amendment flow');
+    }
+
+    const termAssignment = await this.getTermAssignment(objective.termAssignmentId.toString());
+    this.assertObjectiveAmendmentAllowed(termAssignment);
+
+    if (objective.applicabilityStatus === ObjectiveApplicabilityStatus.NOT_APPLICABLE) {
+      throw new Error('Objective is already marked not applicable');
+    }
+    if (objective.applicabilityStatus === ObjectiveApplicabilityStatus.REPLACED) {
+      throw new Error('Objective has already been replaced');
+    }
+
+    if (input.action === 'MARK_NOT_APPLICABLE') {
+      return this.markFlexibleObjectiveNotApplicable(objective, reason);
+    }
+
+    if (input.action === 'REPLACE_OBJECTIVE') {
+      if (!input.replacementObjectiveVersionId) {
+        throw new Error('replacementObjectiveVersionId is required for replacement amendment');
+      }
+      return this.replaceFlexibleObjective(objective, input.replacementObjectiveVersionId, reason, input.assignmentRuleRefs ?? []);
+    }
+
+    throw new Error('Unsupported objective amendment action');
+  }
+
   private async ensurePredefinedObjectivesForAssignments(
     annualAssignments: Array<IAnnualAssignment | Record<string, any>>,
     termAssignments: Array<ITermAssignment | Record<string, any>>,
@@ -2436,6 +3776,17 @@ export class ObjectiveService extends BaseService {
       approvedAt: objective.approvedAt ? new Date(objective.approvedAt).toISOString() : undefined,
       returnedReason: objective.returnedReason,
       returnedAt: objective.returnedAt ? new Date(objective.returnedAt).toISOString() : undefined,
+      objectiveMasterId: objective.objectiveMasterId?.toString?.(),
+      objectiveVersionId: objective.objectiveVersionId?.toString?.(),
+      assignmentRuleRefs: (objective.assignmentRuleRefs ?? []).map((id: any) => id.toString()),
+      sourceType: objective.sourceType,
+      objectiveSnapshot: objective.objectiveSnapshot,
+      applicabilityStatus: objective.applicabilityStatus,
+      amendmentReason: objective.amendmentReason,
+      amendmentAction: objective.amendmentAction,
+      amendmentAt: objective.amendmentAt ? new Date(objective.amendmentAt).toISOString() : undefined,
+      amendmentBy: objective.amendmentBy?.toString?.(),
+      replacementObjectiveId: objective.replacementObjectiveId?.toString?.(),
       updatedAt: new Date(objective.updatedAt).toISOString(),
       createdAt: new Date(objective.createdAt).toISOString(),
     };
@@ -3510,6 +4861,1388 @@ export class ObjectiveService extends BaseService {
       uploadedByRole: attachment.uploadedByRole,
       uploadedAt: attachment.uploadedAt,
     }));
+  }
+
+  private async assertObjectiveOwnerPermission(
+    sourceType: string,
+    metadataOrOwnerId?: string | {
+      ownerUserId?: Types.ObjectId | string;
+      ownerRole?: string;
+      ownerDepartment?: string;
+      ownerScope?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const metadata = typeof metadataOrOwnerId === 'string'
+      ? { ownerUserId: metadataOrOwnerId }
+      : metadataOrOwnerId;
+    const allowed = await this.matchesObjectivePermissionMetadata(sourceType, {
+      userId: metadata?.ownerUserId,
+      role: metadata?.ownerRole,
+      department: metadata?.ownerDepartment,
+      scope: metadata?.ownerScope,
+    });
+
+    if (!allowed) {
+      throw new Error('Only Admin or the Objective Owner can perform this action');
+    }
+  }
+
+  private async assertObjectiveAssignerPermission(
+    sourceType: string,
+    metadata: {
+      assignerUserId?: Types.ObjectId | string;
+      assignerRole?: string;
+      assignerDepartment?: string;
+      assignerScope?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const allowed = await this.matchesObjectivePermissionMetadata(sourceType, {
+      userId: metadata.assignerUserId,
+      role: metadata.assignerRole,
+      department: metadata.assignerDepartment,
+      scope: metadata.assignerScope,
+    });
+
+    if (!allowed) {
+      throw new Error('Only Admin or the Objective Assigner can assign this objective version');
+    }
+  }
+
+  private async assertObjectiveReviewerPermission(
+    sourceType: string,
+    metadata: {
+      reviewerUserId?: Types.ObjectId | string;
+      reviewerRole?: string;
+      reviewerDepartment?: string;
+      reviewerScope?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const allowed = await this.matchesObjectivePermissionMetadata(sourceType, {
+      userId: metadata.reviewerUserId,
+      role: metadata.reviewerRole,
+      department: metadata.reviewerDepartment,
+      scope: metadata.reviewerScope,
+    });
+
+    if (!allowed) {
+      throw new Error('Only Admin or the Objective Reviewer can review this objective version');
+    }
+  }
+
+  private async canViewObjectiveVersionHistory(
+    sourceType: string,
+    master: {
+      ownerUserId?: Types.ObjectId | string;
+      ownerRole?: string;
+      ownerDepartment?: string;
+      ownerScope?: Record<string, unknown>;
+    },
+    versions: Array<{
+      ownerUserId?: Types.ObjectId | string;
+      ownerRole?: string;
+      ownerDepartment?: string;
+      ownerScope?: Record<string, unknown>;
+      assignerUserId?: Types.ObjectId | string;
+      assignerRole?: string;
+      assignerDepartment?: string;
+      assignerScope?: Record<string, unknown>;
+      reviewerUserId?: Types.ObjectId | string;
+      reviewerRole?: string;
+      reviewerDepartment?: string;
+      reviewerScope?: Record<string, unknown>;
+    }>,
+  ): Promise<boolean> {
+    if (await this.matchesObjectivePermissionMetadata(sourceType, {
+      userId: master.ownerUserId,
+      role: master.ownerRole,
+      department: master.ownerDepartment,
+      scope: master.ownerScope,
+    })) {
+      return true;
+    }
+
+    for (const version of versions) {
+      if (await this.matchesObjectivePermissionMetadata(sourceType, {
+        userId: version.ownerUserId,
+        role: version.ownerRole,
+        department: version.ownerDepartment,
+        scope: version.ownerScope,
+      })) {
+        return true;
+      }
+      if (await this.matchesObjectivePermissionMetadata(sourceType, {
+        userId: version.assignerUserId,
+        role: version.assignerRole,
+        department: version.assignerDepartment,
+        scope: version.assignerScope,
+      })) {
+        return true;
+      }
+      if (await this.matchesObjectivePermissionMetadata(sourceType, {
+        userId: version.reviewerUserId,
+        role: version.reviewerRole,
+        department: version.reviewerDepartment,
+        scope: version.reviewerScope,
+      })) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private mergeObjectiveOwnerMetadata(
+    version: {
+      ownerUserId?: Types.ObjectId | string;
+      ownerRole?: string;
+      ownerDepartment?: string;
+      ownerScope?: Record<string, unknown>;
+    },
+    master: {
+      ownerUserId?: Types.ObjectId | string;
+      ownerRole?: string;
+      ownerDepartment?: string;
+      ownerScope?: Record<string, unknown>;
+    },
+  ) {
+    return {
+      ownerUserId: version.ownerUserId ?? master.ownerUserId,
+      ownerRole: version.ownerRole ?? master.ownerRole,
+      ownerDepartment: version.ownerDepartment ?? master.ownerDepartment,
+      ownerScope: version.ownerScope ?? master.ownerScope,
+    };
+  }
+
+  private async matchesObjectivePermissionMetadata(
+    sourceType: string,
+    metadata: {
+      userId?: Types.ObjectId | string;
+      role?: string;
+      department?: string;
+      scope?: Record<string, unknown>;
+    },
+  ): Promise<boolean> {
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+
+    if (mappedRole === PmsRole.ADMIN) {
+      return true;
+    }
+
+    if (metadata.userId?.toString?.() === actor.actorId) {
+      return true;
+    }
+
+    const configuredRole = this.normalizeObjectivePermissionRole(metadata.role);
+    if (!configuredRole) {
+      return false;
+    }
+
+    if (configuredRole !== this.normalizeObjectivePermissionRole(actor.actorRole)) {
+      return false;
+    }
+
+    if (configuredRole === 'DEPARTMENT_HEAD') {
+      return this.matchesDepartmentHeadObjectiveScope(sourceType, metadata);
+    }
+
+    const metadataDepartment = metadata.department?.trim();
+    if (metadataDepartment) {
+      const actorDepartment = await this.getActorDepartmentId();
+      if (!this.sameScopeValue(actorDepartment, metadataDepartment)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async matchesDepartmentHeadObjectiveScope(
+    sourceType: string,
+    metadata: {
+      department?: string;
+      scope?: Record<string, unknown>;
+    },
+  ): Promise<boolean> {
+    if (sourceType !== FlexibleObjectiveSourceType.DEPARTMENT_OBJECTIVE) {
+      return false;
+    }
+
+    const configuredDepartment = String(
+      metadata.department ??
+      metadata.scope?.department ??
+      metadata.scope?.departmentId ??
+      '',
+    ).trim();
+
+    if (!configuredDepartment) {
+      return false;
+    }
+
+    const actorDepartment = await this.getActorDepartmentId();
+    return this.sameScopeValue(actorDepartment, configuredDepartment);
+  }
+
+  private async getActorDepartmentId(): Promise<string> {
+    const actor = this.requireActor();
+    const contextDepartment = this.context.user?.departmentId?.trim();
+    if (contextDepartment) {
+      return contextDepartment;
+    }
+
+    const actorUser = await User.findById(actor.actorId).select('departmentId').lean();
+    return String(actorUser?.departmentId ?? '').trim();
+  }
+
+  private normalizeObjectivePermissionRole(role?: string): string {
+    const normalized = String(role ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (['DEPARTMENT_HEAD', 'DEPT_HEAD', 'HOD', 'HEAD_OF_DEPARTMENT'].includes(normalized)) {
+      return 'DEPARTMENT_HEAD';
+    }
+    return normalized;
+  }
+
+  private sameScopeValue(left?: string, right?: string): boolean {
+    return String(left ?? '').trim().toLowerCase() === String(right ?? '').trim().toLowerCase();
+  }
+
+  private requireFlexibleObjectiveSourceType(
+    sourceType: FlexibleObjectiveSourceTypeType,
+  ): FlexibleObjectiveSourceTypeType {
+    if (!Object.values(FlexibleObjectiveSourceType).includes(sourceType)) {
+      throw new Error('Valid objective source type is required');
+    }
+
+    return sourceType;
+  }
+
+  private normalizeObjectiveOwnerInput(
+    input: ObjectiveOwnerInput,
+    actor: { actorId: string; actorRole: string },
+  ) {
+    return {
+      ownerUserId: input.ownerUserId
+        ? this.toObjectId(input.ownerUserId, 'ownerUserId')
+        : this.toObjectId(actor.actorId, 'actorId'),
+      ownerRole: input.ownerRole?.trim() || actor.actorRole,
+      ownerDepartment: input.ownerDepartment?.trim() || undefined,
+      ownerScope: input.ownerScope ?? {},
+    };
+  }
+
+  private normalizeObjectiveAssignerInput(
+    input: ObjectiveAssignerInput,
+    actor: { actorId: string; actorRole: string },
+  ) {
+    return {
+      assignerUserId: input.assignerUserId
+        ? this.toObjectId(input.assignerUserId, 'assignerUserId')
+        : this.toObjectId(actor.actorId, 'actorId'),
+      assignerRole: input.assignerRole?.trim() || actor.actorRole,
+      assignerDepartment: input.assignerDepartment?.trim() || undefined,
+      assignerScope: input.assignerScope ?? {},
+    };
+  }
+
+  private normalizeObjectiveReviewerInput(
+    input: ObjectiveReviewerInput,
+  ) {
+    return {
+      reviewerUserId: input.reviewerUserId
+        ? this.toObjectId(input.reviewerUserId, 'reviewerUserId')
+        : undefined,
+      reviewerRole: input.reviewerRole?.trim() || undefined,
+      reviewerDepartment: input.reviewerDepartment?.trim() || undefined,
+      reviewerScope: input.reviewerScope ?? {},
+    };
+  }
+
+  private normalizeObjectiveMasterVersionDetails(
+    input: ObjectiveMasterVersionDetailsInput,
+    actor: { actorId: string; actorRole: string },
+  ) {
+    const title = input.title?.trim();
+    if (!title) {
+      throw new Error('Objective title is required');
+    }
+
+    return {
+      title,
+      description: input.description?.trim() || undefined,
+      measurementGuidance: input.measurementGuidance?.trim() || undefined,
+      targetValue: input.targetValue?.trim() || undefined,
+      targetDescription: input.targetDescription?.trim() || undefined,
+      targetDirection: input.targetDirection && Object.values(ObjectiveTargetDirection).includes(input.targetDirection)
+        ? input.targetDirection
+        : undefined,
+      priority: input.priority?.trim().toUpperCase() || undefined,
+      attachmentPolicy: input.attachmentPolicy && Object.values(ObjectiveAttachmentPolicy).includes(input.attachmentPolicy)
+        ? input.attachmentPolicy
+        : ObjectiveAttachmentPolicy.OPTIONAL,
+      scoreable: input.scoreable ?? true,
+      defaultScoringEligibilityRef: input.defaultScoringEligibilityRef?.trim() || undefined,
+      approvedWeightage: input.approvedWeightage,
+      applicableTermLabels: this.normalizeApplicableTermLabels(input.applicableTermLabels),
+      ...this.normalizeObjectiveOwnerInput(input, actor),
+      ...this.normalizeObjectiveAssignerInput(input, actor),
+      ...this.normalizeObjectiveReviewerInput(input),
+    };
+  }
+
+  private normalizeObjectiveMasterVersionPatch(
+    input: UpdateObjectiveMasterVersionInput,
+    actor: { actorId: string; actorRole: string },
+  ) {
+    const patch: Record<string, unknown> = {};
+
+    if (input.title !== undefined) {
+      const title = input.title.trim();
+      if (!title) {
+        throw new Error('Objective title is required');
+      }
+      patch.title = title;
+    }
+    if (input.description !== undefined) patch.description = input.description?.trim() || undefined;
+    if (input.measurementGuidance !== undefined) patch.measurementGuidance = input.measurementGuidance?.trim() || undefined;
+    if (input.targetValue !== undefined) patch.targetValue = input.targetValue?.trim() || undefined;
+    if (input.targetDescription !== undefined) patch.targetDescription = input.targetDescription?.trim() || undefined;
+    if (input.targetDirection !== undefined) {
+      if (input.targetDirection && !Object.values(ObjectiveTargetDirection).includes(input.targetDirection)) {
+        throw new Error('Invalid target direction');
+      }
+      patch.targetDirection = input.targetDirection || undefined;
+    }
+    if (input.priority !== undefined) patch.priority = input.priority?.trim().toUpperCase() || undefined;
+    if (input.attachmentPolicy !== undefined) {
+      if (input.attachmentPolicy && !Object.values(ObjectiveAttachmentPolicy).includes(input.attachmentPolicy)) {
+        throw new Error('Invalid attachment policy');
+      }
+      patch.attachmentPolicy = input.attachmentPolicy || undefined;
+    }
+    if (input.scoreable !== undefined) patch.scoreable = input.scoreable;
+    if (input.defaultScoringEligibilityRef !== undefined) {
+      patch.defaultScoringEligibilityRef = input.defaultScoringEligibilityRef?.trim() || undefined;
+    }
+    if (input.approvedWeightage !== undefined) patch.approvedWeightage = input.approvedWeightage;
+    if (input.applicableTermLabels !== undefined) {
+      patch.applicableTermLabels = this.normalizeApplicableTermLabels(input.applicableTermLabels);
+    }
+    if (input.ownerUserId !== undefined) {
+      patch.ownerUserId = input.ownerUserId ? this.toObjectId(input.ownerUserId, 'ownerUserId') : undefined;
+    }
+    if (input.ownerRole !== undefined) patch.ownerRole = input.ownerRole?.trim() || actor.actorRole;
+    if (input.ownerDepartment !== undefined) patch.ownerDepartment = input.ownerDepartment?.trim() || undefined;
+    if (input.ownerScope !== undefined) patch.ownerScope = input.ownerScope ?? {};
+    if (input.assignerUserId !== undefined) {
+      patch.assignerUserId = input.assignerUserId ? this.toObjectId(input.assignerUserId, 'assignerUserId') : undefined;
+    }
+    if (input.assignerRole !== undefined) patch.assignerRole = input.assignerRole?.trim() || actor.actorRole;
+    if (input.assignerDepartment !== undefined) patch.assignerDepartment = input.assignerDepartment?.trim() || undefined;
+    if (input.assignerScope !== undefined) patch.assignerScope = input.assignerScope ?? {};
+    if (input.reviewerUserId !== undefined) {
+      patch.reviewerUserId = input.reviewerUserId ? this.toObjectId(input.reviewerUserId, 'reviewerUserId') : undefined;
+    }
+    if (input.reviewerRole !== undefined) patch.reviewerRole = input.reviewerRole?.trim() || undefined;
+    if (input.reviewerDepartment !== undefined) patch.reviewerDepartment = input.reviewerDepartment?.trim() || undefined;
+    if (input.reviewerScope !== undefined) patch.reviewerScope = input.reviewerScope ?? {};
+
+    return patch;
+  }
+
+  private cloneObjectiveMasterVersionDetails(
+    version: {
+      title: string;
+      description?: string;
+      measurementGuidance?: string;
+      targetValue?: string;
+      targetDescription?: string;
+      targetDirection?: ObjectiveTargetDirectionType;
+      priority?: string;
+      attachmentPolicy?: ObjectiveAttachmentPolicyType;
+      scoreable?: boolean;
+      defaultScoringEligibilityRef?: string;
+      approvedWeightage?: number;
+      applicableTermLabels?: AssessmentTermCodeType[];
+      ownerUserId?: Types.ObjectId;
+      ownerRole?: string;
+      ownerDepartment?: string;
+      ownerScope?: Record<string, unknown>;
+      assignerDepartment?: string;
+      assignerScope?: Record<string, unknown>;
+    },
+    actor: { actorId: string; actorRole: string },
+  ) {
+    return {
+      title: version.title,
+      description: version.description,
+      measurementGuidance: version.measurementGuidance,
+      targetValue: version.targetValue,
+      targetDescription: version.targetDescription,
+      targetDirection: version.targetDirection,
+      priority: version.priority,
+      attachmentPolicy: version.attachmentPolicy ?? ObjectiveAttachmentPolicy.OPTIONAL,
+      scoreable: version.scoreable ?? true,
+      defaultScoringEligibilityRef: version.defaultScoringEligibilityRef,
+      approvedWeightage: version.approvedWeightage,
+      applicableTermLabels: version.applicableTermLabels ?? [],
+      ownerUserId: version.ownerUserId ?? this.toObjectId(actor.actorId, 'actorId'),
+      ownerRole: version.ownerRole ?? actor.actorRole,
+      ownerDepartment: version.ownerDepartment,
+      ownerScope: version.ownerScope ?? {},
+      assignerUserId: this.toObjectId(actor.actorId, 'actorId'),
+      assignerRole: actor.actorRole,
+      assignerDepartment: version.assignerDepartment,
+      assignerScope: version.assignerScope ?? {},
+      reviewerUserId: (version as any).reviewerUserId,
+      reviewerRole: (version as any).reviewerRole,
+      reviewerDepartment: (version as any).reviewerDepartment,
+      reviewerScope: (version as any).reviewerScope ?? {},
+    };
+  }
+
+  private normalizeApplicableTermLabels(
+    terms?: AssessmentTermCodeType[],
+  ): AssessmentTermCodeType[] {
+    if (!Array.isArray(terms)) {
+      return [];
+    }
+
+    const validTerms = Object.values(AssessmentTermCode);
+    return Array.from(new Set(terms.filter((term) => validTerms.includes(term))));
+  }
+
+  private mapObjectiveMasterRecord(master: any): ObjectiveMasterRecord {
+    return {
+      id: master._id?.toString?.() ?? '',
+      sourceType: master.sourceType,
+      status: master.status,
+      currentVersionId: master.currentVersionId?.toString?.(),
+      ownerUserId: master.ownerUserId?.toString?.(),
+      ownerRole: master.ownerRole,
+      ownerDepartment: master.ownerDepartment,
+      ownerScope: master.ownerScope ?? {},
+      createdBy: master.createdBy?.toString?.() ?? '',
+      updatedBy: master.updatedBy?.toString?.(),
+      createdAt: master.createdAt?.toISOString?.(),
+      updatedAt: master.updatedAt?.toISOString?.(),
+    };
+  }
+
+  private mapObjectiveMasterVersionRecord(version: any): ObjectiveMasterVersionRecord {
+    return {
+      id: version._id?.toString?.() ?? '',
+      objectiveMasterId: version.objectiveMasterId?.toString?.() ?? '',
+      versionNo: version.versionNo,
+      status: version.status,
+      title: version.title,
+      description: version.description,
+      measurementGuidance: version.measurementGuidance,
+      targetValue: version.targetValue,
+      targetDescription: version.targetDescription,
+      targetDirection: version.targetDirection,
+      priority: version.priority,
+      attachmentPolicy: version.attachmentPolicy,
+      scoreable: version.scoreable,
+      defaultScoringEligibilityRef: version.defaultScoringEligibilityRef,
+      approvedWeightage: version.approvedWeightage,
+      applicableTermLabels: version.applicableTermLabels ?? [],
+      ownerUserId: version.ownerUserId?.toString?.(),
+      ownerRole: version.ownerRole,
+      ownerDepartment: version.ownerDepartment,
+      ownerScope: version.ownerScope ?? {},
+      assignerUserId: version.assignerUserId?.toString?.(),
+      assignerRole: version.assignerRole,
+      assignerDepartment: version.assignerDepartment,
+      assignerScope: version.assignerScope ?? {},
+      reviewerUserId: version.reviewerUserId?.toString?.(),
+      reviewerRole: version.reviewerRole,
+      reviewerDepartment: version.reviewerDepartment,
+      reviewerScope: version.reviewerScope ?? {},
+      activatedAt: version.activatedAt?.toISOString?.(),
+      activatedBy: version.activatedBy?.toString?.(),
+      deactivatedAt: version.deactivatedAt?.toISOString?.(),
+      deactivatedBy: version.deactivatedBy?.toString?.(),
+      archivedAt: version.archivedAt?.toISOString?.(),
+      archivedBy: version.archivedBy?.toString?.(),
+      createdBy: version.createdBy?.toString?.() ?? '',
+      updatedBy: version.updatedBy?.toString?.(),
+      createdAt: version.createdAt?.toISOString?.(),
+      updatedAt: version.updatedAt?.toISOString?.(),
+    };
+  }
+
+  private async toObjectiveMasterSummaryRecord(
+    master: any,
+    versions: any[],
+  ): Promise<ObjectiveMasterSummaryRecord> {
+    const mappedVersions = versions.map((version) => this.mapObjectiveMasterVersionRecord(version));
+    const currentVersionId = master.currentVersionId?.toString?.();
+    const currentVersion = mappedVersions.find((version) => version.id === currentVersionId);
+    const latestVersion = mappedVersions[0];
+
+    return {
+      master: this.mapObjectiveMasterRecord(master),
+      currentVersion,
+      latestVersion,
+      versionCount: mappedVersions.length,
+      activeVersionCount: mappedVersions.filter((version) => version.status === ObjectiveMasterVersionStatus.ACTIVE).length,
+      draftVersionCount: mappedVersions.filter((version) => version.status === ObjectiveMasterVersionStatus.DRAFT).length,
+      actions: await this.buildObjectiveMasterActionAvailability(master, versions),
+    };
+  }
+
+  private async buildObjectiveMasterActionAvailability(
+    master: any,
+    versions: any[],
+  ): Promise<ObjectiveMasterActionAvailability> {
+    const currentVersionId = master.currentVersionId?.toString?.();
+    const activeVersion =
+      versions.find((version) => version._id?.toString?.() === currentVersionId) ||
+      versions.find((version) => version.status === ObjectiveMasterVersionStatus.ACTIVE);
+    const draftVersion = versions.find((version) => version.status === ObjectiveMasterVersionStatus.DRAFT);
+    const canOwnMaster = await this.matchesObjectivePermissionMetadata(master.sourceType, {
+      userId: master.ownerUserId,
+      role: master.ownerRole,
+      department: master.ownerDepartment,
+      scope: master.ownerScope,
+    });
+    const canOwnAnyVersion = canOwnMaster || await this.anyVersionMatchesPermission(master.sourceType, versions, 'owner');
+    const canAssignActiveVersion = activeVersion
+      ? await this.matchesObjectivePermissionMetadata(master.sourceType, {
+        userId: activeVersion.assignerUserId,
+        role: activeVersion.assignerRole,
+        department: activeVersion.assignerDepartment,
+        scope: activeVersion.assignerScope,
+      })
+      : false;
+    const canReviewActiveVersion = activeVersion
+      ? await this.matchesObjectivePermissionMetadata(master.sourceType, {
+        userId: activeVersion.reviewerUserId,
+        role: activeVersion.reviewerRole,
+        department: activeVersion.reviewerDepartment,
+        scope: activeVersion.reviewerScope,
+      })
+      : false;
+
+    return {
+      canCreateDraftVersion: canOwnAnyVersion && Boolean(activeVersion || versions.length > 0),
+      canEditDraft: canOwnAnyVersion && Boolean(draftVersion),
+      canActivateDraft: canOwnAnyVersion && Boolean(draftVersion),
+      canDeactivateActive: canOwnAnyVersion && Boolean(activeVersion),
+      canArchiveVersion: canOwnAnyVersion && versions.length > 0,
+      canCreateAssignmentRule: canAssignActiveVersion && Boolean(activeVersion),
+      canReviewActiveVersion,
+    };
+  }
+
+  private async anyVersionMatchesPermission(
+    sourceType: string,
+    versions: any[],
+    permissionType: 'owner' | 'assigner' | 'reviewer',
+  ): Promise<boolean> {
+    for (const version of versions) {
+      if (await this.matchesObjectivePermissionMetadata(sourceType, {
+        userId: version[`${permissionType}UserId`],
+        role: version[`${permissionType}Role`],
+        department: version[`${permissionType}Department`],
+        scope: version[`${permissionType}Scope`],
+      })) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private normalizePositiveInteger(value: string | number | undefined, fallback: number): number {
+    const normalized = Number(value ?? fallback);
+    return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
+  }
+
+  private async buildObjectiveAssignmentPreview(
+    input: ObjectiveAssignmentPreviewInput,
+  ): Promise<ObjectiveAssignmentPreviewResult> {
+    const cycleId = this.toObjectId(input.cycleId, 'cycleId');
+    const selectedTermLabels = this.normalizeApplicableTermLabels(input.termLabels);
+    const rules = await this.loadObjectiveAssignmentRulesForPreview(input, cycleId);
+    const cycle = await AnnualCycle.findById(cycleId).select('assessmentTermType').lean();
+    if (!cycle) {
+      throw new Error('Annual cycle not found');
+    }
+
+    const annualAssignments = await AnnualAssignment.find({
+      cycleId,
+      isDeleted: false,
+    }).lean();
+    const termAssignments = await TermAssignment.find({
+      cycleId,
+      isDeleted: false,
+      ...(selectedTermLabels.length > 0 ? { assessmentTermCode: { $in: selectedTermLabels } } : {}),
+    }).lean();
+
+    const annualById = new Map(annualAssignments.map((assignment) => [assignment._id.toString(), assignment]));
+    const versionIds = Array.from(new Set(rules.map((rule) => rule.objectiveVersionId.toString())));
+    const masterIds = Array.from(new Set(rules.map((rule) => rule.objectiveMasterId.toString())));
+    const [versions, masters, existingObjectives] = await Promise.all([
+      ObjectiveMasterVersion.find({ _id: { $in: versionIds }, isDeleted: false }).lean(),
+      ObjectiveMaster.find({ _id: { $in: masterIds }, isDeleted: false }).lean(),
+      Objective.find({
+        cycleId,
+        isDeleted: false,
+      })
+        .select('_id termAssignmentId objectiveMasterId objectiveVersionId assignmentRuleRefs employeeId assessmentTerm assessmentTermCode title')
+        .lean(),
+    ]);
+
+    const versionsById = new Map(versions.map((version) => [version._id.toString(), version]));
+    const mastersById = new Map(masters.map((master) => [master._id.toString(), master]));
+    const exactExisting = new Map<string, any>();
+    const existingByTerm = new Map<string, any[]>();
+    for (const objective of existingObjectives) {
+      const term = objective.assessmentTerm ?? objective.assessmentTermCode;
+      if (objective.objectiveMasterId && objective.employeeId && term) {
+        exactExisting.set(
+          this.objectiveAssignmentKey(
+            objective.objectiveMasterId.toString(),
+            objective.employeeId.toString(),
+            term,
+          ),
+          objective,
+        );
+      }
+      const termAssignmentId = objective.termAssignmentId?.toString();
+      if (termAssignmentId) {
+        const list = existingByTerm.get(termAssignmentId) ?? [];
+        list.push(objective);
+        existingByTerm.set(termAssignmentId, list);
+      }
+    }
+
+    const groupedRows = new Map<string, ObjectiveAssignmentPreviewRow>();
+    const blockedRows: ObjectiveAssignmentPreviewRow[] = [];
+
+    for (const rule of rules) {
+      const version = versionsById.get(rule.objectiveVersionId.toString());
+      const master = mastersById.get(rule.objectiveMasterId.toString());
+      const ruleBlockedReason = this.getObjectiveAssignmentRuleBlockedReason(
+        rule,
+        version,
+        master,
+        cycle.assessmentTermType ?? undefined,
+      );
+
+      for (const termAssignment of termAssignments) {
+        const annualAssignment = annualById.get(termAssignment.annualAssignmentId.toString());
+        if (!annualAssignment) continue;
+        if (!this.ruleMatchesTerm(rule, termAssignment.assessmentTermCode, cycle.assessmentTermType ?? undefined)) {
+          continue;
+        }
+        if (!this.ruleMatchesAssignmentCriteria(rule.criteria ?? {}, annualAssignment)) {
+          continue;
+        }
+
+        const key = this.objectiveAssignmentKey(
+          rule.objectiveMasterId.toString(),
+          termAssignment.employeeId.toString(),
+          termAssignment.assessmentTermCode,
+        );
+
+        if (ruleBlockedReason || !version || !master) {
+          blockedRows.push(this.buildObjectiveAssignmentPreviewRow({
+            key: `${key}:${rule._id.toString()}:blocked`,
+            ruleIds: [rule._id.toString()],
+            rule,
+            version,
+            termAssignment,
+            status: 'BLOCKED',
+            warnings: [],
+            blockedReason: ruleBlockedReason ?? 'Objective version or master is not available',
+          }));
+          continue;
+        }
+
+        const existing = exactExisting.get(key);
+        const similarTitleWarning = this.findSimilarTitleWarning(
+          existingByTerm.get(termAssignment._id.toString()) ?? [],
+          version.title,
+          rule.objectiveMasterId.toString(),
+        );
+
+        const existingGrouped = groupedRows.get(key);
+        if (existingGrouped) {
+          existingGrouped.assignmentRuleIds = Array.from(new Set([
+            ...existingGrouped.assignmentRuleIds,
+            rule._id.toString(),
+          ]));
+          if (similarTitleWarning && !existingGrouped.warnings.includes(similarTitleWarning)) {
+            existingGrouped.warnings.push(similarTitleWarning);
+            if (existingGrouped.status === 'NEW') existingGrouped.status = 'WARNING';
+          }
+          continue;
+        }
+
+        groupedRows.set(key, this.buildObjectiveAssignmentPreviewRow({
+          key,
+          ruleIds: [rule._id.toString()],
+          rule,
+          version,
+          termAssignment,
+          status: existing ? 'ALREADY_ASSIGNED' : similarTitleWarning ? 'WARNING' : 'NEW',
+          warnings: similarTitleWarning ? [similarTitleWarning] : [],
+        }));
+      }
+    }
+
+    const rows = [...groupedRows.values(), ...blockedRows];
+    return this.summarizeObjectiveAssignmentPreview(input.cycleId, annualAssignments.length, termAssignments.length, rows);
+  }
+
+  private async applyObjectiveAssignmentPreview(
+    input: ObjectiveAssignmentPreviewInput,
+    applySource: 'CYCLE_LAUNCH' | 'MANUAL_CONFIRMATION',
+  ): Promise<ObjectiveAssignmentApplyResult> {
+    const preview = await this.buildObjectiveAssignmentPreview(input);
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const rowsToApply = preview.rows.filter((row) => row.status === 'NEW' || row.status === 'WARNING');
+    const duplicateRows = preview.rows.filter((row) => row.status === 'ALREADY_ASSIGNED');
+    const createdObjectiveIds: string[] = [];
+    const updatedObjectiveIds: string[] = [];
+
+    const ruleIds = Array.from(new Set(preview.rows.flatMap((row) => row.assignmentRuleIds)));
+    const [rules, versions, termAssignments] = await Promise.all([
+      ObjectiveAssignmentRule.find({ _id: { $in: ruleIds.map((id) => this.toObjectId(id, 'assignmentRuleId')) } }).lean(),
+      ObjectiveMasterVersion.find({
+        _id: { $in: Array.from(new Set(rowsToApply.map((row) => row.objectiveVersionId))).map((id) => this.toObjectId(id, 'objectiveVersionId')) },
+      }).lean(),
+      TermAssignment.find({
+        _id: { $in: rowsToApply.map((row) => this.toObjectId(row.termAssignmentId, 'termAssignmentId')) },
+      }).lean(),
+    ]);
+    const rulesById = new Map(rules.map((rule) => [rule._id.toString(), rule]));
+    const versionsById = new Map(versions.map((version) => [version._id.toString(), version]));
+    const termsById = new Map(termAssignments.map((termAssignment) => [termAssignment._id.toString(), termAssignment]));
+    const masters = await ObjectiveMaster.find({
+      _id: { $in: Array.from(new Set(rules.map((rule) => rule.objectiveMasterId.toString()))).map((id) => this.toObjectId(id, 'objectiveMasterId')) },
+    }).lean();
+    const mastersById = new Map(masters.map((master) => [master._id.toString(), master]));
+
+    for (const row of duplicateRows) {
+      const existingObjective = await Objective.findOne({
+        objectiveMasterId: this.toObjectId(row.objectiveMasterId, 'objectiveMasterId'),
+        employeeId: this.toObjectId(row.employeeId, 'employeeId'),
+        assessmentTerm: row.assessmentTerm,
+        isDeleted: false,
+      });
+      if (!existingObjective) continue;
+      const beforeRefs = (existingObjective.assignmentRuleRefs ?? []).map((ref) => ref.toString());
+      const mergedRefs = Array.from(new Set([...beforeRefs, ...row.assignmentRuleIds]));
+      if (mergedRefs.length !== beforeRefs.length) {
+        existingObjective.assignmentRuleRefs = mergedRefs.map((id) => this.toObjectId(id, 'assignmentRuleId'));
+        existingObjective.updatedBy = actorId;
+        existingObjective.version += 1;
+        await existingObjective.save();
+        updatedObjectiveIds.push(existingObjective._id.toString());
+      }
+    }
+
+    const nextObjectiveNoByTerm = await this.resolveNextObjectiveNos(rowsToApply.map((row) => row.termAssignmentId));
+    const objectivePayloads = rowsToApply.map((row) => {
+      const version = versionsById.get(row.objectiveVersionId);
+      const termAssignment = termsById.get(row.termAssignmentId);
+      const firstRule = row.assignmentRuleIds.map((id) => rulesById.get(id)).find(Boolean);
+      if (!version || !termAssignment || !firstRule) {
+        throw new Error('Objective assignment preview is stale. Please preview again.');
+      }
+      const master = mastersById.get(firstRule.objectiveMasterId.toString());
+      const sourceType = this.resolveFlexibleSourceTypeForObjective(version, firstRule, master);
+      const nextObjectiveNo = nextObjectiveNoByTerm.get(row.termAssignmentId) ?? 1;
+      nextObjectiveNoByTerm.set(row.termAssignmentId, nextObjectiveNo + 1);
+      return {
+        termAssignmentId: termAssignment._id,
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        cycleId: termAssignment.cycleId,
+        templateVersionId: termAssignment.templateVersionId,
+        assessmentTermCode: termAssignment.assessmentTermCode,
+        assessmentTerm: termAssignment.assessmentTermCode,
+        employeeId: termAssignment.employeeId,
+        assignedManagerId: termAssignment.assignedManagerId,
+        objectiveMasterId: firstRule.objectiveMasterId,
+        objectiveVersionId: version._id,
+        assignmentRuleRefs: row.assignmentRuleIds.map((id) => this.toObjectId(id, 'assignmentRuleId')),
+        sourceType,
+        parentObjectiveId: undefined,
+        objectiveSnapshot: this.buildAssignedObjectiveSnapshot(version, termAssignment.assessmentTermCode, sourceType),
+        objectiveNo: nextObjectiveNo,
+        source: this.mapFlexibleSourceToLegacySource(sourceType),
+        isPredefined: true,
+        title: version.title,
+        description: version.description,
+        priority: version.priority,
+        targetMetric: version.measurementGuidance,
+        targetValue: version.targetValue,
+        weightage: version.approvedWeightage,
+        successCriteria: version.targetDescription,
+        status: ObjectiveStatus.OBJECTIVE_APPROVED,
+        attachments: [],
+        createdByRole: actor.actorRole,
+        createdByUserId: actorId,
+        createdBy: actorId,
+        approvedAt: new Date(),
+        approvedBy: actorId,
+      };
+    });
+
+    if (objectivePayloads.length > 0) {
+      const inserted = await Objective.insertMany(objectivePayloads);
+      createdObjectiveIds.push(...inserted.map((objective) => objective._id.toString()));
+    }
+
+    await this.audit(
+      applySource === 'CYCLE_LAUNCH'
+        ? 'PMS_OBJECTIVE_ASSIGNMENT_RULES_APPLIED_ON_LAUNCH'
+        : 'PMS_OBJECTIVE_ASSIGNMENT_RULES_APPLIED',
+      'ANNUAL_CYCLE',
+      input.cycleId,
+      undefined,
+      {
+        preview,
+        createdObjectiveIds,
+        updatedObjectiveIds,
+      },
+    );
+
+    return {
+      ...preview,
+      createdObjectiveIds,
+      updatedObjectiveIds,
+    };
+  }
+
+  private async loadObjectiveAssignmentRulesForPreview(
+    input: ObjectiveAssignmentPreviewInput,
+    cycleId: Types.ObjectId,
+  ) {
+    const filter: Record<string, unknown> = {
+      status: ObjectiveAssignmentRuleStatus.ACTIVE,
+      isDeleted: false,
+      $or: [{ cycleId }, { cycleId: { $exists: false } }, { cycleId: null }],
+    };
+
+    if (input.assignmentRuleIds?.length) {
+      filter._id = { $in: input.assignmentRuleIds.map((id) => this.toObjectId(id, 'assignmentRuleId')) };
+    }
+
+    if (input.objectiveVersionId) {
+      filter.objectiveVersionId = this.toObjectId(input.objectiveVersionId, 'objectiveVersionId');
+    }
+
+    const now = this.getCurrentDate();
+    filter.$and = [
+      { $or: [{ effectiveFrom: { $exists: false } }, { effectiveFrom: { $lte: now } }, { effectiveFrom: null }] },
+      { $or: [{ effectiveTo: { $exists: false } }, { effectiveTo: { $gte: now } }, { effectiveTo: null }] },
+    ];
+
+    return ObjectiveAssignmentRule.find(filter).lean();
+  }
+
+  private assertObjectiveAmendmentAllowed(termAssignment: ITermAssignment): void {
+    if (isTermFinalized(termAssignment.termState)) {
+      throw new Error('Finalized or closed term objectives cannot be amended');
+    }
+  }
+
+  private async markFlexibleObjectiveNotApplicable(
+    objective: IObjective,
+    reason: string,
+  ): Promise<FlexibleObjectiveAmendmentResult> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const previousValue = objective.toObject();
+
+    objective.applicabilityStatus = ObjectiveApplicabilityStatus.NOT_APPLICABLE;
+    objective.amendmentAction = 'MARK_NOT_APPLICABLE';
+    objective.amendmentReason = reason;
+    objective.amendmentAt = new Date();
+    objective.amendmentBy = actorId;
+    objective.updatedBy = actorId;
+    objective.version += 1;
+    await objective.save();
+
+    await CorrectionLayer.create({
+      entityType: 'OBJECTIVE',
+      entityId: objective._id,
+      fieldKey: 'applicabilityStatus',
+      originalValue: previousValue,
+      correctedValue: objective.toObject(),
+      correctionReason: reason,
+      correctedBy: actorId,
+      correctedAt: new Date(),
+      approvedBy: actorId,
+      approvedAt: new Date(),
+      createdBy: actorId,
+    });
+
+    await this.createCommentRecord(objective, reason, 'AMENDMENT_MARK_NOT_APPLICABLE');
+    await this.audit(
+      'PMS_OBJECTIVE_MARKED_NOT_APPLICABLE',
+      'OBJECTIVE',
+      objective._id.toString(),
+      previousValue,
+      objective.toObject(),
+      reason,
+    );
+
+    return {
+      previousObjective: objective,
+      action: 'MARK_NOT_APPLICABLE',
+      applicabilityStatus: ObjectiveApplicabilityStatus.NOT_APPLICABLE,
+    };
+  }
+
+  private async replaceFlexibleObjective(
+    objective: IObjective,
+    replacementObjectiveVersionId: string,
+    reason: string,
+    assignmentRuleRefs: string[],
+  ): Promise<FlexibleObjectiveAmendmentResult> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const replacementVersionRecord = await this.assertObjectiveVersionAssignable(replacementObjectiveVersionId);
+    const replacementVersion = await ObjectiveMasterVersion.findById(replacementVersionRecord.id).lean();
+    if (!replacementVersion) {
+      throw new Error('Replacement objective version not found');
+    }
+
+    if (replacementVersion.objectiveMasterId.toString() === objective.objectiveMasterId?.toString()) {
+      throw new Error('Replacement objective must be a different objective master');
+    }
+
+    const replacementMaster = await ObjectiveMaster.findById(replacementVersion.objectiveMasterId).lean();
+    if (!replacementMaster) {
+      throw new Error('Replacement objective master not found');
+    }
+
+    const existingReplacement = await Objective.findOne({
+      objectiveMasterId: replacementVersion.objectiveMasterId,
+      employeeId: objective.employeeId,
+      assessmentTerm: objective.assessmentTerm ?? objective.assessmentTermCode,
+      isDeleted: false,
+    });
+    if (existingReplacement) {
+      throw new Error('Replacement objective is already assigned to this employee and term');
+    }
+
+    const previousValue = objective.toObject();
+    const nextObjectiveNoByTerm = await this.resolveNextObjectiveNos([objective.termAssignmentId.toString()]);
+    const sourceType = this.resolveFlexibleSourceTypeForObjective(replacementVersion, {}, replacementMaster);
+    const replacementObjective = await Objective.create({
+      termAssignmentId: objective.termAssignmentId,
+      annualAssignmentId: objective.annualAssignmentId,
+      cycleId: objective.cycleId,
+      templateVersionId: objective.templateVersionId,
+      assessmentTermCode: objective.assessmentTermCode,
+      assessmentTerm: objective.assessmentTerm ?? objective.assessmentTermCode,
+      employeeId: objective.employeeId,
+      assignedManagerId: objective.assignedManagerId,
+      objectiveMasterId: replacementVersion.objectiveMasterId,
+      objectiveVersionId: replacementVersion._id,
+      assignmentRuleRefs: assignmentRuleRefs.map((id) => this.toObjectId(id, 'assignmentRuleId')),
+      sourceType,
+      parentObjectiveId: objective._id,
+      objectiveSnapshot: this.buildAssignedObjectiveSnapshot(
+        replacementVersion,
+        objective.assessmentTerm ?? objective.assessmentTermCode!,
+        sourceType,
+      ),
+      objectiveNo: nextObjectiveNoByTerm.get(objective.termAssignmentId.toString()) ?? 1,
+      source: this.mapFlexibleSourceToLegacySource(sourceType),
+      isPredefined: true,
+      title: replacementVersion.title,
+      description: replacementVersion.description,
+      priority: replacementVersion.priority,
+      targetMetric: replacementVersion.measurementGuidance,
+      targetValue: replacementVersion.targetValue,
+      weightage: replacementVersion.approvedWeightage,
+      successCriteria: replacementVersion.targetDescription,
+      status: ObjectiveStatus.OBJECTIVE_APPROVED,
+      applicabilityStatus: ObjectiveApplicabilityStatus.ACTIVE,
+      attachments: [],
+      createdByRole: actor.actorRole,
+      createdByUserId: actorId,
+      createdBy: actorId,
+      approvedAt: new Date(),
+      approvedBy: actorId,
+    });
+
+    objective.applicabilityStatus = ObjectiveApplicabilityStatus.REPLACED;
+    objective.amendmentAction = 'REPLACE_OBJECTIVE';
+    objective.amendmentReason = reason;
+    objective.amendmentAt = new Date();
+    objective.amendmentBy = actorId;
+    objective.replacementObjectiveId = replacementObjective._id;
+    objective.updatedBy = actorId;
+    objective.version += 1;
+    await objective.save();
+
+    await CorrectionLayer.create({
+      entityType: 'OBJECTIVE',
+      entityId: objective._id,
+      fieldKey: 'replacementObjective',
+      originalValue: previousValue,
+      correctedValue: {
+        replacedObjective: objective.toObject(),
+        replacementObjective: replacementObjective.toObject(),
+      },
+      correctionReason: reason,
+      correctedBy: actorId,
+      correctedAt: new Date(),
+      approvedBy: actorId,
+      approvedAt: new Date(),
+      createdBy: actorId,
+    });
+
+    await this.createCommentRecord(objective, reason, 'AMENDMENT_REPLACED');
+    await this.createCommentRecord(replacementObjective, reason, 'AMENDMENT_REPLACEMENT');
+    await this.audit(
+      'PMS_OBJECTIVE_REPLACED',
+      'OBJECTIVE',
+      objective._id.toString(),
+      previousValue,
+      {
+        replacedObjective: objective.toObject(),
+        replacementObjective: replacementObjective.toObject(),
+      },
+      reason,
+    );
+
+    return {
+      previousObjective: objective,
+      replacementObjective,
+      action: 'REPLACE_OBJECTIVE',
+      applicabilityStatus: ObjectiveApplicabilityStatus.REPLACED,
+    };
+  }
+
+  private getObjectiveAssignmentRuleBlockedReason(
+    rule: any,
+    version: any | undefined,
+    master: any | undefined,
+    cycleTermType?: string,
+  ): string | undefined {
+    if (!version) return 'Objective version was not found';
+    if (!master) return 'Objective master was not found';
+    if (version.status !== ObjectiveMasterVersionStatus.ACTIVE) {
+      return 'Not assignable because the objective version is not active';
+    }
+    if (master.status !== ObjectiveMasterStatus.ACTIVE) {
+      return 'Not assignable because the objective master is not active';
+    }
+    if (rule.assessmentTermType && cycleTermType && rule.assessmentTermType !== cycleTermType) {
+      return 'Term does not match the cycle type';
+    }
+    return undefined;
+  }
+
+  private ruleMatchesTerm(rule: any, termCode: AssessmentTermCodeType, cycleTermType?: string): boolean {
+    if (rule.assessmentTermType && cycleTermType && rule.assessmentTermType !== cycleTermType) {
+      return false;
+    }
+    const labels = Array.isArray(rule.termLabels) ? rule.termLabels : [];
+    return labels.length === 0 || labels.includes(termCode);
+  }
+
+  private ruleMatchesAssignmentCriteria(criteria: Record<string, any>, annualAssignment: any): boolean {
+    const employeeSnapshot = annualAssignment.employeeSnapshot ?? {};
+    const managerSnapshot = annualAssignment.managerSnapshot ?? {};
+    const orgSnapshot = annualAssignment.orgSnapshot ?? {};
+    const checks: Array<[unknown, unknown[]]> = [
+      [criteria.company, [employeeSnapshot.company, orgSnapshot.company]],
+      [criteria.businessUnit, [employeeSnapshot.businessUnit, orgSnapshot.businessUnit]],
+      [criteria.location, [employeeSnapshot.location, orgSnapshot.location]],
+      [criteria.department, [employeeSnapshot.department, employeeSnapshot.departmentName, employeeSnapshot.departmentId, orgSnapshot.department, orgSnapshot.departmentName, orgSnapshot.departmentId]],
+      [criteria.team, [employeeSnapshot.team, orgSnapshot.team]],
+      [criteria.role, [employeeSnapshot.role, employeeSnapshot.specificRole]],
+      [criteria.designation, [employeeSnapshot.designation, employeeSnapshot.specificRole]],
+      [criteria.grade, [employeeSnapshot.grade, orgSnapshot.grade]],
+      [criteria.employeeGroup, [employeeSnapshot.employeeGroup, employeeSnapshot.employmentStatus]],
+      [criteria.reportingManagerId?.toString?.(), [annualAssignment.assignedManagerId?.toString?.(), orgSnapshot.reportingManagerId?.toString?.(), managerSnapshot.managerId?.toString?.()]],
+    ];
+
+    for (const [expected, actualValues] of checks) {
+      if (expected && !actualValues.some((actual) => this.sameScopeValue(String(actual ?? ''), String(expected)))) {
+        return false;
+      }
+    }
+
+    const employeeIds = Array.isArray(criteria.employeeIds) ? criteria.employeeIds : [];
+    if (employeeIds.length > 0) {
+      return employeeIds.some((employeeId: any) => employeeId?.toString?.() === annualAssignment.employeeId?.toString?.());
+    }
+
+    return true;
+  }
+
+  private buildObjectiveAssignmentPreviewRow(input: {
+    key: string;
+    ruleIds: string[];
+    rule: any;
+    version?: any;
+    termAssignment: any;
+    status: ObjectiveAssignmentPreviewRow['status'];
+    warnings: string[];
+    blockedReason?: string;
+  }): ObjectiveAssignmentPreviewRow {
+    return {
+      key: input.key,
+      assignmentRuleIds: input.ruleIds,
+      objectiveMasterId: input.rule.objectiveMasterId.toString(),
+      objectiveVersionId: input.rule.objectiveVersionId.toString(),
+      objectiveTitle: input.version?.title ?? '',
+      annualAssignmentId: input.termAssignment.annualAssignmentId.toString(),
+      termAssignmentId: input.termAssignment._id.toString(),
+      cycleId: input.termAssignment.cycleId.toString(),
+      employeeId: input.termAssignment.employeeId.toString(),
+      assessmentTerm: input.termAssignment.assessmentTermCode,
+      status: input.status,
+      warnings: input.warnings,
+      blockedReason: input.blockedReason,
+    };
+  }
+
+  private summarizeObjectiveAssignmentPreview(
+    cycleId: string,
+    totalEmployees: number,
+    totalTerms: number,
+    rows: ObjectiveAssignmentPreviewRow[],
+  ): ObjectiveAssignmentPreviewResult {
+    return {
+      cycleId,
+      totalEmployees,
+      totalTerms,
+      newAssignments: rows.filter((row) => row.status === 'NEW' || row.status === 'WARNING').length,
+      alreadyAssigned: rows.filter((row) => row.status === 'ALREADY_ASSIGNED').length,
+      warnings: rows.filter((row) => row.warnings.length > 0).length,
+      blocked: rows.filter((row) => row.status === 'BLOCKED').length,
+      rows,
+    };
+  }
+
+  private objectiveAssignmentKey(objectiveMasterId: string, employeeId: string, assessmentTerm: string): string {
+    return `${objectiveMasterId}:${employeeId}:${assessmentTerm}`;
+  }
+
+  private findSimilarTitleWarning(
+    existingObjectives: any[],
+    title: string,
+    objectiveMasterId: string,
+  ): string | undefined {
+    const normalizedTitle = this.normalizeTitleForComparison(title);
+    if (!normalizedTitle) return undefined;
+    const similar = existingObjectives.find((objective) =>
+      objective.objectiveMasterId?.toString?.() !== objectiveMasterId &&
+      this.normalizeTitleForComparison(objective.title) === normalizedTitle,
+    );
+    return similar ? 'Similar title found - please review' : undefined;
+  }
+
+  private normalizeTitleForComparison(title?: string): string {
+    return String(title ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  private async resolveNextObjectiveNos(termAssignmentIds: string[]): Promise<Map<string, number>> {
+    const uniqueTermIds = Array.from(new Set(termAssignmentIds));
+    const objectives = await Objective.find({
+      termAssignmentId: { $in: uniqueTermIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
+      isDeleted: false,
+    }).select('termAssignmentId objectiveNo').lean();
+    const nextByTerm = new Map(uniqueTermIds.map((id) => [id, 1]));
+    for (const objective of objectives) {
+      const termId = objective.termAssignmentId.toString();
+      nextByTerm.set(termId, Math.max(nextByTerm.get(termId) ?? 1, (objective.objectiveNo ?? 0) + 1));
+    }
+    return nextByTerm;
+  }
+
+  private buildAssignedObjectiveSnapshot(
+    version: any,
+    applicableTerm: AssessmentTermCodeType,
+    sourceType: FlexibleObjectiveSourceTypeType,
+  ) {
+    return {
+      title: version.title,
+      description: version.description,
+      source: sourceType,
+      measurementGuidance: version.measurementGuidance,
+      targetValue: version.targetValue,
+      targetDescription: version.targetDescription,
+      targetDirection: version.targetDirection,
+      priority: version.priority,
+      attachmentPolicy: version.attachmentPolicy,
+      scoreable: version.scoreable,
+      approvedWeightage: version.approvedWeightage,
+      applicableTerm,
+      ownerUserId: version.ownerUserId,
+      ownerRole: version.ownerRole,
+      ownerDepartment: version.ownerDepartment,
+      ownerScope: version.ownerScope ?? {},
+      assignerUserId: version.assignerUserId,
+      assignerRole: version.assignerRole,
+      assignerDepartment: version.assignerDepartment,
+      assignerScope: version.assignerScope ?? {},
+      frozenAt: new Date(),
+    };
+  }
+
+  private resolveFlexibleSourceTypeForObjective(
+    version: any,
+    rule: any,
+    master?: any,
+  ): FlexibleObjectiveSourceTypeType {
+    return version.sourceType ?? rule.sourceType ?? master?.sourceType ?? FlexibleObjectiveSourceType.COMPANY_OBJECTIVE;
+  }
+
+  private mapFlexibleSourceToLegacySource(sourceType: FlexibleObjectiveSourceTypeType): ObjectiveSourceType {
+    if (sourceType === FlexibleObjectiveSourceType.MANAGER_CREATED_OBJECTIVE) {
+      return ObjectiveSource.MANAGER_CREATED;
+    }
+    if (sourceType === FlexibleObjectiveSourceType.EMPLOYEE_CREATED_OBJECTIVE) {
+      return ObjectiveSource.EMPLOYEE_CREATED;
+    }
+    return ObjectiveSource.PREDEFINED;
+  }
+
+  private normalizeObjectiveAssignmentCriteria(criteria?: ObjectiveAssignmentCriteriaInput) {
+    return {
+      company: criteria?.company?.trim() || undefined,
+      businessUnit: criteria?.businessUnit?.trim() || undefined,
+      location: criteria?.location?.trim() || undefined,
+      department: criteria?.department?.trim() || undefined,
+      team: criteria?.team?.trim() || undefined,
+      role: criteria?.role?.trim() || undefined,
+      designation: criteria?.designation?.trim() || undefined,
+      grade: criteria?.grade?.trim() || undefined,
+      employeeGroup: criteria?.employeeGroup?.trim() || undefined,
+      reportingManagerId: criteria?.reportingManagerId
+        ? this.toObjectId(criteria.reportingManagerId, 'reportingManagerId')
+        : undefined,
+      employeeIds: (criteria?.employeeIds ?? []).map((id) => this.toObjectId(id, 'employeeId')),
+    };
+  }
+
+  private mapObjectiveAssignmentRuleRecord(rule: any): ObjectiveAssignmentRuleRecord {
+    return {
+      id: rule._id?.toString?.() ?? '',
+      objectiveMasterId: rule.objectiveMasterId?.toString?.() ?? '',
+      objectiveVersionId: rule.objectiveVersionId?.toString?.() ?? '',
+      cycleId: rule.cycleId?.toString?.(),
+      assessmentTermType: rule.assessmentTermType,
+      termLabels: rule.termLabels ?? [],
+      criteria: rule.criteria ?? {},
+      status: rule.status,
+      effectiveFrom: rule.effectiveFrom?.toISOString?.(),
+      effectiveTo: rule.effectiveTo?.toISOString?.(),
+      note: rule.note,
+    };
+  }
+
+  private async requireAdminForObjectiveAssignment(action: string): Promise<void> {
+    const access = await accessService.canPerform({
+      actor: this.requireActor(),
+      action,
+      requiresAdmin: true,
+    });
+    if (!access.allowed) {
+      throw new Error(access.message ?? 'Admin access required');
+    }
+  }
+
+  private async requireAdminForObjectiveReporting(action: string): Promise<void> {
+    const access = await accessService.canPerform({
+      actor: this.requireActor(),
+      action,
+      requiresAdmin: true,
+    });
+    if (!access.allowed) {
+      throw new Error(access.message ?? 'Admin access required');
+    }
+  }
+
+  private buildObjectiveReportingFilter(query: ObjectiveReportingQuery): Record<string, unknown> {
+    const filter: Record<string, unknown> = { isDeleted: false };
+    if (query.cycleId) filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
+    if (query.annualAssignmentId) filter.annualAssignmentId = this.toObjectId(query.annualAssignmentId, 'annualAssignmentId');
+    if (query.employeeId) filter.employeeId = this.toObjectId(query.employeeId, 'employeeId');
+    if (query.assessmentTerm) {
+      filter.$or = [
+        { assessmentTerm: query.assessmentTerm },
+        { assessmentTermCode: query.assessmentTerm },
+      ];
+    }
+    if (query.sourceType) filter.sourceType = query.sourceType;
+    if (query.objectiveMasterId) filter.objectiveMasterId = this.toObjectId(query.objectiveMasterId, 'objectiveMasterId');
+    if (query.objectiveVersionId) filter.objectiveVersionId = this.toObjectId(query.objectiveVersionId, 'objectiveVersionId');
+    if (query.status) filter.status = query.status;
+    return filter;
+  }
+
+  private resolveObjectiveAssignmentLevel(objective: {
+    sourceType?: string;
+    assignmentRuleRefs?: unknown[];
+    templateObjectiveKey?: string;
+  }): string {
+    if (objective.assignmentRuleRefs?.length) return 'ASSIGNMENT_RULE';
+    if (objective.sourceType) return objective.sourceType;
+    if (objective.templateObjectiveKey) return 'TEMPLATE';
+    return 'DIRECT';
+  }
+
+  private resolveObjectiveDashboardStatus(
+    objectiveStatus: string,
+    applicabilityStatus: string,
+    termState?: string,
+  ): {
+    dashboardStatus: ObjectiveDashboardStatusRecord['dashboardStatus'];
+    blockedReason?: string;
+  } {
+    if (
+      applicabilityStatus === ObjectiveApplicabilityStatus.NOT_APPLICABLE ||
+      applicabilityStatus === ObjectiveApplicabilityStatus.REPLACED ||
+      termState === TermWorkflowState.CLOSED_BY_ADMIN
+    ) {
+      return { dashboardStatus: 'closed_not_applicable' };
+    }
+
+    if (termState && isTermFinalized(termState)) {
+      return { dashboardStatus: 'finalized' };
+    }
+
+    if (termState === TermWorkflowState.NOT_STARTED) {
+      return { dashboardStatus: 'not_started' };
+    }
+
+    if (
+      termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN ||
+      objectiveStatus === ObjectiveStatus.OBJECTIVE_DRAFT
+    ) {
+      return { dashboardStatus: 'pending_objective_setup' };
+    }
+
+    if (objectiveStatus === ObjectiveStatus.OBJECTIVE_SUBMITTED) {
+      return { dashboardStatus: 'submitted' };
+    }
+
+    if (objectiveStatus === ObjectiveStatus.OBJECTIVE_APPROVED) {
+      return { dashboardStatus: 'approved' };
+    }
+
+    if (objectiveStatus === ObjectiveStatus.OBJECTIVE_REVISION_REQUIRED) {
+      return { dashboardStatus: 'returned_for_revision' };
+    }
+
+    return {
+      dashboardStatus: 'blocked',
+      blockedReason: `Unsupported objective status: ${objectiveStatus}`,
+    };
   }
 
   private async assertAssignmentAccess(action: string, termAssignment: ITermAssignment): Promise<void> {
