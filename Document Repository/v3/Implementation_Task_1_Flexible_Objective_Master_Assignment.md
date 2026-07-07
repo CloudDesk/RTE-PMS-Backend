@@ -4,6 +4,7 @@ Source design: `PMS_Design_Change_Request_Flexible_Objectives_Probation_Review.m
 
 ## Task Goal
 
+Create a flexible objective model where objectives live outside PMS templates, can be versioned, activated, assigned by rules, previewed before application, and stored as immutable employee-term objective snapshots.
 
 This task must keep the existing PMS objective behavior working by default. New behavior is enabled only when the flexible objective configuration is used.
 
