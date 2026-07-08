@@ -266,6 +266,16 @@ Objectives must remain context-only by default. Scoring is enabled only when the
   - term aggregation policy
   - scoring validation rules
 
+These policies are owned at the Objective section level inside the locked Template Version. They are not configured separately for every objective by default.
+
+Examples:
+
+- Employee fills objective actuals in Q1, Q2, Q3, and Q4, while manager review/scoring happens only at yearly review.
+- Employee fills objective actuals in H1 and H2, while manager review/scoring happens separately for each half-year term.
+- Objectives remain context-only for all terms unless the Objective section scoring mode enables weighted or overall scoring.
+
+Objective-specific data may still exist for title, KPI, target value, scoreable flag, approved weightage, and exceptions where explicitly allowed. However, fill terms, review timing, scoring mode, actual aggregation, term aggregation, and section weight are section-level template policy.
+
 ### 5.4 Scoring configuration UI
 
 - Add a scoring configuration panel in template builder.
@@ -562,7 +572,7 @@ Do not confuse actual aggregation with term aggregation:
 
 ### Scoring Storage Ownership
 
-Scoring mode is owned by the locked Template Version, not Objective Master.
+Scoring mode and review timing are owned by the Objective section policy in the locked Template Version, not Objective Master and not individual objectives by default.
 
 Locked Template Version should own:
 
@@ -576,6 +586,7 @@ Locked Template Version should own:
 - included assessment term grouping policy
 - term aggregation policy
 - scoring validation rules
+- actual fill term policy, such as Q1/Q2/Q3/Q4 actual entry with yearly manager review
 
 Employee Term Objective snapshot may store:
 
