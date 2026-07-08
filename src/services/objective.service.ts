@@ -375,6 +375,14 @@ interface ObjectiveSheetLayoutInput {
     rightColumnId?: string;
     customExpression?: string;
   }>;
+  fillPermissions?: Array<{
+    id?: string;
+    columnId?: string;
+    actor?: string;
+    access?: string;
+    required?: boolean;
+    lockRule?: string;
+  }>;
 }
 
 interface NormalizedObjectiveSheetLayout {
@@ -409,6 +417,14 @@ interface NormalizedObjectiveSheetLayout {
     leftColumnId?: string;
     rightColumnId?: string;
     customExpression?: string;
+  }>;
+  fillPermissions: Array<{
+    id: string;
+    columnId: string;
+    actor: string;
+    access: string;
+    required: boolean;
+    lockRule: string;
   }>;
 }
 
@@ -6098,7 +6114,64 @@ export class ObjectiveService extends BaseService {
       });
     });
 
-    return { columns, rows, headerGroups, formulas };
+    const allowedFillActors = new Set(['EMPLOYEE', 'MANAGER', 'REVIEWER', 'ADMIN', 'SYSTEM']);
+    const allowedFillAccess = new Set(['HIDDEN', 'VIEW', 'FILL']);
+    const allowedFillLockRules = new Set(['NONE', 'LOCK_AFTER_SUBMIT', 'EDITABLE_UNTIL_MANAGER_REVIEW']);
+    const fillPermissionMap = new Map(
+      this.defaultObjectiveSheetFillPermissions(columns).map((permission) => [
+        `${permission.columnId}:${permission.actor}`,
+        permission,
+      ]),
+    );
+
+    const inputFillPermissions = Array.isArray(layout?.fillPermissions) ? layout.fillPermissions : [];
+    inputFillPermissions.forEach((permission: NonNullable<ObjectiveSheetLayoutInput['fillPermissions']>[number], index: number) => {
+      const columnIndex = columnIndexByKey.get(this.normalizeSheetKey(permission?.columnId, ''));
+      if (columnIndex === undefined) {
+        throw new Error(`Fill permission ${index + 1} references an invalid column.`);
+      }
+      const column = columns[columnIndex];
+      const actor = String(permission?.actor ?? '').trim().toUpperCase();
+      const access = String(permission?.access ?? '').trim().toUpperCase();
+      const lockRule = String(permission?.lockRule ?? 'NONE').trim().toUpperCase() || 'NONE';
+      if (!allowedFillActors.has(actor) || !allowedFillAccess.has(access) || !allowedFillLockRules.has(lockRule)) {
+        throw new Error(`Fill permission for "${column.label}" has an invalid actor, access, or lock rule.`);
+      }
+      if (permission?.required === true && access !== 'FILL') {
+        throw new Error(`Fill permission for "${column.label}" can be required only when access is Can fill.`);
+      }
+      if (lockRule !== 'NONE' && access !== 'FILL') {
+        throw new Error(`Fill permission for "${column.label}" can use lock rules only when access is Can fill.`);
+      }
+      if (column.type === 'FORMULA' && actor !== 'SYSTEM' && access === 'FILL') {
+        throw new Error(`Formula column "${column.label}" can only be filled by the system.`);
+      }
+      if (column.type === 'FORMULA' && actor === 'SYSTEM' && access !== 'FILL') {
+        throw new Error(`Formula column "${column.label}" must remain system calculated.`);
+      }
+      if (column.type !== 'FORMULA' && actor === 'SYSTEM' && access === 'FILL') {
+        throw new Error(`System can fill only calculated formula columns. "${column.label}" must use View or Hidden for System.`);
+      }
+
+      fillPermissionMap.set(`${column.id}:${actor}`, {
+        id: this.normalizeSheetKey(permission?.id, `perm_${column.id}_${actor.toLowerCase()}`),
+        columnId: column.id,
+        actor,
+        access,
+        required: access === 'FILL' ? permission?.required === true : false,
+        lockRule: access === 'FILL' ? lockRule : 'NONE',
+      });
+    });
+
+    const fillPermissions = Array.from(fillPermissionMap.values()).sort((a, b) => {
+      const columnDelta = columns.findIndex((column) => column.id === a.columnId) -
+        columns.findIndex((column) => column.id === b.columnId);
+      if (columnDelta !== 0) return columnDelta;
+      return ['EMPLOYEE', 'MANAGER', 'REVIEWER', 'ADMIN', 'SYSTEM'].indexOf(a.actor) -
+        ['EMPLOYEE', 'MANAGER', 'REVIEWER', 'ADMIN', 'SYSTEM'].indexOf(b.actor);
+    });
+
+    return { columns, rows, headerGroups, formulas, fillPermissions };
   }
 
   private normalizeSheetKey(value: unknown, fallback: string): string {
@@ -6110,20 +6183,44 @@ export class ObjectiveService extends BaseService {
     return normalized || fallback;
   }
 
+  private defaultObjectiveSheetFillPermissions(
+    columns: NormalizedObjectiveSheetLayout['columns'],
+  ): NormalizedObjectiveSheetLayout['fillPermissions'] {
+    const actors = ['EMPLOYEE', 'MANAGER', 'REVIEWER', 'ADMIN', 'SYSTEM'];
+    return columns.flatMap((column) =>
+      actors.map((actor) => {
+        const isFormula = column.type === 'FORMULA';
+        const isSystem = actor === 'SYSTEM';
+        const isEmployee = actor === 'EMPLOYEE';
+        return {
+          id: `perm_${column.id}_${actor.toLowerCase()}`,
+          columnId: column.id,
+          actor,
+          access: isFormula ? (isSystem ? 'FILL' : 'VIEW') : (isSystem ? 'HIDDEN' : isEmployee ? 'FILL' : 'VIEW'),
+          required: !isFormula && isEmployee && column.required === true,
+          lockRule: !isFormula && isEmployee ? 'LOCK_AFTER_SUBMIT' : 'NONE',
+        };
+      }),
+    );
+  }
+
   private defaultObjectiveSheetLayout(): NormalizedObjectiveSheetLayout {
+    const columns: NormalizedObjectiveSheetLayout['columns'] = [
+      { id: 'objective', label: 'Objective', type: 'LONG_TEXT', width: 'LARGE', required: true },
+      { id: 'uom', label: 'UOM', type: 'DROPDOWN', width: 'SMALL', required: false, options: ['%', 'Nos', 'Minutes', 'Hours'] },
+      { id: 'bm', label: 'BM', type: 'PERCENTAGE', width: 'SMALL', required: false },
+      { id: 'target', label: 'Target', type: 'PERCENTAGE', width: 'SMALL', required: false },
+      { id: 'q1_actual', label: 'Q1 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+      { id: 'q2_actual', label: 'Q2 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+      { id: 'q3_actual', label: 'Q3 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+      { id: 'q4_actual', label: 'Q4 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+      { id: 'actual', label: 'Actual', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from term actuals' },
+      { id: 'gap', label: 'Gap', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from target and actual' },
+      { id: 'remarks', label: 'Remarks', type: 'LONG_TEXT', width: 'LARGE', required: false },
+    ];
     return {
       columns: [
-        { id: 'objective', label: 'Objective', type: 'LONG_TEXT', width: 'LARGE', required: true },
-        { id: 'uom', label: 'UOM', type: 'DROPDOWN', width: 'SMALL', required: false, options: ['%', 'Nos', 'Minutes', 'Hours'] },
-        { id: 'bm', label: 'BM', type: 'PERCENTAGE', width: 'SMALL', required: false },
-        { id: 'target', label: 'Target', type: 'PERCENTAGE', width: 'SMALL', required: false },
-        { id: 'q1_actual', label: 'Q1 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-        { id: 'q2_actual', label: 'Q2 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-        { id: 'q3_actual', label: 'Q3 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-        { id: 'q4_actual', label: 'Q4 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-        { id: 'actual', label: 'Actual', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from term actuals' },
-        { id: 'gap', label: 'Gap', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from target and actual' },
-        { id: 'remarks', label: 'Remarks', type: 'LONG_TEXT', width: 'LARGE', required: false },
+        ...columns,
       ],
       rows: [
         { id: 'row_1', label: 'Objective line 1' },
@@ -6148,6 +6245,7 @@ export class ObjectiveService extends BaseService {
           rightColumnId: 'actual',
         },
       ],
+      fillPermissions: this.defaultObjectiveSheetFillPermissions(columns),
     };
   }
 
