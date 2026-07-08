@@ -71,6 +71,7 @@ Objectives must remain context-only by default. Scoring is enabled only when the
 - Keep all new scoring behavior controlled by locked template version policy and assigned objective snapshots.
 - Do not let managers override scoring mode, scoreable flag, target value, target direction, or objective weightage during review.
 - Enforce permissions and scoring validation on the server. Frontend-only controls are not enough.
+- Section visibility and editability policies apply to every template section, not only Objective sections. Objective-specific scoring, actual aggregation, fill-term, review-timing, and term-aggregation policies apply to Objective sections.
 - Keep UI simple for non-technical users with clear states, tooltips, guided configuration, and friendly validation messages.
 - Do not create very large components. Keep Svelte components around 1000-1500+ lines maximum, and split earlier when responsibility grows.
 - Use child components for scoring configuration, objective table, actual value entry, achievement evidence, score entry, term grouping, and validation summary.

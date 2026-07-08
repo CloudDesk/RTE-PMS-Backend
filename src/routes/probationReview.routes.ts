@@ -4,11 +4,13 @@ import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
   ApproveProbationReviewInput,
+  BulkCreateProbationReviewInput,
   CancelProbationReviewInput,
   CreateProbationReviewInput,
   OpenProbationReviewInput,
   ProbationReviewListQuery,
   ReturnProbationReviewInput,
+  SaveProbationReviewDraftInput,
   SaveProbationReviewValuesInput,
   SyncDueProbationReviewsInput,
 } from '../services/probationReview.service';
@@ -55,6 +57,91 @@ export const probationReviewRoutes: RouteHandler = async (
           request.body as SyncDueProbationReviewsInput,
         );
         return reply.send(successResponse('Due probation reviews synced successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/bulk',
+    { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.probationReviewService.createAssignmentsBulk(
+          request.body as BulkCreateProbationReviewInput,
+        );
+        return reply.status(201).send(successResponse('Probation review assignments processed successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/drafts',
+    { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.probationReviewService.listDrafts();
+        return reply.send(successResponse('Probation review drafts fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/drafts',
+    { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.probationReviewService.saveDraft(
+          request.body as SaveProbationReviewDraftInput,
+        );
+        return reply.status(201).send(successResponse('Probation review draft saved successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/drafts/:draftId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
+    async (request, reply) => {
+      try {
+        const { draftId } = request.params as { draftId: string };
+        const result = await request.container!.probationReviewService.getDraft(draftId);
+        return reply.send(successResponse('Probation review draft fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.delete(
+    '/drafts/:draftId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
+    async (request, reply) => {
+      try {
+        const { draftId } = request.params as { draftId: string };
+        const result = await request.container!.probationReviewService.deleteDraft(draftId);
+        return reply.send(successResponse('Probation review draft discarded successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/drafts/:draftId/assign',
+    { onRequest: [authenticate], schema: { tags: ['PMS Probation Reviews'] } },
+    async (request, reply) => {
+      try {
+        const { draftId } = request.params as { draftId: string };
+        const result = await request.container!.probationReviewService.assignDraft(draftId);
+        return reply.send(successResponse('Probation review draft assigned successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -119,7 +206,7 @@ export const probationReviewRoutes: RouteHandler = async (
           assignmentId,
           request.body as SaveProbationReviewValuesInput,
         );
-        return reply.send(successResponse('Probation review submitted to Manager 2 successfully', result));
+        return reply.send(successResponse('Probation review submitted to Approver Level Two successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -153,7 +240,7 @@ export const probationReviewRoutes: RouteHandler = async (
           assignmentId,
           request.body as ReturnProbationReviewInput,
         );
-        return reply.send(successResponse('Probation review returned to Manager 1 successfully', result));
+        return reply.send(successResponse('Probation review returned to Approver Level One successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

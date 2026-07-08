@@ -4,6 +4,7 @@ import { RequestContext } from '../types/context';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { User } from '../models/user.model';
+import { PmsProbationReviewDraft } from '../models/pms-probation-review-draft.model';
 import { emailService } from './email.service';
 import {
   IProbationReviewFieldPermission,
@@ -37,7 +38,33 @@ export interface CreateProbationReviewInput {
   templateId: string;
   templateVersionId: string;
   reviewerConfiguration?: IProbationReviewReviewerConfiguration;
+  skipDuplicateCheck?: boolean;
+  sourceDraftId?: string;
+  allowExistingAssignment?: boolean;
 }
+
+export interface BulkCreateProbationReviewInput {
+  templateId: string;
+  templateVersionId: string;
+  sourceDraftId?: string;
+  allowExistingAssignment?: boolean;
+  assignments: Array<Omit<CreateProbationReviewInput, 'templateId' | 'templateVersionId'> & {
+    templateId?: string;
+    templateVersionId?: string;
+    rowId?: string;
+  }>;
+}
+
+export interface BulkCreateProbationReviewResult {
+  created: unknown[];
+  failed: Array<{ rowId?: string; employeeId?: string; message: string }>;
+  createdCount: number;
+  failedCount: number;
+}
+
+export type SaveProbationReviewDraftInput = BulkCreateProbationReviewInput & {
+  draftId?: string;
+};
 
 export interface SaveProbationReviewValuesInput {
   values?: IProbationReviewValue[];
@@ -51,6 +78,7 @@ export interface OpenProbationReviewInput {
 
 export interface SyncDueProbationReviewsInput {
   asOfDate?: string | Date;
+  assignmentIds?: string[];
 }
 
 export interface ReturnProbationReviewInput {
@@ -81,6 +109,7 @@ export class ProbationReviewService extends BaseService {
   }
 
   async listAssignments(query: ProbationReviewListQuery = {}) {
+    await this.openDueScheduledReviews();
     const page = this.normalizePositiveInteger(query.page, 1);
     const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
     const filter: Record<string, unknown> = { isDeleted: false };
@@ -154,6 +183,7 @@ export class ProbationReviewService extends BaseService {
   }
 
   async getAssignment(id: string) {
+    await this.openDueScheduledReviews();
     const assignment = await PmsProbationReviewAssignment.findOne({
       _id: this.toObjectId(id, 'Probation review assignment'),
       isDeleted: false,
@@ -177,8 +207,8 @@ export class ProbationReviewService extends BaseService {
   async createAssignment(input: CreateProbationReviewInput) {
     const actorId = this.getActorObjectId();
     const employeeId = this.toObjectId(input.employeeId, 'Employee');
-    const manager1Id = this.toObjectId(input.manager1Id, 'Manager 1');
-    const manager2Id = this.toObjectId(input.manager2Id, 'Manager 2');
+    const manager1Id = this.toObjectId(input.manager1Id, 'Approver Level One');
+    const manager2Id = this.toObjectId(input.manager2Id, 'Approver Level Two');
     const templateId = this.toObjectId(input.templateId, 'Template');
     const templateVersionId = this.toObjectId(input.templateVersionId, 'Template version');
     const probationEndDate = this.parseDate(input.probationEndDate, 'Probation end date');
@@ -186,9 +216,12 @@ export class ProbationReviewService extends BaseService {
     const reviewOpenDate = input.reviewOpenDate
       ? this.parseDate(input.reviewOpenDate, 'Review open date')
       : this.subtractDays(probationEndDate, reviewOpenOffsetDays);
-
-    if (manager1Id.equals(manager2Id)) {
-      throw new Error('Manager 1 and Manager 2 must be different users.');
+    if (!input.skipDuplicateCheck) {
+      await this.assertEmployeeNotAlreadyInProbationEntry(
+        employeeId,
+        input.sourceDraftId,
+        input.allowExistingAssignment,
+      );
     }
 
     const [employee, manager1, manager2, template, templateVersion] =
@@ -207,8 +240,8 @@ export class ProbationReviewService extends BaseService {
       ]);
 
     if (!employee) throw new Error('Employee is not active or does not exist.');
-    if (!manager1) throw new Error('Manager 1 is not active or does not exist.');
-    if (!manager2) throw new Error('Manager 2 is not active or does not exist.');
+    if (!manager1) throw new Error('Approver Level One is not active or does not exist.');
+    if (!manager2) throw new Error('Approver Level Two is not active or does not exist.');
     if (!template) throw new Error('Template does not exist.');
     if (!templateVersion) {
       throw new Error('Template version does not exist for the selected template.');
@@ -286,54 +319,204 @@ export class ProbationReviewService extends BaseService {
     return this.getAssignment(assignment._id.toString());
   }
 
+  async createAssignmentsBulk(input: BulkCreateProbationReviewInput): Promise<BulkCreateProbationReviewResult> {
+    this.assertPrivilegedActor('Only admin users can create probation review assignments.');
+    if (!Array.isArray(input.assignments) || input.assignments.length === 0) {
+      throw new Error('Add at least one probation review assignment row.');
+    }
+    if (input.assignments.length > 25) {
+      throw new Error('Bulk probation review creation is limited to 25 rows at a time.');
+    }
+    const seenEmployeeIds = new Set<string>();
+    for (const row of input.assignments) {
+      const employeeKey = String(row.employeeId || '').trim();
+      if (!employeeKey) continue;
+      if (seenEmployeeIds.has(employeeKey)) {
+        throw new Error('Duplicate employees are not allowed in the same bulk probation review request.');
+      }
+      seenEmployeeIds.add(employeeKey);
+    }
+    await this.assertEmployeesNotAlreadyInProbationEntries(
+      [...seenEmployeeIds].map((employeeId) => this.toObjectId(employeeId, 'Employee')),
+      input.sourceDraftId,
+      input.allowExistingAssignment,
+    );
+
+    const created: unknown[] = [];
+    const failed: BulkCreateProbationReviewResult['failed'] = [];
+
+    for (const row of input.assignments) {
+      try {
+        const assignment = await this.createAssignment({
+          ...row,
+          templateId: row.templateId || input.templateId,
+          templateVersionId: row.templateVersionId || input.templateVersionId,
+          skipDuplicateCheck: true,
+          sourceDraftId: input.sourceDraftId,
+          allowExistingAssignment: input.allowExistingAssignment,
+        });
+        created.push(assignment);
+      } catch (error) {
+        failed.push({
+          rowId: row.rowId,
+          employeeId: row.employeeId,
+          message: error instanceof Error ? error.message : 'Unable to create probation review assignment.',
+        });
+      }
+    }
+
+    return {
+      created,
+      failed,
+      createdCount: created.length,
+      failedCount: failed.length,
+    };
+  }
+
+  async listDrafts() {
+    this.assertPrivilegedActor('Only admin users can view probation review drafts.');
+    const actorId = this.getActorObjectId();
+    return PmsProbationReviewDraft.find({
+      isDeleted: false,
+      ...(actorId ? { createdBy: actorId } : {}),
+    })
+      .populate('templateId', 'name code status metadata')
+      .populate('templateVersionId', 'versionNo status isLocked')
+      .populate('assignments.employeeId', 'name email employeeCode')
+      .populate('assignments.manager1Id', 'name email employeeCode')
+      .populate('assignments.manager2Id', 'name email employeeCode')
+      .sort({ updatedAt: -1 })
+      .lean();
+  }
+
+  async getDraft(id: string) {
+    this.assertPrivilegedActor('Only admin users can view probation review drafts.');
+    const draft = await PmsProbationReviewDraft.findOne({
+      _id: this.toObjectId(id, 'Probation review draft'),
+      isDeleted: false,
+    })
+      .populate('templateId', 'name code status metadata')
+      .populate('templateVersionId')
+      .populate('assignments.employeeId', 'name email employeeCode')
+      .populate('assignments.manager1Id', 'name email employeeCode')
+      .populate('assignments.manager2Id', 'name email employeeCode')
+      .lean();
+
+    if (!draft) throw new Error('Probation review draft not found.');
+    return draft;
+  }
+
+  async saveDraft(input: SaveProbationReviewDraftInput) {
+    this.assertPrivilegedActor('Only admin users can save probation review drafts.');
+    const actorId = this.getActorObjectId();
+    const templateId = this.toObjectId(input.templateId, 'Template');
+    const templateVersionId = this.toObjectId(input.templateVersionId, 'Template version');
+    if (!Array.isArray(input.assignments) || input.assignments.length === 0) {
+      throw new Error('Add at least one row before saving draft.');
+    }
+
+    const rows = input.assignments.map((row, index) => ({
+      rowId: row.rowId || `row_${index + 1}`,
+      employeeId: this.toObjectId(row.employeeId, 'Employee'),
+      joiningDate: row.joiningDate ? this.parseDate(row.joiningDate, 'Joining date') : undefined,
+      probationStartDate: row.probationStartDate
+        ? this.parseDate(row.probationStartDate, 'Probation start date')
+        : undefined,
+      probationEndDate: this.parseDate(row.probationEndDate, 'Probation end date'),
+      reviewOpenOffsetDays: this.normalizeReviewOpenOffsetDays(row.reviewOpenOffsetDays),
+      manager1Id: this.toObjectId(row.manager1Id, 'Approver Level One'),
+      manager2Id: this.toObjectId(row.manager2Id, 'Approver Level Two'),
+      reviewerConfiguration: row.reviewerConfiguration,
+    }));
+
+    const duplicateEmployeeIds = new Set<string>();
+    for (const row of rows) {
+      const employeeKey = row.employeeId.toString();
+      if (duplicateEmployeeIds.has(employeeKey)) {
+        throw new Error('Duplicate employees are not allowed in the same probation review draft.');
+      }
+      duplicateEmployeeIds.add(employeeKey);
+    }
+    await this.assertEmployeesNotAlreadyInProbationEntries(
+      rows.map((row) => row.employeeId),
+      input.draftId,
+      true,
+    );
+
+    const draftPayload = {
+      templateId,
+      templateVersionId,
+      assignments: rows,
+      updatedBy: actorId,
+    };
+
+    const draft = input.draftId
+      ? await PmsProbationReviewDraft.findOneAndUpdate(
+          {
+            _id: this.toObjectId(input.draftId, 'Probation review draft'),
+            isDeleted: false,
+          },
+          { $set: draftPayload },
+          { new: true },
+        )
+      : await PmsProbationReviewDraft.create({
+          ...draftPayload,
+          createdBy: actorId,
+        });
+
+    if (!draft) throw new Error('Probation review draft not found.');
+
+    return this.getDraft(draft._id.toString());
+  }
+
+  async deleteDraft(id: string) {
+    this.assertPrivilegedActor('Only admin users can discard probation review drafts.');
+    const actorId = this.getActorObjectId();
+    await PmsProbationReviewDraft.updateOne(
+      { _id: this.toObjectId(id, 'Probation review draft'), isDeleted: false },
+      { $set: { isDeleted: true, updatedBy: actorId } },
+    );
+    return { draftId: id };
+  }
+
+  async assignDraft(id: string) {
+    this.assertPrivilegedActor('Only admin users can assign probation review drafts.');
+    const draft = await PmsProbationReviewDraft.findOne({
+      _id: this.toObjectId(id, 'Probation review draft'),
+      isDeleted: false,
+    }).lean();
+    if (!draft) throw new Error('Probation review draft not found.');
+    const draftRecord = draft as any;
+
+    const result = await this.createAssignmentsBulk({
+      templateId: draftRecord.templateId.toString(),
+      templateVersionId: draftRecord.templateVersionId.toString(),
+      sourceDraftId: id,
+      assignments: draftRecord.assignments.map((row: any) => ({
+        rowId: row.rowId,
+        employeeId: row.employeeId.toString(),
+        joiningDate: row.joiningDate,
+        probationStartDate: row.probationStartDate,
+        probationEndDate: row.probationEndDate,
+        reviewOpenOffsetDays: row.reviewOpenOffsetDays,
+        manager1Id: row.manager1Id.toString(),
+        manager2Id: row.manager2Id.toString(),
+        reviewerConfiguration: row.reviewerConfiguration,
+      })),
+    });
+
+    if (result.failedCount === 0) {
+      await this.deleteDraft(id);
+    }
+    return result;
+  }
+
   async syncDueProbationReviews(input: SyncDueProbationReviewsInput = {}) {
     this.assertPrivilegedActor('Only admin users can sync probation review windows.');
-    const actorId = this.getActorObjectId();
     const asOfDate = input.asOfDate
       ? this.parseDate(input.asOfDate, 'Sync date')
       : this.getCurrentDate();
-
-    const dueAssignments = await PmsProbationReviewAssignment.find({
-      status: ProbationReviewStatus.SCHEDULED,
-      reviewOpenDate: { $lte: asOfDate },
-      isDeleted: false,
-    }).select('_id');
-
-    if (dueAssignments.length === 0) {
-      return {
-        asOfDate,
-        openedCount: 0,
-        assignmentIds: [],
-      };
-    }
-
-    const assignmentIds = dueAssignments.map((assignment) => assignment._id);
-    await PmsProbationReviewAssignment.updateMany(
-      { _id: { $in: assignmentIds } },
-      {
-        $set: {
-          status: ProbationReviewStatus.REVIEW_OPEN,
-          updatedBy: actorId,
-        },
-        $inc: { version: 1 },
-        $push: {
-          auditTrail: {
-            action: 'SYNC_OPENED',
-            actorId,
-            comment: `Opened by manual sync as of ${asOfDate.toISOString()}.`,
-            createdAt: this.getCurrentDate(),
-          },
-        },
-      },
-    );
-
-    void this.sendReviewOpenedEmailsByAssignmentIds(assignmentIds);
-
-    return {
-      asOfDate,
-      openedCount: assignmentIds.length,
-      assignmentIds: assignmentIds.map((assignmentId) => assignmentId.toString()),
-    };
+    return this.openDueScheduledReviews(asOfDate, 'SYNC_OPENED', input.assignmentIds, Boolean(input.assignmentIds?.length));
   }
 
   async openAssignment(id: string, input: OpenProbationReviewInput = {}) {
@@ -354,6 +537,7 @@ export class ProbationReviewService extends BaseService {
     }
 
     assignment.status = ProbationReviewStatus.REVIEW_OPEN;
+    assignment.openedAt = asOfDate;
     this.touch(assignment, input.force ? 'FORCE_OPENED' : 'OPENED');
     await assignment.save();
     void this.sendReviewOpenedEmailsByAssignmentIds([assignment._id]);
@@ -404,7 +588,7 @@ export class ProbationReviewService extends BaseService {
     const assignment = await this.loadMutableAssignment(id);
     this.assertApprovingManagerActor(assignment);
     if (assignment.status !== ProbationReviewStatus.MANAGER_1_SUBMITTED) {
-      throw new Error('Manager 2 can approve only after Manager 1 submits the review.');
+      throw new Error('Approver Level Two can approve only after Approver Level One submits the review.');
     }
 
     assignment.status = ProbationReviewStatus.FINALIZED;
@@ -421,7 +605,7 @@ export class ProbationReviewService extends BaseService {
     const assignment = await this.loadMutableAssignment(id);
     this.assertApprovingManagerActor(assignment);
     if (assignment.status !== ProbationReviewStatus.MANAGER_1_SUBMITTED) {
-      throw new Error('Manager 2 can return only after Manager 1 submits the review.');
+      throw new Error('Approver Level Two can return only after Approver Level One submits the review.');
     }
 
     const reason = input.reason?.trim();
@@ -442,8 +626,8 @@ export class ProbationReviewService extends BaseService {
   async cancelAssignment(id: string, input: CancelProbationReviewInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
     this.assertPrivilegedActor('Only admin users can cancel probation reviews.');
-    if (assignment.status === ProbationReviewStatus.FINALIZED) {
-      throw new Error('Finalized probation reviews cannot be cancelled.');
+    if (assignment.status !== ProbationReviewStatus.SCHEDULED) {
+      throw new Error('Only scheduled probation reviews can be cancelled before they are opened.');
     }
 
     assignment.status = ProbationReviewStatus.CANCELLED;
@@ -479,7 +663,7 @@ export class ProbationReviewService extends BaseService {
   private ensureManager1CanEdit(status: ProbationReviewStatus) {
     if (!MUTABLE_MANAGER_1_STATUSES.includes(status)) {
       throw new Error(
-        'Manager 1 can edit the review only when the probation review is open or returned.',
+        'Approver Level One can edit the review only when the probation review is open or returned.',
       );
     }
   }
@@ -679,6 +863,132 @@ export class ProbationReviewService extends BaseService {
       );
     }
     return days;
+  }
+
+  private async openDueScheduledReviews(
+    asOfDate: Date = this.getCurrentDate(),
+    action: 'AUTO_OPENED_ON_READ' | 'SYNC_OPENED' = 'AUTO_OPENED_ON_READ',
+    assignmentIds?: string[],
+    overrideSelectedOpenDate = false,
+  ) {
+    const actorId = this.getActorObjectId();
+    const filter: Record<string, unknown> = {
+      status: ProbationReviewStatus.SCHEDULED,
+      isDeleted: false,
+    };
+    if (!overrideSelectedOpenDate) {
+      filter.reviewOpenDate = { $lte: asOfDate };
+    }
+    if (assignmentIds?.length) {
+      filter._id = {
+        $in: assignmentIds.map((id) => this.toObjectId(id, 'Probation review assignment')),
+      };
+    }
+    const dueAssignments = await PmsProbationReviewAssignment.find(filter).select('_id');
+
+    const openedAssignmentIds: Types.ObjectId[] = [];
+    const createdAt = this.getCurrentDate();
+    const comment =
+      action === 'SYNC_OPENED'
+        ? overrideSelectedOpenDate
+          ? `Opened by manual sync using selected sync date ${asOfDate.toISOString()}.`
+          : `Opened by manual sync as of ${asOfDate.toISOString()}.`
+        : `Opened automatically during assignment fetch as of ${asOfDate.toISOString()}.`;
+
+    for (const assignment of dueAssignments) {
+      const result = await PmsProbationReviewAssignment.updateOne(
+        {
+          _id: assignment._id,
+          status: ProbationReviewStatus.SCHEDULED,
+          isDeleted: false,
+        },
+        {
+          $set: {
+            status: ProbationReviewStatus.REVIEW_OPEN,
+            openedAt: asOfDate,
+            updatedBy: actorId,
+          },
+          $inc: { version: 1 },
+          $push: {
+            auditTrail: {
+              action,
+              actorId,
+              comment,
+              createdAt,
+            },
+          },
+        },
+      );
+      if (result.modifiedCount > 0) {
+        openedAssignmentIds.push(assignment._id);
+      }
+    }
+
+    if (openedAssignmentIds.length > 0) {
+      void this.sendReviewOpenedEmailsByAssignmentIds(openedAssignmentIds);
+    }
+
+    return {
+      asOfDate,
+      openedCount: openedAssignmentIds.length,
+      assignmentIds: openedAssignmentIds.map((assignmentId) => assignmentId.toString()),
+    };
+  }
+
+  private async assertEmployeeNotAlreadyInProbationEntry(
+    employeeId: Types.ObjectId,
+    excludeDraftId?: string,
+    allowExistingAssignment = false,
+  ) {
+    await this.assertEmployeesNotAlreadyInProbationEntries(
+      [employeeId],
+      excludeDraftId,
+      allowExistingAssignment,
+    );
+  }
+
+  private async assertEmployeesNotAlreadyInProbationEntries(
+    employeeIds: Types.ObjectId[],
+    excludeDraftId?: string,
+    allowExistingAssignment = false,
+  ) {
+    if (employeeIds.length === 0) return;
+    const uniqueEmployeeIds = [...new Map(employeeIds.map((id) => [id.toString(), id])).values()];
+    if (!allowExistingAssignment) {
+      const activeAssignment = await PmsProbationReviewAssignment.findOne({
+        employeeId: { $in: uniqueEmployeeIds },
+        isDeleted: false,
+        status: { $ne: ProbationReviewStatus.CANCELLED },
+      })
+        .populate('employeeId', 'name employeeCode')
+        .select('employeeId')
+        .lean();
+      if (activeAssignment) {
+        throw new Error(
+          `${this.userName((activeAssignment as any).employeeId, 'This employee')} already has a probation review assignment.`,
+        );
+      }
+    }
+
+    const draftFilter: Record<string, unknown> = {
+      'assignments.employeeId': { $in: uniqueEmployeeIds },
+      isDeleted: false,
+    };
+    if (excludeDraftId) {
+      draftFilter._id = { $ne: this.toObjectId(excludeDraftId, 'Probation review draft') };
+    }
+    const activeDraft = await PmsProbationReviewDraft.findOne(draftFilter)
+      .populate('assignments.employeeId', 'name employeeCode')
+      .select('assignments.employeeId')
+      .lean();
+    if (activeDraft) {
+      const duplicateRow = (activeDraft as any).assignments?.find((row: any) =>
+        uniqueEmployeeIds.some((id) => this.sameObjectId(id, row.employeeId)),
+      );
+      throw new Error(
+        `${this.userName(duplicateRow?.employeeId, 'This employee')} already exists in another probation review draft.`,
+      );
+    }
   }
 
   private clampAccessRule(
@@ -997,7 +1307,11 @@ export class ProbationReviewService extends BaseService {
     const statusText =
       input.status === ProbationReviewStatus.REVIEW_OPEN
         ? 'The review is open now.'
-        : `The review will open on ${reviewOpenDate}.`;
+        : `The form will be opened from ${reviewOpenDate}.`;
+    const formAvailabilityText =
+      input.status === ProbationReviewStatus.REVIEW_OPEN
+        ? `The form is available from ${reviewOpenDate}.`
+        : `The form will be opened from ${reviewOpenDate}.`;
 
     const sendToManager = async (manager: any, roleLabel: string) => {
       const managerName = this.userName(manager, roleLabel);
@@ -1011,7 +1325,7 @@ A probation review assignment has been created for ${employeeName}.
 Your role: ${roleLabel}
 Review opens: ${reviewOpenDate}
 Probation end date: ${probationEndDate}
-Open offset: ${input.reviewOpenOffsetDays} day(s) before probation end date
+Form availability: ${formAvailabilityText}
 
 ${statusText}`,
         `<p>Hello ${this.escapeHtml(managerName)},</p>
@@ -1019,14 +1333,14 @@ ${statusText}`,
 <p><strong>Your role:</strong> ${this.escapeHtml(roleLabel)}<br/>
 <strong>Review opens:</strong> ${this.escapeHtml(reviewOpenDate)}<br/>
 <strong>Probation end date:</strong> ${this.escapeHtml(probationEndDate)}<br/>
-<strong>Open offset:</strong> ${input.reviewOpenOffsetDays} day(s) before probation end date</p>
+<strong>Form availability:</strong> ${this.escapeHtml(formAvailabilityText)}</p>
 <p>${this.escapeHtml(statusText)}</p>`,
       );
     };
 
     await Promise.all([
-      sendToManager(input.manager1, 'Manager 1'),
-      sendToManager(input.manager2, 'Manager 2'),
+      sendToManager(input.manager1, 'Approver Level One'),
+      sendToManager(input.manager2, 'Approver Level Two'),
     ]);
   }
 
@@ -1066,8 +1380,8 @@ Probation end date: ${probationEndDate}`,
         };
 
         return [
-          sendToManager(assignment.manager1Id, 'Manager 1'),
-          sendToManager(assignment.manager2Id, 'Manager 2'),
+          sendToManager(assignment.manager1Id, 'Approver Level One'),
+          sendToManager(assignment.manager2Id, 'Approver Level Two'),
         ];
       }),
     );

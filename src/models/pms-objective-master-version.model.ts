@@ -2,12 +2,14 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 import {
   AssessmentTermCode,
   ObjectiveAttachmentPolicy,
+  ObjectiveMasterType,
   ObjectiveMasterVersionStatus,
   ObjectiveTargetDirection,
 } from '../constants/pms.enums';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
   ObjectiveAttachmentPolicy as ObjectiveAttachmentPolicyType,
+  ObjectiveMasterType as ObjectiveMasterTypeType,
   ObjectiveMasterVersionStatus as ObjectiveMasterVersionStatusType,
   ObjectiveTargetDirection as ObjectiveTargetDirectionType,
 } from '../constants/pms.enums';
@@ -28,6 +30,8 @@ export interface IObjectiveReviewerMetadata {
 }
 
 export interface IObjectiveBusinessSnapshot {
+  objectiveType?: ObjectiveMasterTypeType;
+  sheetLayout?: Record<string, unknown>;
   title: string;
   description?: string;
   measurementGuidance?: string;
@@ -66,6 +70,12 @@ export interface IObjectiveMasterVersion
 
 const objectiveBusinessSnapshotSchema = new Schema<IObjectiveBusinessSnapshot>(
   {
+    objectiveType: {
+      type: String,
+      enum: Object.values(ObjectiveMasterType),
+      default: ObjectiveMasterType.SIMPLE,
+    },
+    sheetLayout: { type: Schema.Types.Mixed, default: undefined },
     title: { type: String, required: true, trim: true, maxlength: 200 },
     description: { type: String, trim: true },
     measurementGuidance: { type: String, trim: true },
@@ -135,6 +145,13 @@ const objectiveMasterVersionSchema = new Schema<IObjectiveMasterVersion>(
       default: ObjectiveMasterVersionStatus.DRAFT,
       index: true,
     },
+    objectiveType: {
+      type: String,
+      enum: Object.values(ObjectiveMasterType),
+      default: ObjectiveMasterType.SIMPLE,
+      index: true,
+    },
+    sheetLayout: { type: Schema.Types.Mixed, default: undefined },
     title: { type: String, required: true, trim: true, maxlength: 200 },
     description: { type: String, trim: true },
     measurementGuidance: { type: String, trim: true },
