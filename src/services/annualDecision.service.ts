@@ -589,11 +589,12 @@ export class AnnualDecisionService extends BaseService {
       ...input,
       finalScore: effectiveFinalScore,
     };
-    const decisionInput = await this.sanitizeAnnualDecisionInputForTemplate(
+    const sanitizedDecisionInput = await this.sanitizeAnnualDecisionInputForTemplate(
       annualAssignment,
       rawDecisionInput,
       existingDecision,
     );
+    const decisionInput = this.normalizeMeritRecommendationForDecision(sanitizedDecisionInput);
     const appraisalOutcomeType = this.deriveOutcome(
       decisionInput.isGradeApplied,
       decisionInput.isMeritApplied,
@@ -1363,6 +1364,60 @@ export class AnnualDecisionService extends BaseService {
     if (outcomeType === AppraisalOutcomeType.NIL && !input.nilReason?.trim()) {
       throw new Error('nilReason is required when grade and merit are not applied');
     }
+  }
+
+  private normalizeMeritRecommendationForDecision(
+    input: SaveDecisionDraftInput,
+  ): SaveDecisionDraftInput {
+    if (!input.isMeritApplied) {
+      return input;
+    }
+
+    const normalizedInput: SaveDecisionDraftInput = {
+      ...input,
+      meritDetails: {
+        ...(input.meritDetails ?? {}),
+      },
+      decisionValues: input.decisionValues?.map((decisionValue) => ({ ...decisionValue })),
+    };
+
+    const meritDetails = normalizedInput.meritDetails as Record<string, unknown>;
+    const currentRecommendation =
+      typeof meritDetails.recommendation === 'string'
+        ? meritDetails.recommendation.trim()
+        : '';
+    if (!currentRecommendation || currentRecommendation.toLowerCase() === 'no_change') {
+      meritDetails.recommendation = 'merit_applied';
+    }
+
+    normalizedInput.decisionValues = this.normalizeMeritRecommendationDecisionValues(
+      normalizedInput.decisionValues ?? [],
+    );
+
+    return normalizedInput;
+  }
+
+  private normalizeMeritRecommendationDecisionValues(
+    decisionValues: AnnualDecisionValueInput[],
+  ): AnnualDecisionValueInput[] {
+    return decisionValues.map((decisionValue) => {
+      if (!this.isMeritRecommendationFieldKey(decisionValue.fieldKey)) {
+        return decisionValue;
+      }
+
+      const textValue = decisionValue.valueText?.trim();
+      if (textValue && textValue.toLowerCase() !== 'no_change') {
+        return decisionValue;
+      }
+
+      return {
+        ...decisionValue,
+        valueText: 'merit_applied',
+        valueJson: undefined,
+        valueNumber: undefined,
+        valueDate: undefined,
+      };
+    });
   }
 
   private async validateAnnualTemplateInput(
@@ -2197,6 +2252,10 @@ export class AnnualDecisionService extends BaseService {
 
   private isFinalScoreFieldKey(fieldKey: string): boolean {
     return ['finalscore', 'score'].includes(this.normalizeAnnualFieldKey(fieldKey));
+  }
+
+  private isMeritRecommendationFieldKey(fieldKey: string): boolean {
+    return ['meritrecommendation', 'recommendation'].includes(this.normalizeAnnualFieldKey(fieldKey));
   }
 
   private isStandardAnnualDecisionFieldKey(fieldKey: string): boolean {
