@@ -358,6 +358,12 @@ interface ObjectiveSheetLayoutInput {
     label?: string;
     group?: string;
   }>;
+  headerGroups?: Array<{
+    id?: string;
+    label?: string;
+    startColumnId?: string;
+    endColumnId?: string;
+  }>;
 }
 
 interface NormalizedObjectiveSheetLayout {
@@ -375,6 +381,12 @@ interface NormalizedObjectiveSheetLayout {
     id: string;
     label: string;
     group?: string;
+  }>;
+  headerGroups: Array<{
+    id: string;
+    label: string;
+    startColumnId: string;
+    endColumnId: string;
   }>;
 }
 
@@ -5748,6 +5760,9 @@ export class ObjectiveService extends BaseService {
     const fallback = this.defaultObjectiveSheetLayout();
     const inputColumns = Array.isArray(layout?.columns) ? layout.columns : fallback.columns;
     const inputRows = Array.isArray(layout?.rows) ? layout.rows : fallback.rows;
+    const inputHeaderGroups = Array.isArray(layout?.headerGroups)
+      ? layout.headerGroups
+      : fallback.headerGroups;
 
     const columns: NormalizedObjectiveSheetLayout['columns'] = [];
     inputColumns.forEach((column, index) => {
@@ -5791,7 +5806,31 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective table requires at least one row.');
     }
 
-    return { columns, rows };
+    const columnIndexByKey = new Map<string, number>();
+    columns.forEach((column, index) => {
+      columnIndexByKey.set(this.normalizeSheetKey(column.id, ''), index);
+      columnIndexByKey.set(this.normalizeSheetKey(column.label, ''), index);
+    });
+    const headerGroups: NormalizedObjectiveSheetLayout['headerGroups'] = [];
+    inputHeaderGroups.forEach((group, index) => {
+      const label = String(group?.label ?? '').trim();
+      if (!label) return;
+      const startColumnId = this.normalizeSheetKey(group?.startColumnId, '');
+      const endColumnId = this.normalizeSheetKey(group?.endColumnId, '');
+      const startIndex = columnIndexByKey.get(startColumnId);
+      const endIndex = columnIndexByKey.get(endColumnId);
+      if (startIndex === undefined || endIndex === undefined || startIndex > endIndex) {
+        throw new Error(`Header group "${label}" has an invalid column range.`);
+      }
+      headerGroups.push({
+        id: this.normalizeSheetKey(group?.id, `group_${index + 1}`),
+        label,
+        startColumnId: columns[startIndex].id,
+        endColumnId: columns[endIndex].id,
+      });
+    });
+
+    return { columns, rows, headerGroups };
   }
 
   private normalizeSheetKey(value: unknown, fallback: string): string {
@@ -5819,6 +5858,7 @@ export class ObjectiveService extends BaseService {
       rows: [
         { id: 'row_1', label: 'Objective line 1' },
       ],
+      headerGroups: [],
     };
   }
 
