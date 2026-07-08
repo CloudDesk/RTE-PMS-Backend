@@ -30,6 +30,8 @@ interface IProbationReviewAuditEntry {
 
 export interface IPmsProbationReviewAssignment extends Document {
   employeeId: Types.ObjectId;
+  joiningDate?: Date;
+  probationStartDate?: Date;
   probationEndDate: Date;
   reviewOpenDate: Date;
   manager1Id: Types.ObjectId;
@@ -89,6 +91,8 @@ const probationReviewAssignmentSchema =
         ref: 'User',
         index: true,
       },
+      joiningDate: { type: Date },
+      probationStartDate: { type: Date },
       probationEndDate: { type: Date, required: true, index: true },
       reviewOpenDate: { type: Date, required: true, index: true },
       manager1Id: {

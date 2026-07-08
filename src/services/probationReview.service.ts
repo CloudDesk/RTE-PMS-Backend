@@ -23,6 +23,8 @@ export interface ProbationReviewListQuery {
 
 export interface CreateProbationReviewInput {
   employeeId: string;
+  joiningDate?: string | Date;
+  probationStartDate?: string | Date;
   probationEndDate: string | Date;
   reviewOpenDate?: string | Date;
   manager1Id: string;
@@ -122,7 +124,7 @@ export class ProbationReviewService extends BaseService {
 
     const [items, total] = await Promise.all([
       PmsProbationReviewAssignment.find(filter)
-        .populate('employeeId', 'name email employeeCode departmentId designation role specificRole probationDate joiningDate')
+        .populate('employeeId', 'name email employeeCode departmentId designation role specificRole joiningDate probationStartDate probationEndDate probationDate')
         .populate('manager1Id', 'name email employeeCode role specificRole')
         .populate('manager2Id', 'name email employeeCode role specificRole')
         .populate('templateId', 'name code status metadata')
@@ -142,7 +144,7 @@ export class ProbationReviewService extends BaseService {
       _id: this.toObjectId(id, 'Probation review assignment'),
       isDeleted: false,
     })
-      .populate('employeeId', 'name email employeeCode departmentId designation role specificRole probationDate joiningDate')
+      .populate('employeeId', 'name email employeeCode departmentId designation role specificRole joiningDate probationStartDate probationEndDate probationDate')
       .populate('manager1Id', 'name email employeeCode role specificRole')
       .populate('manager2Id', 'name email employeeCode role specificRole')
       .populate('templateId', 'name code status metadata')
@@ -176,7 +178,9 @@ export class ProbationReviewService extends BaseService {
 
     const [employee, manager1, manager2, template, templateVersion] =
       await Promise.all([
-        User.findOne({ _id: employeeId, active: true }).select('_id').lean(),
+        User.findOne({ _id: employeeId, active: true })
+          .select('_id joiningDate probationStartDate probationEndDate probationDate')
+          .lean(),
         User.findOne({ _id: manager1Id, active: true }).select('_id').lean(),
         User.findOne({ _id: manager2Id, active: true }).select('_id').lean(),
         PmsTemplate.findOne({ _id: templateId, isDeleted: false }).lean(),
@@ -195,6 +199,25 @@ export class ProbationReviewService extends BaseService {
       throw new Error('Template version does not exist for the selected template.');
     }
 
+    const employeeDates = employee as {
+      joiningDate?: Date | string;
+      probationStartDate?: Date | string;
+    };
+    const joiningDate = input.joiningDate
+      ? this.parseDate(input.joiningDate, 'Joining date')
+      : employeeDates.joiningDate
+        ? this.parseDate(employeeDates.joiningDate, 'Joining date')
+        : undefined;
+    const probationStartDate = input.probationStartDate
+      ? this.parseDate(input.probationStartDate, 'Probation start date')
+      : employeeDates.probationStartDate
+        ? this.parseDate(employeeDates.probationStartDate, 'Probation start date')
+        : joiningDate;
+
+    if (probationStartDate && probationEndDate.getTime() < probationStartDate.getTime()) {
+      throw new Error('Probation end date cannot be before probation start date.');
+    }
+
     const status =
       this.getCurrentDate().getTime() >= reviewOpenDate.getTime()
         ? ProbationReviewStatus.REVIEW_OPEN
@@ -202,6 +225,8 @@ export class ProbationReviewService extends BaseService {
 
     const assignment = await PmsProbationReviewAssignment.create({
       employeeId,
+      joiningDate,
+      probationStartDate,
       probationEndDate,
       reviewOpenDate,
       manager1Id,
