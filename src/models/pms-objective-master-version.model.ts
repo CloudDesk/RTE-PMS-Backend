@@ -86,7 +86,7 @@ const objectiveBusinessSnapshotSchema = new Schema<IObjectiveBusinessSnapshot>(
       enum: Object.values(ObjectiveAttachmentPolicy),
       default: ObjectiveAttachmentPolicy.OPTIONAL,
     },
-    scoreable: { type: Boolean, default: true },
+    scoreable: { type: Boolean, default: false },
     defaultScoringEligibilityRef: { type: String, trim: true },
     approvedWeightage: { type: Number, min: 0, max: 100 },
     applicableTermLabels: {
@@ -155,7 +155,7 @@ const objectiveMasterVersionSchema = new Schema<IObjectiveMasterVersion>(
       enum: Object.values(ObjectiveAttachmentPolicy),
       default: ObjectiveAttachmentPolicy.OPTIONAL,
     },
-    scoreable: { type: Boolean, default: true },
+    scoreable: { type: Boolean, default: false },
     defaultScoringEligibilityRef: { type: String, trim: true },
     approvedWeightage: { type: Number, min: 0, max: 100 },
     applicableTermLabels: {

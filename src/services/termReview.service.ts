@@ -1677,10 +1677,10 @@ export class TermReviewService extends BaseService {
 
     const invalidWeightObjective = rateableObjectives.find((objective) => {
       const weightage = this.getObjectiveWeightage(objective);
-      return weightage === undefined || weightage < 0 || weightage > 100;
+      return weightage === undefined || weightage <= 0 || weightage > 100;
     });
     if (invalidWeightObjective) {
-      throw new Error('Each scoreable objective must have valid weightage between 0 and 100.');
+      throw new Error('Each scoreable objective must have weightage greater than 0 and no more than 100.');
     }
 
     const totalWeightage = rateableObjectives.reduce(
@@ -1689,6 +1689,9 @@ export class TermReviewService extends BaseService {
     );
     if (totalWeightage > 100) {
       throw new Error(`Total scoreable objective weightage cannot exceed 100%. Current total is ${totalWeightage}%.`);
+    }
+    if (isSubmit && Math.abs(totalWeightage - 100) > 0.001) {
+      throw new Error(`Total scoreable objective weightage must equal 100% before submission. Current total is ${totalWeightage}%.`);
     }
   }
 

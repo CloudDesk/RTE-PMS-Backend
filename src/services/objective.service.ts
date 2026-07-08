@@ -909,6 +909,7 @@ export class ObjectiveService extends BaseService {
     const actor = this.requireActor();
     const actorId = this.toObjectId(actor.actorId, 'actorId');
     const sourceType = this.requireFlexibleObjectiveSourceType(input.sourceType);
+    this.assertObjectiveMasterCreatableSourceType(sourceType);
     const owner = this.normalizeObjectiveOwnerInput(input, actor);
 
     await this.assertObjectiveOwnerPermission(sourceType, owner);
@@ -966,6 +967,7 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective Master not found');
     }
 
+    this.assertObjectiveMasterCreatableSourceType(master.sourceType);
     await this.assertObjectiveOwnerPermission(master.sourceType, master);
 
     const sourceVersion = sourceVersionId
@@ -4593,6 +4595,14 @@ export class ObjectiveService extends BaseService {
       (sum, objective) => sum + Number(objective.weightage ?? 0),
       0,
     );
+    const invalidWeightageObjective = scoreableObjectives.find((objective) => {
+      const weightage = Number(objective.weightage);
+      return !Number.isFinite(weightage) || weightage <= 0 || weightage > 100;
+    });
+
+    if (invalidWeightageObjective) {
+      throw new Error('Each scoreable objective must have weightage greater than 0 and no more than 100 before achievement opens.');
+    }
 
     if (Math.abs(totalWeightage - 100) > 0.001) {
       throw new Error(
@@ -5446,6 +5456,15 @@ export class ObjectiveService extends BaseService {
     return sourceType;
   }
 
+  private assertObjectiveMasterCreatableSourceType(sourceType: FlexibleObjectiveSourceTypeType): void {
+    if (
+      sourceType !== FlexibleObjectiveSourceType.COMPANY_OBJECTIVE &&
+      sourceType !== FlexibleObjectiveSourceType.DEPARTMENT_OBJECTIVE
+    ) {
+      throw new Error('Objective Master can be created only for Company/Global or Department objectives.');
+    }
+  }
+
   private normalizeObjectiveOwnerInput(
     input: ObjectiveOwnerInput,
     actor: { actorId: string; actorRole: string },
@@ -5496,6 +5515,9 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective title is required');
     }
 
+    const scoreable = input.scoreable === true;
+    const approvedWeightage = this.normalizeObjectiveMasterWeightage(input.approvedWeightage, scoreable);
+
     return {
       title,
       description: input.description?.trim() || undefined,
@@ -5509,9 +5531,9 @@ export class ObjectiveService extends BaseService {
       attachmentPolicy: input.attachmentPolicy && Object.values(ObjectiveAttachmentPolicy).includes(input.attachmentPolicy)
         ? input.attachmentPolicy
         : ObjectiveAttachmentPolicy.OPTIONAL,
-      scoreable: input.scoreable ?? true,
+      scoreable,
       defaultScoringEligibilityRef: input.defaultScoringEligibilityRef?.trim() || undefined,
-      approvedWeightage: input.approvedWeightage,
+      approvedWeightage,
       applicableTermLabels: this.normalizeApplicableTermLabels(input.applicableTermLabels),
       ...this.normalizeObjectiveOwnerInput(input, actor),
       ...this.normalizeObjectiveAssignerInput(input, actor),
@@ -5553,7 +5575,16 @@ export class ObjectiveService extends BaseService {
     if (input.defaultScoringEligibilityRef !== undefined) {
       patch.defaultScoringEligibilityRef = input.defaultScoringEligibilityRef?.trim() || undefined;
     }
-    if (input.approvedWeightage !== undefined) patch.approvedWeightage = input.approvedWeightage;
+    if (input.scoreable === true && input.approvedWeightage === undefined) {
+      throw new Error('Scoreable Objective Master versions require approved weightage.');
+    }
+    if (input.approvedWeightage !== undefined) {
+      patch.approvedWeightage = this.normalizeObjectiveMasterWeightage(
+        input.approvedWeightage,
+        input.scoreable === true,
+      );
+    }
+    if (input.scoreable === false) patch.approvedWeightage = undefined;
     if (input.applicableTermLabels !== undefined) {
       patch.applicableTermLabels = this.normalizeApplicableTermLabels(input.applicableTermLabels);
     }
@@ -5577,6 +5608,22 @@ export class ObjectiveService extends BaseService {
     if (input.reviewerScope !== undefined) patch.reviewerScope = input.reviewerScope ?? {};
 
     return patch;
+  }
+
+  private normalizeObjectiveMasterWeightage(
+    approvedWeightage: number | undefined,
+    scoreable: boolean,
+  ): number | undefined {
+    if (!scoreable) {
+      return undefined;
+    }
+
+    const weightage = Number(approvedWeightage);
+    if (!Number.isFinite(weightage) || weightage <= 0 || weightage > 100) {
+      throw new Error('Scoreable Objective Master versions require weightage greater than 0 and no more than 100.');
+    }
+
+    return weightage;
   }
 
   private cloneObjectiveMasterVersionDetails(
@@ -5611,9 +5658,9 @@ export class ObjectiveService extends BaseService {
       targetDirection: version.targetDirection,
       priority: version.priority,
       attachmentPolicy: version.attachmentPolicy ?? ObjectiveAttachmentPolicy.OPTIONAL,
-      scoreable: version.scoreable ?? true,
+      scoreable: version.scoreable === true,
       defaultScoringEligibilityRef: version.defaultScoringEligibilityRef,
-      approvedWeightage: version.approvedWeightage,
+      approvedWeightage: version.scoreable === true ? version.approvedWeightage : undefined,
       applicableTermLabels: version.applicableTermLabels ?? [],
       ownerUserId: version.ownerUserId ?? this.toObjectId(actor.actorId, 'actorId'),
       ownerRole: version.ownerRole ?? actor.actorRole,
@@ -5743,7 +5790,7 @@ export class ObjectiveService extends BaseService {
       targetDirection: version.targetDirection,
       priority: version.priority,
       attachmentPolicy: version.attachmentPolicy,
-      scoreable: version.scoreable,
+      scoreable: version.scoreable === true,
       defaultScoringEligibilityRef: version.defaultScoringEligibilityRef,
       approvedWeightage: version.approvedWeightage,
       applicableTermLabels: version.applicableTermLabels ?? [],
@@ -6089,7 +6136,7 @@ export class ObjectiveService extends BaseService {
         priority: version.priority,
         targetMetric: version.measurementGuidance,
         targetValue: version.targetValue,
-        weightage: version.approvedWeightage,
+        weightage: version.scoreable === true ? version.approvedWeightage : undefined,
         successCriteria: version.targetDescription,
         status: ObjectiveStatus.OBJECTIVE_APPROVED,
         attachments: [],
@@ -6487,8 +6534,8 @@ export class ObjectiveService extends BaseService {
       targetDirection: version.targetDirection,
       priority: version.priority,
       attachmentPolicy: version.attachmentPolicy,
-      scoreable: version.scoreable,
-      approvedWeightage: version.approvedWeightage,
+      scoreable: version.scoreable === true,
+      approvedWeightage: version.scoreable === true ? version.approvedWeightage : undefined,
       applicableTerm,
       ownerUserId: version.ownerUserId,
       ownerRole: version.ownerRole,
@@ -6814,7 +6861,7 @@ export class ObjectiveService extends BaseService {
     }
 
     const weightage = Number(objectiveSnapshot.approvedWeightage);
-    if (!Number.isFinite(weightage) || weightage < 0 || weightage > 100) {
+    if (!Number.isFinite(weightage) || weightage <= 0 || weightage > 100) {
       return 'Scoreable objective is missing valid approved weightage.';
     }
 

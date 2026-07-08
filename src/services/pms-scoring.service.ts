@@ -372,6 +372,17 @@ export class PmsScoringService {
       };
     }
 
+    const weightages = scoreableObjectives.map((objective) =>
+      Number(objective.objectiveSnapshot?.approvedWeightage ?? objective.weightage),
+    );
+    if (weightages.some((weightage) => !Number.isFinite(weightage) || weightage <= 0 || weightage > 100)) {
+      throw new Error('Each scoreable objective must have weightage greater than 0 and no more than 100.');
+    }
+    const totalWeightage = weightages.reduce((sum, weightage) => sum + weightage, 0);
+    if (totalWeightage > 100) {
+      throw new Error(`Total scoreable objective weightage cannot exceed 100%. Current total is ${totalWeightage}%.`);
+    }
+
     let sectionScore = 0;
     const objectivesSnapshot = scoreableObjectives.map((objective) => {
       const objectiveId = objective._id.toString();
