@@ -10,6 +10,7 @@ import {
   ObjectiveAttachmentPolicy,
   ObjectiveActualAggregationMode,
   ObjectiveScoringMode,
+  ObjectiveMasterType,
   ObjectiveMasterStatus,
   ObjectiveMasterVersionStatus,
   ObjectiveSource,
@@ -60,6 +61,7 @@ import type {
   ObjectiveAssignmentRuleStatus as ObjectiveAssignmentRuleStatusType,
   ObjectiveApplicabilityStatus as ObjectiveApplicabilityStatusType,
   ObjectiveAttachmentPolicy as ObjectiveAttachmentPolicyType,
+  ObjectiveMasterType as ObjectiveMasterTypeType,
   ObjectiveMasterStatus as ObjectiveMasterStatusType,
   ObjectiveMasterVersionStatus as ObjectiveMasterVersionStatusType,
   ObjectiveSource as ObjectiveSourceType,
@@ -340,10 +342,48 @@ interface ObjectiveReviewerInput {
   reviewerScope?: Record<string, unknown>;
 }
 
+interface ObjectiveSheetLayoutInput {
+  columns?: Array<{
+    id?: string;
+    label?: string;
+    type?: string;
+    width?: string;
+    required?: boolean;
+    defaultValue?: string;
+    helpText?: string;
+    options?: string[];
+  }>;
+  rows?: Array<{
+    id?: string;
+    label?: string;
+    group?: string;
+  }>;
+}
+
+interface NormalizedObjectiveSheetLayout {
+  columns: Array<{
+    id: string;
+    label: string;
+    type: string;
+    width: string;
+    required: boolean;
+    defaultValue?: string;
+    helpText?: string;
+    options?: string[];
+  }>;
+  rows: Array<{
+    id: string;
+    label: string;
+    group?: string;
+  }>;
+}
+
 export interface ObjectiveMasterVersionDetailsInput
   extends ObjectiveOwnerInput,
     ObjectiveAssignerInput,
     ObjectiveReviewerInput {
+  objectiveType?: ObjectiveMasterTypeType;
+  sheetLayout?: ObjectiveSheetLayoutInput;
   title: string;
   description?: string;
   measurementGuidance?: string;
@@ -388,6 +428,8 @@ export interface ObjectiveMasterVersionRecord {
   objectiveMasterId: string;
   versionNo: number;
   status: ObjectiveMasterVersionStatusType;
+  objectiveType: ObjectiveMasterTypeType;
+  sheetLayout?: ObjectiveSheetLayoutInput;
   title: string;
   description?: string;
   measurementGuidance?: string;
@@ -917,9 +959,10 @@ export class ObjectiveService extends BaseService {
     const owner = this.normalizeObjectiveOwnerInput(input, actor);
 
     await this.assertObjectiveOwnerPermission(sourceType, owner);
+    const code = input.code?.trim() || await this.generateObjectiveMasterCode(sourceType);
 
     const master = await ObjectiveMaster.create({
-      code: input.code?.trim() || undefined,
+      code,
       sourceType,
       status: ObjectiveMasterStatus.ACTIVE,
       ...owner,
@@ -5469,6 +5512,37 @@ export class ObjectiveService extends BaseService {
     }
   }
 
+  private async generateObjectiveMasterCode(
+    sourceType: FlexibleObjectiveSourceTypeType,
+  ): Promise<string> {
+    const prefix =
+      sourceType === FlexibleObjectiveSourceType.DEPARTMENT_OBJECTIVE
+        ? 'D-OBJ'
+        : 'G-OBJ';
+
+    const latest = await ObjectiveMaster.findOne({
+      code: { $regex: `^${prefix}-\\d+$` },
+    })
+      .sort({ createdAt: -1, code: -1 })
+      .select('code')
+      .lean();
+
+    let nextNumber = 1;
+    const latestCode = String(latest?.code ?? '');
+    const match = latestCode.match(/-(\d+)$/);
+    if (match) {
+      nextNumber = Number(match[1]) + 1;
+    }
+
+    let code = `${prefix}-${String(nextNumber).padStart(3, '0')}`;
+    while (await ObjectiveMaster.exists({ code })) {
+      nextNumber += 1;
+      code = `${prefix}-${String(nextNumber).padStart(3, '0')}`;
+    }
+
+    return code;
+  }
+
   private normalizeObjectiveOwnerInput(
     input: ObjectiveOwnerInput,
     actor: { actorId: string; actorRole: string },
@@ -5519,18 +5593,26 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective title is required');
     }
 
-    const scoreable = input.scoreable === true;
+    const objectiveType = this.normalizeObjectiveMasterType(input.objectiveType);
+    const scoreable = objectiveType === ObjectiveMasterType.SHEET ? false : input.scoreable === true;
     const approvedWeightage = this.normalizeObjectiveMasterWeightage(input.approvedWeightage, scoreable);
 
     return {
+      objectiveType,
+      sheetLayout: objectiveType === ObjectiveMasterType.SHEET
+        ? this.normalizeObjectiveSheetLayout(input.sheetLayout)
+        : undefined,
       title,
       description: input.description?.trim() || undefined,
       measurementGuidance: input.measurementGuidance?.trim() || undefined,
       targetValue: input.targetValue?.trim() || undefined,
       targetDescription: input.targetDescription?.trim() || undefined,
-      targetDirection: input.targetDirection && Object.values(ObjectiveTargetDirection).includes(input.targetDirection)
-        ? input.targetDirection
-        : undefined,
+      targetDirection:
+        objectiveType === ObjectiveMasterType.SHEET
+          ? ObjectiveTargetDirection.NOT_APPLICABLE
+          : input.targetDirection && Object.values(ObjectiveTargetDirection).includes(input.targetDirection)
+            ? input.targetDirection
+            : undefined,
       priority: input.priority?.trim().toUpperCase() || undefined,
       attachmentPolicy: input.attachmentPolicy && Object.values(ObjectiveAttachmentPolicy).includes(input.attachmentPolicy)
         ? input.attachmentPolicy
@@ -5550,7 +5632,18 @@ export class ObjectiveService extends BaseService {
     actor: { actorId: string; actorRole: string },
   ) {
     const patch: Record<string, unknown> = {};
+    const nextObjectiveType =
+      input.objectiveType !== undefined
+        ? this.normalizeObjectiveMasterType(input.objectiveType)
+        : undefined;
 
+    if (nextObjectiveType !== undefined) patch.objectiveType = nextObjectiveType;
+    if (input.sheetLayout !== undefined || nextObjectiveType === ObjectiveMasterType.SHEET) {
+      patch.sheetLayout =
+        nextObjectiveType === ObjectiveMasterType.SIMPLE
+          ? undefined
+          : this.normalizeObjectiveSheetLayout(input.sheetLayout);
+    }
     if (input.title !== undefined) {
       const title = input.title.trim();
       if (!title) {
@@ -5568,6 +5661,13 @@ export class ObjectiveService extends BaseService {
       }
       patch.targetDirection = input.targetDirection || undefined;
     }
+    if (nextObjectiveType === ObjectiveMasterType.SHEET) {
+      patch.scoreable = false;
+      patch.approvedWeightage = undefined;
+      patch.targetDirection = ObjectiveTargetDirection.NOT_APPLICABLE;
+    } else if (nextObjectiveType === ObjectiveMasterType.SIMPLE) {
+      patch.sheetLayout = undefined;
+    }
     if (input.priority !== undefined) patch.priority = input.priority?.trim().toUpperCase() || undefined;
     if (input.attachmentPolicy !== undefined) {
       if (input.attachmentPolicy && !Object.values(ObjectiveAttachmentPolicy).includes(input.attachmentPolicy)) {
@@ -5575,20 +5675,20 @@ export class ObjectiveService extends BaseService {
       }
       patch.attachmentPolicy = input.attachmentPolicy || undefined;
     }
-    if (input.scoreable !== undefined) patch.scoreable = input.scoreable;
+    if (input.scoreable !== undefined && nextObjectiveType !== ObjectiveMasterType.SHEET) patch.scoreable = input.scoreable;
     if (input.defaultScoringEligibilityRef !== undefined) {
       patch.defaultScoringEligibilityRef = input.defaultScoringEligibilityRef?.trim() || undefined;
     }
-    if (input.scoreable === true && input.approvedWeightage === undefined) {
+    if (nextObjectiveType !== ObjectiveMasterType.SHEET && input.scoreable === true && input.approvedWeightage === undefined) {
       throw new Error('Scoreable Objective Master versions require approved weightage.');
     }
     if (input.approvedWeightage !== undefined) {
       patch.approvedWeightage = this.normalizeObjectiveMasterWeightage(
         input.approvedWeightage,
-        input.scoreable === true,
+        nextObjectiveType === ObjectiveMasterType.SHEET ? false : input.scoreable === true,
       );
     }
-    if (input.scoreable === false) patch.approvedWeightage = undefined;
+    if (input.scoreable === false || nextObjectiveType === ObjectiveMasterType.SHEET) patch.approvedWeightage = undefined;
     if (input.applicableTermLabels !== undefined) {
       patch.applicableTermLabels = this.normalizeApplicableTermLabels(input.applicableTermLabels);
     }
@@ -5630,8 +5730,102 @@ export class ObjectiveService extends BaseService {
     return weightage;
   }
 
+  private normalizeObjectiveMasterType(
+    objectiveType?: ObjectiveMasterTypeType | string,
+  ): ObjectiveMasterTypeType {
+    if (objectiveType && Object.values(ObjectiveMasterType).includes(objectiveType as ObjectiveMasterTypeType)) {
+      return objectiveType as ObjectiveMasterTypeType;
+    }
+
+    return ObjectiveMasterType.SIMPLE;
+  }
+
+  private normalizeObjectiveSheetLayout(
+    layout?: ObjectiveSheetLayoutInput,
+  ): NormalizedObjectiveSheetLayout {
+    const allowedTypes = new Set(['TEXT', 'LONG_TEXT', 'NUMBER', 'PERCENTAGE', 'DATE', 'DROPDOWN']);
+    const allowedWidths = new Set(['SMALL', 'MEDIUM', 'LARGE']);
+    const fallback = this.defaultObjectiveSheetLayout();
+    const inputColumns = Array.isArray(layout?.columns) ? layout.columns : fallback.columns;
+    const inputRows = Array.isArray(layout?.rows) ? layout.rows : fallback.rows;
+
+    const columns: NormalizedObjectiveSheetLayout['columns'] = [];
+    inputColumns.forEach((column, index) => {
+        const label = String(column?.label ?? '').trim();
+        if (!label) return;
+        const type = String(column?.type ?? 'TEXT').trim().toUpperCase();
+        const width = String(column?.width ?? 'MEDIUM').trim().toUpperCase();
+        const options = Array.isArray(column?.options)
+          ? Array.from(new Set(column.options.map((option) => String(option ?? '').trim()).filter(Boolean)))
+          : [];
+        if (type === 'DROPDOWN' && options.length === 0) {
+          throw new Error(`Dropdown column "${label}" requires at least one option.`);
+        }
+        columns.push({
+          id: this.normalizeSheetKey(column?.id, `col_${index + 1}`),
+          label,
+          type: allowedTypes.has(type) ? type : 'TEXT',
+          width: allowedWidths.has(width) ? width : 'MEDIUM',
+          required: column?.required === true,
+          defaultValue: String(column?.defaultValue ?? '').trim() || undefined,
+          helpText: String(column?.helpText ?? '').trim() || undefined,
+          options: type === 'DROPDOWN' ? options : undefined,
+        });
+      });
+
+    const rows: NormalizedObjectiveSheetLayout['rows'] = [];
+    inputRows.forEach((row, index) => {
+        const label = String(row?.label ?? '').trim();
+        if (!label) return;
+        rows.push({
+          id: this.normalizeSheetKey(row?.id, `row_${index + 1}`),
+          label,
+          group: String(row?.group ?? '').trim() || undefined,
+        });
+      });
+
+    if (!columns.length) {
+      throw new Error('Objective table requires at least one column.');
+    }
+    if (!rows.length) {
+      throw new Error('Objective table requires at least one row.');
+    }
+
+    return { columns, rows };
+  }
+
+  private normalizeSheetKey(value: unknown, fallback: string): string {
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    return normalized || fallback;
+  }
+
+  private defaultObjectiveSheetLayout(): NormalizedObjectiveSheetLayout {
+    return {
+      columns: [
+        { id: 'objective', label: 'Objective', type: 'LONG_TEXT', width: 'LARGE', required: true },
+        { id: 'uom', label: 'UOM', type: 'DROPDOWN', width: 'SMALL', required: false, options: ['%', 'Nos', 'Minutes', 'Hours'] },
+        { id: 'bm', label: 'BM', type: 'PERCENTAGE', width: 'SMALL', required: false },
+        { id: 'target', label: 'Target', type: 'PERCENTAGE', width: 'SMALL', required: false },
+        { id: 'q1_actual', label: 'Q1 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+        { id: 'q2_actual', label: 'Q2 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+        { id: 'q3_actual', label: 'Q3 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+        { id: 'q4_actual', label: 'Q4 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+        { id: 'remarks', label: 'Remarks', type: 'LONG_TEXT', width: 'LARGE', required: false },
+      ],
+      rows: [
+        { id: 'row_1', label: 'Objective line 1' },
+      ],
+    };
+  }
+
   private cloneObjectiveMasterVersionDetails(
     version: {
+      objectiveType?: ObjectiveMasterTypeType;
+      sheetLayout?: ObjectiveSheetLayoutInput;
       title: string;
       description?: string;
       measurementGuidance?: string;
@@ -5653,18 +5847,24 @@ export class ObjectiveService extends BaseService {
     },
     actor: { actorId: string; actorRole: string },
   ) {
+    const objectiveType = this.normalizeObjectiveMasterType(version.objectiveType);
+
     return {
+      objectiveType,
+      sheetLayout: objectiveType === ObjectiveMasterType.SHEET
+        ? this.normalizeObjectiveSheetLayout(version.sheetLayout)
+        : undefined,
       title: version.title,
       description: version.description,
       measurementGuidance: version.measurementGuidance,
       targetValue: version.targetValue,
       targetDescription: version.targetDescription,
-      targetDirection: version.targetDirection,
+      targetDirection: objectiveType === ObjectiveMasterType.SHEET ? ObjectiveTargetDirection.NOT_APPLICABLE : version.targetDirection,
       priority: version.priority,
       attachmentPolicy: version.attachmentPolicy ?? ObjectiveAttachmentPolicy.OPTIONAL,
-      scoreable: version.scoreable === true,
+      scoreable: objectiveType === ObjectiveMasterType.SHEET ? false : version.scoreable === true,
       defaultScoringEligibilityRef: version.defaultScoringEligibilityRef,
-      approvedWeightage: version.scoreable === true ? version.approvedWeightage : undefined,
+      approvedWeightage: objectiveType !== ObjectiveMasterType.SHEET && version.scoreable === true ? version.approvedWeightage : undefined,
       applicableTermLabels: version.applicableTermLabels ?? [],
       ownerUserId: version.ownerUserId ?? this.toObjectId(actor.actorId, 'actorId'),
       ownerRole: version.ownerRole ?? actor.actorRole,
@@ -5786,6 +5986,8 @@ export class ObjectiveService extends BaseService {
       objectiveMasterId: this.userIdString(version.objectiveMasterId),
       versionNo: version.versionNo,
       status: version.status,
+      objectiveType: this.normalizeObjectiveMasterType(version.objectiveType),
+      sheetLayout: version.sheetLayout,
       title: version.title,
       description: version.description,
       measurementGuidance: version.measurementGuidance,

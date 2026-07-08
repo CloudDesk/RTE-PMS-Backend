@@ -200,6 +200,14 @@ export const ObjectiveMasterVersionStatus = {
 export type ObjectiveMasterVersionStatus =
   (typeof ObjectiveMasterVersionStatus)[keyof typeof ObjectiveMasterVersionStatus];
 
+export const ObjectiveMasterType = {
+  SIMPLE: 'SIMPLE',
+  SHEET: 'SHEET',
+} as const;
+
+export type ObjectiveMasterType =
+  (typeof ObjectiveMasterType)[keyof typeof ObjectiveMasterType];
+
 export const ObjectiveAssignmentRuleStatus = {
   DRAFT: 'DRAFT',
   ACTIVE: 'ACTIVE',
