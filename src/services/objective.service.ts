@@ -5867,6 +5867,166 @@ export class ObjectiveService extends BaseService {
       });
     });
 
+    type CalculationColumnType = 'NUMBER' | 'PERCENTAGE';
+    const isCalculationColumnType = (type?: string): type is CalculationColumnType =>
+      type === 'NUMBER' || type === 'PERCENTAGE';
+    const resolveFormulaTargetIndex = (formula: any): number | undefined =>
+      columnIndexByKey.get(this.normalizeSheetKey(formula?.targetColumnId, ''));
+    const resolveCustomFormulaType = (
+      formula: any,
+      targetColumnIndex?: number,
+      visitedColumnIds = new Set<string>(),
+    ): CalculationColumnType | undefined => {
+      return validateCustomFormula(formula, targetColumnIndex, visitedColumnIds).type;
+    };
+    const validateCustomFormula = (
+      formula: any,
+      targetColumnIndex?: number,
+      visitedColumnIds = new Set<string>(),
+    ): { type?: CalculationColumnType; error?: string } => {
+      const expression = String(formula?.customExpression ?? '').trim();
+      if (!expression) return { error: 'Enter a formula using available columns.' };
+
+      const candidates = columns
+        .map((column, columnIndex) => ({ column, columnIndex }))
+        .filter(({ columnIndex }) => columnIndex !== targetColumnIndex)
+        .map(({ column, columnIndex }) => ({
+          column,
+          columnIndex,
+          type: resolveCalculationType(
+            columnIndex,
+            new Set([
+              ...visitedColumnIds,
+              targetColumnIndex !== undefined ? columns[targetColumnIndex]?.id : '',
+            ].filter(Boolean)),
+          ),
+        }))
+        .filter((item): item is { column: typeof columns[number]; columnIndex: number; type: CalculationColumnType } => Boolean(item.type))
+        .sort((a, b) =>
+          Math.max(b.column.label.length, b.column.id.length) -
+          Math.max(a.column.label.length, a.column.id.length),
+        );
+
+      const referencedTypes: CalculationColumnType[] = [];
+      let index = 0;
+      let lastToken: 'operand' | 'operator' | 'open' | 'close' | '' = '';
+      let openParens = 0;
+      const lowerExpression = expression.toLowerCase();
+
+      while (index < expression.length) {
+        const char = expression[index];
+        if (/\s/.test(char)) {
+          index += 1;
+          continue;
+        }
+
+        if (/[+\-*/]/.test(char)) {
+          if (!lastToken || lastToken === 'operator' || lastToken === 'open') return { error: 'Add a column before the operator.' };
+          lastToken = 'operator';
+          index += 1;
+          continue;
+        }
+
+        if (char === '(') {
+          if (lastToken === 'operand' || lastToken === 'close') return { error: 'Add an operator before opening brackets.' };
+          openParens += 1;
+          lastToken = 'open';
+          index += 1;
+          continue;
+        }
+
+        if (char === ')') {
+          if (openParens === 0 || lastToken === 'operator' || lastToken === 'open' || !lastToken) return { error: 'Close brackets after a complete value.' };
+          openParens -= 1;
+          lastToken = 'close';
+          index += 1;
+          continue;
+        }
+
+        const numberMatch = expression.slice(index).match(/^\d+(\.\d+)?/);
+        if (numberMatch) {
+          if (lastToken === 'operand' || lastToken === 'close') return { error: 'Add an operator between values.' };
+          lastToken = 'operand';
+          index += numberMatch[0].length;
+          continue;
+        }
+
+        const matched = candidates.find(({ column }) =>
+          columnReferenceMatches(lowerExpression, index, column.label) ||
+          columnReferenceMatches(lowerExpression, index, column.id),
+        );
+        if (!matched) return { error: 'Use only available columns, numbers, operators, and brackets.' };
+        if (lastToken === 'operand' || lastToken === 'close') return { error: 'Add an operator between selected columns.' };
+
+        referencedTypes.push(matched.type);
+        lastToken = 'operand';
+        index += columnReferenceLength(lowerExpression, index, matched.column.label, matched.column.id);
+      }
+
+      if (openParens > 0) return { error: 'Close all brackets in the formula.' };
+      if (lastToken === 'operator' || lastToken === 'open') return { error: 'Complete the formula after the operator.' };
+
+      const uniqueTypes = new Set(referencedTypes);
+      if (!referencedTypes.length) return { error: 'Select at least one Number or Percentage column.' };
+      if (uniqueTypes.size > 1) return { error: 'Custom formula columns must all be Number or all be Percentage.' };
+      return { type: referencedTypes[0] };
+    };
+    const columnReferenceMatches = (expression: string, index: number, reference: string): boolean => {
+      const normalizedReference = reference.toLowerCase();
+      if (!normalizedReference || !expression.startsWith(normalizedReference, index)) return false;
+      const nextChar = expression[index + normalizedReference.length] || '';
+      return !/[a-z0-9_]/i.test(nextChar);
+    };
+    const columnReferenceLength = (expression: string, index: number, label: string, id: string): number => {
+      const lowerLabel = label.toLowerCase();
+      return expression.startsWith(lowerLabel, index) ? label.length : id.length;
+    };
+    const resolveCalculationType = (
+      columnIndex: number | undefined,
+      visitedColumnIds = new Set<string>(),
+    ): CalculationColumnType | undefined => {
+      if (columnIndex === undefined) return undefined;
+      const column = columns[columnIndex];
+      if (!column) return undefined;
+      if (isCalculationColumnType(column.type)) return column.type;
+      if (column.type !== 'FORMULA' || visitedColumnIds.has(column.id)) return undefined;
+
+      visitedColumnIds.add(column.id);
+      const linkedFormula = inputFormulas.find((formula) => resolveFormulaTargetIndex(formula) === columnIndex);
+      if (!linkedFormula) return undefined;
+      const kind = String(linkedFormula?.kind ?? '').trim().toUpperCase();
+      const mode = String(linkedFormula?.mode ?? '').trim().toUpperCase();
+      if (!allowedFormulaKinds.has(kind) || !allowedFormulaModes.has(mode)) {
+        return undefined;
+      }
+      if (mode === 'CUSTOM') return resolveCustomFormulaType(linkedFormula, columnIndex, new Set(visitedColumnIds));
+
+      if (kind === 'ACTUAL') {
+        const sourceTypes = Array.isArray(linkedFormula?.sourceColumnIds)
+          ? linkedFormula.sourceColumnIds.map((columnId: unknown) =>
+              resolveCalculationType(
+                columnIndexByKey.get(this.normalizeSheetKey(columnId, '')),
+                new Set(visitedColumnIds),
+              ),
+            )
+          : [];
+        const uniqueTypes = new Set(sourceTypes.filter(Boolean));
+        return sourceTypes.length > 0 && sourceTypes.every(Boolean) && uniqueTypes.size === 1
+          ? [...uniqueTypes][0] as CalculationColumnType
+          : undefined;
+      }
+
+      const leftType = resolveCalculationType(
+        columnIndexByKey.get(this.normalizeSheetKey(linkedFormula?.leftColumnId, '')),
+        new Set(visitedColumnIds),
+      );
+      const rightType = resolveCalculationType(
+        columnIndexByKey.get(this.normalizeSheetKey(linkedFormula?.rightColumnId, '')),
+        new Set(visitedColumnIds),
+      );
+      return leftType && rightType && leftType === rightType ? leftType : undefined;
+    };
+
     const formulas: NormalizedObjectiveSheetLayout['formulas'] = [];
     inputFormulas.forEach((formula, index) => {
       const kind = String(formula?.kind ?? '').trim().toUpperCase();
@@ -5892,6 +6052,37 @@ export class ObjectiveService extends BaseService {
       }
       if (kind === 'GAP' && mode !== 'CUSTOM' && (leftIndex === undefined || rightIndex === undefined)) {
         throw new Error(`Gap formula "${label}" needs valid left and right columns.`);
+      }
+      if (columns[targetIndex].type !== 'FORMULA') {
+        throw new Error(`Formula "${label}" must target a calculated column.`);
+      }
+      if (mode === 'CUSTOM') {
+        const customValidation = validateCustomFormula(formula, targetIndex);
+        if (!customValidation.type) {
+          throw new Error(`Custom formula "${label}" is invalid. ${customValidation.error ?? 'Use valid formula syntax.'}`);
+        }
+      }
+      if (kind === 'ACTUAL' && mode !== 'CUSTOM') {
+        const sourceTypes = sourceColumnIds.map((sourceColumnId) =>
+          resolveCalculationType(columnIndexByKey.get(this.normalizeSheetKey(sourceColumnId, ''))),
+        );
+        const uniqueTypes = new Set(sourceTypes.filter(Boolean));
+        if (sourceTypes.some((sourceType) => !sourceType)) {
+          throw new Error(`Actual formula "${label}" can use only Number or Percentage columns.`);
+        }
+        if (uniqueTypes.size > 1) {
+          throw new Error(`Actual formula "${label}" source columns must all be Number or all be Percentage.`);
+        }
+      }
+      if (kind === 'GAP' && mode !== 'CUSTOM') {
+        const leftType = resolveCalculationType(leftIndex);
+        const rightType = resolveCalculationType(rightIndex);
+        if (!leftType || !rightType) {
+          throw new Error(`Gap formula "${label}" can use only Number or Percentage columns.`);
+        }
+        if (leftType !== rightType) {
+          throw new Error(`Gap formula "${label}" columns must both be Number or both be Percentage.`);
+        }
       }
 
       formulas.push({
