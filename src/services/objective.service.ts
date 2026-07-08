@@ -383,6 +383,11 @@ interface ObjectiveSheetLayoutInput {
     required?: boolean;
     lockRule?: string;
   }>;
+  termAvailability?: Array<{
+    id?: string;
+    columnId?: string;
+    terms?: string[];
+  }>;
 }
 
 interface NormalizedObjectiveSheetLayout {
@@ -425,6 +430,11 @@ interface NormalizedObjectiveSheetLayout {
     access: string;
     required: boolean;
     lockRule: string;
+  }>;
+  termAvailability: Array<{
+    id: string;
+    columnId: string;
+    terms: string[];
   }>;
 }
 
@@ -6117,6 +6127,7 @@ export class ObjectiveService extends BaseService {
     const allowedFillActors = new Set(['EMPLOYEE', 'MANAGER', 'REVIEWER', 'ADMIN', 'SYSTEM']);
     const allowedFillAccess = new Set(['HIDDEN', 'VIEW', 'FILL']);
     const allowedFillLockRules = new Set(['NONE', 'LOCK_AFTER_SUBMIT', 'EDITABLE_UNTIL_MANAGER_REVIEW']);
+    const allowedAvailabilityTerms = new Set(['Q1', 'Q2', 'Q3', 'Q4', 'H1', 'H2', 'Y1']);
     const fillPermissionMap = new Map(
       this.defaultObjectiveSheetFillPermissions(columns).map((permission) => [
         `${permission.columnId}:${permission.actor}`,
@@ -6171,7 +6182,40 @@ export class ObjectiveService extends BaseService {
         ['EMPLOYEE', 'MANAGER', 'REVIEWER', 'ADMIN', 'SYSTEM'].indexOf(b.actor);
     });
 
-    return { columns, rows, headerGroups, formulas, fillPermissions };
+    const termAvailabilityMap = new Map(
+      this.defaultObjectiveSheetTermAvailability(columns).map((availability) => [
+        availability.columnId,
+        availability,
+      ]),
+    );
+    const inputTermAvailability = Array.isArray(layout?.termAvailability) ? layout.termAvailability : [];
+    inputTermAvailability.forEach((availability: NonNullable<ObjectiveSheetLayoutInput['termAvailability']>[number], index: number) => {
+      const columnIndex = columnIndexByKey.get(this.normalizeSheetKey(availability?.columnId, ''));
+      if (columnIndex === undefined) {
+        throw new Error(`Term availability ${index + 1} references an invalid column.`);
+      }
+      const terms = Array.isArray(availability?.terms)
+        ? Array.from(new Set(availability.terms.map((term) => String(term ?? '').trim().toUpperCase()).filter(Boolean)))
+        : [];
+      if (terms.length === 0) {
+        throw new Error(`Term availability for "${columns[columnIndex].label}" requires at least one term.`);
+      }
+      if (terms.some((term) => !allowedAvailabilityTerms.has(term))) {
+        throw new Error(`Term availability for "${columns[columnIndex].label}" contains an invalid term.`);
+      }
+      termAvailabilityMap.set(columns[columnIndex].id, {
+        id: this.normalizeSheetKey(availability?.id, `term_${columns[columnIndex].id}`),
+        columnId: columns[columnIndex].id,
+        terms,
+      });
+    });
+
+    const termAvailability = Array.from(termAvailabilityMap.values()).sort((a, b) =>
+      columns.findIndex((column) => column.id === a.columnId) -
+      columns.findIndex((column) => column.id === b.columnId),
+    );
+
+    return { columns, rows, headerGroups, formulas, fillPermissions, termAvailability };
   }
 
   private normalizeSheetKey(value: unknown, fallback: string): string {
@@ -6202,6 +6246,25 @@ export class ObjectiveService extends BaseService {
         };
       }),
     );
+  }
+
+  private inferObjectiveSheetColumnTerms(column: Pick<NormalizedObjectiveSheetLayout['columns'][number], 'id' | 'label'>): string[] {
+    const allTerms = ['Q1', 'Q2', 'Q3', 'Q4', 'H1', 'H2', 'Y1'];
+    const text = `${column.id || ''} ${column.label || ''}`.toUpperCase();
+    const matchedTerms = allTerms.filter((term) =>
+      new RegExp(`(^|[^A-Z0-9])${term}([^A-Z0-9]|$)`).test(text),
+    );
+    return matchedTerms.length > 0 ? matchedTerms : allTerms;
+  }
+
+  private defaultObjectiveSheetTermAvailability(
+    columns: NormalizedObjectiveSheetLayout['columns'],
+  ): NormalizedObjectiveSheetLayout['termAvailability'] {
+    return columns.map((column) => ({
+      id: `term_${column.id}`,
+      columnId: column.id,
+      terms: this.inferObjectiveSheetColumnTerms(column),
+    }));
   }
 
   private defaultObjectiveSheetLayout(): NormalizedObjectiveSheetLayout {
@@ -6246,6 +6309,7 @@ export class ObjectiveService extends BaseService {
         },
       ],
       fillPermissions: this.defaultObjectiveSheetFillPermissions(columns),
+      termAvailability: this.defaultObjectiveSheetTermAvailability(columns),
     };
   }
 
