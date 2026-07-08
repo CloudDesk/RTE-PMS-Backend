@@ -4,9 +4,13 @@ import { RequestContext } from '../types/context';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { User } from '../models/user.model';
+import { emailService } from './email.service';
 import {
+  IProbationReviewFieldPermission,
+  IProbationReviewReviewerConfiguration,
   IProbationReviewValue,
   PmsProbationReviewAssignment,
+  ProbationReviewerRole,
   ProbationReviewStatus,
 } from '../models/pms-probation-review-assignment.model';
 
@@ -27,10 +31,12 @@ export interface CreateProbationReviewInput {
   probationStartDate?: string | Date;
   probationEndDate: string | Date;
   reviewOpenDate?: string | Date;
+  reviewOpenOffsetDays?: string | number;
   manager1Id: string;
   manager2Id: string;
   templateId: string;
   templateVersionId: string;
+  reviewerConfiguration?: IProbationReviewReviewerConfiguration;
 }
 
 export interface SaveProbationReviewValuesInput {
@@ -60,11 +66,14 @@ export interface CancelProbationReviewInput {
 }
 
 const REVIEW_OPEN_OFFSET_DAYS = 30;
+const MAX_REVIEW_OPEN_OFFSET_DAYS = 365;
 
 const MUTABLE_MANAGER_1_STATUSES: ProbationReviewStatus[] = [
   ProbationReviewStatus.REVIEW_OPEN,
   ProbationReviewStatus.RETURNED_TO_MANAGER_1,
 ];
+
+const REVIEWER_ROLES: ProbationReviewerRole[] = ['MANAGER_1', 'MANAGER_2'];
 
 export class ProbationReviewService extends BaseService {
   constructor(context: RequestContext) {
@@ -122,13 +131,13 @@ export class ProbationReviewService extends BaseService {
       filter.employeeId = { $in: users.map((user) => user._id) };
     }
 
-    const [items, total] = await Promise.all([
+    const [rawItems, total] = await Promise.all([
       PmsProbationReviewAssignment.find(filter)
         .populate('employeeId', 'name email employeeCode departmentId designation role specificRole joiningDate probationStartDate probationEndDate probationDate')
         .populate('manager1Id', 'name email employeeCode role specificRole')
         .populate('manager2Id', 'name email employeeCode role specificRole')
         .populate('templateId', 'name code status metadata')
-        .populate('templateVersionId', 'versionNo status isLocked')
+        .populate('templateVersionId')
         .sort({ reviewOpenDate: -1, createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -136,7 +145,12 @@ export class ProbationReviewService extends BaseService {
       PmsProbationReviewAssignment.countDocuments(filter),
     ]);
 
-    return { items, total, page, limit };
+    return {
+      items: rawItems.map((assignment) => this.applyActorPermissionsToAssignment(assignment)),
+      total,
+      page,
+      limit,
+    };
   }
 
   async getAssignment(id: string) {
@@ -157,7 +171,7 @@ export class ProbationReviewService extends BaseService {
 
     this.assertCanViewAssignment(assignment);
 
-    return assignment;
+    return this.applyActorPermissionsToAssignment(assignment);
   }
 
   async createAssignment(input: CreateProbationReviewInput) {
@@ -168,9 +182,10 @@ export class ProbationReviewService extends BaseService {
     const templateId = this.toObjectId(input.templateId, 'Template');
     const templateVersionId = this.toObjectId(input.templateVersionId, 'Template version');
     const probationEndDate = this.parseDate(input.probationEndDate, 'Probation end date');
+    const reviewOpenOffsetDays = this.normalizeReviewOpenOffsetDays(input.reviewOpenOffsetDays);
     const reviewOpenDate = input.reviewOpenDate
       ? this.parseDate(input.reviewOpenDate, 'Review open date')
-      : this.subtractDays(probationEndDate, REVIEW_OPEN_OFFSET_DAYS);
+      : this.subtractDays(probationEndDate, reviewOpenOffsetDays);
 
     if (manager1Id.equals(manager2Id)) {
       throw new Error('Manager 1 and Manager 2 must be different users.');
@@ -179,10 +194,10 @@ export class ProbationReviewService extends BaseService {
     const [employee, manager1, manager2, template, templateVersion] =
       await Promise.all([
         User.findOne({ _id: employeeId, active: true })
-          .select('_id joiningDate probationStartDate probationEndDate probationDate')
+          .select('_id name email employeeCode joiningDate probationStartDate probationEndDate probationDate')
           .lean(),
-        User.findOne({ _id: manager1Id, active: true }).select('_id').lean(),
-        User.findOne({ _id: manager2Id, active: true }).select('_id').lean(),
+        User.findOne({ _id: manager1Id, active: true }).select('_id name email employeeCode').lean(),
+        User.findOne({ _id: manager2Id, active: true }).select('_id name email employeeCode').lean(),
         PmsTemplate.findOne({ _id: templateId, isDeleted: false }).lean(),
         PmsTemplateVersion.findOne({
           _id: templateVersionId,
@@ -198,6 +213,11 @@ export class ProbationReviewService extends BaseService {
     if (!templateVersion) {
       throw new Error('Template version does not exist for the selected template.');
     }
+
+    const reviewerConfiguration = this.normalizeReviewerConfiguration(
+      input.reviewerConfiguration,
+      templateVersion,
+    );
 
     const employeeDates = employee as {
       joiningDate?: Date | string;
@@ -229,10 +249,12 @@ export class ProbationReviewService extends BaseService {
       probationStartDate,
       probationEndDate,
       reviewOpenDate,
+      reviewOpenOffsetDays,
       manager1Id,
       manager2Id,
       templateId,
       templateVersionId,
+      reviewerConfiguration,
       status,
       createdBy: actorId,
       updatedBy: actorId,
@@ -250,6 +272,16 @@ export class ProbationReviewService extends BaseService {
       { _id: templateVersionId, isLocked: { $ne: true } },
       { $set: { isLocked: true, lockedAt: this.getCurrentDate(), updatedBy: actorId } },
     );
+
+    void this.sendAssignmentCreatedEmails({
+      employee,
+      manager1,
+      manager2,
+      probationEndDate,
+      reviewOpenDate,
+      reviewOpenOffsetDays,
+      status,
+    });
 
     return this.getAssignment(assignment._id.toString());
   }
@@ -295,6 +327,8 @@ export class ProbationReviewService extends BaseService {
       },
     );
 
+    void this.sendReviewOpenedEmailsByAssignmentIds(assignmentIds);
+
     return {
       asOfDate,
       openedCount: assignmentIds.length,
@@ -322,14 +356,20 @@ export class ProbationReviewService extends BaseService {
     assignment.status = ProbationReviewStatus.REVIEW_OPEN;
     this.touch(assignment, input.force ? 'FORCE_OPENED' : 'OPENED');
     await assignment.save();
+    void this.sendReviewOpenedEmailsByAssignmentIds([assignment._id]);
     return this.getAssignment(id);
   }
 
   async saveManager1Draft(id: string, input: SaveProbationReviewValuesInput) {
     const assignment = await this.loadMutableAssignment(id);
-    this.assertManager1Actor(assignment);
+    this.assertFillingManagerActor(assignment);
     this.ensureManager1CanEdit(assignment.status);
-    assignment.reviewValues = this.normalizeValues(input);
+    assignment.reviewValues = this.mergePermittedValues(
+      assignment.reviewValues,
+      this.normalizeValues(input),
+      assignment,
+      this.fillingManagerRole(assignment),
+    );
     this.touch(assignment, 'MANAGER_1_DRAFT_SAVED');
     await assignment.save();
     return this.getAssignment(id);
@@ -337,12 +377,17 @@ export class ProbationReviewService extends BaseService {
 
   async submitManager1(id: string, input: SaveProbationReviewValuesInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
-    this.assertManager1Actor(assignment);
+    this.assertFillingManagerActor(assignment);
     this.ensureManager1CanEdit(assignment.status);
 
     const values = this.normalizeValues(input);
     if (values.length > 0) {
-      assignment.reviewValues = values;
+      assignment.reviewValues = this.mergePermittedValues(
+        assignment.reviewValues,
+        values,
+        assignment,
+        this.fillingManagerRole(assignment),
+      );
     }
 
     assignment.status = ProbationReviewStatus.MANAGER_1_SUBMITTED;
@@ -357,7 +402,7 @@ export class ProbationReviewService extends BaseService {
 
   async approveByManager2(id: string, input: ApproveProbationReviewInput = {}) {
     const assignment = await this.loadMutableAssignment(id);
-    this.assertManager2Actor(assignment);
+    this.assertApprovingManagerActor(assignment);
     if (assignment.status !== ProbationReviewStatus.MANAGER_1_SUBMITTED) {
       throw new Error('Manager 2 can approve only after Manager 1 submits the review.');
     }
@@ -374,7 +419,7 @@ export class ProbationReviewService extends BaseService {
 
   async returnToManager1(id: string, input: ReturnProbationReviewInput) {
     const assignment = await this.loadMutableAssignment(id);
-    this.assertManager2Actor(assignment);
+    this.assertApprovingManagerActor(assignment);
     if (assignment.status !== ProbationReviewStatus.MANAGER_1_SUBMITTED) {
       throw new Error('Manager 2 can return only after Manager 1 submits the review.');
     }
@@ -451,19 +496,27 @@ export class ProbationReviewService extends BaseService {
     throw new Error('You do not have access to this probation review.');
   }
 
-  private assertManager1Actor(assignment: any) {
+  private assertFillingManagerActor(assignment: any) {
     if (this.isPrivilegedActor()) return;
     const actorId = this.requireActorObjectId();
-    if (!this.sameObjectId(actorId, assignment.manager1Id)) {
-      throw new Error('Only Manager 1 can edit or submit this probation review.');
+    const expectedManagerId =
+      this.fillingManagerRole(assignment) === 'MANAGER_2'
+        ? assignment.manager2Id
+        : assignment.manager1Id;
+    if (!this.sameObjectId(actorId, expectedManagerId)) {
+      throw new Error('Only the configured filling manager can edit or submit this probation review.');
     }
   }
 
-  private assertManager2Actor(assignment: any) {
+  private assertApprovingManagerActor(assignment: any) {
     if (this.isPrivilegedActor()) return;
     const actorId = this.requireActorObjectId();
-    if (!this.sameObjectId(actorId, assignment.manager2Id)) {
-      throw new Error('Only Manager 2 can approve or return this probation review.');
+    const expectedManagerId =
+      this.approvingManagerRole(assignment) === 'MANAGER_1'
+        ? assignment.manager1Id
+        : assignment.manager2Id;
+    if (!this.sameObjectId(actorId, expectedManagerId)) {
+      throw new Error('Only the configured approving manager can approve or return this probation review.');
     }
   }
 
@@ -499,6 +552,556 @@ export class ProbationReviewService extends BaseService {
         updatedAt,
       };
     });
+  }
+
+  private normalizeReviewerConfiguration(
+    input: IProbationReviewReviewerConfiguration | undefined,
+    templateVersion: Record<string, any>,
+  ): IProbationReviewReviewerConfiguration {
+    const fillingManagerRole = this.normalizeReviewerRole(
+      input?.fillingManagerRole,
+      'MANAGER_1',
+    );
+    const approvingManagerRole = this.normalizeReviewerRole(
+      input?.approvingManagerRole,
+      'MANAGER_2',
+    );
+    const requestedPermissions = new Map<string, IProbationReviewFieldPermission>();
+    for (const permission of input?.permissions ?? []) {
+      if (!permission?.sectionKey || !permission?.fieldKey) continue;
+      requestedPermissions.set(
+        this.permissionKey(permission.sectionKey, permission.fieldKey),
+        permission,
+      );
+    }
+
+    const permissions: IProbationReviewFieldPermission[] = [];
+    for (const section of templateVersion.sections ?? []) {
+      const sectionKey = String(section.sectionKey || section.key || section.id || '').trim();
+      if (!sectionKey) continue;
+      const sectionLabel = String(
+        section.sectionLabel || section.label || section.title || sectionKey,
+      );
+      if (!this.isPerformanceAssessmentSection(sectionKey, sectionLabel)) continue;
+
+      for (const field of section.fields ?? []) {
+        const fieldKey = String(field.fieldKey || field.key || field.id || '').trim();
+        if (!fieldKey) continue;
+
+        const fieldType = String(field.fieldType || field.type || '');
+        const fieldLabel = String(field.fieldLabel || field.label || fieldKey);
+        const manager1Default: any = {
+          visible: true,
+          editable: fillingManagerRole === 'MANAGER_1',
+          mandatory: Boolean(field.isRequired ?? field.required),
+        };
+        const manager2Default: any = {
+          visible: true,
+          editable: fillingManagerRole === 'MANAGER_2',
+          mandatory: false,
+        };
+
+        const templateVisible = this.templateFieldVisibleToManager(field);
+        const templateEditable = templateVisible && this.templateFieldEditableByManager(field);
+
+        if (fieldType === 'data_grid' && Array.isArray(field.gridConfig?.defaultRows)) {
+          for (const [rowIndex, row] of field.gridConfig.defaultRows.entries()) {
+            const rowKey = this.gridRowKey(row, rowIndex);
+            const rowPermissionKey = this.gridRowPermissionKey(fieldKey, rowKey);
+            const requested = requestedPermissions.get(this.permissionKey(sectionKey, rowPermissionKey));
+            permissions.push({
+              sectionKey,
+              sectionLabel,
+              fieldKey: rowPermissionKey,
+              parentFieldKey: fieldKey,
+              isGridRow: true,
+              gridRowKey: rowKey,
+              fieldLabel: `${fieldLabel} / ${this.gridRowLabel(row, rowIndex)}`,
+              fieldType: 'data_grid_row',
+              manager1: this.clampAccessRule(
+                requested?.manager1,
+                manager1Default,
+                templateVisible,
+                templateEditable,
+              ),
+              manager2: this.clampAccessRule(
+                requested?.manager2,
+                manager2Default,
+                templateVisible,
+                templateEditable,
+              ),
+            });
+          }
+          continue;
+        }
+
+        const requested = requestedPermissions.get(this.permissionKey(sectionKey, fieldKey));
+        permissions.push({
+          sectionKey,
+          sectionLabel,
+          fieldKey,
+          fieldLabel,
+          fieldType,
+          manager1: this.clampAccessRule(
+            requested?.manager1,
+            manager1Default,
+            templateVisible,
+            templateEditable,
+          ),
+          manager2: this.clampAccessRule(
+            requested?.manager2,
+            manager2Default,
+            templateVisible,
+            templateEditable,
+          ),
+        });
+      }
+    }
+
+    return { fillingManagerRole, approvingManagerRole, permissions };
+  }
+
+  private normalizeReviewerRole(
+    value: unknown,
+    fallback: ProbationReviewerRole,
+  ): ProbationReviewerRole {
+    return REVIEWER_ROLES.includes(value as ProbationReviewerRole)
+      ? (value as ProbationReviewerRole)
+      : fallback;
+  }
+
+  private normalizeReviewOpenOffsetDays(value: unknown) {
+    if (value === undefined || value === null || value === '') return REVIEW_OPEN_OFFSET_DAYS;
+    const days = Number(value);
+    if (!Number.isInteger(days) || days < 0 || days > MAX_REVIEW_OPEN_OFFSET_DAYS) {
+      throw new Error(
+        `Review open days must be a whole number between 0 and ${MAX_REVIEW_OPEN_OFFSET_DAYS}.`,
+      );
+    }
+    return days;
+  }
+
+  private clampAccessRule(
+    requested: any,
+    fallback: IProbationReviewFieldPermission['manager1'],
+    templateVisible: boolean,
+    templateEditable: boolean,
+  ) {
+    const visible = templateVisible && Boolean(requested?.visible ?? fallback.visible);
+    return {
+      visible,
+      editable: visible && templateEditable && Boolean(requested?.editable ?? fallback.editable),
+      mandatory: visible && Boolean(requested?.mandatory ?? fallback.mandatory),
+    };
+  }
+
+  private templateFieldVisibleToManager(field: any) {
+    if (field.visible === false || field.metadata?.hidden === true) return false;
+    const hiddenFrom = this.stringArray(field.visibilityRules?.hiddenFrom).map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    if (hiddenFrom.includes('MANAGER')) return false;
+
+    const visibleTo = this.stringArray(field.visibilityRules?.visibleTo).map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    return visibleTo.length === 0 || visibleTo.includes('MANAGER');
+  }
+
+  private templateFieldEditableByManager(field: any) {
+    if (field.editable === false || field.metadata?.readOnly === true) return false;
+    const editableBy = this.stringArray(field.editabilityRules?.editableBy).map((role) =>
+      this.normalizeRoleCode(role),
+    );
+    return editableBy.length === 0 || editableBy.includes('MANAGER');
+  }
+
+  private mergePermittedValues(
+    currentValues: IProbationReviewValue[] = [],
+    requestedValues: IProbationReviewValue[],
+    assignment: any,
+    role: ProbationReviewerRole,
+  ) {
+    if (!assignment.reviewerConfiguration) return requestedValues;
+    const permissionMap = this.editablePermissionMap(assignment.reviewerConfiguration, role);
+
+    const merged = new Map<string, IProbationReviewValue>();
+    for (const value of currentValues) {
+      merged.set(this.permissionKey(value.sectionKey, value.fieldKey), value);
+    }
+    for (const value of requestedValues) {
+      const key = this.permissionKey(value.sectionKey, value.fieldKey);
+      const editableGridRowKeys = this.editableGridRowKeys(
+        assignment.reviewerConfiguration,
+        role,
+        value.sectionKey,
+        value.fieldKey,
+      );
+      if (editableGridRowKeys.size > 0) {
+        const currentValue = merged.get(key);
+        merged.set(key, {
+          ...value,
+          value: this.mergeGridRowsByAllowedRows(
+            currentValue?.value,
+            value.value,
+            editableGridRowKeys,
+          ),
+        });
+        continue;
+      }
+      if (!permissionMap.has(key)) {
+        throw new Error(`You cannot edit ${value.fieldKey} in this probation review.`);
+      }
+      merged.set(key, value);
+    }
+    return [...merged.values()];
+  }
+
+  private applyActorPermissionsToAssignment(assignment: any) {
+    if (this.isPrivilegedActor()) return assignment;
+    const reviewerRole = this.actorReviewerRole(assignment);
+    if (!reviewerRole || !assignment?.reviewerConfiguration?.permissions) return assignment;
+
+    const permissionMap = new Map<string, IProbationReviewFieldPermission>();
+    for (const permission of assignment.reviewerConfiguration.permissions) {
+      permissionMap.set(this.permissionKey(permission.sectionKey, permission.fieldKey), permission);
+    }
+
+    const templateVersion = assignment.templateVersionId;
+    if (!templateVersion || typeof templateVersion === 'string') return assignment;
+
+    const sections = (templateVersion.sections ?? [])
+      .map((section: any) => {
+        const sectionKey = String(section.sectionKey || section.key || section.id || '');
+        const fields = (section.fields ?? [])
+          .map((field: any) => {
+            const fieldKey = String(field.fieldKey || field.key || field.id || '');
+            if (String(field.fieldType || field.type || '') === 'data_grid' && Array.isArray(field.gridConfig?.defaultRows)) {
+              const visibleRows = field.gridConfig.defaultRows
+                .map((row: any, rowIndex: number) => {
+                  const rowKey = this.gridRowKey(row, rowIndex);
+                  const permission = permissionMap.get(
+                    this.permissionKey(sectionKey, this.gridRowPermissionKey(fieldKey, rowKey)),
+                  );
+                  const access = reviewerRole === 'MANAGER_1' ? permission?.manager1 : permission?.manager2;
+                  return access?.visible ? { row, access } : null;
+                })
+                .filter(Boolean) as Array<{ row: any; access: IProbationReviewFieldPermission['manager1'] }>;
+              if (visibleRows.length === 0) return null;
+              return {
+                ...field,
+                visible: true,
+                editable: visibleRows.some((item) => item.access.editable === true),
+                required: visibleRows.some((item) => item.access.mandatory === true),
+                gridConfig: {
+                  ...field.gridConfig,
+                  defaultRows: visibleRows.map((item) => item.row),
+                  minRows: visibleRows.length,
+                  maxRows: visibleRows.length,
+                  allowAddRows: false,
+                  allowDeleteRows: false,
+                },
+              };
+            }
+
+            const permission = permissionMap.get(this.permissionKey(sectionKey, fieldKey));
+            const access = reviewerRole === 'MANAGER_1' ? permission?.manager1 : permission?.manager2;
+            if (!access?.visible) return null;
+            return {
+              ...field,
+              visible: true,
+              editable: access.editable === true,
+              required: access.mandatory ?? field.isRequired ?? field.required,
+            };
+          })
+          .filter(Boolean);
+        return fields.length > 0 ? { ...section, fields } : null;
+      })
+      .filter(Boolean);
+
+    return {
+      ...assignment,
+      templateVersionId: {
+        ...templateVersion,
+        sections,
+      },
+    };
+  }
+
+  private actorReviewerRole(assignment: any): ProbationReviewerRole | null {
+    const actorId = this.getActorObjectId();
+    if (!actorId) return null;
+    if (this.sameObjectId(actorId, assignment.manager1Id)) return 'MANAGER_1';
+    if (this.sameObjectId(actorId, assignment.manager2Id)) return 'MANAGER_2';
+    return null;
+  }
+
+  private fillingManagerRole(assignment: any): ProbationReviewerRole {
+    return this.normalizeReviewerRole(
+      assignment.reviewerConfiguration?.fillingManagerRole,
+      'MANAGER_1',
+    );
+  }
+
+  private approvingManagerRole(assignment: any): ProbationReviewerRole {
+    return this.normalizeReviewerRole(
+      assignment.reviewerConfiguration?.approvingManagerRole,
+      'MANAGER_2',
+    );
+  }
+
+  private editablePermissionMap(
+    reviewerConfiguration: IProbationReviewReviewerConfiguration | undefined,
+    role: ProbationReviewerRole,
+  ) {
+    const editable = new Map<string, true>();
+    for (const permission of reviewerConfiguration?.permissions ?? []) {
+      const access = role === 'MANAGER_1' ? permission.manager1 : permission.manager2;
+      if (access?.visible && access?.editable) {
+        editable.set(this.permissionKey(permission.sectionKey, permission.fieldKey), true);
+      }
+    }
+    return editable;
+  }
+
+  private editableGridRowKeys(
+    reviewerConfiguration: IProbationReviewReviewerConfiguration | undefined,
+    role: ProbationReviewerRole,
+    sectionKey: string,
+    parentFieldKey: string,
+  ) {
+    const editable = new Set<string>();
+    for (const permission of reviewerConfiguration?.permissions ?? []) {
+      if (!permission.isGridRow || permission.sectionKey !== sectionKey) continue;
+      if (permission.parentFieldKey !== parentFieldKey) continue;
+      const access = role === 'MANAGER_1' ? permission.manager1 : permission.manager2;
+      if (access?.visible && access?.editable) {
+        editable.add(permission.gridRowKey || this.gridRowKeyFromPermission(permission.fieldKey, parentFieldKey));
+      }
+    }
+    return editable;
+  }
+
+  private mergeGridRowsByAllowedRows(
+    currentValue: unknown,
+    requestedValue: unknown,
+    allowedRowKeys: Set<string>,
+  ) {
+    const currentRows = Array.isArray(currentValue) ? currentValue : [];
+    const requestedRows = Array.isArray(requestedValue) ? requestedValue : [];
+    const currentByRowKey = new Map<string, Record<string, unknown>>();
+    currentRows.forEach((row, index) => {
+      if (row && typeof row === 'object') {
+        currentByRowKey.set(this.gridRowKey(row, index), row as Record<string, unknown>);
+      }
+    });
+
+    requestedRows.forEach((requestedRow, index) => {
+      const incomingRow =
+        requestedRow && typeof requestedRow === 'object'
+          ? (requestedRow as Record<string, unknown>)
+          : {};
+      const rowKey = this.gridRowKey(incomingRow, index);
+      if (!allowedRowKeys.has(rowKey)) {
+        throw new Error('You cannot edit one or more performance assessment rows in this probation review.');
+      }
+      currentByRowKey.set(rowKey, {
+        ...(currentByRowKey.get(rowKey) || {}),
+        ...incomingRow,
+      });
+    });
+
+    return [...currentByRowKey.values()];
+  }
+
+  private permissionKey(sectionKey: string, fieldKey: string) {
+    return `${sectionKey}::${fieldKey}`;
+  }
+
+  private gridRowPermissionKey(fieldKey: string, rowKey: string) {
+    return `${fieldKey}.__row.${rowKey}`;
+  }
+
+  private gridRowKeyFromPermission(permissionFieldKey: string, parentFieldKey: string) {
+    const prefix = `${parentFieldKey}.__row.`;
+    return permissionFieldKey.startsWith(prefix)
+      ? permissionFieldKey.slice(prefix.length)
+      : permissionFieldKey;
+  }
+
+  private gridRowKey(row: unknown, index: number) {
+    const record = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+    const explicitKey =
+      record.rowKey ??
+      record.key ??
+      record.id ??
+      record.sNo ??
+      record.s_no ??
+      record.serialNo ??
+      record['S.NO'] ??
+      record['S.No'];
+    if (explicitKey !== undefined && explicitKey !== null && String(explicitKey).trim()) {
+      return String(explicitKey).trim();
+    }
+    return `row_${index + 1}`;
+  }
+
+  private gridRowLabel(row: unknown, index: number) {
+    const record = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
+    const preferred =
+      record.rating_performance ??
+      record.ratingPerformance ??
+      record.performance ??
+      record.reviewPoint ??
+      record.label ??
+      record.name ??
+      record.title;
+    if (preferred !== undefined && preferred !== null && String(preferred).trim()) {
+      return String(preferred).trim();
+    }
+    for (const [key, value] of Object.entries(record)) {
+      const normalizedKey = key.replace(/[\s._-]/g, '').toLowerCase();
+      if (['sno', 'serialno', 'feedback', 'comments'].includes(normalizedKey)) continue;
+      if (value !== undefined && value !== null && String(value).trim()) {
+        return String(value).trim();
+      }
+    }
+    return `Row ${index + 1}`;
+  }
+
+  private isPerformanceAssessmentSection(sectionKey: string, sectionLabel: string) {
+    const normalized = `${sectionKey} ${sectionLabel}`.replace(/[_-]/g, ' ').toLowerCase();
+    return normalized.includes('performance assessment');
+  }
+
+  private stringArray(value: unknown) {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  }
+
+  private normalizeRoleCode(role: string) {
+    return role.replace(/[ /-]/g, '_').toUpperCase();
+  }
+
+  private async sendAssignmentCreatedEmails(input: {
+    employee: any;
+    manager1: any;
+    manager2: any;
+    probationEndDate: Date;
+    reviewOpenDate: Date;
+    reviewOpenOffsetDays: number;
+    status: ProbationReviewStatus;
+  }) {
+    const employeeName = this.userName(input.employee, 'Employee');
+    const reviewOpenDate = this.formatNotificationDate(input.reviewOpenDate);
+    const probationEndDate = this.formatNotificationDate(input.probationEndDate);
+    const statusText =
+      input.status === ProbationReviewStatus.REVIEW_OPEN
+        ? 'The review is open now.'
+        : `The review will open on ${reviewOpenDate}.`;
+
+    const sendToManager = async (manager: any, roleLabel: string) => {
+      const managerName = this.userName(manager, roleLabel);
+      await this.sendBestEffortEmail(
+        manager?.email,
+        'Probation Review Assignment Created',
+        `Hello ${managerName},
+
+A probation review assignment has been created for ${employeeName}.
+
+Your role: ${roleLabel}
+Review opens: ${reviewOpenDate}
+Probation end date: ${probationEndDate}
+Open offset: ${input.reviewOpenOffsetDays} day(s) before probation end date
+
+${statusText}`,
+        `<p>Hello ${this.escapeHtml(managerName)},</p>
+<p>A probation review assignment has been created for <strong>${this.escapeHtml(employeeName)}</strong>.</p>
+<p><strong>Your role:</strong> ${this.escapeHtml(roleLabel)}<br/>
+<strong>Review opens:</strong> ${this.escapeHtml(reviewOpenDate)}<br/>
+<strong>Probation end date:</strong> ${this.escapeHtml(probationEndDate)}<br/>
+<strong>Open offset:</strong> ${input.reviewOpenOffsetDays} day(s) before probation end date</p>
+<p>${this.escapeHtml(statusText)}</p>`,
+      );
+    };
+
+    await Promise.all([
+      sendToManager(input.manager1, 'Manager 1'),
+      sendToManager(input.manager2, 'Manager 2'),
+    ]);
+  }
+
+  private async sendReviewOpenedEmailsByAssignmentIds(assignmentIds: unknown[]) {
+    const assignments = await PmsProbationReviewAssignment.find({
+      _id: { $in: assignmentIds },
+      isDeleted: false,
+    })
+      .populate('employeeId', 'name email employeeCode')
+      .populate('manager1Id', 'name email employeeCode')
+      .populate('manager2Id', 'name email employeeCode')
+      .lean();
+
+    await Promise.all(
+      assignments.flatMap((assignment: any) => {
+        const employeeName = this.userName(assignment.employeeId, 'Employee');
+        const reviewOpenDate = this.formatNotificationDate(assignment.reviewOpenDate);
+        const probationEndDate = this.formatNotificationDate(assignment.probationEndDate);
+        const sendToManager = (manager: any, roleLabel: string) => {
+          const managerName = this.userName(manager, roleLabel);
+          return this.sendBestEffortEmail(
+            manager?.email,
+            'Probation Review Opened',
+            `Hello ${managerName},
+
+The probation review for ${employeeName} is now open.
+
+Your role: ${roleLabel}
+Review open date: ${reviewOpenDate}
+Probation end date: ${probationEndDate}`,
+            `<p>Hello ${this.escapeHtml(managerName)},</p>
+<p>The probation review for <strong>${this.escapeHtml(employeeName)}</strong> is now open.</p>
+<p><strong>Your role:</strong> ${this.escapeHtml(roleLabel)}<br/>
+<strong>Review open date:</strong> ${this.escapeHtml(reviewOpenDate)}<br/>
+<strong>Probation end date:</strong> ${this.escapeHtml(probationEndDate)}</p>`,
+          );
+        };
+
+        return [
+          sendToManager(assignment.manager1Id, 'Manager 1'),
+          sendToManager(assignment.manager2Id, 'Manager 2'),
+        ];
+      }),
+    );
+  }
+
+  private async sendBestEffortEmail(
+    to: string | undefined,
+    subject: string,
+    text: string,
+    html: string,
+  ): Promise<void> {
+    if (!to) return;
+    try {
+      await emailService.sendEmail({ body: { to, subject, text, html } });
+    } catch (error) {
+      console.warn('Probation review email notification failed:', error);
+    }
+  }
+
+  private userName(user: any, fallback: string): string {
+    return user?.name || user?.employeeCode || user?.email || fallback;
+  }
+
+  private formatNotificationDate(value: Date): string {
+    return value.toLocaleDateString('en-GB');
+  }
+
+  private escapeHtml(value: string): string {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   private touch(assignment: any, action: string, comment?: string) {
