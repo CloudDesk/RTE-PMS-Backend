@@ -554,6 +554,10 @@ export interface ObjectiveAssignmentPreviewRow {
   termAssignmentId: string;
   cycleId: string;
   employeeId: string;
+  employeeName?: string;
+  employeeCode?: string;
+  employeeDepartment?: string;
+  employeeRole?: string;
   assessmentTerm: string;
   status: 'NEW' | 'ALREADY_ASSIGNED' | 'WARNING' | 'BLOCKED';
   warnings: string[];
@@ -6009,6 +6013,7 @@ export class ObjectiveService extends BaseService {
             rule,
             version,
             termAssignment,
+            annualAssignment,
             status: 'BLOCKED',
             warnings: [],
             blockedReason: ruleBlockedReason ?? 'Objective version or master is not available',
@@ -6042,6 +6047,7 @@ export class ObjectiveService extends BaseService {
           rule,
           version,
           termAssignment,
+          annualAssignment,
           status: existing ? 'ALREADY_ASSIGNED' : similarTitleWarning ? 'WARNING' : 'NEW',
           warnings: similarTitleWarning ? [similarTitleWarning] : [],
         }));
@@ -6444,10 +6450,24 @@ export class ObjectiveService extends BaseService {
     rule: any;
     version?: any;
     termAssignment: any;
+    annualAssignment?: any;
     status: ObjectiveAssignmentPreviewRow['status'];
     warnings: string[];
     blockedReason?: string;
   }): ObjectiveAssignmentPreviewRow {
+    const employeeSnapshot = input.annualAssignment?.employeeSnapshot ?? {};
+    const employeeDepartment = String(
+      employeeSnapshot.departmentName ??
+      employeeSnapshot.department ??
+      employeeSnapshot.departmentId ??
+      '',
+    );
+    const employeeRole = String(
+      employeeSnapshot.specificRole ??
+      employeeSnapshot.designation ??
+      employeeSnapshot.role ??
+      '',
+    );
     return {
       key: input.key,
       assignmentRuleIds: input.ruleIds,
@@ -6458,6 +6478,10 @@ export class ObjectiveService extends BaseService {
       termAssignmentId: input.termAssignment._id.toString(),
       cycleId: input.termAssignment.cycleId.toString(),
       employeeId: input.termAssignment.employeeId.toString(),
+      employeeName: String(employeeSnapshot.name ?? 'Employee'),
+      employeeCode: String(employeeSnapshot.employeeCode ?? ''),
+      employeeDepartment: employeeDepartment || undefined,
+      employeeRole: employeeRole || undefined,
       assessmentTerm: input.termAssignment.assessmentTermCode,
       status: input.status,
       warnings: input.warnings,
