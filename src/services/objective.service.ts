@@ -364,6 +364,17 @@ interface ObjectiveSheetLayoutInput {
     startColumnId?: string;
     endColumnId?: string;
   }>;
+  formulas?: Array<{
+    id?: string;
+    kind?: string;
+    label?: string;
+    targetColumnId?: string;
+    mode?: string;
+    sourceColumnIds?: string[];
+    leftColumnId?: string;
+    rightColumnId?: string;
+    customExpression?: string;
+  }>;
 }
 
 interface NormalizedObjectiveSheetLayout {
@@ -387,6 +398,17 @@ interface NormalizedObjectiveSheetLayout {
     label: string;
     startColumnId: string;
     endColumnId: string;
+  }>;
+  formulas: Array<{
+    id: string;
+    kind: string;
+    label: string;
+    targetColumnId: string;
+    mode: string;
+    sourceColumnIds?: string[];
+    leftColumnId?: string;
+    rightColumnId?: string;
+    customExpression?: string;
   }>;
 }
 
@@ -5755,14 +5777,29 @@ export class ObjectiveService extends BaseService {
   private normalizeObjectiveSheetLayout(
     layout?: ObjectiveSheetLayoutInput,
   ): NormalizedObjectiveSheetLayout {
-    const allowedTypes = new Set(['TEXT', 'LONG_TEXT', 'NUMBER', 'PERCENTAGE', 'DATE', 'DROPDOWN']);
+    const allowedTypes = new Set(['TEXT', 'LONG_TEXT', 'NUMBER', 'PERCENTAGE', 'DATE', 'DROPDOWN', 'FORMULA']);
     const allowedWidths = new Set(['SMALL', 'MEDIUM', 'LARGE']);
+    const allowedFormulaKinds = new Set(['ACTUAL', 'GAP']);
+    const allowedFormulaModes = new Set([
+      'SUM_TERMS',
+      'AVERAGE_TERMS',
+      'LATEST_FILLED_TERM',
+      'TARGET_MINUS_ACTUAL',
+      'ACTUAL_MINUS_TARGET',
+      'BM_MINUS_ACTUAL',
+      'ACTUAL_MINUS_BM',
+      'ABSOLUTE_DIFFERENCE',
+      'CUSTOM',
+    ]);
     const fallback = this.defaultObjectiveSheetLayout();
     const inputColumns = Array.isArray(layout?.columns) ? layout.columns : fallback.columns;
     const inputRows = Array.isArray(layout?.rows) ? layout.rows : fallback.rows;
     const inputHeaderGroups = Array.isArray(layout?.headerGroups)
       ? layout.headerGroups
       : fallback.headerGroups;
+    const inputFormulas = Array.isArray(layout?.formulas)
+      ? layout.formulas
+      : fallback.formulas;
 
     const columns: NormalizedObjectiveSheetLayout['columns'] = [];
     inputColumns.forEach((column, index) => {
@@ -5830,7 +5867,47 @@ export class ObjectiveService extends BaseService {
       });
     });
 
-    return { columns, rows, headerGroups };
+    const formulas: NormalizedObjectiveSheetLayout['formulas'] = [];
+    inputFormulas.forEach((formula, index) => {
+      const kind = String(formula?.kind ?? '').trim().toUpperCase();
+      const label = String(formula?.label ?? '').trim() || kind;
+      const mode = String(formula?.mode ?? '').trim().toUpperCase();
+      const targetColumnKey = this.normalizeSheetKey(formula?.targetColumnId, '');
+      const targetIndex = columnIndexByKey.get(targetColumnKey);
+      if (!allowedFormulaKinds.has(kind) || !allowedFormulaModes.has(mode) || targetIndex === undefined) {
+        throw new Error(`Formula "${label}" has an invalid configuration.`);
+      }
+
+      const sourceColumnIds = Array.isArray(formula?.sourceColumnIds)
+        ? formula.sourceColumnIds
+            .map((columnId) => columnIndexByKey.get(this.normalizeSheetKey(columnId, '')))
+            .filter((columnIndex): columnIndex is number => columnIndex !== undefined)
+            .map((columnIndex) => columns[columnIndex].id)
+        : [];
+      const leftIndex = columnIndexByKey.get(this.normalizeSheetKey(formula?.leftColumnId, ''));
+      const rightIndex = columnIndexByKey.get(this.normalizeSheetKey(formula?.rightColumnId, ''));
+
+      if (kind === 'ACTUAL' && mode !== 'CUSTOM' && sourceColumnIds.length === 0) {
+        throw new Error(`Actual formula "${label}" needs at least one source column.`);
+      }
+      if (kind === 'GAP' && mode !== 'CUSTOM' && (leftIndex === undefined || rightIndex === undefined)) {
+        throw new Error(`Gap formula "${label}" needs valid left and right columns.`);
+      }
+
+      formulas.push({
+        id: this.normalizeSheetKey(formula?.id, `formula_${index + 1}`),
+        kind,
+        label,
+        targetColumnId: columns[targetIndex].id,
+        mode,
+        sourceColumnIds: sourceColumnIds.length ? sourceColumnIds : undefined,
+        leftColumnId: leftIndex !== undefined ? columns[leftIndex].id : undefined,
+        rightColumnId: rightIndex !== undefined ? columns[rightIndex].id : undefined,
+        customExpression: String(formula?.customExpression ?? '').trim() || undefined,
+      });
+    });
+
+    return { columns, rows, headerGroups, formulas };
   }
 
   private normalizeSheetKey(value: unknown, fallback: string): string {
@@ -5853,12 +5930,33 @@ export class ObjectiveService extends BaseService {
         { id: 'q2_actual', label: 'Q2 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
         { id: 'q3_actual', label: 'Q3 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
         { id: 'q4_actual', label: 'Q4 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
+        { id: 'actual', label: 'Actual', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from term actuals' },
+        { id: 'gap', label: 'Gap', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from target and actual' },
         { id: 'remarks', label: 'Remarks', type: 'LONG_TEXT', width: 'LARGE', required: false },
       ],
       rows: [
         { id: 'row_1', label: 'Objective line 1' },
       ],
       headerGroups: [],
+      formulas: [
+        {
+          id: 'formula_actual',
+          kind: 'ACTUAL',
+          label: 'Actual',
+          targetColumnId: 'actual',
+          mode: 'SUM_TERMS',
+          sourceColumnIds: ['q1_actual', 'q2_actual', 'q3_actual', 'q4_actual'],
+        },
+        {
+          id: 'formula_gap',
+          kind: 'GAP',
+          label: 'Gap',
+          targetColumnId: 'gap',
+          mode: 'TARGET_MINUS_ACTUAL',
+          leftColumnId: 'target',
+          rightColumnId: 'actual',
+        },
+      ],
     };
   }
 
