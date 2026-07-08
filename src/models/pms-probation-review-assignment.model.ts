@@ -61,6 +61,7 @@ export interface IPmsProbationReviewAssignment extends Document {
   probationStartDate?: Date;
   probationEndDate: Date;
   reviewOpenDate: Date;
+  openedAt?: Date;
   reviewOpenOffsetDays?: number;
   manager1Id: Types.ObjectId;
   manager2Id: Types.ObjectId;
@@ -124,6 +125,7 @@ const probationReviewAssignmentSchema =
       probationStartDate: { type: Date },
       probationEndDate: { type: Date, required: true, index: true },
       reviewOpenDate: { type: Date, required: true, index: true },
+      openedAt: Date,
       reviewOpenOffsetDays: { type: Number, min: 0, default: 30 },
       manager1Id: {
         type: Schema.Types.ObjectId,
