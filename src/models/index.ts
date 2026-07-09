@@ -6,6 +6,8 @@ export * from './pms-objective.model';
 export * from './pms-objective-master.model';
 export * from './pms-objective-master-version.model';
 export * from './pms-objective-assignment-rule.model';
+export * from './pms-objective-assignment-period.model';
+export * from './pms-objective-employee-assignment.model';
 export * from './pms-manager-objective-library.model';
 export * from './pms-objective-value.model';
 export * from './pms-objective-attachment.model';

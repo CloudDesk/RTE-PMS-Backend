@@ -4,8 +4,13 @@ import { RequestContext } from '../types/context';
 import {
   AnnualWorkflowState,
   AssessmentTermCode,
+  AssessmentTermType,
   FlexibleObjectiveSourceType,
+  getAssessmentTerms,
+  getAssessmentTermLabel,
+  ObjectiveAssignmentPeriodStatus,
   ObjectiveAssignmentRuleStatus,
+  ObjectiveEmployeeAssignmentStatus,
   ObjectiveApplicabilityStatus,
   ObjectiveAttachmentPolicy,
   ObjectiveActualAggregationMode,
@@ -22,7 +27,9 @@ import {
   isTermFinalized,
 } from '../constants/pms.enums';
 import { Objective } from '../models/pms-objective.model';
+import { ObjectiveAssignmentPeriod } from '../models/pms-objective-assignment-period.model';
 import { ObjectiveAssignmentRule } from '../models/pms-objective-assignment-rule.model';
+import { ObjectiveEmployeeAssignment } from '../models/pms-objective-employee-assignment.model';
 import { ObjectiveMaster } from '../models/pms-objective-master.model';
 import { ObjectiveMasterVersion } from '../models/pms-objective-master-version.model';
 import { ObjectiveValue } from '../models/pms-objective-value.model';
@@ -58,6 +65,7 @@ import type {
   AssessmentTermCode as AssessmentTermCodeType,
   AssessmentTermType as AssessmentTermTypeType,
   FlexibleObjectiveSourceType as FlexibleObjectiveSourceTypeType,
+  ObjectiveAssignmentPeriodStatus as ObjectiveAssignmentPeriodStatusType,
   ObjectiveAssignmentRuleStatus as ObjectiveAssignmentRuleStatusType,
   ObjectiveApplicabilityStatus as ObjectiveApplicabilityStatusType,
   ObjectiveAttachmentPolicy as ObjectiveAttachmentPolicyType,
@@ -694,6 +702,120 @@ export interface ObjectiveAssignmentPreviewResult {
 export interface ObjectiveAssignmentApplyResult extends ObjectiveAssignmentPreviewResult {
   createdObjectiveIds: string[];
   updatedObjectiveIds: string[];
+}
+
+export interface CreateObjectiveAssignmentPeriodInput {
+  name: string;
+  objectiveVersionId: string;
+  linkedPmsCycleId?: string;
+  periodStartDate: Date | string;
+  periodEndDate: Date | string;
+  termType: AssessmentTermTypeType;
+  terms: AssessmentTermCodeType[];
+  fillStartDate: Date | string;
+  fillEndDate: Date | string;
+  status?: ObjectiveAssignmentPeriodStatusType;
+  note?: string;
+}
+
+export type UpdateObjectiveAssignmentPeriodInput = Partial<CreateObjectiveAssignmentPeriodInput>;
+
+export interface ObjectiveAssignmentPeriodRecord {
+  id: string;
+  name: string;
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  linkedPmsCycleId?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  termType: string;
+  terms: string[];
+  fillStartDate?: string;
+  fillEndDate?: string;
+  status: string;
+  note?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  closedAt?: string;
+  closedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ObjectiveAssignmentPeriodListQuery {
+  objectiveMasterId?: string;
+  objectiveVersionId?: string;
+  status?: ObjectiveAssignmentPeriodStatusType | string;
+  linkedPmsCycleId?: string;
+  page?: number | string;
+  limit?: number | string;
+}
+
+export interface ObjectiveAssignmentPeriodListResult {
+  items: ObjectiveAssignmentPeriodRecord[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface ObjectiveAssignmentPeriodEmployeeInput {
+  employeeIds: string[];
+}
+
+export interface ApplyObjectiveAssignmentPeriodInput extends ObjectiveAssignmentPeriodEmployeeInput {
+  confirm?: boolean;
+}
+
+export interface ObjectiveAssignmentPeriodPreviewRow {
+  employeeId: string;
+  employeeName?: string;
+  employeeCode?: string;
+  employeeDepartment?: string;
+  employeeRole?: string;
+  managerId?: string;
+  terms: string[];
+  status: 'NEW' | 'ALREADY_ASSIGNED' | 'BLOCKED';
+  blockedReason?: string;
+  warnings: string[];
+}
+
+export interface ObjectiveAssignmentPeriodPreviewResult {
+  periodId: string;
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  totalEmployees: number;
+  newAssignments: number;
+  alreadyAssigned: number;
+  blocked: number;
+  warnings: number;
+  rows: ObjectiveAssignmentPeriodPreviewRow[];
+}
+
+export interface ObjectiveEmployeeAssignmentRecord {
+  id: string;
+  objectiveAssignmentPeriodId: string;
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  employeeId: string;
+  managerId?: string;
+  selectedTerms: string[];
+  frozenObjectiveSnapshot: Record<string, unknown>;
+  values: Record<string, unknown>;
+  status: string;
+  submittedAt?: string;
+  submittedBy?: string;
+  closedAt?: string;
+  closedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ObjectiveAssignmentPeriodApplyResult extends ObjectiveAssignmentPeriodPreviewResult {
+  createdAssignmentIds: string[];
+}
+
+export interface SaveObjectiveEmployeeAssignmentValuesInput {
+  values: Record<string, unknown>;
 }
 
 type AssignmentMode = 'employee' | 'manager';
@@ -1751,6 +1873,355 @@ export class ObjectiveService extends BaseService {
       { cycleId },
       'CYCLE_LAUNCH',
     );
+  }
+
+  async createObjectiveAssignmentPeriod(
+    input: CreateObjectiveAssignmentPeriodInput,
+  ): Promise<ObjectiveAssignmentPeriodRecord> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.create');
+    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    const version = await this.loadActiveObjectiveVersionForPeriod(input.objectiveVersionId);
+    await this.assertObjectiveAssignerPermissionForVersion(version);
+    const dates = this.normalizeObjectiveAssignmentPeriodDates(input);
+    const terms = this.normalizePeriodTerms(input.termType, input.terms);
+    const period = await ObjectiveAssignmentPeriod.create({
+      name: this.requireTrimmed(input.name, 'name'),
+      objectiveMasterId: version.objectiveMasterId,
+      objectiveVersionId: version._id,
+      linkedPmsCycleId: input.linkedPmsCycleId ? this.toObjectId(input.linkedPmsCycleId, 'linkedPmsCycleId') : undefined,
+      ...dates,
+      termType: input.termType,
+      terms,
+      status: input.status ?? ObjectiveAssignmentPeriodStatus.DRAFT,
+      note: input.note?.trim() || undefined,
+      createdBy: actorId,
+    });
+
+    await this.audit(
+      'PMS_OBJECTIVE_ASSIGNMENT_PERIOD_CREATED',
+      'OBJECTIVE_ASSIGNMENT_PERIOD',
+      period._id.toString(),
+      undefined,
+      this.mapObjectiveAssignmentPeriodRecord(period),
+    );
+
+    return this.mapObjectiveAssignmentPeriodRecord(period);
+  }
+
+  async listObjectiveAssignmentPeriods(
+    query: ObjectiveAssignmentPeriodListQuery = {},
+  ): Promise<ObjectiveAssignmentPeriodListResult> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.list');
+    const page = Math.max(Number(query.page || 1), 1);
+    const limit = Math.min(Math.max(Number(query.limit || 25), 1), 100);
+    const filter: Record<string, unknown> = { isDeleted: false };
+    if (query.objectiveMasterId) {
+      filter.objectiveMasterId = this.toObjectId(query.objectiveMasterId, 'objectiveMasterId');
+    }
+    if (query.objectiveVersionId) {
+      filter.objectiveVersionId = this.toObjectId(query.objectiveVersionId, 'objectiveVersionId');
+    }
+    if (query.linkedPmsCycleId) {
+      filter.linkedPmsCycleId = this.toObjectId(query.linkedPmsCycleId, 'linkedPmsCycleId');
+    }
+    if (query.status && query.status !== 'ALL') {
+      if (!Object.values(ObjectiveAssignmentPeriodStatus).includes(query.status as ObjectiveAssignmentPeriodStatusType)) {
+        throw new Error('Invalid Objective Assignment Period status');
+      }
+      filter.status = query.status;
+    }
+
+    const [items, total] = await Promise.all([
+      ObjectiveAssignmentPeriod.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      ObjectiveAssignmentPeriod.countDocuments(filter),
+    ]);
+
+    return {
+      items: items.map((period) => this.mapObjectiveAssignmentPeriodRecord(period)),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  async getObjectiveAssignmentPeriod(
+    periodId: string,
+  ): Promise<ObjectiveAssignmentPeriodRecord> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.get');
+    const period = await this.loadObjectiveAssignmentPeriod(periodId);
+    return this.mapObjectiveAssignmentPeriodRecord(period);
+  }
+
+  async updateObjectiveAssignmentPeriod(
+    periodId: string,
+    input: UpdateObjectiveAssignmentPeriodInput,
+  ): Promise<ObjectiveAssignmentPeriodRecord> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.update');
+    const period = await ObjectiveAssignmentPeriod.findOne({
+      _id: this.toObjectId(periodId, 'periodId'),
+      isDeleted: false,
+    });
+    if (!period) {
+      throw new Error('Objective Assignment Period not found');
+    }
+    if (period.status === ObjectiveAssignmentPeriodStatus.CLOSED) {
+      throw new Error('Closed Objective Assignment Period cannot be updated');
+    }
+
+    const previousValue = this.mapObjectiveAssignmentPeriodRecord(period);
+    if (input.objectiveVersionId !== undefined) {
+      const version = await this.loadActiveObjectiveVersionForPeriod(input.objectiveVersionId);
+      await this.assertObjectiveAssignerPermissionForVersion(version);
+      period.objectiveMasterId = version.objectiveMasterId;
+      period.objectiveVersionId = version._id;
+    }
+    if (input.name !== undefined) {
+      period.name = this.requireTrimmed(input.name, 'name');
+    }
+    if (input.linkedPmsCycleId !== undefined) {
+      period.linkedPmsCycleId = input.linkedPmsCycleId
+        ? this.toObjectId(input.linkedPmsCycleId, 'linkedPmsCycleId')
+        : undefined;
+    }
+    const merged = {
+      periodStartDate: input.periodStartDate ?? period.periodStartDate,
+      periodEndDate: input.periodEndDate ?? period.periodEndDate,
+      fillStartDate: input.fillStartDate ?? period.fillStartDate,
+      fillEndDate: input.fillEndDate ?? period.fillEndDate,
+    };
+    if (
+      input.periodStartDate !== undefined ||
+      input.periodEndDate !== undefined ||
+      input.fillStartDate !== undefined ||
+      input.fillEndDate !== undefined
+    ) {
+      const dates = this.normalizeObjectiveAssignmentPeriodDates(merged);
+      period.periodStartDate = dates.periodStartDate;
+      period.periodEndDate = dates.periodEndDate;
+      period.fillStartDate = dates.fillStartDate;
+      period.fillEndDate = dates.fillEndDate;
+    }
+    if (input.termType !== undefined || input.terms !== undefined) {
+      const termType = input.termType ?? period.termType;
+      period.termType = termType;
+      period.terms = this.normalizePeriodTerms(termType, input.terms ?? period.terms);
+    }
+    if (input.status !== undefined) {
+      if (!Object.values(ObjectiveAssignmentPeriodStatus).includes(input.status)) {
+        throw new Error('Invalid Objective Assignment Period status');
+      }
+      period.status = input.status;
+    }
+    if (input.note !== undefined) {
+      period.note = input.note?.trim() || undefined;
+    }
+    period.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    period.version += 1;
+    await period.save();
+
+    const nextValue = this.mapObjectiveAssignmentPeriodRecord(period);
+    await this.audit(
+      'PMS_OBJECTIVE_ASSIGNMENT_PERIOD_UPDATED',
+      'OBJECTIVE_ASSIGNMENT_PERIOD',
+      period._id.toString(),
+      previousValue,
+      nextValue,
+    );
+
+    return nextValue;
+  }
+
+  async activateObjectiveAssignmentPeriod(
+    periodId: string,
+  ): Promise<ObjectiveAssignmentPeriodRecord> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.activate');
+    const period = await ObjectiveAssignmentPeriod.findOne({
+      _id: this.toObjectId(periodId, 'periodId'),
+      isDeleted: false,
+    });
+    if (!period) {
+      throw new Error('Objective Assignment Period not found');
+    }
+    if (period.status === ObjectiveAssignmentPeriodStatus.CLOSED) {
+      throw new Error('Closed Objective Assignment Period cannot be activated');
+    }
+    await this.loadActiveObjectiveVersionForPeriod(period.objectiveVersionId.toString());
+    const previousValue = this.mapObjectiveAssignmentPeriodRecord(period);
+    period.status = ObjectiveAssignmentPeriodStatus.ACTIVE;
+    period.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    period.version += 1;
+    await period.save();
+    const nextValue = this.mapObjectiveAssignmentPeriodRecord(period);
+    await this.audit('PMS_OBJECTIVE_ASSIGNMENT_PERIOD_ACTIVATED', 'OBJECTIVE_ASSIGNMENT_PERIOD', period._id.toString(), previousValue, nextValue);
+    return nextValue;
+  }
+
+  async closeObjectiveAssignmentPeriod(
+    periodId: string,
+  ): Promise<ObjectiveAssignmentPeriodRecord> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.close');
+    const period = await ObjectiveAssignmentPeriod.findOne({
+      _id: this.toObjectId(periodId, 'periodId'),
+      isDeleted: false,
+    });
+    if (!period) {
+      throw new Error('Objective Assignment Period not found');
+    }
+    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    const previousValue = this.mapObjectiveAssignmentPeriodRecord(period);
+    period.status = ObjectiveAssignmentPeriodStatus.CLOSED;
+    period.closedAt = new Date();
+    period.closedBy = actorId;
+    period.updatedBy = actorId;
+    period.version += 1;
+    await period.save();
+    await ObjectiveEmployeeAssignment.updateMany(
+      {
+        objectiveAssignmentPeriodId: period._id,
+        status: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
+        isDeleted: false,
+      },
+      {
+        $set: {
+          status: ObjectiveEmployeeAssignmentStatus.CLOSED,
+          closedAt: period.closedAt,
+          closedBy: actorId,
+          updatedBy: actorId,
+        },
+        $inc: { version: 1 },
+      },
+    );
+    const nextValue = this.mapObjectiveAssignmentPeriodRecord(period);
+    await this.audit('PMS_OBJECTIVE_ASSIGNMENT_PERIOD_CLOSED', 'OBJECTIVE_ASSIGNMENT_PERIOD', period._id.toString(), previousValue, nextValue);
+    return nextValue;
+  }
+
+  async previewObjectiveAssignmentPeriodEmployees(
+    periodId: string,
+    input: ObjectiveAssignmentPeriodEmployeeInput,
+  ): Promise<ObjectiveAssignmentPeriodPreviewResult> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.preview');
+    return this.buildObjectiveAssignmentPeriodPreview(periodId, input);
+  }
+
+  async applyObjectiveAssignmentPeriodEmployees(
+    periodId: string,
+    input: ApplyObjectiveAssignmentPeriodInput,
+  ): Promise<ObjectiveAssignmentPeriodApplyResult> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.apply');
+    if (input.confirm !== true) {
+      throw new Error('Confirmation is required before assigning employees');
+    }
+    const preview = await this.buildObjectiveAssignmentPeriodPreview(periodId, input);
+    if (preview.blocked > 0) {
+      throw new Error('Blocked employee assignments must be resolved before applying');
+    }
+    const period = await this.loadObjectiveAssignmentPeriod(periodId);
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+      throw new Error('Only Active Objective Assignment Periods can be assigned to employees');
+    }
+    const version = await this.loadActiveObjectiveVersionForPeriod(period.objectiveVersionId.toString());
+    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    const employeeIds = preview.rows
+      .filter((row) => row.status === 'NEW')
+      .map((row) => this.toObjectId(row.employeeId, 'employeeId'));
+    const employees = employeeIds.length
+      ? await User.find({ _id: { $in: employeeIds }, active: { $ne: false } }).lean()
+      : [];
+    const employeesById = new Map(employees.map((employee: any) => [employee._id.toString(), employee]));
+    const createdAssignmentIds: string[] = [];
+    const snapshot = this.buildObjectiveAssignmentFrozenSnapshot(version);
+
+    for (const row of preview.rows.filter((item) => item.status === 'NEW')) {
+      const employee = employeesById.get(row.employeeId);
+      if (!employee) continue;
+      const assignment = await ObjectiveEmployeeAssignment.create({
+        objectiveAssignmentPeriodId: period._id,
+        objectiveMasterId: period.objectiveMasterId,
+        objectiveVersionId: period.objectiveVersionId,
+        employeeId: employee._id,
+        managerId: employee.managerId && Types.ObjectId.isValid(employee.managerId)
+          ? new Types.ObjectId(employee.managerId)
+          : undefined,
+        selectedTerms: period.terms,
+        frozenObjectiveSnapshot: snapshot,
+        values: {},
+        status: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
+        createdBy: actorId,
+      });
+      createdAssignmentIds.push(assignment._id.toString());
+    }
+
+    await this.audit(
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENTS_CREATED',
+      'OBJECTIVE_ASSIGNMENT_PERIOD',
+      period._id.toString(),
+      undefined,
+      { createdAssignmentIds, employeeCount: createdAssignmentIds.length },
+    );
+
+    return {
+      ...preview,
+      createdAssignmentIds,
+      newAssignments: createdAssignmentIds.length,
+    };
+  }
+
+  async saveObjectiveEmployeeAssignmentValues(
+    assignmentId: string,
+    input: SaveObjectiveEmployeeAssignmentValuesInput,
+  ): Promise<ObjectiveEmployeeAssignmentRecord> {
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    await this.assertObjectiveEmployeeAssignmentEditable(assignment);
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment);
+    assignment.values = input.values ?? {};
+    assignment.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    assignment.version += 1;
+    await assignment.save();
+    const nextValue = this.mapObjectiveEmployeeAssignmentRecord(assignment);
+    await this.audit('PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_VALUES_SAVED', 'OBJECTIVE_EMPLOYEE_ASSIGNMENT', assignment._id.toString(), previousValue, nextValue);
+    return nextValue;
+  }
+
+  async submitObjectiveEmployeeAssignment(
+    assignmentId: string,
+    input: SaveObjectiveEmployeeAssignmentValuesInput = { values: {} },
+  ): Promise<ObjectiveEmployeeAssignmentRecord> {
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    await this.assertObjectiveEmployeeAssignmentEditable(assignment);
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment);
+    assignment.values = input.values ?? assignment.values ?? {};
+    assignment.status = ObjectiveEmployeeAssignmentStatus.SUBMITTED;
+    assignment.submittedAt = new Date();
+    assignment.submittedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
+    assignment.updatedBy = assignment.submittedBy;
+    assignment.version += 1;
+    await assignment.save();
+    const nextValue = this.mapObjectiveEmployeeAssignmentRecord(assignment);
+    await this.audit('PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SUBMITTED', 'OBJECTIVE_EMPLOYEE_ASSIGNMENT', assignment._id.toString(), previousValue, nextValue);
+    return nextValue;
+  }
+
+  async closeObjectiveEmployeeAssignment(
+    assignmentId: string,
+  ): Promise<ObjectiveEmployeeAssignmentRecord> {
+    await this.requireAdminForObjectiveAssignment('objectiveEmployeeAssignment.close');
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment);
+    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    assignment.status = ObjectiveEmployeeAssignmentStatus.CLOSED;
+    assignment.closedAt = new Date();
+    assignment.closedBy = actorId;
+    assignment.updatedBy = actorId;
+    assignment.version += 1;
+    await assignment.save();
+    const nextValue = this.mapObjectiveEmployeeAssignmentRecord(assignment);
+    await this.audit('PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_CLOSED', 'OBJECTIVE_EMPLOYEE_ASSIGNMENT', assignment._id.toString(), previousValue, nextValue);
+    return nextValue;
   }
 
   async getObjectiveReportingData(
@@ -7921,6 +8392,271 @@ export class ObjectiveService extends BaseService {
     if (mappedRole === PmsRole.MANAGER) return ObjectiveSource.MANAGER_CREATED;
 
     throw new Error('Only employee or manager can create objectives');
+  }
+
+  private requireTrimmed(value: string | undefined, fieldName: string): string {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      throw new Error(`${fieldName} is required`);
+    }
+    return normalized;
+  }
+
+  private normalizeDate(value: Date | string | undefined, fieldName: string): Date {
+    if (!value) {
+      throw new Error(`${fieldName} is required`);
+    }
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`Invalid ${fieldName}`);
+    }
+    return date;
+  }
+
+  private normalizeObjectiveAssignmentPeriodDates(input: {
+    periodStartDate?: Date | string;
+    periodEndDate?: Date | string;
+    fillStartDate?: Date | string;
+    fillEndDate?: Date | string;
+  }) {
+    const periodStartDate = this.normalizeDate(input.periodStartDate, 'periodStartDate');
+    const periodEndDate = this.normalizeDate(input.periodEndDate, 'periodEndDate');
+    const fillStartDate = this.normalizeDate(input.fillStartDate, 'fillStartDate');
+    const fillEndDate = this.normalizeDate(input.fillEndDate, 'fillEndDate');
+    if (periodEndDate < periodStartDate) {
+      throw new Error('Period end date cannot be before period start date');
+    }
+    if (fillEndDate < fillStartDate) {
+      throw new Error('Fill end date cannot be before fill start date');
+    }
+    if (fillStartDate < periodStartDate) {
+      throw new Error('Fill start date cannot be before period start date');
+    }
+    if (fillEndDate > periodEndDate) {
+      throw new Error('Fill end date cannot be after period end date');
+    }
+    return { periodStartDate, periodEndDate, fillStartDate, fillEndDate };
+  }
+
+  private normalizePeriodTerms(
+    termType: AssessmentTermTypeType | string | undefined,
+    terms: AssessmentTermCodeType[] | string[] | undefined,
+  ): AssessmentTermCodeType[] {
+    if (!Object.values(AssessmentTermType).includes(termType as AssessmentTermTypeType)) {
+      throw new Error('Invalid term type');
+    }
+    const validTerms = new Set(getAssessmentTerms(termType));
+    const uniqueTerms = Array.from(new Set((terms ?? []).map((term) => String(term).trim()).filter(Boolean)));
+    if (!uniqueTerms.length) {
+      throw new Error('At least one term is required');
+    }
+    const invalidTerm = uniqueTerms.find((term) => !validTerms.has(term as AssessmentTermCodeType));
+    if (invalidTerm) {
+      throw new Error(`${getAssessmentTermLabel(invalidTerm)} is not valid for selected term type`);
+    }
+    return uniqueTerms as AssessmentTermCodeType[];
+  }
+
+  private async loadActiveObjectiveVersionForPeriod(objectiveVersionId: string) {
+    const version = await ObjectiveMasterVersion.findOne({
+      _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
+      isDeleted: false,
+    }).lean();
+    if (!version) {
+      throw new Error('Objective Master Version not found');
+    }
+    if (version.status !== ObjectiveMasterVersionStatus.ACTIVE) {
+      throw new Error('Only Active objective versions can be assigned');
+    }
+    return version;
+  }
+
+  private async assertObjectiveAssignerPermissionForVersion(version: any): Promise<void> {
+    const master = await ObjectiveMaster.findOne({
+      _id: version.objectiveMasterId,
+      isDeleted: false,
+    }).lean();
+    if (!master) {
+      throw new Error('Objective Master not found');
+    }
+    await this.assertObjectiveAssignerPermission(master.sourceType, version);
+  }
+
+  private async loadObjectiveAssignmentPeriod(periodId: string) {
+    const period = await ObjectiveAssignmentPeriod.findOne({
+      _id: this.toObjectId(periodId, 'periodId'),
+      isDeleted: false,
+    }).lean();
+    if (!period) {
+      throw new Error('Objective Assignment Period not found');
+    }
+    return period;
+  }
+
+  private async loadObjectiveEmployeeAssignment(assignmentId: string) {
+    const assignment = await ObjectiveEmployeeAssignment.findOne({
+      _id: this.toObjectId(assignmentId, 'assignmentId'),
+      isDeleted: false,
+    });
+    if (!assignment) {
+      throw new Error('Objective Employee Assignment not found');
+    }
+    return assignment;
+  }
+
+  private buildObjectiveAssignmentFrozenSnapshot(version: any) {
+    return {
+      objectiveType: version.objectiveType,
+      sheetLayout: version.sheetLayout,
+      title: version.title,
+      description: version.description,
+      measurementGuidance: version.measurementGuidance,
+      targetValue: version.targetValue,
+      targetDescription: version.targetDescription,
+      targetDirection: version.targetDirection,
+      priority: version.priority,
+      attachmentPolicy: version.attachmentPolicy,
+      scoreable: false,
+      defaultScoringEligibilityRef: undefined,
+      approvedWeightage: undefined,
+      applicableTermLabels: version.applicableTermLabels ?? [],
+    };
+  }
+
+  private mapObjectiveAssignmentPeriodRecord(period: any): ObjectiveAssignmentPeriodRecord {
+    return {
+      id: period._id?.toString?.() ?? '',
+      name: period.name,
+      objectiveMasterId: period.objectiveMasterId?.toString?.() ?? '',
+      objectiveVersionId: period.objectiveVersionId?.toString?.() ?? '',
+      linkedPmsCycleId: period.linkedPmsCycleId?.toString?.(),
+      periodStartDate: period.periodStartDate?.toISOString?.(),
+      periodEndDate: period.periodEndDate?.toISOString?.(),
+      termType: period.termType,
+      terms: period.terms ?? [],
+      fillStartDate: period.fillStartDate?.toISOString?.(),
+      fillEndDate: period.fillEndDate?.toISOString?.(),
+      status: period.status,
+      note: period.note,
+      createdBy: period.createdBy?.toString?.(),
+      updatedBy: period.updatedBy?.toString?.(),
+      closedAt: period.closedAt?.toISOString?.(),
+      closedBy: period.closedBy?.toString?.(),
+      createdAt: period.createdAt?.toISOString?.(),
+      updatedAt: period.updatedAt?.toISOString?.(),
+    };
+  }
+
+  private mapObjectiveEmployeeAssignmentRecord(assignment: any): ObjectiveEmployeeAssignmentRecord {
+    return {
+      id: assignment._id?.toString?.() ?? '',
+      objectiveAssignmentPeriodId: assignment.objectiveAssignmentPeriodId?.toString?.() ?? '',
+      objectiveMasterId: assignment.objectiveMasterId?.toString?.() ?? '',
+      objectiveVersionId: assignment.objectiveVersionId?.toString?.() ?? '',
+      employeeId: assignment.employeeId?.toString?.() ?? '',
+      managerId: assignment.managerId?.toString?.(),
+      selectedTerms: assignment.selectedTerms ?? [],
+      frozenObjectiveSnapshot: assignment.frozenObjectiveSnapshot ?? {},
+      values: assignment.values ?? {},
+      status: assignment.status,
+      submittedAt: assignment.submittedAt?.toISOString?.(),
+      submittedBy: assignment.submittedBy?.toString?.(),
+      closedAt: assignment.closedAt?.toISOString?.(),
+      closedBy: assignment.closedBy?.toString?.(),
+      createdAt: assignment.createdAt?.toISOString?.(),
+      updatedAt: assignment.updatedAt?.toISOString?.(),
+    };
+  }
+
+  private async buildObjectiveAssignmentPeriodPreview(
+    periodId: string,
+    input: ObjectiveAssignmentPeriodEmployeeInput,
+  ): Promise<ObjectiveAssignmentPeriodPreviewResult> {
+    const period = await this.loadObjectiveAssignmentPeriod(periodId);
+    const employeeIds = Array.from(new Set((input.employeeIds ?? []).filter(Boolean)));
+    if (!employeeIds.length) {
+      throw new Error('At least one employee is required');
+    }
+    if (period.status === ObjectiveAssignmentPeriodStatus.CLOSED) {
+      throw new Error('Closed Objective Assignment Period cannot be assigned');
+    }
+    await this.loadActiveObjectiveVersionForPeriod(period.objectiveVersionId.toString());
+    const objectIds = employeeIds.map((employeeId) => this.toObjectId(employeeId, 'employeeId'));
+    const employees = await User.find({ _id: { $in: objectIds }, active: { $ne: false } }).lean();
+    const employeesById = new Map(employees.map((employee: any) => [employee._id.toString(), employee]));
+    const existingAssignments = await ObjectiveEmployeeAssignment.find({
+      objectiveAssignmentPeriodId: period._id,
+      objectiveVersionId: period.objectiveVersionId,
+      employeeId: { $in: objectIds },
+      isDeleted: false,
+    }).lean();
+    const existingEmployeeIds = new Set(existingAssignments.map((assignment: any) => assignment.employeeId.toString()));
+    const rows: ObjectiveAssignmentPeriodPreviewRow[] = employeeIds.map((employeeId) => {
+      const employee = employeesById.get(employeeId);
+      if (!employee) {
+        return {
+          employeeId,
+          terms: period.terms ?? [],
+          status: 'BLOCKED',
+          blockedReason: 'Employee not found or inactive',
+          warnings: [],
+        };
+      }
+      if (existingEmployeeIds.has(employeeId)) {
+        return {
+          employeeId,
+          employeeName: employee.name,
+          employeeCode: employee.employeeCode,
+          employeeDepartment: employee.departmentName || employee.departmentId,
+          employeeRole: employee.specificRole || employee.role,
+          managerId: employee.managerId,
+          terms: period.terms ?? [],
+          status: 'ALREADY_ASSIGNED',
+          warnings: ['Employee is already assigned in this period.'],
+        };
+      }
+      return {
+        employeeId,
+        employeeName: employee.name,
+        employeeCode: employee.employeeCode,
+        employeeDepartment: employee.departmentName || employee.departmentId,
+        employeeRole: employee.specificRole || employee.role,
+        managerId: employee.managerId,
+        terms: period.terms ?? [],
+        status: 'NEW',
+        warnings: [],
+      };
+    });
+
+    return {
+      periodId: period._id.toString(),
+      objectiveMasterId: period.objectiveMasterId.toString(),
+      objectiveVersionId: period.objectiveVersionId.toString(),
+      totalEmployees: rows.length,
+      newAssignments: rows.filter((row) => row.status === 'NEW').length,
+      alreadyAssigned: rows.filter((row) => row.status === 'ALREADY_ASSIGNED').length,
+      blocked: rows.filter((row) => row.status === 'BLOCKED').length,
+      warnings: rows.reduce((total, row) => total + row.warnings.length, 0),
+      rows,
+    };
+  }
+
+  private async assertObjectiveEmployeeAssignmentEditable(assignment: any): Promise<void> {
+    const actor = this.requireActor();
+    if (assignment.employeeId.toString() !== actor.actorId) {
+      throw new Error('Only the assigned employee can fill this objective');
+    }
+    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
+      throw new Error('Submitted or closed objective assignments are read-only');
+    }
+    const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+      throw new Error('Objective Assignment Period is not active');
+    }
+    const now = new Date();
+    if (now < period.fillStartDate || now > period.fillEndDate) {
+      throw new Error('Objective fill period is not open');
+    }
   }
 
   private async assertAdmin(action: string): Promise<void> {
