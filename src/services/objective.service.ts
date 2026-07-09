@@ -364,6 +364,13 @@ interface ObjectiveSheetLayoutInput {
     startColumnId?: string;
     endColumnId?: string;
   }>;
+  rowGroups?: Array<{
+    id?: string;
+    levelLabel?: string;
+    label?: string;
+    startRowId?: string;
+    endRowId?: string;
+  }>;
   formulas?: Array<{
     id?: string;
     kind?: string;
@@ -411,6 +418,13 @@ interface NormalizedObjectiveSheetLayout {
     label: string;
     startColumnId: string;
     endColumnId: string;
+  }>;
+  rowGroups: Array<{
+    id: string;
+    levelLabel: string;
+    label: string;
+    startRowId: string;
+    endRowId: string;
   }>;
   formulas: Array<{
     id: string;
@@ -5654,8 +5668,8 @@ export class ObjectiveService extends BaseService {
     }
 
     const objectiveType = this.normalizeObjectiveMasterType(input.objectiveType);
-    const scoreable = objectiveType === ObjectiveMasterType.SHEET ? false : input.scoreable === true;
-    const approvedWeightage = this.normalizeObjectiveMasterWeightage(input.approvedWeightage, scoreable);
+    const scoreable = false;
+    const approvedWeightage = undefined;
 
     return {
       objectiveType,
@@ -5678,7 +5692,7 @@ export class ObjectiveService extends BaseService {
         ? input.attachmentPolicy
         : ObjectiveAttachmentPolicy.OPTIONAL,
       scoreable,
-      defaultScoringEligibilityRef: input.defaultScoringEligibilityRef?.trim() || undefined,
+      defaultScoringEligibilityRef: undefined,
       approvedWeightage,
       applicableTermLabels: this.normalizeApplicableTermLabels(input.applicableTermLabels),
       ...this.normalizeObjectiveOwnerInput(input, actor),
@@ -5728,6 +5742,9 @@ export class ObjectiveService extends BaseService {
     } else if (nextObjectiveType === ObjectiveMasterType.SIMPLE) {
       patch.sheetLayout = undefined;
     }
+    patch.scoreable = false;
+    patch.approvedWeightage = undefined;
+    patch.defaultScoringEligibilityRef = undefined;
     if (input.priority !== undefined) patch.priority = input.priority?.trim().toUpperCase() || undefined;
     if (input.attachmentPolicy !== undefined) {
       if (input.attachmentPolicy && !Object.values(ObjectiveAttachmentPolicy).includes(input.attachmentPolicy)) {
@@ -5735,20 +5752,6 @@ export class ObjectiveService extends BaseService {
       }
       patch.attachmentPolicy = input.attachmentPolicy || undefined;
     }
-    if (input.scoreable !== undefined && nextObjectiveType !== ObjectiveMasterType.SHEET) patch.scoreable = input.scoreable;
-    if (input.defaultScoringEligibilityRef !== undefined) {
-      patch.defaultScoringEligibilityRef = input.defaultScoringEligibilityRef?.trim() || undefined;
-    }
-    if (nextObjectiveType !== ObjectiveMasterType.SHEET && input.scoreable === true && input.approvedWeightage === undefined) {
-      throw new Error('Scoreable Objective Master versions require approved weightage.');
-    }
-    if (input.approvedWeightage !== undefined) {
-      patch.approvedWeightage = this.normalizeObjectiveMasterWeightage(
-        input.approvedWeightage,
-        nextObjectiveType === ObjectiveMasterType.SHEET ? false : input.scoreable === true,
-      );
-    }
-    if (input.scoreable === false || nextObjectiveType === ObjectiveMasterType.SHEET) patch.approvedWeightage = undefined;
     if (input.applicableTermLabels !== undefined) {
       patch.applicableTermLabels = this.normalizeApplicableTermLabels(input.applicableTermLabels);
     }
@@ -5772,22 +5775,6 @@ export class ObjectiveService extends BaseService {
     if (input.reviewerScope !== undefined) patch.reviewerScope = input.reviewerScope ?? {};
 
     return patch;
-  }
-
-  private normalizeObjectiveMasterWeightage(
-    approvedWeightage: number | undefined,
-    scoreable: boolean,
-  ): number | undefined {
-    if (!scoreable) {
-      return undefined;
-    }
-
-    const weightage = Number(approvedWeightage);
-    if (!Number.isFinite(weightage) || weightage <= 0 || weightage > 100) {
-      throw new Error('Scoreable Objective Master versions require weightage greater than 0 and no more than 100.');
-    }
-
-    return weightage;
   }
 
   private normalizeObjectiveMasterType(
@@ -5823,6 +5810,9 @@ export class ObjectiveService extends BaseService {
     const inputHeaderGroups = Array.isArray(layout?.headerGroups)
       ? layout.headerGroups
       : fallback.headerGroups;
+    const inputRowGroups = Array.isArray(layout?.rowGroups)
+      ? layout.rowGroups
+      : fallback.rowGroups;
     const inputFormulas = Array.isArray(layout?.formulas)
       ? layout.formulas
       : fallback.formulas;
@@ -5892,6 +5882,61 @@ export class ObjectiveService extends BaseService {
         endColumnId: columns[endIndex].id,
       });
     });
+
+    const rowIndexByKey = new Map<string, number>();
+    rows.forEach((row, index) => {
+      rowIndexByKey.set(this.normalizeSheetKey(row.id, ''), index);
+      rowIndexByKey.set(this.normalizeSheetKey(row.label, ''), index);
+    });
+    const rowGroupCandidates: Array<NormalizedObjectiveSheetLayout['rowGroups'][number] & {
+      levelKey: string;
+      startIndex: number;
+      endIndex: number;
+    }> = [];
+    inputRowGroups.forEach((group, index) => {
+      const levelLabel = String(group?.levelLabel ?? '').trim();
+      const label = String(group?.label ?? '').trim();
+      if (!levelLabel && !label) return;
+      if (!levelLabel || !label) {
+        throw new Error(`Row group ${index + 1} requires both group column and label.`);
+      }
+      const startRowId = this.normalizeSheetKey(group?.startRowId, '');
+      const endRowId = this.normalizeSheetKey(group?.endRowId, '');
+      const startIndex = rowIndexByKey.get(startRowId);
+      const endIndex = rowIndexByKey.get(endRowId);
+      if (startIndex === undefined || endIndex === undefined || startIndex > endIndex) {
+        throw new Error(`Row group "${label}" has an invalid row range.`);
+      }
+      const levelKey = levelLabel.trim().toLowerCase();
+      rowGroupCandidates.push({
+        id: this.normalizeSheetKey(group?.id, `row_group_${index + 1}`),
+        levelLabel,
+        levelKey,
+        label,
+        startRowId: rows[startIndex].id,
+        endRowId: rows[endIndex].id,
+        startIndex,
+        endIndex,
+      });
+    });
+    const occupiedRowGroupRanges = new Map<string, number>();
+    const rowGroups: NormalizedObjectiveSheetLayout['rowGroups'] = [];
+    rowGroupCandidates
+      .sort((left, right) => left.levelKey.localeCompare(right.levelKey) || left.startIndex - right.startIndex)
+      .forEach((group) => {
+        const occupiedUntil = occupiedRowGroupRanges.get(group.levelKey) ?? -1;
+        if (group.startIndex <= occupiedUntil) {
+          throw new Error(`Row group "${group.label}" overlaps another group in "${group.levelLabel}".`);
+        }
+        occupiedRowGroupRanges.set(group.levelKey, group.endIndex);
+        rowGroups.push({
+          id: group.id,
+          levelLabel: group.levelLabel,
+          label: group.label,
+          startRowId: group.startRowId,
+          endRowId: group.endRowId,
+        });
+      });
 
     type CalculationColumnType = 'NUMBER' | 'PERCENTAGE';
     const isCalculationColumnType = (type?: string): type is CalculationColumnType =>
@@ -6215,7 +6260,7 @@ export class ObjectiveService extends BaseService {
       columns.findIndex((column) => column.id === b.columnId),
     );
 
-    return { columns, rows, headerGroups, formulas, fillPermissions, termAvailability };
+    return { columns, rows, headerGroups, rowGroups, formulas, fillPermissions, termAvailability };
   }
 
   private normalizeSheetKey(value: unknown, fallback: string): string {
@@ -6289,6 +6334,7 @@ export class ObjectiveService extends BaseService {
         { id: 'row_1', label: 'Objective line 1' },
       ],
       headerGroups: [],
+      rowGroups: [],
       formulas: [
         {
           id: 'formula_actual',
