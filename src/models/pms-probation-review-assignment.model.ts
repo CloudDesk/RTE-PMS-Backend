@@ -4,6 +4,8 @@ export const ProbationReviewStatus = {
   SCHEDULED: 'SCHEDULED',
   REVIEW_OPEN: 'REVIEW_OPEN',
   MANAGER_1_SUBMITTED: 'MANAGER_1_SUBMITTED',
+  DELEGATED_TO_APPROVER: 'DELEGATED_TO_APPROVER',
+  APPROVAL_REASSIGNED: 'APPROVAL_REASSIGNED',
   RETURNED_TO_MANAGER_1: 'RETURNED_TO_MANAGER_1',
   FINALIZED: 'FINALIZED',
   CANCELLED: 'CANCELLED',
@@ -72,6 +74,16 @@ export interface IPmsProbationReviewAssignment extends Document {
   reviewValues: IProbationReviewValue[];
   manager1SubmittedAt?: Date;
   manager1SubmittedBy?: Types.ObjectId;
+  delegatedAt?: Date;
+  delegatedBy?: Types.ObjectId;
+  delegatedToRole?: ProbationReviewerRole;
+  delegatedFromStatus?: ProbationReviewStatus;
+  delegationReason?: string;
+  approvalOwnerRoleOverride?: ProbationReviewerRole;
+  approvalOwnerOriginalRole?: ProbationReviewerRole;
+  approvalOwnerOverrideBy?: Types.ObjectId;
+  approvalOwnerOverrideAt?: Date;
+  approvalOwnerOverrideReason?: string;
   manager2ReviewedAt?: Date;
   manager2ReviewedBy?: Types.ObjectId;
   finalizedAt?: Date;
@@ -162,6 +174,16 @@ const probationReviewAssignmentSchema =
       reviewValues: { type: [probationReviewValueSchema], default: [] },
       manager1SubmittedAt: Date,
       manager1SubmittedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+      delegatedAt: Date,
+      delegatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+      delegatedToRole: { type: String, enum: ['MANAGER_1', 'MANAGER_2'] },
+      delegatedFromStatus: { type: String, enum: Object.values(ProbationReviewStatus) },
+      delegationReason: { type: String, trim: true },
+      approvalOwnerRoleOverride: { type: String, enum: ['MANAGER_1', 'MANAGER_2'] },
+      approvalOwnerOriginalRole: { type: String, enum: ['MANAGER_1', 'MANAGER_2'] },
+      approvalOwnerOverrideBy: { type: Schema.Types.ObjectId, ref: 'User' },
+      approvalOwnerOverrideAt: Date,
+      approvalOwnerOverrideReason: { type: String, trim: true },
       manager2ReviewedAt: Date,
       manager2ReviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
       finalizedAt: Date,
