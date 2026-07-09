@@ -714,6 +714,11 @@ export interface CreateObjectiveAssignmentPeriodInput {
   terms: AssessmentTermCodeType[];
   fillStartDate: Date | string;
   fillEndDate: Date | string;
+  termFillWindows?: Array<{
+    term: AssessmentTermCodeType | string;
+    fillStartDate: Date | string;
+    fillEndDate: Date | string;
+  }>;
   status?: ObjectiveAssignmentPeriodStatusType;
   note?: string;
 }
@@ -732,6 +737,11 @@ export interface ObjectiveAssignmentPeriodRecord {
   terms: string[];
   fillStartDate?: string;
   fillEndDate?: string;
+  termFillWindows?: Array<{
+    term: string;
+    fillStartDate?: string;
+    fillEndDate?: string;
+  }>;
   status: string;
   note?: string;
   createdBy?: string;
@@ -1884,6 +1894,12 @@ export class ObjectiveService extends BaseService {
     await this.assertObjectiveAssignerPermissionForVersion(version);
     const dates = this.normalizeObjectiveAssignmentPeriodDates(input);
     const terms = this.normalizePeriodTerms(input.termType, input.terms);
+    const termFillWindows = this.normalizeTermFillWindows(
+      terms,
+      input.termFillWindows,
+      dates.periodStartDate,
+      dates.periodEndDate,
+    );
     const period = await ObjectiveAssignmentPeriod.create({
       name: this.requireTrimmed(input.name, 'name'),
       objectiveMasterId: version.objectiveMasterId,
@@ -1892,6 +1908,7 @@ export class ObjectiveService extends BaseService {
       ...dates,
       termType: input.termType,
       terms,
+      termFillWindows,
       status: input.status ?? ObjectiveAssignmentPeriodStatus.DRAFT,
       note: input.note?.trim() || undefined,
       createdBy: actorId,
@@ -1968,10 +1985,6 @@ export class ObjectiveService extends BaseService {
     if (!period) {
       throw new Error('Objective Assignment Period not found');
     }
-    if (period.status === ObjectiveAssignmentPeriodStatus.CLOSED) {
-      throw new Error('Closed Objective Assignment Period cannot be updated');
-    }
-
     const previousValue = this.mapObjectiveAssignmentPeriodRecord(period);
     if (input.objectiveVersionId !== undefined) {
       const version = await this.loadActiveObjectiveVersionForPeriod(input.objectiveVersionId);
@@ -1993,28 +2006,45 @@ export class ObjectiveService extends BaseService {
       fillStartDate: input.fillStartDate ?? period.fillStartDate,
       fillEndDate: input.fillEndDate ?? period.fillEndDate,
     };
+    let normalizedDates = this.normalizeObjectiveAssignmentPeriodDates(merged);
     if (
       input.periodStartDate !== undefined ||
       input.periodEndDate !== undefined ||
       input.fillStartDate !== undefined ||
       input.fillEndDate !== undefined
     ) {
-      const dates = this.normalizeObjectiveAssignmentPeriodDates(merged);
-      period.periodStartDate = dates.periodStartDate;
-      period.periodEndDate = dates.periodEndDate;
-      period.fillStartDate = dates.fillStartDate;
-      period.fillEndDate = dates.fillEndDate;
+      period.periodStartDate = normalizedDates.periodStartDate;
+      period.periodEndDate = normalizedDates.periodEndDate;
+      period.fillStartDate = normalizedDates.fillStartDate;
+      period.fillEndDate = normalizedDates.fillEndDate;
     }
+    let normalizedTerms = period.terms;
     if (input.termType !== undefined || input.terms !== undefined) {
       const termType = input.termType ?? period.termType;
       period.termType = termType;
-      period.terms = this.normalizePeriodTerms(termType, input.terms ?? period.terms);
+      normalizedTerms = this.normalizePeriodTerms(termType, input.terms ?? period.terms);
+      period.terms = normalizedTerms;
+    }
+    if (
+      input.termFillWindows !== undefined ||
+      input.terms !== undefined ||
+      input.periodStartDate !== undefined ||
+      input.periodEndDate !== undefined
+    ) {
+      period.termFillWindows = this.normalizeTermFillWindows(
+        normalizedTerms,
+        input.termFillWindows ?? period.termFillWindows ?? [],
+        normalizedDates.periodStartDate,
+        normalizedDates.periodEndDate,
+      );
     }
     if (input.status !== undefined) {
       if (!Object.values(ObjectiveAssignmentPeriodStatus).includes(input.status)) {
         throw new Error('Invalid Objective Assignment Period status');
       }
       period.status = input.status;
+    } else if (period.status === ObjectiveAssignmentPeriodStatus.CLOSED) {
+      period.status = ObjectiveAssignmentPeriodStatus.DRAFT;
     }
     if (input.note !== undefined) {
       period.note = input.note?.trim() || undefined;
@@ -8438,6 +8468,78 @@ export class ObjectiveService extends BaseService {
     return { periodStartDate, periodEndDate, fillStartDate, fillEndDate };
   }
 
+  private normalizeTermFillWindows(
+    terms: AssessmentTermCodeType[] | string[],
+    windows: Array<{
+      term?: AssessmentTermCodeType | string;
+      fillStartDate?: Date | string;
+      fillEndDate?: Date | string;
+    }> | undefined,
+    periodStartDate: Date,
+    periodEndDate: Date,
+  ): Array<{
+    term: AssessmentTermCodeType;
+    fillStartDate: Date;
+    fillEndDate: Date;
+  }> {
+    const selectedTerms = Array.from(new Set((terms ?? []).map((term) => String(term).trim()).filter(Boolean)));
+    const windowsByTerm = new Map(
+      (windows ?? [])
+        .filter((window) => window?.term)
+        .map((window) => [String(window.term).trim(), window]),
+    );
+
+    const normalizedWindows = selectedTerms.map((term) => {
+      const window = windowsByTerm.get(term);
+      if (!window?.fillStartDate || !window?.fillEndDate) {
+        throw new Error(`${getAssessmentTermLabel(term)} fill start and fill end are required`);
+      }
+
+      const fillStartDate = this.normalizeDate(window.fillStartDate, `${getAssessmentTermLabel(term)} fillStartDate`);
+      const fillEndDate = this.normalizeDate(window.fillEndDate, `${getAssessmentTermLabel(term)} fillEndDate`);
+
+      if (fillEndDate < fillStartDate) {
+        throw new Error(`${getAssessmentTermLabel(term)} fill end date cannot be before fill start date`);
+      }
+      if (fillStartDate < periodStartDate) {
+        throw new Error(`${getAssessmentTermLabel(term)} fill start date cannot be before period start date`);
+      }
+      if (fillEndDate > periodEndDate) {
+        throw new Error(`${getAssessmentTermLabel(term)} fill end date cannot be after period end date`);
+      }
+
+      return {
+        term: term as AssessmentTermCodeType,
+        fillStartDate,
+        fillEndDate,
+      };
+    });
+
+    const windowsByStart = [...normalizedWindows].sort(
+      (left, right) => left.fillStartDate.getTime() - right.fillStartDate.getTime(),
+    );
+    for (let index = 1; index < windowsByStart.length; index += 1) {
+      if (windowsByStart[index].fillStartDate <= windowsByStart[index - 1].fillEndDate) {
+        throw new Error(
+          `${getAssessmentTermLabel(windowsByStart[index].term)} fill period cannot overlap ${getAssessmentTermLabel(
+            windowsByStart[index - 1].term,
+          )}`,
+        );
+      }
+      const expectedStartDate = new Date(windowsByStart[index - 1].fillEndDate);
+      expectedStartDate.setUTCDate(expectedStartDate.getUTCDate() + 1);
+      if (windowsByStart[index].fillStartDate.getTime() !== expectedStartDate.getTime()) {
+        throw new Error(
+          `${getAssessmentTermLabel(windowsByStart[index].term)} fill start date must be the day after ${getAssessmentTermLabel(
+            windowsByStart[index - 1].term,
+          )} fill end date`,
+        );
+      }
+    }
+
+    return normalizedWindows;
+  }
+
   private normalizePeriodTerms(
     termType: AssessmentTermTypeType | string | undefined,
     terms: AssessmentTermCodeType[] | string[] | undefined,
@@ -8536,6 +8638,11 @@ export class ObjectiveService extends BaseService {
       terms: period.terms ?? [],
       fillStartDate: period.fillStartDate?.toISOString?.(),
       fillEndDate: period.fillEndDate?.toISOString?.(),
+      termFillWindows: (period.termFillWindows ?? []).map((window: any) => ({
+        term: window.term,
+        fillStartDate: window.fillStartDate?.toISOString?.(),
+        fillEndDate: window.fillEndDate?.toISOString?.(),
+      })),
       status: period.status,
       note: period.note,
       createdBy: period.createdBy?.toString?.(),

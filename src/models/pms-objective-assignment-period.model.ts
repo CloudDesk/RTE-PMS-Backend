@@ -21,6 +21,11 @@ export interface IObjectiveAssignmentPeriod extends Document {
   terms: AssessmentTermCodeType[];
   fillStartDate: Date;
   fillEndDate: Date;
+  termFillWindows?: Array<{
+    term: AssessmentTermCodeType;
+    fillStartDate: Date;
+    fillEndDate: Date;
+  }>;
   status: ObjectiveAssignmentPeriodStatusType;
   note?: string;
   createdBy: Types.ObjectId;
@@ -89,6 +94,26 @@ const objectiveAssignmentPeriodSchema = new Schema<IObjectiveAssignmentPeriod>(
       type: Date,
       required: true,
       index: true,
+    },
+    termFillWindows: {
+      type: [
+        {
+          term: {
+            type: String,
+            required: true,
+            enum: Object.values(AssessmentTermCode),
+          },
+          fillStartDate: {
+            type: Date,
+            required: true,
+          },
+          fillEndDate: {
+            type: Date,
+            required: true,
+          },
+        },
+      ],
+      default: [],
     },
     status: {
       type: String,
