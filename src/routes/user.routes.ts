@@ -240,9 +240,9 @@ const userResponseSchema = {
     isIntern: { type: 'boolean' },
     // Employee detail fields (63-70)
     confirmationDate: { type: 'string', format: 'date-time' },
-    probationStartDate: { type: 'string', format: 'date-time' },
-    probationEndDate: { type: 'string', format: 'date-time' },
-    probationDate: { type: 'string', format: 'date-time' },
+    probationStartDate: { type: ['string', 'null'], format: 'date-time' },
+    probationEndDate: { type: ['string', 'null'], format: 'date-time' },
+    probationDate: { type: ['string', 'null'], format: 'date-time' },
     separationDate: { type: 'string', format: 'date-time' },
     fatherName: { type: 'string' },
     maritalStatus: { type: 'string' },
@@ -890,17 +890,17 @@ export const userRoutes: RouteHandler = async (
               description: 'Employee confirmation date'
             },
             probationStartDate: {
-              type: 'string',
+              type: ['string', 'null'],
               format: 'date-time',
               description: 'Probation start date'
             },
             probationEndDate: {
-              type: 'string',
+              type: ['string', 'null'],
               format: 'date-time',
               description: 'Probation end date'
             },
             probationDate: {
-              type: 'string',
+              type: ['string', 'null'],
               maxLength: 100,
               description: 'Legacy probation end date alias (e.g. 2025-01-01 or date-time string)'
             },
@@ -1141,17 +1141,17 @@ export const userRoutes: RouteHandler = async (
               description: 'Employee confirmation date'
             },
             probationStartDate: {
-              type: 'string',
+              type: ['string', 'null'],
               format: 'date-time',
               description: 'Probation start date'
             },
             probationEndDate: {
-              type: 'string',
+              type: ['string', 'null'],
               format: 'date-time',
               description: 'Probation end date'
             },
             probationDate: {
-              type: 'string',
+              type: ['string', 'null'],
               maxLength: 100,
               description: 'Legacy probation end date alias'
             },
