@@ -16,6 +16,7 @@ import {
   EmployeeAchievementSubmissionStatus,
 } from '../models/pms-employee-achievement-submission.model';
 import { PmsTemplateVersion, type ITemplateSection } from '../models/pms-template-version.model';
+import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 
 const SUPPORTED_SLA_RULES = {
   objective_submission_pending: {
@@ -401,7 +402,7 @@ export class SlaService {
         _id: { $in: annualAssignmentIds.map((id) => new Types.ObjectId(id)) },
         isDeleted: false,
       })
-        .select('templateVersionId orgSnapshot cycleId employeeSnapshot managerSnapshot')
+        .select('templateVersionId orgSnapshot cycleId employeeSnapshot managerSnapshot assignmentWindowSnapshot')
         .lean(),
       EmployeeAchievementSubmission.find({
         termAssignmentId: { $in: termAssignmentIds },
@@ -462,7 +463,12 @@ export class SlaService {
       }
 
       const termCycle = termCycleById.get(assignment.cycleTermId.toString());
-      const window = termCycle?.achievementSubmissionWindow;
+      const annualAssignment = annualAssignmentById.get(assignment.annualAssignmentId.toString());
+      const window = resolveEffectiveTermWindows(
+        assignment,
+        termCycle,
+        annualAssignment,
+      ).achievementSubmissionWindow;
       if (!window || window.enabled !== true) {
         continue;
       }
@@ -472,7 +478,6 @@ export class SlaService {
         continue;
       }
 
-      const annualAssignment = annualAssignmentById.get(assignment.annualAssignmentId.toString());
       const templateVersion = annualAssignment?.templateVersionId
         ? templateVersionById.get(annualAssignment.templateVersionId.toString())
         : undefined;

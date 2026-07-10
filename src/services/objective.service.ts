@@ -45,6 +45,10 @@ import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
+import {
+  mapEffectiveTermWindowsForResponse,
+  resolveEffectiveTermWindows,
+} from '../utilis/pmsAssignmentWindows';
 import type { IObjective } from '../models/pms-objective.model';
 import type { IManagerObjectiveLibraryItem } from '../models/pms-manager-objective-library.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
@@ -2233,7 +2237,7 @@ export class ObjectiveService extends BaseService {
         assessmentEndDate: termCycle?.endDate
           ? new Date(termCycle.endDate).toISOString()
           : undefined,
-        termWindows: this.mapTermWindows(termCycle),
+        termWindows: this.mapTermWindows(termCycle, termAssignment, annualAssignment),
         employeeId: termAssignment.employeeId.toString(),
         employeeName: this.getEmployeeName(annualAssignment, termAssignment.employeeId.toString()),
         employeeCode,
@@ -4278,8 +4282,17 @@ export class ObjectiveService extends BaseService {
     return grouped;
   }
 
-  private mapTermWindows(termCycle?: Record<string, any>) {
+  private mapTermWindows(
+    termCycle?: Record<string, any>,
+    termAssignment?: ITermAssignment | Record<string, any>,
+    annualAssignment?: IAnnualAssignment | Record<string, any> | null,
+  ) {
     if (!termCycle) return undefined;
+    if (termAssignment) {
+      return mapEffectiveTermWindowsForResponse(
+        resolveEffectiveTermWindows(termAssignment, termCycle, annualAssignment),
+      );
+    }
 
     const mapWindow = (window?: { startDate?: Date; endDate?: Date }) => {
       if (!window?.startDate || !window?.endDate) return undefined;
@@ -7780,16 +7793,26 @@ export class ObjectiveService extends BaseService {
       return;
     }
 
-    const termCycle = await TermCycle.findById(termAssignment.cycleTermId)
-      .select('objectiveSettingWindow objectiveApprovalWindow')
-      .lean();
+    const [termCycle, annualAssignment] = await Promise.all([
+      TermCycle.findById(termAssignment.cycleTermId)
+        .select('objectiveSettingWindow objectiveApprovalWindow')
+        .lean(),
+      AnnualAssignment.findById(termAssignment.annualAssignmentId)
+        .select('assignmentWindowSnapshot')
+        .lean(),
+    ]);
     if (!termCycle) {
       return;
     }
 
+    const effectiveWindows = resolveEffectiveTermWindows(
+      termAssignment,
+      termCycle,
+      annualAssignment,
+    );
     const window = windowType === 'setting'
-      ? termCycle.objectiveSettingWindow
-      : termCycle.objectiveApprovalWindow;
+      ? effectiveWindows.objectiveSettingWindow
+      : effectiveWindows.objectiveApprovalWindow;
 
     if (!window?.startDate || !window?.endDate) {
       return;
@@ -7804,8 +7827,8 @@ export class ObjectiveService extends BaseService {
     if (now < start || now > end) {
       throw new Error(
         windowType === 'setting'
-          ? 'Objective setting window is closed for this quarter'
-          : 'Objective approval window is closed for this quarter',
+          ? 'Objective setting window is closed for this assessment term. Use a custom assignment window if this employee needs special dates.'
+          : 'Objective approval window is closed for this assessment term. Use a custom assignment window if this employee needs special dates.',
       );
     }
   }

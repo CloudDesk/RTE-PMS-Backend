@@ -21,6 +21,7 @@ import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import type { ITermCycle } from '../models/pms-term-cycle.model';
 import { workflowService } from './workflow.service';
+import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
   TermWorkflowState as TermWorkflowStateType,
@@ -43,6 +44,7 @@ interface DateWindowLike {
 
 interface WorkflowSyncCandidate {
   targetState?: TermWorkflowStateType;
+  transitionPath?: TermWorkflowStateType[];
   windowName?: string;
   windowStart?: Date;
   windowEnd?: Date;
@@ -67,6 +69,7 @@ export interface WorkflowSyncInput {
   dryRun?: boolean;
   reason?: string;
   ignoreWindowDates?: boolean;
+  source?: 'ADMIN_MANUAL_SYNC' | 'AUTOMATIC_DAILY_SYNC';
 }
 
 export interface WorkflowSyncResultItem {
@@ -144,9 +147,23 @@ export class WorkflowSyncService extends BaseService {
       TermAssignment.find(filter).sort({ employeeId: 1, assessmentTermCode: 1 }),
       TermCycle.find({ cycleId: cycleObjectId, isDeleted: false }),
     ]);
+    const annualAssignmentIds = Array.from(
+      new Set(termAssignments.map((termAssignment) => termAssignment.annualAssignmentId.toString())),
+    );
+    const annualAssignments = annualAssignmentIds.length > 0
+      ? await AnnualAssignment.find({
+          _id: { $in: annualAssignmentIds.map((id) => new Types.ObjectId(id)) },
+          isDeleted: false,
+        })
+          .select('assignmentWindowSnapshot')
+          .lean()
+      : [];
 
     const termCycleMap = new Map(
       termCycles.map((termCycle) => [termCycle.assessmentTermCode, termCycle]),
+    );
+    const annualAssignmentMap = new Map(
+      annualAssignments.map((assignment) => [assignment._id.toString(), assignment]),
     );
     const termAssignmentsByAnnualAssignment = new Map<string, ITermAssignment[]>();
 
@@ -185,8 +202,10 @@ export class WorkflowSyncService extends BaseService {
       const item = await this.processTermAssignment(
         termAssignment,
         termCycle,
+        annualAssignmentMap.get(termAssignment.annualAssignmentId.toString()),
         assignmentTerms,
         termCycleMap,
+        annualAssignmentMap,
         input,
       );
       result.results.push(item);
@@ -214,21 +233,24 @@ export class WorkflowSyncService extends BaseService {
   private async processTermAssignment(
     termAssignment: ITermAssignment,
     termCycle: ITermCycle | undefined,
+    annualAssignment: Record<string, any> | undefined,
     assignmentTerms: ITermAssignment[],
     termCycleMap: Map<AssessmentTermCodeType, ITermCycle>,
+    annualAssignmentMap: Map<string, Record<string, any>>,
     input: WorkflowSyncInput,
   ): Promise<WorkflowSyncResultItem> {
     if (termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
       return this.processObjectiveSettingOpenAssignment(
         termAssignment,
         termCycle,
+        annualAssignment,
         input,
       );
     }
 
     const candidate = await this.resolveCandidate(termAssignment, termCycle, {
       ignoreWindowDates: input.ignoreWindowDates === true,
-    }, assignmentTerms, termCycleMap);
+    }, assignmentTerms, termCycleMap, annualAssignment, annualAssignmentMap);
     const baseItem = this.buildBaseResultItem(termAssignment, candidate);
 
     if (!candidate.targetState) {
@@ -249,7 +271,10 @@ export class WorkflowSyncService extends BaseService {
       };
     }
 
-    if (candidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+    if (
+      candidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
+      candidate.windowOverrideApplied !== true
+    ) {
       const readiness = await this.validateObjectiveScoringReadyForAchievementOpen(termAssignment);
       if (!readiness.ready) {
         return {
@@ -261,23 +286,32 @@ export class WorkflowSyncService extends BaseService {
       }
     }
 
-    const transitionValidation = workflowService.validateTransition({
-      entityType: WorkflowEntityType.TERM_ASSIGNMENT,
-      entityId: termAssignment._id.toString(),
-      currentState: termAssignment.termState,
-      nextState: candidate.targetState,
-      actorId: this.requireActor().actorId,
-      actorRole: this.requireActor().actorRole,
-      reason: input.reason?.trim() || candidate.reason,
-    });
+    const actor = this.requireActor();
+    const syncSource = input.source ?? 'ADMIN_MANUAL_SYNC';
+    const transitionPath = candidate.transitionPath?.length
+      ? candidate.transitionPath
+      : [candidate.targetState];
+    let currentState: TermWorkflowStateType = termAssignment.termState;
+    for (const nextState of transitionPath) {
+      const transitionValidation = workflowService.validateTransition({
+        entityType: WorkflowEntityType.TERM_ASSIGNMENT,
+        entityId: termAssignment._id.toString(),
+        currentState,
+        nextState,
+        actorId: actor.actorId,
+        actorRole: actor.actorRole,
+        reason: input.reason?.trim() || candidate.reason,
+      });
 
-    if (!transitionValidation.allowed) {
-      return {
-        ...baseItem,
-        status: 'SKIPPED',
-        skipReason: 'TRANSITION_NOT_ALLOWED',
-        message: transitionValidation.message,
-      };
+      if (!transitionValidation.allowed) {
+        return {
+          ...baseItem,
+          status: 'SKIPPED',
+          skipReason: 'TRANSITION_NOT_ALLOWED',
+          message: transitionValidation.message,
+        };
+      }
+      currentState = nextState;
     }
 
     if (input.dryRun === true) {
@@ -289,20 +323,22 @@ export class WorkflowSyncService extends BaseService {
     }
 
     try {
-      await transitionTermAssignmentState(
-        termAssignment._id.toString(),
-        candidate.targetState,
-        this.requireActor(),
-        input.reason?.trim() || candidate.reason,
-        'ADMIN_WORKFLOW_SYNC',
-        {
-          source: 'ADMIN_MANUAL_SYNC',
-          windowName: candidate.windowName,
-          windowStart: candidate.windowStart,
-          windowEnd: candidate.windowEnd,
-          windowOverrideApplied: candidate.windowOverrideApplied === true,
-        },
-      );
+      for (const nextState of transitionPath) {
+        await transitionTermAssignmentState(
+          termAssignment._id.toString(),
+          nextState,
+          actor,
+          input.reason?.trim() || candidate.reason,
+          'ADMIN_WORKFLOW_SYNC',
+          {
+            source: syncSource,
+            windowName: candidate.windowName,
+            windowStart: candidate.windowStart,
+            windowEnd: candidate.windowEnd,
+            windowOverrideApplied: candidate.windowOverrideApplied === true,
+          },
+        );
+      }
 
       return {
         ...baseItem,
@@ -322,6 +358,7 @@ export class WorkflowSyncService extends BaseService {
   private async processObjectiveSettingOpenAssignment(
     termAssignment: ITermAssignment,
     termCycle: ITermCycle | undefined,
+    annualAssignment: Record<string, any> | undefined,
     input: WorkflowSyncInput,
   ): Promise<WorkflowSyncResultItem> {
     const closeCheck = await this.canAutoCloseObjectiveSetting(termAssignment);
@@ -340,6 +377,8 @@ export class WorkflowSyncService extends BaseService {
 
     const approvedCandidate = await this.resolveApprovedStateCandidate(
       termCycle,
+      termAssignment,
+      annualAssignment,
       { ignoreWindowDates: input.ignoreWindowDates === true },
     );
     const finalCandidate: WorkflowSyncCandidate = approvedCandidate.targetState
@@ -354,6 +393,7 @@ export class WorkflowSyncService extends BaseService {
         };
     const baseItem = this.buildBaseResultItem(termAssignment, finalCandidate);
     const actor = this.requireActor();
+    const syncSource = input.source ?? 'ADMIN_MANUAL_SYNC';
     const closeReason =
       input.reason?.trim() ||
       'All objectives are approved; objective setting auto-closed during workflow sync.';
@@ -430,7 +470,7 @@ export class WorkflowSyncService extends BaseService {
         closeReason,
         'ADMIN_WORKFLOW_SYNC_AUTO_CLOSE',
         {
-          source: 'ADMIN_MANUAL_SYNC',
+          source: syncSource,
           autoClosedObjectiveSetting: true,
         },
       );
@@ -457,7 +497,7 @@ export class WorkflowSyncService extends BaseService {
           input.reason?.trim() || finalCandidate.reason,
           'ADMIN_WORKFLOW_SYNC',
           {
-            source: 'ADMIN_MANUAL_SYNC',
+            source: syncSource,
             windowName: finalCandidate.windowName,
             windowStart: finalCandidate.windowStart,
             windowEnd: finalCandidate.windowEnd,
@@ -488,6 +528,8 @@ export class WorkflowSyncService extends BaseService {
     options: { ignoreWindowDates?: boolean } = {},
     assignmentTerms: ITermAssignment[] = [],
     termCycleMap: Map<AssessmentTermCodeType, ITermCycle> = new Map(),
+    annualAssignment?: Record<string, any>,
+    annualAssignmentMap: Map<string, Record<string, any>> = new Map(),
   ): Promise<WorkflowSyncCandidate> {
     const state = termAssignment.termState;
     const now = this.getCurrentDate();
@@ -508,10 +550,29 @@ export class WorkflowSyncService extends BaseService {
     }
 
     if (state === TermWorkflowState.NOT_STARTED) {
+      const customFlowMode = annualAssignment?.assignmentWindowSnapshot?.terms?.[
+        termAssignment.assessmentTermCode
+      ]?.customFlowMode;
+      if (customFlowMode && customFlowMode !== 'REOPEN_OBJECTIVE_SETUP') {
+        const effectiveWindows = resolveEffectiveTermWindows(
+          termAssignment,
+          termCycle,
+          annualAssignment,
+        );
+        const customCandidate = this.resolveCustomNotStartedCandidate(
+          customFlowMode,
+          effectiveWindows,
+          ignoreWindowDates,
+          now,
+        );
+        if (customCandidate) return customCandidate;
+      }
+
       const objectiveSettingEligibility = this.resolveObjectiveSettingOpenEligibility(
         termAssignment,
         assignmentTerms,
         termCycleMap,
+        annualAssignmentMap,
         ignoreWindowDates,
         now,
       );
@@ -523,20 +584,32 @@ export class WorkflowSyncService extends BaseService {
         };
       }
 
-      const window = termCycle.objectiveSettingWindow;
+      const effectiveWindows = resolveEffectiveTermWindows(
+        termAssignment,
+        termCycle,
+        annualAssignment,
+      );
+      const window = effectiveWindows.objectiveSettingWindow;
       return this.transitionCandidate(
         TermWorkflowState.OBJECTIVE_SETTING_OPEN,
         'Objective Setting Window',
         window,
-        ignoreWindowDates
+        effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
+          ? 'Custom assignment objective setting window is active for this employee.'
+          : ignoreWindowDates
           ? 'Objective setting window date bypassed for testing.'
           : 'Objective setting window is active.',
-        ignoreWindowDates,
+        ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
       );
     }
 
     if (state === TermWorkflowState.OBJECTIVE_APPROVED) {
-      return this.resolveApprovedStateCandidate(termCycle, { ignoreWindowDates });
+      return this.resolveApprovedStateCandidate(
+        termCycle,
+        termAssignment,
+        annualAssignment,
+        { ignoreWindowDates },
+      );
     }
 
     if (state === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
@@ -557,7 +630,12 @@ export class WorkflowSyncService extends BaseService {
         };
       }
 
-      const managerReviewWindow = termCycle.managerReviewWindow;
+      const effectiveWindows = resolveEffectiveTermWindows(
+        termAssignment,
+        termCycle,
+        annualAssignment,
+      );
+      const managerReviewWindow = effectiveWindows.managerReviewWindow;
       if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
@@ -571,13 +649,20 @@ export class WorkflowSyncService extends BaseService {
         managerReviewWindow,
         ignoreWindowDates
           ? 'Employee achievement is submitted/locked and manager review window date bypassed for testing.'
+          : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
+          ? 'Employee achievement is submitted/locked and custom manager review window is eligible.'
           : 'Employee achievement is submitted/locked and manager review window is eligible.',
-        ignoreWindowDates,
+        ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
       );
     }
 
     if (state === TermWorkflowState.MANAGER_REVIEW_SUBMITTED) {
-      const finalizationWindow = termCycle.termFinalizationWindow;
+      const effectiveWindows = resolveEffectiveTermWindows(
+        termAssignment,
+        termCycle,
+        annualAssignment,
+      );
+      const finalizationWindow = effectiveWindows.termFinalizationWindow;
       if (!ignoreWindowDates && !this.hasWindowStarted(now, finalizationWindow)) {
         return {
           skipReason: 'NOT_ELIGIBLE',
@@ -591,8 +676,10 @@ export class WorkflowSyncService extends BaseService {
         finalizationWindow,
         ignoreWindowDates
           ? 'Finalization window date bypassed for testing.'
+          : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
+          ? 'Custom finalization window is eligible for this employee.'
           : 'Finalization window is eligible.',
-        ignoreWindowDates,
+        ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
       );
     }
 
@@ -630,10 +717,82 @@ export class WorkflowSyncService extends BaseService {
     };
   }
 
+  private resolveCustomNotStartedCandidate(
+    customFlowMode: string,
+    effectiveWindows: ReturnType<typeof resolveEffectiveTermWindows>,
+    ignoreWindowDates: boolean,
+    now: Date,
+  ): WorkflowSyncCandidate | undefined {
+    const active = (window?: DateWindowLike) =>
+      ignoreWindowDates || this.isWindowActive(now, window);
+
+    if (customFlowMode === 'CONTINUE_FROM_ACHIEVEMENT') {
+      if (active(effectiveWindows.achievementSubmissionWindow)) {
+        return {
+          ...this.transitionCandidate(
+            TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+            'Achievement Submission Window',
+            effectiveWindows.achievementSubmissionWindow,
+            'Custom assignment achievement submission window is active for this employee.',
+            true,
+          ),
+          transitionPath: [
+            TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+            TermWorkflowState.OBJECTIVE_APPROVED,
+            TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+          ],
+        };
+      }
+
+      if (active(effectiveWindows.managerReviewWindow)) {
+        return {
+          ...this.transitionCandidate(
+            TermWorkflowState.MANAGER_REVIEW_OPEN,
+            'Manager Review Window',
+            effectiveWindows.managerReviewWindow,
+            'Custom assignment manager review window is active for this employee.',
+            true,
+          ),
+          transitionPath: [
+            TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+            TermWorkflowState.OBJECTIVE_APPROVED,
+            TermWorkflowState.MANAGER_REVIEW_OPEN,
+          ],
+        };
+      }
+
+      if (active(effectiveWindows.termFinalizationWindow)) {
+        return {
+          ...this.transitionCandidate(
+            TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+            'Finalization Window',
+            effectiveWindows.termFinalizationWindow,
+            'Custom assignment finalization window is active for this employee.',
+            true,
+          ),
+          transitionPath: [
+            TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+            TermWorkflowState.OBJECTIVE_APPROVED,
+            TermWorkflowState.MANAGER_REVIEW_OPEN,
+            TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+          ],
+        };
+      }
+
+      return {
+        skipReason: 'NOT_ELIGIBLE',
+        reason: 'Custom achievement, manager review, or finalization window is not active for this employee.',
+      };
+    }
+
+    return undefined;
+  }
+
   private resolveObjectiveSettingOpenEligibility(
     termAssignment: ITermAssignment,
     assignmentTerms: ITermAssignment[],
     termCycleMap: Map<AssessmentTermCodeType, ITermCycle>,
+    annualAssignmentMap: Map<string, Record<string, any>>,
     ignoreWindowDates: boolean,
     now: Date,
   ): { eligible: boolean; reason: string } {
@@ -652,13 +811,21 @@ export class WorkflowSyncService extends BaseService {
 
       if (state === TermWorkflowState.NOT_STARTED) {
         const currentTermCycle = termCycleMap.get(currentTerm.assessmentTermCode);
-        const windowActive = ignoreWindowDates || this.isWindowActive(now, currentTermCycle?.objectiveSettingWindow);
+        const currentAnnualAssignment = annualAssignmentMap.get(
+          currentTerm.annualAssignmentId.toString(),
+        );
+        const currentEffectiveWindows = resolveEffectiveTermWindows(
+          currentTerm,
+          currentTermCycle,
+          currentAnnualAssignment,
+        );
+        const windowActive = ignoreWindowDates || this.isWindowActive(now, currentEffectiveWindows.objectiveSettingWindow);
 
         if (!windowActive) {
           return {
             eligible: false,
             reason: isTarget
-              ? 'Objective setting window is not active.'
+              ? 'Objective setting window is not active for this employee.'
               : `${label} is the next scheduled assessment term, but its objective setting window is not active yet.`,
           };
         }
@@ -955,6 +1122,8 @@ export class WorkflowSyncService extends BaseService {
 
   private resolveApprovedStateCandidate(
     termCycle: ITermCycle | undefined,
+    termAssignment: ITermAssignment,
+    annualAssignment?: Record<string, any>,
     options: { ignoreWindowDates?: boolean } = {},
   ): WorkflowSyncCandidate {
     const now = this.getCurrentDate();
@@ -967,7 +1136,12 @@ export class WorkflowSyncService extends BaseService {
       };
     }
 
-    const achievementWindow = termCycle.achievementSubmissionWindow;
+    const effectiveWindows = resolveEffectiveTermWindows(
+      termAssignment,
+      termCycle,
+      annualAssignment,
+    );
+    const achievementWindow = effectiveWindows.achievementSubmissionWindow;
     if (achievementWindow?.enabled === true) {
       if (!ignoreWindowDates && !this.hasWindowStarted(now, achievementWindow)) {
         return {
@@ -981,12 +1155,14 @@ export class WorkflowSyncService extends BaseService {
         achievementWindow,
         ignoreWindowDates
           ? 'Employee achievement submission window date bypassed for testing.'
+          : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
+          ? 'Custom employee achievement submission window is eligible for this employee.'
           : 'Employee achievement submission window is eligible.',
-        ignoreWindowDates,
+        ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
       );
     }
 
-    const managerReviewWindow = termCycle.managerReviewWindow;
+    const managerReviewWindow = effectiveWindows.managerReviewWindow;
     if (!ignoreWindowDates && !this.hasWindowStarted(now, managerReviewWindow)) {
       return {
         skipReason: 'NOT_ELIGIBLE',
@@ -999,8 +1175,10 @@ export class WorkflowSyncService extends BaseService {
       managerReviewWindow,
       ignoreWindowDates
         ? 'Employee achievement is disabled; manager review window date bypassed for testing.'
+        : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
+        ? 'Employee achievement is disabled; custom manager review window is eligible for this employee.'
         : 'Employee achievement is disabled; manager review window is eligible.',
-      ignoreWindowDates,
+      ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
     );
   }
 

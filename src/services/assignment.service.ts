@@ -41,6 +41,13 @@ import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import { AssessmentTermCode } from '../constants/pms.enums';
+import type {
+  PmsAchievementWindowSnapshot,
+  PmsAssignmentTermWindowSnapshot,
+  PmsAssignmentWindowSnapshot,
+  PmsDateWindowSnapshot,
+} from '../utilis/pmsAssignmentWindows';
+import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
@@ -61,6 +68,9 @@ export interface AssignEmployeeInput {
   templateVersionId?: string;
   applicableTerms?: QuarterCode[];
   assignmentReason?: string;
+  specialWindowOverride?: boolean;
+  specialWindowReason?: string;
+  assignmentWindowSnapshot?: PmsAssignmentWindowSnapshot;
 }
 
 export interface AssignEmployeeResult {
@@ -340,6 +350,7 @@ export class AssignmentService extends BaseService {
     const assessmentTermType = annualCycle.assessmentTermType ?? getDefaultAssessmentTermType();
     const allowedQuarters = getAssessmentTerms(assessmentTermType);
     const applicableTerms = this.normalizeApplicableTerms(input.applicableTerms, allowedQuarters);
+    const assignmentWindowSnapshot = this.buildAssignmentWindowSnapshot(input, applicableTerms);
     const { employeeSnapshot, managerSnapshot, orgSnapshot } = await this.buildAssignmentSnapshots(
       employeeObjectId,
       managerObjectId,
@@ -364,6 +375,7 @@ export class AssignmentService extends BaseService {
       finalDecisionStatus: AnnualDecisionStatus.DRAFT,
       applicableTerms,
       assignmentReason: input.assignmentReason ?? 'FULL_YEAR',
+      assignmentWindowSnapshot,
       employeeSnapshot,
       managerSnapshot,
       orgSnapshot,
@@ -403,7 +415,8 @@ export class AssignmentService extends BaseService {
       termAssignments,
       termCycleById,
     );
-    await this.openSeededTermAssignmentsForObjectiveSetting(
+    await this.syncInitialTermAssignmentStates(
+      annualAssignment,
       termAssignments,
       seededTermAssignmentIds,
       termCycleById,
@@ -419,7 +432,9 @@ export class AssignmentService extends BaseService {
       {
         annualAssignment,
         termAssignmentIds: annualAssignment.termAssignmentIds,
+        assignmentWindowSnapshot,
       },
+      input.specialWindowReason,
     );
 
     return { annualAssignment, termAssignments };
@@ -1379,7 +1394,8 @@ export class AssignmentService extends BaseService {
     return seededTermAssignmentIds;
   }
 
-  private async openSeededTermAssignmentsForObjectiveSetting(
+  private async syncInitialTermAssignmentStates(
+    annualAssignment: IAnnualAssignment,
     termAssignments: ITermAssignment[],
     seededTermAssignmentIds: Set<string>,
     termCycleById: Map<
@@ -1388,134 +1404,125 @@ export class AssignmentService extends BaseService {
         assessmentTermCode?: QuarterCode;
         assessmentTermType?: AssessmentTermTypeType;
         objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
+        objectiveApprovalWindow?: { startDate?: Date; endDate?: Date };
+        achievementSubmissionWindow?: PmsAchievementWindowSnapshot;
+        managerReviewWindow?: { startDate?: Date; endDate?: Date };
+        termFinalizationWindow?: { startDate?: Date; endDate?: Date };
       }
     >,
   ): Promise<void> {
-    if (seededTermAssignmentIds.size === 0) {
-      return;
-    }
-
-    const activeSeededTermAssignment = this.findCurrentSeededObjectiveSettingTerm(
-      termAssignments,
-      seededTermAssignmentIds,
-      termCycleById,
-    );
-
-    if (!activeSeededTermAssignment) {
-      return;
-    }
-
-    const termAssignmentId = activeSeededTermAssignment._id.toString();
-    const targetState = TermWorkflowState.OBJECTIVE_SETTING_OPEN;
-
-    if (activeSeededTermAssignment.termState === targetState) {
-      return;
-    }
-
-    const previousState = activeSeededTermAssignment.termState;
-    const updatedTermAssignment = await transitionTermAssignmentState(
-      termAssignmentId,
-      targetState,
-      this.requireActor(),
-      'Seeded predefined objectives are approved and the current objective-setting window is active',
-    );
-
-    await this.audit(
-      'PMS_TERM_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
-      'TERM_ASSIGNMENT',
-      activeSeededTermAssignment._id.toString(),
-      {
-        termState: previousState,
-      },
-      {
-        termState: updatedTermAssignment.termState,
-      },
-      'Seeded predefined objectives opened only the currently active objective-setting term at assignment launch',
-    );
-  }
-
-  private findCurrentSeededObjectiveSettingTerm(
-    termAssignments: ITermAssignment[],
-    seededTermAssignmentIds: Set<string>,
-    termCycleById: Map<
-      string,
-      {
-        assessmentTermCode?: QuarterCode;
-        assessmentTermType?: AssessmentTermTypeType;
-        objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
-      }
-    >,
-  ): ITermAssignment | null {
-    const seededAssignments = termAssignments
-      .filter((termAssignment) => seededTermAssignmentIds.has(termAssignment._id.toString()))
-      .sort((left, right) => this.compareTermAssignments(left, right, termCycleById));
-
-    for (const termAssignment of seededAssignments) {
-      const cycleTerm = termAssignment.cycleTermId
-        ? termCycleById.get(termAssignment.cycleTermId.toString())
-        : undefined;
-
-      if (!this.isObjectiveSettingWindowActive(cycleTerm?.objectiveSettingWindow)) {
+    for (const termAssignment of termAssignments) {
+      if (termAssignment.termState !== TermWorkflowState.NOT_STARTED) {
         continue;
       }
 
-      return termAssignment;
-    }
+      const termCode = termAssignment.assessmentTermCode;
+      const termCycle = termAssignment.cycleTermId
+        ? termCycleById.get(termAssignment.cycleTermId.toString())
+        : undefined;
+      const effectiveWindows = resolveEffectiveTermWindows(
+        termAssignment,
+        termCycle,
+        annualAssignment,
+      );
+      const customTermWindow = annualAssignment.assignmentWindowSnapshot?.terms?.[termCode];
+      const transitionPlan = this.initialTransitionPlanForWindows(
+        effectiveWindows,
+        customTermWindow?.customFlowMode,
+      );
 
-    return null;
-  }
-
-  private compareTermAssignments(
-    left: ITermAssignment,
-    right: ITermAssignment,
-    termCycleById: Map<
-      string,
-      {
-        assessmentTermCode?: QuarterCode;
-        assessmentTermType?: AssessmentTermTypeType;
-        objectiveSettingWindow?: { startDate?: Date; endDate?: Date };
+      if (transitionPlan.length === 0) {
+        continue;
       }
-    >,
-  ): number {
-    const leftCycle = left.cycleTermId ? termCycleById.get(left.cycleTermId.toString()) : undefined;
-    const rightCycle = right.cycleTermId ? termCycleById.get(right.cycleTermId.toString()) : undefined;
-    const leftRank = this.getAssessmentTermRank(
-      left.assessmentTermCode,
-      left.assessmentTermType ?? leftCycle?.assessmentTermType,
-    );
-    const rightRank = this.getAssessmentTermRank(
-      right.assessmentTermCode,
-      right.assessmentTermType ?? rightCycle?.assessmentTermType,
-    );
 
-    if (leftRank !== rightRank) {
-      return leftRank - rightRank;
+      const hasCustomFlowMode = Boolean(customTermWindow?.customFlowMode);
+      const action =
+        hasCustomFlowMode && customTermWindow?.customFlowMode !== 'REOPEN_OBJECTIVE_SETUP'
+          ? `PMS_CUSTOM_ASSIGNMENT_${customTermWindow?.customFlowMode}`
+          : seededTermAssignmentIds.has(termAssignment._id.toString())
+          ? 'PMS_TERM_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN'
+          : 'PMS_TERM_ASSIGNMENT_INITIAL_OBJECTIVE_SETTING_OPEN';
+      const reason =
+        hasCustomFlowMode && customTermWindow?.customFlowMode !== 'REOPEN_OBJECTIVE_SETUP'
+          ? 'Admin selected a custom employee start stage and that custom window is active for this employee.'
+          : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
+          ? 'Custom objective-setting window is active for this employee at assignment launch.'
+          : 'Current objective-setting window is active at assignment launch.';
+
+      for (const targetState of transitionPlan) {
+        const updatedTermAssignment = await transitionTermAssignmentState(
+          termAssignment._id.toString(),
+          targetState,
+          this.requireActor(),
+          reason,
+          action,
+          {
+            annualAssignmentId: annualAssignment._id.toString(),
+            customFlowMode: customTermWindow?.customFlowMode,
+            assessmentTermCode: termCode,
+            windowSource: effectiveWindows.windowSource,
+          },
+        );
+        termAssignment.termState = updatedTermAssignment.termState;
+        termAssignment.previousTermState = updatedTermAssignment.previousTermState;
+        termAssignment.lastTransitionAt = updatedTermAssignment.lastTransitionAt;
+      }
+    }
+  }
+
+  private initialTransitionPlanForWindows(
+    windows: ReturnType<typeof resolveEffectiveTermWindows>,
+    customFlowMode?: PmsAssignmentTermWindowSnapshot['customFlowMode'],
+  ): TermWorkflowState[] {
+    if (customFlowMode === 'CONTINUE_FROM_ACHIEVEMENT') {
+      if (this.isWindowActive(windows.achievementSubmissionWindow)) {
+        return [
+          TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+          TermWorkflowState.OBJECTIVE_APPROVED,
+          TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        ];
+      }
+
+      if (this.isWindowActive(windows.managerReviewWindow)) {
+        return [
+          TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+          TermWorkflowState.OBJECTIVE_APPROVED,
+          TermWorkflowState.MANAGER_REVIEW_OPEN,
+        ];
+      }
+
+      if (this.isWindowActive(windows.termFinalizationWindow)) {
+        return [
+          TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+          TermWorkflowState.OBJECTIVE_APPROVED,
+          TermWorkflowState.MANAGER_REVIEW_OPEN,
+          TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+        ];
+      }
+
+      return [];
     }
 
-    const leftStart = leftCycle?.objectiveSettingWindow?.startDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
-    const rightStart = rightCycle?.objectiveSettingWindow?.startDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
-    return leftStart - rightStart;
+    if (this.isWindowActive(windows.objectiveSettingWindow)) {
+      return [TermWorkflowState.OBJECTIVE_SETTING_OPEN];
+    }
+
+    return [];
   }
 
-  private getAssessmentTermRank(
-    assessmentTermCode: QuarterCode,
-    assessmentTermType?: AssessmentTermTypeType,
-  ): number {
-    const orderedTerms = getAssessmentTerms(assessmentTermType ?? getDefaultAssessmentTermType());
-    const index = orderedTerms.indexOf(assessmentTermCode);
-    return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
-  }
-
-  private isObjectiveSettingWindowActive(
+  private isWindowActive(
     window?: { startDate?: Date; endDate?: Date },
   ): boolean {
     if (!window?.startDate || !window?.endDate) {
       return false;
     }
 
-    const now = this.getCurrentDate();
+    const now = new Date(this.getCurrentDate());
     const start = new Date(window.startDate);
     const end = new Date(window.endDate);
+    now.setHours(0, 0, 0, 0);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
     return now >= start && now <= end;
   }
 
@@ -1719,12 +1726,16 @@ export class AssignmentService extends BaseService {
     quarters?: QuarterCode[],
     allowedQuarters: QuarterCode[] = Object.values(AssessmentTermCode) as QuarterCode[],
   ): QuarterCode[] {
-    const normalized = quarters?.length ? quarters : allowedQuarters;
+    if (Array.isArray(quarters) && quarters.length === 0) {
+      throw new Error('Select at least one assessment term to assign this employee.');
+    }
+
+    const normalized = quarters ? quarters : allowedQuarters;
     const seen = new Set<QuarterCode>();
 
     for (const quarter of normalized) {
       if (!allowedQuarters.includes(quarter)) {
-        throw new Error(`Invalid applicable assessment term: ${quarter}`);
+        throw new Error('Selected terms do not match this cycle type. Please choose valid terms for this cycle.');
       }
       if (seen.has(quarter)) {
         throw new Error(`Duplicate applicable assessment term: ${quarter}`);
@@ -1733,6 +1744,292 @@ export class AssignmentService extends BaseService {
     }
 
     return allowedQuarters.filter((quarter) => seen.has(quarter));
+  }
+
+  private buildAssignmentWindowSnapshot(
+    input: AssignEmployeeInput,
+    applicableTerms: QuarterCode[],
+  ): PmsAssignmentWindowSnapshot | undefined {
+    const incomingSnapshot = input.assignmentWindowSnapshot;
+    const hasIncomingTerms = Boolean(
+      incomingSnapshot?.terms && Object.keys(incomingSnapshot.terms).length > 0,
+    );
+
+    if (!input.specialWindowOverride && !hasIncomingTerms) {
+      return undefined;
+    }
+
+    if (input.specialWindowOverride !== true) {
+      throw new Error('Custom assignment window permission is required to reopen objective setup dates for this employee.');
+    }
+
+    const reason = String(input.specialWindowReason || incomingSnapshot?.reason || '').trim();
+    if (!reason) {
+      throw new Error('Enter a reason for the custom assignment window.');
+    }
+
+    if (!hasIncomingTerms) {
+      throw new Error('Add at least one custom assessment-term window.');
+    }
+
+    const applicableTermSet = new Set(applicableTerms);
+    const terms: Partial<Record<QuarterCode, PmsAssignmentTermWindowSnapshot>> = {};
+
+    for (const [rawTermCode, rawTermWindow] of Object.entries(incomingSnapshot?.terms ?? {})) {
+      const termCode = rawTermCode as QuarterCode;
+      if (!applicableTermSet.has(termCode)) {
+        throw new Error(`Custom window term ${termCode} must be selected as an applicable term.`);
+      }
+
+      const normalizedTermWindow = this.normalizeAssignmentTermWindow(
+        termCode,
+        rawTermWindow as PmsAssignmentTermWindowSnapshot,
+      );
+
+      if (normalizedTermWindow) {
+        terms[termCode] = normalizedTermWindow;
+      }
+    }
+
+    if (Object.keys(terms).length === 0) {
+      throw new Error('Add at least one valid custom assessment-term window.');
+    }
+
+    return {
+      mode: incomingSnapshot?.mode || 'CUSTOM_ADMIN_OVERRIDE',
+      specialWindowOverride: true,
+      reason,
+      createdBy: this.actorIdObject(),
+      createdAt: this.getCurrentDate(),
+      terms,
+    };
+  }
+
+  private normalizeAssignmentTermWindow(
+    termCode: QuarterCode,
+    termWindow: PmsAssignmentTermWindowSnapshot,
+  ): PmsAssignmentTermWindowSnapshot | undefined {
+    const rawCustomFlowMode = String(termWindow.customFlowMode || 'REOPEN_OBJECTIVE_SETUP').trim();
+    if (
+      rawCustomFlowMode !== 'REOPEN_OBJECTIVE_SETUP' &&
+      rawCustomFlowMode !== 'CONTINUE_FROM_ACHIEVEMENT'
+    ) {
+      throw new Error(`${termCode} custom flow mode is invalid.`);
+    }
+    const customFlowMode = rawCustomFlowMode as NonNullable<
+      PmsAssignmentTermWindowSnapshot['customFlowMode']
+    >;
+
+    const normalized: PmsAssignmentTermWindowSnapshot = {
+      windowSource: 'ASSIGNMENT_CUSTOM',
+      customFlowMode,
+    };
+
+    normalized.objectiveSettingWindow = this.normalizeDateWindow(
+      termWindow.objectiveSettingWindow,
+      `${termCode} objective setting`,
+    );
+    normalized.objectiveApprovalWindow = this.normalizeDateWindow(
+      termWindow.objectiveApprovalWindow,
+      `${termCode} objective approval`,
+    );
+    normalized.achievementSubmissionWindow = this.normalizeAchievementWindow(
+      termWindow.achievementSubmissionWindow,
+      `${termCode} achievement submission`,
+    );
+    normalized.managerReviewWindow = this.normalizeDateWindow(
+      termWindow.managerReviewWindow,
+      `${termCode} manager review`,
+    );
+    normalized.termFinalizationWindow = this.normalizeDateWindow(
+      termWindow.termFinalizationWindow,
+      `${termCode} finalization`,
+    );
+
+    this.assertSkippedCustomWindowsAreEmpty(termCode, normalized);
+
+    const hasAnyWindow = Boolean(
+      normalized.objectiveSettingWindow ||
+      normalized.objectiveApprovalWindow ||
+      normalized.achievementSubmissionWindow ||
+      normalized.managerReviewWindow ||
+      normalized.termFinalizationWindow,
+    );
+
+    if (!hasAnyWindow) {
+      return undefined;
+    }
+
+    this.assertWindowSequence(termCode, normalized);
+    return normalized;
+  }
+
+  private normalizeDateWindow(
+    window: PmsDateWindowSnapshot | undefined,
+    label: string,
+  ): PmsDateWindowSnapshot | undefined {
+    if (!window?.startDate && !window?.endDate) {
+      return undefined;
+    }
+
+    if (!window.startDate || !window.endDate) {
+      throw new Error(`${label} window requires both start and end dates.`);
+    }
+
+    const startDate = this.parseWindowDate(window.startDate, `${label} start date`);
+    const endDate = this.parseWindowDate(window.endDate, `${label} end date`);
+    if (startDate > endDate) {
+      throw new Error(`${label} end date cannot be before start date.`);
+    }
+
+    return { startDate, endDate };
+  }
+
+  private normalizeAchievementWindow(
+    window: PmsAchievementWindowSnapshot | undefined,
+    label: string,
+  ): PmsAchievementWindowSnapshot | undefined {
+    const dateWindow = this.normalizeDateWindow(window, label);
+    const dueDate = window?.dueDate
+      ? this.parseWindowDate(window.dueDate, `${label} due date`)
+      : undefined;
+
+    if (!dateWindow && !dueDate && window?.enabled !== true) {
+      return undefined;
+    }
+
+    if (!dateWindow) {
+      throw new Error(`${label} window requires both start and end dates.`);
+    }
+
+    if (dueDate && dateWindow.startDate && dueDate < dateWindow.startDate) {
+      throw new Error(`${label} due date cannot be before start date.`);
+    }
+
+    return {
+      ...dateWindow,
+      enabled: window?.enabled !== false,
+      dueDate,
+      graceDays: Number.isFinite(window?.graceDays) ? Number(window?.graceDays) : undefined,
+      reminderDaysBefore: Array.isArray(window?.reminderDaysBefore)
+        ? window.reminderDaysBefore.map(Number).filter(Number.isFinite)
+        : undefined,
+      escalationDaysAfterDue: Number.isFinite(window?.escalationDaysAfterDue)
+        ? Number(window?.escalationDaysAfterDue)
+        : undefined,
+    };
+  }
+
+  private parseWindowDate(value: unknown, label: string): Date {
+    const date = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`Invalid ${label}.`);
+    }
+    return date;
+  }
+
+  private assertSkippedCustomWindowsAreEmpty(
+    termCode: QuarterCode,
+    termWindow: PmsAssignmentTermWindowSnapshot,
+  ): void {
+    const mode = termWindow.customFlowMode || 'REOPEN_OBJECTIVE_SETUP';
+    const stageOrder = [
+      'objectiveSetting',
+      'objectiveApproval',
+      'achievement',
+      'managerReview',
+      'finalization',
+    ] as const;
+    const modeStartStage: Record<
+      NonNullable<PmsAssignmentTermWindowSnapshot['customFlowMode']>,
+      (typeof stageOrder)[number]
+    > = {
+      REOPEN_OBJECTIVE_SETUP: 'objectiveSetting',
+      CONTINUE_FROM_ACHIEVEMENT: 'achievement',
+    };
+    const startIndex = stageOrder.indexOf(modeStartStage[mode]);
+    const stageWindows = {
+      objectiveSetting: termWindow.objectiveSettingWindow,
+      objectiveApproval: termWindow.objectiveApprovalWindow,
+      achievement: termWindow.achievementSubmissionWindow,
+      managerReview: termWindow.managerReviewWindow,
+      finalization: termWindow.termFinalizationWindow,
+    };
+
+    for (const [index, stage] of stageOrder.entries()) {
+      if (index >= startIndex || !stageWindows[stage]) continue;
+      const label = stage
+        .replace(/([A-Z])/g, ' $1')
+        .toLowerCase();
+      throw new Error(`${termCode} ${label} window must be empty because it is skipped by this custom flow.`);
+    }
+  }
+
+  private assertWindowSequence(
+    termCode: QuarterCode,
+    termWindow: PmsAssignmentTermWindowSnapshot,
+  ): void {
+    const orderedWindows = [
+      ['objective setting', termWindow.objectiveSettingWindow],
+      ['objective approval', termWindow.objectiveApprovalWindow],
+      ['achievement submission', termWindow.achievementSubmissionWindow],
+      ['manager review', termWindow.managerReviewWindow],
+      ['finalization', termWindow.termFinalizationWindow],
+    ] as const;
+
+    const allowContinueSameDayException =
+      this.isContinueFromAchievementSameDayException(termWindow);
+
+    let previousLabel = '';
+    let previousEndDate: Date | undefined;
+    for (const [label, window] of orderedWindows) {
+      if (!window?.startDate || !window?.endDate) {
+        continue;
+      }
+
+      if (
+        previousEndDate &&
+        window.startDate <= previousEndDate &&
+        !allowContinueSameDayException
+      ) {
+        throw new Error(`${termCode} ${label} window must start after ${previousLabel} ends.`);
+      }
+
+      previousLabel = label;
+      previousEndDate = window.endDate;
+    }
+  }
+
+  private isContinueFromAchievementSameDayException(
+    termWindow: PmsAssignmentTermWindowSnapshot,
+  ): boolean {
+    if (termWindow.customFlowMode !== 'CONTINUE_FROM_ACHIEVEMENT') {
+      return false;
+    }
+    if (termWindow.objectiveSettingWindow || termWindow.objectiveApprovalWindow) {
+      return false;
+    }
+
+    const windows = [
+      termWindow.achievementSubmissionWindow,
+      termWindow.managerReviewWindow,
+      termWindow.termFinalizationWindow,
+    ];
+    if (windows.some((window) => !window?.startDate || !window?.endDate)) {
+      return false;
+    }
+
+    const normalizedWindows = windows as Array<{ startDate: Date; endDate: Date }>;
+    const dateKey = this.toWindowDateKey(normalizedWindows[0].startDate);
+    return normalizedWindows.every(
+      (window) =>
+        this.toWindowDateKey(window.startDate) === dateKey &&
+        this.toWindowDateKey(window.endDate) === dateKey,
+    );
+  }
+
+  private toWindowDateKey(date: Date): string {
+    return date.toISOString().slice(0, 10);
   }
 
   private async buildAssignmentSnapshots(

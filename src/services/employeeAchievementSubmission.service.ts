@@ -38,6 +38,7 @@ import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { gcpFileStorageService } from './gcp-file-storage.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
+import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 
 interface AchievementAttachmentInput {
   fileName?: string;
@@ -2151,11 +2152,20 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       return;
     }
 
-    const termCycle = await TermCycle.findById(termAssignment.cycleTermId)
-      .select('achievementSubmissionWindow')
-      .lean();
+    const [termCycle, annualAssignment] = await Promise.all([
+      TermCycle.findById(termAssignment.cycleTermId)
+        .select('achievementSubmissionWindow')
+        .lean(),
+      AnnualAssignment.findById(termAssignment.annualAssignmentId)
+        .select('assignmentWindowSnapshot')
+        .lean(),
+    ]);
 
-    const window = termCycle?.achievementSubmissionWindow;
+    const window = resolveEffectiveTermWindows(
+      termAssignment,
+      termCycle,
+      annualAssignment,
+    ).achievementSubmissionWindow;
     if (!window || window.enabled !== true) {
       return;
     }

@@ -37,6 +37,10 @@ import { DelegationService } from './delegation.service';
 import { PmsScoringService } from './pms-scoring.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
+import {
+  mapEffectiveTermWindowsForResponse,
+  resolveEffectiveTermWindows,
+} from '../utilis/pmsAssignmentWindows';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
@@ -455,7 +459,7 @@ export class TermReviewService extends BaseService {
         termCode: termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termLabel: termAssignment.termLabel ?? termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termState: effectiveTermState,
-        termWindows: this.mapTermWindows(termCycle),
+        termWindows: this.mapTermWindows(termCycle, termAssignment, annualAssignment),
         employeeId: termAssignment.employeeId.toString(),
         employeeName: String(employeeSnapshot.name ?? 'Employee'),
         employeeCode,
@@ -1084,7 +1088,7 @@ export class TermReviewService extends BaseService {
         termCode: termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termLabel: termAssignment.termLabel ?? termAssignment.termCode ?? termAssignment.assessmentTermCode,
         termState: termAssignment.termState,
-        termWindows: this.mapTermWindows(termCycle),
+        termWindows: this.mapTermWindows(termCycle, termAssignment, annualAssignment),
         employeeId: termAssignment.employeeId.toString(),
         employeeName: String(employeeSnapshot.name ?? 'Employee'),
         employeeCode,
@@ -1195,8 +1199,17 @@ export class TermReviewService extends BaseService {
     };
   }
 
-  private mapTermWindows(termCycle?: Record<string, any>) {
+  private mapTermWindows(
+    termCycle?: Record<string, any>,
+    termAssignment?: ITermAssignment | Record<string, any>,
+    annualAssignment?: IAnnualAssignment | Record<string, any> | null,
+  ) {
     if (!termCycle) return undefined;
+    if (termAssignment) {
+      return mapEffectiveTermWindowsForResponse(
+        resolveEffectiveTermWindows(termAssignment, termCycle, annualAssignment),
+      );
+    }
 
     const mapWindow = (window?: { startDate?: Date; endDate?: Date }) => {
       if (!window?.startDate || !window?.endDate) return undefined;
@@ -3099,22 +3112,33 @@ export class TermReviewService extends BaseService {
       return;
     }
 
-    const termCycle = await TermCycle.findById(termAssignment.cycleTermId)
-      .select('managerReviewWindow')
-      .lean();
+    const [termCycle, annualAssignment] = await Promise.all([
+      TermCycle.findById(termAssignment.cycleTermId)
+        .select('managerReviewWindow')
+        .lean(),
+      AnnualAssignment.findById(termAssignment.annualAssignmentId)
+        .select('assignmentWindowSnapshot')
+        .lean(),
+    ]);
 
-    if (!termCycle?.managerReviewWindow?.startDate || !termCycle.managerReviewWindow?.endDate) {
+    const window = resolveEffectiveTermWindows(
+      termAssignment,
+      termCycle,
+      annualAssignment,
+    ).managerReviewWindow;
+
+    if (!window?.startDate || !window?.endDate) {
       return;
     }
 
     const now = this.getCurrentDate();
-    const start = new Date(termCycle.managerReviewWindow.startDate);
-    const end = new Date(termCycle.managerReviewWindow.endDate);
+    const start = new Date(window.startDate);
+    const end = new Date(window.endDate);
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
 
     if (now < start || now > end) {
-      throw new Error('Manager review window is closed for this quarter');
+      throw new Error('Manager review window is closed for this assessment term. Use a custom assignment window if this employee needs special dates.');
     }
   }
 
