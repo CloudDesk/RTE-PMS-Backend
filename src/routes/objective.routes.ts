@@ -21,6 +21,7 @@ import type {
   ObjectiveAssignmentPeriodEmployeeInput,
   ObjectiveAssignmentPeriodListQuery,
   ObjectiveAssignmentPreviewInput,
+  ObjectiveEmployeeAssignmentListQuery,
   ObjectiveReportingQuery,
   CorrectObjectiveInput,
   ManagerObjectiveLibraryDraftInput,
@@ -514,6 +515,21 @@ export const objectiveRoutes: RouteHandler = async (
           request.body as ApplyObjectiveAssignmentPeriodInput,
         );
         return reply.send(successResponse('Objective Assignment Period applied successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/employee-assignments',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const assignments = await request.container!.objectiveService.listObjectiveEmployeeAssignments(
+          request.query as ObjectiveEmployeeAssignmentListQuery,
+        );
+        return reply.send(successResponse('Objective employee assignments fetched successfully', assignments));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

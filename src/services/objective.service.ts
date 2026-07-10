@@ -271,6 +271,14 @@ export interface ObjectiveReportingQuery {
   status?: string;
 }
 
+export interface ObjectiveEmployeeAssignmentListQuery {
+  objectiveAssignmentPeriodId?: string;
+  objectiveMasterId?: string;
+  objectiveVersionId?: string;
+  employeeId?: string;
+  status?: string;
+}
+
 export interface ObjectiveReportingRecord {
   objectiveId: string;
   objectiveSource: string;
@@ -804,10 +812,19 @@ export interface ObjectiveAssignmentPeriodPreviewResult {
 export interface ObjectiveEmployeeAssignmentRecord {
   id: string;
   objectiveAssignmentPeriodId: string;
+  objectiveAssignmentPeriodName?: string;
+  objectiveAssignmentPeriodStatus?: string;
+  fillStartDate?: string;
+  fillEndDate?: string;
   objectiveMasterId: string;
   objectiveVersionId: string;
   employeeId: string;
+  employeeName?: string;
+  employeeCode?: string;
+  employeeDepartment?: string;
+  employeeRole?: string;
   managerId?: string;
+  managerName?: string;
   selectedTerms: string[];
   frozenObjectiveSnapshot: Record<string, unknown>;
   values: Record<string, unknown>;
@@ -818,6 +835,8 @@ export interface ObjectiveEmployeeAssignmentRecord {
   closedBy?: string;
   createdAt?: string;
   updatedAt?: string;
+  canEdit?: boolean;
+  readOnlyReason?: string;
 }
 
 export interface ObjectiveAssignmentPeriodApplyResult extends ObjectiveAssignmentPeriodPreviewResult {
@@ -2428,6 +2447,46 @@ export class ObjectiveService extends BaseService {
         blockedReason: dashboard.blockedReason,
       };
     });
+  }
+
+  async listObjectiveEmployeeAssignments(
+    query: ObjectiveEmployeeAssignmentListQuery = {},
+  ): Promise<ObjectiveEmployeeAssignmentRecord[]> {
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    const filter: Record<string, unknown> = { isDeleted: false };
+    if (query.objectiveAssignmentPeriodId) {
+      filter.objectiveAssignmentPeriodId = this.toObjectId(query.objectiveAssignmentPeriodId, 'objectiveAssignmentPeriodId');
+    }
+    if (query.objectiveMasterId) {
+      filter.objectiveMasterId = this.toObjectId(query.objectiveMasterId, 'objectiveMasterId');
+    }
+    if (query.objectiveVersionId) {
+      filter.objectiveVersionId = this.toObjectId(query.objectiveVersionId, 'objectiveVersionId');
+    }
+    if (query.employeeId) {
+      filter.employeeId = this.toObjectId(query.employeeId, 'employeeId');
+    }
+    if (query.status) {
+      filter.status = query.status;
+    }
+
+    if (mappedRole === PmsRole.EMPLOYEE) {
+      filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
+    } else if (mappedRole === PmsRole.MANAGER) {
+      filter.managerId = this.toObjectId(actor.actorId, 'actorId');
+    } else if (mappedRole !== PmsRole.ADMIN && mappedRole !== PmsRole.MANAGEMENT && mappedRole !== PmsRole.DIRECTOR) {
+      throw new Error('PMS access denied');
+    }
+
+    const assignments = await ObjectiveEmployeeAssignment.find(filter)
+      .sort({ createdAt: -1 })
+      .populate('objectiveAssignmentPeriodId', 'name status fillStartDate fillEndDate')
+      .populate('employeeId', 'name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
+      .populate('managerId', 'name employeeName fullName email employeeCode')
+      .lean();
+
+    return assignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
   }
 
   async listManagerObjectiveLibrary(): Promise<IManagerObjectiveLibraryItem[]> {
@@ -8655,13 +8714,31 @@ export class ObjectiveService extends BaseService {
   }
 
   private mapObjectiveEmployeeAssignmentRecord(assignment: any): ObjectiveEmployeeAssignmentRecord {
+    const employee = assignment.employeeId && typeof assignment.employeeId === 'object' ? assignment.employeeId : undefined;
+    const manager = assignment.managerId && typeof assignment.managerId === 'object' ? assignment.managerId : undefined;
+    const period = assignment.objectiveAssignmentPeriodId && typeof assignment.objectiveAssignmentPeriodId === 'object'
+      ? assignment.objectiveAssignmentPeriodId
+      : undefined;
+    const employeeId = employee?._id || assignment.employeeId;
+    const managerId = manager?._id || assignment.managerId;
+    const periodId = period?._id || assignment.objectiveAssignmentPeriodId;
+    const editState = this.resolveObjectiveEmployeeAssignmentEditState(assignment, period);
     return {
       id: assignment._id?.toString?.() ?? '',
-      objectiveAssignmentPeriodId: assignment.objectiveAssignmentPeriodId?.toString?.() ?? '',
+      objectiveAssignmentPeriodId: periodId?.toString?.() ?? '',
+      objectiveAssignmentPeriodName: period?.name,
+      objectiveAssignmentPeriodStatus: period?.status,
+      fillStartDate: period?.fillStartDate?.toISOString?.(),
+      fillEndDate: period?.fillEndDate?.toISOString?.(),
       objectiveMasterId: assignment.objectiveMasterId?.toString?.() ?? '',
       objectiveVersionId: assignment.objectiveVersionId?.toString?.() ?? '',
-      employeeId: assignment.employeeId?.toString?.() ?? '',
-      managerId: assignment.managerId?.toString?.(),
+      employeeId: employeeId?.toString?.() ?? '',
+      employeeName: employee?.name || employee?.employeeName || employee?.fullName || employee?.email,
+      employeeCode: employee?.employeeCode,
+      employeeDepartment: employee?.departmentName || employee?.department || employee?.departmentId,
+      employeeRole: employee?.specificRole || employee?.designation || employee?.role,
+      managerId: managerId?.toString?.(),
+      managerName: manager?.name || manager?.employeeName || manager?.fullName || manager?.email,
       selectedTerms: assignment.selectedTerms ?? [],
       frozenObjectiveSnapshot: assignment.frozenObjectiveSnapshot ?? {},
       values: assignment.values ?? {},
@@ -8672,7 +8749,32 @@ export class ObjectiveService extends BaseService {
       closedBy: assignment.closedBy?.toString?.(),
       createdAt: assignment.createdAt?.toISOString?.(),
       updatedAt: assignment.updatedAt?.toISOString?.(),
+      canEdit: editState.canEdit,
+      readOnlyReason: editState.readOnlyReason,
     };
+  }
+
+  private resolveObjectiveEmployeeAssignmentEditState(
+    assignment: any,
+    period?: any,
+  ): { canEdit: boolean; readOnlyReason?: string } {
+    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
+      return { canEdit: false, readOnlyReason: 'Submitted or closed objective assignments are read-only' };
+    }
+    if (!period) {
+      return { canEdit: false, readOnlyReason: 'Assignment period details are not available' };
+    }
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+      return { canEdit: false, readOnlyReason: 'Objective Assignment Period is not active' };
+    }
+    const now = this.getCurrentDate();
+    if (now < period.fillStartDate) {
+      return { canEdit: false, readOnlyReason: 'Objective fill period has not started' };
+    }
+    if (now > period.fillEndDate) {
+      return { canEdit: false, readOnlyReason: 'Objective fill period is closed' };
+    }
+    return { canEdit: true };
   }
 
   private async buildObjectiveAssignmentPeriodPreview(
@@ -8760,7 +8862,7 @@ export class ObjectiveService extends BaseService {
     if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
       throw new Error('Objective Assignment Period is not active');
     }
-    const now = new Date();
+    const now = this.getCurrentDate();
     if (now < period.fillStartDate || now > period.fillEndDate) {
       throw new Error('Objective fill period is not open');
     }
