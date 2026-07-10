@@ -51,6 +51,7 @@ interface WorkflowSyncCandidate {
   skipReason?: SyncSkipReason;
   reason: string;
   windowOverrideApplied?: boolean;
+  warning?: string;
 }
 
 interface ObjectiveSettingCloseCheck {
@@ -88,6 +89,7 @@ export interface WorkflowSyncResultItem {
   status: 'UPDATED' | 'DRY_RUN' | 'SKIPPED' | 'FAILED';
   skipReason?: SyncSkipReason;
   message?: string;
+  warning?: string;
 }
 
 export interface WorkflowSyncResult {
@@ -318,7 +320,8 @@ export class WorkflowSyncService extends BaseService {
       return {
         ...baseItem,
         status: 'DRY_RUN',
-        message: candidate.reason,
+        message: this.workflowSyncMessage(candidate),
+        warning: candidate.warning,
       };
     }
 
@@ -343,7 +346,8 @@ export class WorkflowSyncService extends BaseService {
       return {
         ...baseItem,
         status: 'UPDATED',
-        message: candidate.reason,
+        message: this.workflowSyncMessage(candidate),
+        warning: candidate.warning,
       };
     } catch (error) {
       return {
@@ -613,23 +617,6 @@ export class WorkflowSyncService extends BaseService {
     }
 
     if (state === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
-      const submission = await EmployeeAchievementSubmission.findOne({
-        termAssignmentId: termAssignment._id,
-        isDeleted: false,
-      }).lean();
-
-      const isSubmittedOrLocked = await this.isAchievementSubmissionReadyForManagerReview(
-        termAssignment,
-        submission,
-      );
-
-      if (!isSubmittedOrLocked) {
-        return {
-          skipReason: 'NOT_ELIGIBLE',
-          reason: 'Employee achievement submission is not submitted or locked.',
-        };
-      }
-
       const effectiveWindows = resolveEffectiveTermWindows(
         termAssignment,
         termCycle,
@@ -643,17 +630,19 @@ export class WorkflowSyncService extends BaseService {
         };
       }
 
-      return this.transitionCandidate(
+      const candidate = this.transitionCandidate(
         TermWorkflowState.MANAGER_REVIEW_OPEN,
         'Manager Review Window',
         managerReviewWindow,
         ignoreWindowDates
-          ? 'Employee achievement is submitted/locked and manager review window date bypassed for testing.'
+          ? 'Manager review window date bypassed for testing.'
           : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
-          ? 'Employee achievement is submitted/locked and custom manager review window is eligible.'
-          : 'Employee achievement is submitted/locked and manager review window is eligible.',
+          ? 'Custom manager review window is eligible for this employee.'
+          : 'Manager review window is eligible.',
         ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
       );
+      candidate.warning = await this.getAchievementSubmissionWarningForManagerReview(termAssignment);
+      return candidate;
     }
 
     if (state === TermWorkflowState.MANAGER_REVIEW_SUBMITTED) {
@@ -945,6 +934,20 @@ export class WorkflowSyncService extends BaseService {
     };
   }
 
+  private async getAchievementSubmissionWarningForManagerReview(
+    termAssignment: ITermAssignment,
+  ): Promise<string | undefined> {
+    const submission = await EmployeeAchievementSubmission.findOne({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    }).lean();
+
+    const ready = await this.isAchievementSubmissionReadyForManagerReview(termAssignment, submission);
+    return ready
+      ? undefined
+      : 'Employee achievement submission is not submitted or incomplete. Sync is allowed, but manager review will open with missing employee input.';
+  }
+
   private async isAchievementSubmissionReadyForManagerReview(
     termAssignment: ITermAssignment,
     submission: Record<string, any> | null | undefined,
@@ -1182,6 +1185,12 @@ export class WorkflowSyncService extends BaseService {
     );
   }
 
+  private workflowSyncMessage(candidate: WorkflowSyncCandidate): string {
+    return candidate.warning
+      ? `${candidate.reason} Warning: ${candidate.warning}`
+      : candidate.reason;
+  }
+
   private buildBaseResultItem(
     termAssignment: ITermAssignment,
     candidate: WorkflowSyncCandidate,
@@ -1199,6 +1208,7 @@ export class WorkflowSyncService extends BaseService {
       windowStart: candidate.windowStart?.toISOString(),
       windowEnd: candidate.windowEnd?.toISOString(),
       windowOverrideApplied: candidate.windowOverrideApplied === true,
+      warning: candidate.warning,
       status: 'SKIPPED',
     };
   }

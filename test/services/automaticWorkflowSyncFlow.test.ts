@@ -272,6 +272,52 @@ describe('Automatic workflow sync flow', () => {
     expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
 
+  it('opens manager review and warns when employee achievement submission is missing', async () => {
+    mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
+    const service = createService('2026-09-16T00:00:00.000Z');
+
+    const result = await service.syncWorkflowStates(cycleId.toString(), {
+      reason: 'Automatic daily PMS workflow sync',
+      source: 'AUTOMATIC_DAILY_SYNC',
+    });
+
+    expect(result.totalUpdated).toBe(1);
+    expect(result.results[0].warning).toContain('Employee achievement submission is not submitted or incomplete');
+    expect(result.results[0].message).toContain('Warning: Employee achievement submission is not submitted or incomplete');
+    expect(EmployeeAchievementSubmission.findOne).toHaveBeenCalledWith({
+      termAssignmentId,
+      isDeleted: false,
+    });
+    expect(transitionTermAssignmentState).toHaveBeenCalledWith(
+      termAssignmentId.toString(),
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
+      { actorId: actorId.toString(), actorRole: 'ADMIN' },
+      'Automatic daily PMS workflow sync',
+      'ADMIN_WORKFLOW_SYNC',
+      expect.objectContaining({
+        source: 'AUTOMATIC_DAILY_SYNC',
+        windowName: 'Manager Review Window',
+      }),
+    );
+  });
+
+  it('opens manager review without a warning when employee achievement is submitted', async () => {
+    mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
+    (EmployeeAchievementSubmission.findOne as jest.Mock).mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ status: 'SUBMITTED' }),
+    });
+    const service = createService('2026-09-16T00:00:00.000Z');
+
+    const result = await service.syncWorkflowStates(cycleId.toString(), {
+      reason: 'Automatic daily PMS workflow sync',
+      source: 'AUTOMATIC_DAILY_SYNC',
+    });
+
+    expect(result.totalUpdated).toBe(1);
+    expect(result.results[0].warning).toBeUndefined();
+    expect(result.results[0].message).toBe('Manager review window is eligible.');
+  });
+
   it('does not overwrite assignments that already moved forward', async () => {
     mockCommonQueries(
       TermWorkflowState.OBJECTIVE_SUBMITTED,
