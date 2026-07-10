@@ -12,6 +12,9 @@ import {
   FieldCategory,
   PmsRole,
   AssessmentTermCode,
+  NoObjectiveScoringPolicy,
+  ObjectiveActualAggregationMode,
+  ObjectiveScoringMode,
 } from '../constants/pms.enums';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
@@ -1220,11 +1223,41 @@ export class PmsTemplateService extends BaseService {
       allowManagerCreated,
       managerCreatedAutoApprove: config.managerCreatedAutoApprove !== false,
       objectiveScoringPolicy: {
+        objectiveScoringEnabled:
+          config.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          config.objectiveScoringPolicy?.objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY,
+        objectiveScoringMode:
+          config.objectiveScoringPolicy?.objectiveScoringEnabled === true
+            ? config.objectiveScoringPolicy?.objectiveScoringMode ?? ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE
+            : ObjectiveScoringMode.CONTEXT_ONLY,
+        objectiveSectionWeight: Number(config.objectiveScoringPolicy?.objectiveSectionWeight ?? 0),
+        perObjectiveScoreEntryAllowed:
+          config.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          config.objectiveScoringPolicy?.objectiveScoringMode === ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE &&
+          config.objectiveScoringPolicy?.perObjectiveScoreEntryAllowed !== false,
+        overallScoreEntryAllowed:
+          config.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          config.objectiveScoringPolicy?.objectiveScoringMode === ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE &&
+          config.objectiveScoringPolicy?.overallScoreEntryAllowed !== false,
+        noObjectiveScoringPolicy:
+          config.objectiveScoringPolicy?.noObjectiveScoringPolicy ??
+          NoObjectiveScoringPolicy.NO_OBJECTIVES_NOT_APPLICABLE,
+        reviewTimingPolicy: config.objectiveScoringPolicy?.reviewTimingPolicy ?? {},
+        includedAssessmentTermGroupingPolicy:
+          config.objectiveScoringPolicy?.includedAssessmentTermGroupingPolicy ?? {},
+        termAggregationPolicy: config.objectiveScoringPolicy?.termAggregationPolicy ?? {},
+        scoringValidationRules: config.objectiveScoringPolicy?.scoringValidationRules ?? {},
         predefinedObjectivesScoreable:
-          config.objectiveScoringPolicy?.predefinedObjectivesScoreable !== false,
+          config.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          config.objectiveScoringPolicy?.objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY &&
+          config.objectiveScoringPolicy?.predefinedObjectivesScoreable === true,
         managerCreatedScoreable:
+          config.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          config.objectiveScoringPolicy?.objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY &&
           config.objectiveScoringPolicy?.managerCreatedScoreable === true,
         employeeCreatedScoreable:
+          config.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+          config.objectiveScoringPolicy?.objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY &&
           config.objectiveScoringPolicy?.employeeCreatedScoreable === true,
         requireManagerApprovalForEmployeeScore:
           config.objectiveScoringPolicy?.requireManagerApprovalForEmployeeScore !== false,
@@ -1232,6 +1265,8 @@ export class PmsTemplateService extends BaseService {
           config.objectiveScoringPolicy?.requireWeightageBeforeAchievement !== false,
         allowManagerOverallForRemainingWeightage:
           config.objectiveScoringPolicy?.allowManagerOverallForRemainingWeightage !== false,
+        actualAggregationMode:
+          config.objectiveScoringPolicy?.actualAggregationMode ?? ObjectiveActualAggregationMode.LATEST_VALUE,
       },
       predefinedObjectives,
     };
@@ -1261,9 +1296,13 @@ export class PmsTemplateService extends BaseService {
     const hasActivePredefinedObjectives = (objectiveConfig.predefinedObjectives ?? []).some(
       (objective) => objective.isActive !== false,
     );
+    const objectiveScoringEnabled =
+      objectiveConfig.objectiveScoringPolicy?.objectiveScoringEnabled === true &&
+      objectiveConfig.objectiveScoringPolicy?.objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY;
     const needsPredefinedBucket =
       hasActivePredefinedObjectives &&
-      objectiveConfig.objectiveScoringPolicy?.predefinedObjectivesScoreable !== false;
+      objectiveScoringEnabled &&
+      objectiveConfig.objectiveScoringPolicy?.predefinedObjectivesScoreable === true;
     const hasPredefinedBucket = existingBuckets.some(
       (bucket) => bucket.source === 'TEMPLATE_PREDEFINED',
     );
@@ -1344,22 +1383,25 @@ export class PmsTemplateService extends BaseService {
     objectiveConfig: ITemplateSection['objectiveConfig'],
   ): NonNullable<ITemplateSection['objectiveBuckets']> {
     const policy = objectiveConfig?.objectiveScoringPolicy ?? {};
+    const objectiveScoringEnabled =
+      policy.objectiveScoringEnabled === true &&
+      policy.objectiveScoringMode !== ObjectiveScoringMode.CONTEXT_ONLY;
     const hasActivePredefinedObjectives = (objectiveConfig?.predefinedObjectives ?? []).some(
       (objective) => objective.isActive !== false,
     );
     const scoreableSources: Array<'TEMPLATE_PREDEFINED' | 'EMPLOYEE_DYNAMIC' | 'MANAGER_DYNAMIC'> = [];
 
-    if (hasActivePredefinedObjectives && policy.predefinedObjectivesScoreable !== false) {
+    if (hasActivePredefinedObjectives && objectiveScoringEnabled && policy.predefinedObjectivesScoreable === true) {
       scoreableSources.push('TEMPLATE_PREDEFINED');
     }
-    if (objectiveConfig?.allowEmployeeCreated !== false && policy.employeeCreatedScoreable === true) {
+    if (objectiveConfig?.allowEmployeeCreated !== false && objectiveScoringEnabled && policy.employeeCreatedScoreable === true) {
       scoreableSources.push('EMPLOYEE_DYNAMIC');
     }
-    if (objectiveConfig?.allowManagerCreated !== false && policy.managerCreatedScoreable === true) {
+    if (objectiveConfig?.allowManagerCreated !== false && objectiveScoringEnabled && policy.managerCreatedScoreable === true) {
       scoreableSources.push('MANAGER_DYNAMIC');
     }
 
-    if (scoreableSources.length === 0) {
+    if (scoreableSources.length === 0 && objectiveScoringEnabled) {
       if (hasActivePredefinedObjectives) {
         scoreableSources.push('TEMPLATE_PREDEFINED');
       } else {
@@ -2557,6 +2599,53 @@ export class PmsTemplateService extends BaseService {
 
       if (totalQuarterWeight !== 100) {
         errors.push(`Annual scoring quarter weightage total must be exactly 100% before activation (currently ${totalQuarterWeight}%)`);
+      }
+    }
+
+    for (const section of version.sections ?? []) {
+      if (section.sectionType !== PmsTemplateSectionType.OBJECTIVES) {
+        continue;
+      }
+
+      const termAggregationPolicy = section.objectiveConfig?.objectiveScoringPolicy?.termAggregationPolicy as
+        | {
+          aggregationMethod?: string;
+          method?: string;
+          termWeights?: Record<string, number>;
+          weights?: Record<string, number>;
+          includedTerms?: string[];
+        }
+        | undefined;
+      const aggregationMethod = String(
+        termAggregationPolicy?.aggregationMethod ?? termAggregationPolicy?.method ?? '',
+      ).toUpperCase();
+      if (aggregationMethod !== 'TERM_WEIGHTED_AVERAGE') {
+        continue;
+      }
+
+      const objectiveTermWeights = termAggregationPolicy?.termWeights ?? termAggregationPolicy?.weights;
+      if (!objectiveTermWeights || Object.keys(objectiveTermWeights).length === 0) {
+        errors.push(`Objective section "${section.sectionLabel || section.sectionKey}" term weighted average requires term weights`);
+        continue;
+      }
+
+      const includedTerms = new Set(termAggregationPolicy?.includedTerms ?? Object.keys(objectiveTermWeights));
+      for (const term of Object.keys(objectiveTermWeights)) {
+        if (!allowedQuarters.has(term as AssessmentTermCodeType)) {
+          errors.push(`Objective section "${section.sectionLabel || section.sectionKey}" term ${term} is not a supported assessment term`);
+          continue;
+        }
+        const weight = Number(objectiveTermWeights[term] ?? 0);
+        if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
+          errors.push(`Objective section "${section.sectionLabel || section.sectionKey}" term ${term} weightage must be between 0 and 100`);
+        }
+      }
+
+      const totalIncludedTermWeight = Object.keys(objectiveTermWeights)
+        .filter((term) => includedTerms.has(term))
+        .reduce((total, term) => total + Number(objectiveTermWeights[term] ?? 0), 0);
+      if (Math.abs(totalIncludedTermWeight - 100) > 0.000001) {
+        errors.push(`Objective section "${section.sectionLabel || section.sectionKey}" term weightage total must be exactly 100% before activation (currently ${totalIncludedTermWeight}%)`);
       }
     }
 

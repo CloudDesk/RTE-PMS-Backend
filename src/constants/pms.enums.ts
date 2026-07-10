@@ -170,6 +170,133 @@ export const ObjectiveSource = {
 
 export type ObjectiveSource = (typeof ObjectiveSource)[keyof typeof ObjectiveSource];
 
+export const FlexibleObjectiveSourceType = {
+  COMPANY_OBJECTIVE: 'COMPANY_OBJECTIVE',
+  DEPARTMENT_OBJECTIVE: 'DEPARTMENT_OBJECTIVE',
+  TEMPLATE_REFERENCED_OBJECTIVE: 'TEMPLATE_REFERENCED_OBJECTIVE',
+  MANAGER_CREATED_OBJECTIVE: 'MANAGER_CREATED_OBJECTIVE',
+  EMPLOYEE_CREATED_OBJECTIVE: 'EMPLOYEE_CREATED_OBJECTIVE',
+} as const;
+
+export type FlexibleObjectiveSourceType =
+  (typeof FlexibleObjectiveSourceType)[keyof typeof FlexibleObjectiveSourceType];
+
+export const ObjectiveMasterStatus = {
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type ObjectiveMasterStatus =
+  (typeof ObjectiveMasterStatus)[keyof typeof ObjectiveMasterStatus];
+
+export const ObjectiveMasterVersionStatus = {
+  DRAFT: 'DRAFT',
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type ObjectiveMasterVersionStatus =
+  (typeof ObjectiveMasterVersionStatus)[keyof typeof ObjectiveMasterVersionStatus];
+
+export const ObjectiveMasterType = {
+  SIMPLE: 'SIMPLE',
+  SHEET: 'SHEET',
+} as const;
+
+export type ObjectiveMasterType =
+  (typeof ObjectiveMasterType)[keyof typeof ObjectiveMasterType];
+
+export const ObjectiveAssignmentRuleStatus = {
+  DRAFT: 'DRAFT',
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+  ARCHIVED: 'ARCHIVED',
+} as const;
+
+export type ObjectiveAssignmentRuleStatus =
+  (typeof ObjectiveAssignmentRuleStatus)[keyof typeof ObjectiveAssignmentRuleStatus];
+
+export const ObjectiveAssignmentPeriodStatus = {
+  DRAFT: 'DRAFT',
+  ACTIVE: 'ACTIVE',
+  CLOSED: 'CLOSED',
+} as const;
+
+export type ObjectiveAssignmentPeriodStatus =
+  (typeof ObjectiveAssignmentPeriodStatus)[keyof typeof ObjectiveAssignmentPeriodStatus];
+
+export const ObjectiveEmployeeAssignmentStatus = {
+  ASSIGNED: 'ASSIGNED',
+  SUBMITTED: 'SUBMITTED',
+  CLOSED: 'CLOSED',
+} as const;
+
+export type ObjectiveEmployeeAssignmentStatus =
+  (typeof ObjectiveEmployeeAssignmentStatus)[keyof typeof ObjectiveEmployeeAssignmentStatus];
+
+export const ObjectiveTargetDirection = {
+  HIGHER_IS_BETTER: 'HIGHER_IS_BETTER',
+  LOWER_IS_BETTER: 'LOWER_IS_BETTER',
+  NOT_APPLICABLE: 'NOT_APPLICABLE',
+  INCREASE: 'INCREASE',
+  DECREASE: 'DECREASE',
+  MAINTAIN: 'MAINTAIN',
+  ACHIEVE: 'ACHIEVE',
+} as const;
+
+export type ObjectiveTargetDirection =
+  (typeof ObjectiveTargetDirection)[keyof typeof ObjectiveTargetDirection];
+
+export const ObjectiveActualAggregationMode = {
+  LATEST_VALUE: 'LATEST_VALUE',
+  SUM_OF_TERMS: 'SUM_OF_TERMS',
+  AVERAGE_OF_TERMS: 'AVERAGE_OF_TERMS',
+  MAX_OF_TERMS: 'MAX_OF_TERMS',
+  MIN_OF_TERMS: 'MIN_OF_TERMS',
+} as const;
+
+export type ObjectiveActualAggregationMode =
+  (typeof ObjectiveActualAggregationMode)[keyof typeof ObjectiveActualAggregationMode];
+
+export const ObjectiveScoringMode = {
+  CONTEXT_ONLY: 'CONTEXT_ONLY',
+  WEIGHTED_OBJECTIVE_SCORE: 'WEIGHTED_OBJECTIVE_SCORE',
+  OVERALL_OBJECTIVE_SCORE: 'OVERALL_OBJECTIVE_SCORE',
+} as const;
+
+export type ObjectiveScoringMode =
+  (typeof ObjectiveScoringMode)[keyof typeof ObjectiveScoringMode];
+
+export const NoObjectiveScoringPolicy = {
+  NO_OBJECTIVES_NOT_APPLICABLE: 'NO_OBJECTIVES_NOT_APPLICABLE',
+  REALLOCATE_OBJECTIVE_WEIGHT: 'REALLOCATE_OBJECTIVE_WEIGHT',
+  BLOCK_REVIEW_SUBMISSION: 'BLOCK_REVIEW_SUBMISSION',
+  ALLOW_MANUAL_OVERALL_SCORE: 'ALLOW_MANUAL_OVERALL_SCORE',
+} as const;
+
+export type NoObjectiveScoringPolicy =
+  (typeof NoObjectiveScoringPolicy)[keyof typeof NoObjectiveScoringPolicy];
+
+export const ObjectiveAttachmentPolicy = {
+  NOT_ALLOWED: 'NOT_ALLOWED',
+  OPTIONAL: 'OPTIONAL',
+  REQUIRED: 'REQUIRED',
+} as const;
+
+export type ObjectiveAttachmentPolicy =
+  (typeof ObjectiveAttachmentPolicy)[keyof typeof ObjectiveAttachmentPolicy];
+
+export const ObjectiveApplicabilityStatus = {
+  ACTIVE: 'ACTIVE',
+  NOT_APPLICABLE: 'NOT_APPLICABLE',
+  REPLACED: 'REPLACED',
+} as const;
+
+export type ObjectiveApplicabilityStatus =
+  (typeof ObjectiveApplicabilityStatus)[keyof typeof ObjectiveApplicabilityStatus];
+
 export const AppraisalOutcomeType = {
   BOTH: 'BOTH',
   MERIT_ONLY: 'MERIT_ONLY',
@@ -263,6 +390,7 @@ export const SemanticRole = {
   OBJECTIVE_TARGET: 'OBJECTIVE_TARGET',
   OBJECTIVE_WEIGHTAGE: 'OBJECTIVE_WEIGHTAGE',
   OBJECTIVE_ACHIEVEMENT: 'OBJECTIVE_ACHIEVEMENT',
+  OVERALL_OBJECTIVE_SCORE: 'OVERALL_OBJECTIVE_SCORE',
   MANAGER_RATING: 'MANAGER_RATING',
   MANAGER_SCORE: 'MANAGER_SCORE',
   MANAGER_COMMENT: 'MANAGER_COMMENT',

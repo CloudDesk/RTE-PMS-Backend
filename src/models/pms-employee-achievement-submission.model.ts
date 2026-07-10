@@ -1,6 +1,14 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
-import { AssessmentTermCode } from '../constants/pms.enums';
-import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/pms.enums';
+import {
+  AssessmentTermCode,
+  ObjectiveActualAggregationMode,
+  ObjectiveTargetDirection,
+} from '../constants/pms.enums';
+import type {
+  AssessmentTermCode as AssessmentTermCodeType,
+  ObjectiveActualAggregationMode as ObjectiveActualAggregationModeType,
+  ObjectiveTargetDirection as ObjectiveTargetDirectionType,
+} from '../constants/pms.enums';
 
 export const EmployeeAchievementSubmissionStatus = {
   DRAFT: 'DRAFT',
@@ -34,6 +42,8 @@ export interface IAchievementObjectiveSnapshot {
   expectedOutcome?: string;
   targetMetric?: string;
   targetValue?: string;
+  targetDirection?: ObjectiveTargetDirectionType;
+  actualAggregationMode?: ObjectiveActualAggregationModeType;
   targetDate?: Date;
   weightage?: number;
   source?: string;
@@ -113,6 +123,15 @@ const achievementObjectiveSnapshotSchema = new Schema<IAchievementObjectiveSnaps
     expectedOutcome: String,
     targetMetric: String,
     targetValue: String,
+    targetDirection: {
+      type: String,
+      enum: Object.values(ObjectiveTargetDirection),
+    },
+    actualAggregationMode: {
+      type: String,
+      enum: Object.values(ObjectiveActualAggregationMode),
+      default: ObjectiveActualAggregationMode.LATEST_VALUE,
+    },
     targetDate: Date,
     weightage: Number,
     source: String,

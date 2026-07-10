@@ -1,5 +1,9 @@
 import { PmsScoringService } from '../../src/services/pms-scoring.service';
-import { PmsTemplateSectionType } from '../../src/constants/pms.enums';
+import {
+  NoObjectiveScoringPolicy,
+  ObjectiveScoringMode,
+  PmsTemplateSectionType,
+} from '../../src/constants/pms.enums';
 import { Types } from 'mongoose';
 
 describe('QuarterReviewService - Template Engine Scoring Logic', () => {
@@ -75,11 +79,15 @@ describe('QuarterReviewService - Template Engine Scoring Logic', () => {
     it('should calculate objective score properly utilizing bucket and row weightages', () => {
       const reviewConfig = {
         objectiveRatingRule: { maxScore: 10 },
+        objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
         overallScoreMax: 100,
         sections: [
           {
             sectionKey: 'objectives_section',
             sectionType: PmsTemplateSectionType.OBJECTIVES,
+            objectiveScoringEnabled: true,
+            objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
+            perObjectiveScoreEntryAllowed: true,
             weightage: 100,
             aggregationMethod: 'WEIGHTED_AVERAGE',
             objectiveBuckets: [
@@ -128,6 +136,172 @@ describe('QuarterReviewService - Template Engine Scoring Logic', () => {
       
       expect(sectionScores.length).toBe(1);
       expect(sectionScores[0].score).toBeCloseTo(82.6, 1);
+    });
+
+    it('keeps objectives context-only by default', () => {
+      const reviewConfig = {
+        objectiveRatingRule: { maxScore: 10 },
+        overallScoreMax: 100,
+        sections: [
+          {
+            sectionKey: 'objectives_section',
+            sectionType: PmsTemplateSectionType.OBJECTIVES,
+            weightage: 100,
+            aggregationMethod: 'WEIGHTED_AVERAGE',
+            objectiveBuckets: [
+              {
+                bucketKey: 'employee_dynamic',
+                source: 'EMPLOYEE_DYNAMIC',
+                bucketWeightage: 100,
+                rowWeightMode: 'OWNER_ENTERED'
+              }
+            ],
+            scoringFields: []
+          }
+        ]
+      };
+
+      const approvedObjectives = [
+        {
+          _id: new Types.ObjectId(),
+          source: 'EMPLOYEE_CREATED',
+          weightage: 100
+        }
+      ];
+      const ratings = [{ objectiveId: approvedObjectives[0]._id.toString(), rating: 10 }];
+
+      const { sectionScores, sectionsSnapshot } = service.calculateSectionScores([], reviewConfig, approvedObjectives, ratings);
+
+      expect(sectionScores[0].score).toBe(0);
+      expect(sectionsSnapshot[0].contextOnly).toBe(true);
+      expect(sectionsSnapshot[0].objectiveScoringMode).toBe(ObjectiveScoringMode.CONTEXT_ONLY);
+    });
+
+    it('calculates weighted objective score from manager score and objective weightage', () => {
+      const reviewConfig = {
+        objectiveRatingRule: { maxScore: 100 },
+        objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
+        overallScoreMax: 100,
+        sections: [
+          {
+            sectionKey: 'objectives_section',
+            sectionType: PmsTemplateSectionType.OBJECTIVES,
+            objectiveScoringEnabled: true,
+            objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
+            perObjectiveScoreEntryAllowed: true,
+            useObjectiveWeightageScoring: true,
+            weightage: 40,
+            aggregationMethod: 'WEIGHTED_AVERAGE',
+            scoringFields: []
+          }
+        ]
+      };
+
+      const approvedObjectives = [
+        {
+          _id: new Types.ObjectId(),
+          title: 'Revenue',
+          source: 'EMPLOYEE_CREATED',
+          weightage: 60
+        },
+        {
+          _id: new Types.ObjectId(),
+          title: 'Quality',
+          source: 'MANAGER_CREATED',
+          weightage: 40
+        }
+      ];
+
+      const ratings = [
+        { objectiveId: approvedObjectives[0]._id.toString(), rating: 80 },
+        { objectiveId: approvedObjectives[1]._id.toString(), rating: 50 }
+      ];
+
+      const { sectionScores, sectionsSnapshot } = service.calculateSectionScores([], reviewConfig, approvedObjectives, ratings);
+
+      expect(sectionScores[0].score).toBe(68);
+      expect(sectionsSnapshot[0].objectiveSectionContribution).toBeCloseTo(27.2, 1);
+      expect(sectionsSnapshot[0].objectives).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ managerScore: 80, weightage: 60, contribution: 48 }),
+          expect.objectContaining({ managerScore: 50, weightage: 40, contribution: 20 }),
+        ]),
+      );
+    });
+
+    it('returns no-objective policy snapshot when weighted mode has no scoreable objectives', () => {
+      const reviewConfig = {
+        objectiveRatingRule: { maxScore: 100 },
+        objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
+        overallScoreMax: 100,
+        sections: [
+          {
+            sectionKey: 'objectives_section',
+            sectionType: PmsTemplateSectionType.OBJECTIVES,
+            objectiveScoringEnabled: true,
+            objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
+            perObjectiveScoreEntryAllowed: true,
+            useObjectiveWeightageScoring: true,
+            noObjectiveScoringPolicy: NoObjectiveScoringPolicy.BLOCK_REVIEW_SUBMISSION,
+            weightage: 40,
+            aggregationMethod: 'WEIGHTED_AVERAGE',
+            scoringFields: []
+          }
+        ]
+      };
+
+      const { sectionScores, sectionsSnapshot } = service.calculateSectionScores([], reviewConfig, [], []);
+
+      expect(sectionScores[0].score).toBe(0);
+      expect(sectionsSnapshot[0].noObjectiveScoringPolicy).toBe(NoObjectiveScoringPolicy.BLOCK_REVIEW_SUBMISSION);
+      expect(sectionsSnapshot[0].objectives).toEqual([]);
+    });
+
+    it('calculates overall objective section score from a single manager-entered score', () => {
+      const reviewConfig = {
+        objectiveRatingRule: null,
+        objectiveScoringMode: ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE,
+        overallScoreMax: 100,
+        sections: [
+          {
+            sectionKey: 'objectives_section',
+            sectionType: PmsTemplateSectionType.OBJECTIVES,
+            objectiveScoringEnabled: true,
+            objectiveScoringMode: ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE,
+            perObjectiveScoreEntryAllowed: false,
+            overallScoreEntryAllowed: true,
+            overallObjectiveScoreFieldKey: 'overall_objective_score',
+            weightage: 40,
+            aggregationMethod: 'WEIGHTED_AVERAGE',
+            scoringFields: [
+              {
+                fieldKey: 'overall_objective_score',
+                sectionKey: 'objectives_section',
+                fieldLabel: 'Overall Objective Score',
+                fieldType: 'NUMBER',
+                weightage: 100,
+                semanticRole: 'OVERALL_OBJECTIVE_SCORE',
+              },
+            ],
+          },
+        ],
+      };
+
+      const reviewValues = [
+        {
+          sectionKey: 'objectives_section',
+          fieldKey: 'overall_objective_score',
+          valueNumber: 72,
+        },
+      ];
+
+      const { sectionScores, sectionsSnapshot } = service.calculateSectionScores(reviewValues, reviewConfig, [], []);
+
+      expect(sectionScores[0].score).toBe(72);
+      expect(sectionsSnapshot[0].overallObjectiveScore).toBe(72);
+      expect(sectionsSnapshot[0].objectiveSectionScore).toBe(72);
+      expect(sectionsSnapshot[0].objectiveSectionContribution).toBeCloseTo(28.8, 1);
+      expect(sectionsSnapshot[0].activeBuckets).toEqual([]);
     });
   });
   
@@ -296,6 +470,53 @@ describe('QuarterReviewService - Template Engine Scoring Logic', () => {
       );
 
       expect(score).toBe(87);
+    });
+
+    it('calculates equal term average for configured included terms only', () => {
+      const score = service.calculateAnnualRollup(
+        { Q1: 80, Q2: 60, Q3: 30, Q4: 100 },
+        {
+          aggregationMethod: 'EQUAL_TERM_AVERAGE',
+          includedTerms: ['Q1', 'Q2'],
+        },
+      );
+
+      expect(score).toBe(70);
+    });
+
+    it('calculates term weighted average and requires included weights to total 100', () => {
+      const score = service.calculateAnnualRollup(
+        { Q1: 80, Q2: 60, Q3: 30 },
+        {
+          aggregationMethod: 'TERM_WEIGHTED_AVERAGE',
+          includedTerms: ['Q1', 'Q2'],
+          termWeights: { Q1: 75, Q2: 25, Q3: 100 },
+        },
+      );
+
+      expect(score).toBe(75);
+      expect(() =>
+        service.calculateAnnualRollup(
+          { Q1: 80, Q2: 60 },
+          {
+            aggregationMethod: 'TERM_WEIGHTED_AVERAGE',
+            includedTerms: ['Q1', 'Q2'],
+            termWeights: { Q1: 50, Q2: 20 },
+          },
+        ),
+      ).toThrow('Term weighted average requires included term weights to total 100%');
+    });
+
+    it('uses manual group overall score when configured by locked policy', () => {
+      const score = service.calculateAnnualRollup(
+        { Q1: 80, Q2: 60 },
+        {
+          aggregationMethod: 'MANUAL_GROUP_OVERALL_SCORE',
+          manualGroupOverallScore: 88,
+        },
+      );
+
+      expect(score).toBe(88);
     });
 
     it('excludes a field when an INCLUDE condition does not match', () => {

@@ -1,5 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 import { AnnualDecisionStatus, AnnualWorkflowState, AssessmentTermCode } from '../constants/pms.enums';
+import type { PmsAssignmentWindowSnapshot } from '../utilis/pmsAssignmentWindows';
 import type {
   AnnualDecisionStatus as AnnualDecisionStatusType,
   AnnualWorkflowState as AnnualWorkflowStateType,
@@ -37,6 +38,7 @@ export interface IAnnualAssignment extends Document {
   launchedByRole?: 'ADMIN' | 'MANAGER';
   launchedByUserId?: Types.ObjectId;
   flowPolicy?: Record<string, unknown>;
+  assignmentWindowSnapshot?: PmsAssignmentWindowSnapshot;
   visibility: IVisibilityCache;
   employeeSnapshot?: Record<string, unknown>;
   managerSnapshot?: Record<string, unknown>;
@@ -131,6 +133,7 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
       index: true,
     },
     flowPolicy: { type: Schema.Types.Mixed, default: {} },
+    assignmentWindowSnapshot: { type: Schema.Types.Mixed, default: undefined },
     visibility: { type: visibilityCacheSchema, default: () => ({}) },
     employeeSnapshot: { type: Schema.Types.Mixed, default: {} },
     managerSnapshot: { type: Schema.Types.Mixed, default: {} },

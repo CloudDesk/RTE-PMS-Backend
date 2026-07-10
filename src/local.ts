@@ -1,4 +1,5 @@
 import { createApp } from './app';
+import { startAutomaticWorkflowSyncScheduler } from './services/workflow-sync-scheduler.service';
 
 const start = async () => {
   try {
@@ -11,6 +12,7 @@ const start = async () => {
     
     console.log(`Attempting to listen on ${host}:${port}`);
     const address = await server.listen({ port, host });
+    startAutomaticWorkflowSyncScheduler();
     console.log(`✅ Server successfully listening at ${address}`);
   } catch (err) {
     console.error('❌ Failed to start server:');

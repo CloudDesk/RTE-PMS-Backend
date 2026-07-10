@@ -189,6 +189,33 @@ Review Open Date = Probation End Date - 30 days
   - data-grid row/column/cell permission
   - mandatory rule
 
+### 3.2.1 Template Capability Boundary
+
+The selected Manager Review Only Template Version is the maximum allowed capability for a field, section, grid row, grid column, or grid cell.
+
+Probation Review Configuration may further restrict access for Manager 1, Manager 2, final approver, or delegated users, but it must not grant more access than the locked template version allows.
+
+Rules:
+
+- If the template field is hidden, probation configuration cannot make it visible or editable.
+- If the template field is read-only, probation configuration cannot make it editable.
+- If the template field is editable, probation configuration may make it editable, read-only, hidden, or mandatory for a reviewer role where valid.
+- If the template grid column is read-only, probation configuration cannot make that column editable.
+- If the template grid does not allow row add/delete, probation configuration cannot enable row add/delete.
+- If the template marks a field as required, probation configuration should not bypass that requirement unless the template/config design explicitly supports conditional mandatory behavior.
+- Backend must reject configuration saves that exceed the template capability boundary.
+- Runtime APIs must enforce the same boundary even if the UI is bypassed.
+
+Example:
+
+```text
+Template field = read-only
+Probation configuration = Manager 1 editable
+Runtime result = read-only
+```
+
+If HR/Admin needs broader access than the current template allows, create or activate a new Manager Review Only Template Version with the required capability, then create or clone the Probation Review Configuration for that template version.
+
 ### 3.3 API masking
 
 - Hidden or confidential fields must be masked or omitted server-side where required.

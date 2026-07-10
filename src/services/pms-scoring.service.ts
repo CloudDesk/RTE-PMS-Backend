@@ -1,4 +1,10 @@
-import { ObjectiveSource, PmsTemplateFieldType, PmsTemplateSectionType } from '../constants/pms.enums';
+import {
+  ObjectiveScoringMode,
+  ObjectiveSource,
+  PmsTemplateFieldType,
+  PmsTemplateSectionType,
+} from '../constants/pms.enums';
+import type { ObjectiveScoringMode as ObjectiveScoringModeType } from '../constants/pms.enums';
 
 export type PmsScoringReviewValue = {
   fieldKey?: string;
@@ -16,6 +22,7 @@ export type PmsScoringRating = {
 export type PmsScoringConfig = {
   mode?: 'AUTO' | 'MANUAL';
   objectiveRatingRule?: { maxScore?: number } | null;
+  objectiveScoringMode?: ObjectiveScoringModeType;
   overallScoreMax?: number | null;
   scoringPolicy?: PmsScoringPolicy;
   sections: Array<{
@@ -26,6 +33,13 @@ export type PmsScoringConfig = {
     maxSectionScore: number | null;
     scoringFields: any[];
     objectiveBuckets?: any[];
+    objectiveScoringEnabled?: boolean;
+    objectiveScoringMode?: ObjectiveScoringModeType;
+    perObjectiveScoreEntryAllowed?: boolean;
+    overallScoreEntryAllowed?: boolean;
+    overallObjectiveScoreFieldKey?: string;
+    useObjectiveWeightageScoring?: boolean;
+    noObjectiveScoringPolicy?: string;
     scoringPolicy?: PmsScoringPolicy;
   }>;
 };
@@ -159,6 +173,7 @@ export class PmsScoringService {
           reviewConfig,
           approvedObjectives,
           ratings,
+          valueMap,
         );
         sectionScore = score;
         sectionDetails = snapshot;
@@ -220,13 +235,46 @@ export class PmsScoringService {
     reviewConfig: PmsScoringConfig,
     approvedObjectives: any[],
     ratings: PmsScoringRating[],
+    valueMap: Map<string, PmsScoringReviewValue>,
   ): { score: number; snapshot: any } {
+    const objectiveScoringMode = this.resolveObjectiveScoringMode(section, reviewConfig);
+    if (objectiveScoringMode === ObjectiveScoringMode.CONTEXT_ONLY || section.objectiveScoringEnabled !== true) {
+      return {
+        score: 0,
+        snapshot: {
+          objectiveScoringMode,
+          contextOnly: true,
+          activeBuckets: [],
+        },
+      };
+    }
+
+    if (objectiveScoringMode === ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE) {
+      return this.calculateOverallObjectiveSectionScore(section, valueMap);
+    }
+
+    if (section.perObjectiveScoreEntryAllowed === false) {
+      return {
+        score: 0,
+        snapshot: {
+          objectiveScoringMode,
+          perObjectiveScoreEntryAllowed: false,
+          activeBuckets: [],
+        },
+      };
+    }
+
+    if (section.useObjectiveWeightageScoring === true) {
+      return this.calculateWeightedObjectiveSectionScore(section, approvedObjectives, ratings);
+    }
+
     const buckets = section.objectiveBuckets ?? [];
     const objectivesByBucket = new Map<string, any[]>();
 
-    for (const obj of approvedObjectives.filter((objective) => objective.source === ObjectiveSource.PREDEFINED)) {
+    for (const obj of approvedObjectives) {
       let bucketKey = 'employee_dynamic';
       if (obj.source === ObjectiveSource.PREDEFINED) bucketKey = 'template_predefined';
+      if (obj.source === ObjectiveSource.MANAGER_CREATED) bucketKey = 'manager_dynamic';
 
       const matchedBucket = buckets.find(
         (b) =>
@@ -295,7 +343,177 @@ export class PmsScoringService {
       });
     }
 
-    return { score: runningSectionScore, snapshot: { activeBuckets: bucketSnapshots } };
+    return {
+      score: runningSectionScore,
+      snapshot: {
+        objectiveScoringMode,
+        activeBuckets: bucketSnapshots,
+      },
+    };
+  }
+
+  private calculateWeightedObjectiveSectionScore(
+    section: PmsScoringConfig['sections'][number],
+    approvedObjectives: any[],
+    ratings: PmsScoringRating[],
+  ): { score: number; snapshot: any } {
+    const scoreableObjectives = approvedObjectives.filter((objective) =>
+      this.isObjectiveScoreable(objective),
+    );
+
+    if (scoreableObjectives.length === 0) {
+      return {
+        score: 0,
+        snapshot: {
+          objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
+          noObjectiveScoringPolicy: section.noObjectiveScoringPolicy ?? 'NO_OBJECTIVES_NOT_APPLICABLE',
+          objectives: [],
+        },
+      };
+    }
+
+    const weightages = scoreableObjectives.map((objective) =>
+      Number(objective.objectiveSnapshot?.approvedWeightage ?? objective.weightage),
+    );
+    if (weightages.some((weightage) => !Number.isFinite(weightage) || weightage <= 0 || weightage > 100)) {
+      throw new Error('Each scoreable objective must have weightage greater than 0 and no more than 100.');
+    }
+    const totalWeightage = weightages.reduce((sum, weightage) => sum + weightage, 0);
+    if (totalWeightage > 100) {
+      throw new Error(`Total scoreable objective weightage cannot exceed 100%. Current total is ${totalWeightage}%.`);
+    }
+
+    let sectionScore = 0;
+    const objectivesSnapshot = scoreableObjectives.map((objective) => {
+      const objectiveId = objective._id.toString();
+      const weightage = Number(objective.objectiveSnapshot?.approvedWeightage ?? objective.weightage ?? 0);
+      const ratingMatch = ratings.find((rating) => rating.objectiveId?.toString() === objectiveId);
+      const managerScore = ratingMatch?.rating !== undefined && ratingMatch.rating !== null
+        ? Number(ratingMatch.rating)
+        : 0;
+      const contribution = (managerScore / 100) * weightage;
+      sectionScore += contribution;
+
+      return {
+        objectiveId,
+        title: objective.objectiveSnapshot?.title ?? objective.title,
+        weightage,
+        managerScore,
+        contribution,
+      };
+    });
+
+    return {
+      score: sectionScore,
+      snapshot: {
+        objectiveScoringMode: ObjectiveScoringMode.WEIGHTED_OBJECTIVE_SCORE,
+        objectiveSectionScore: sectionScore,
+        objectiveSectionContribution: (sectionScore / 100) * Number(section.weightage ?? 0),
+        objectives: objectivesSnapshot,
+      },
+    };
+  }
+
+  private calculateOverallObjectiveSectionScore(
+    section: PmsScoringConfig['sections'][number],
+    valueMap: Map<string, PmsScoringReviewValue>,
+  ): { score: number; snapshot: any } {
+    const resolvedScore = this.resolveOverallObjectiveScore(section, valueMap);
+    const objectiveSectionScore = resolvedScore?.score ?? 0;
+
+    return {
+      score: objectiveSectionScore,
+      snapshot: {
+        objectiveScoringMode: ObjectiveScoringMode.OVERALL_OBJECTIVE_SCORE,
+        overallObjectiveScoreRequired: section.overallScoreEntryAllowed === true,
+        overallScoreEntryAllowed: section.overallScoreEntryAllowed === true,
+        overallObjectiveScore: resolvedScore?.score,
+        overallObjectiveScoreFieldKey: resolvedScore?.fieldKey ?? section.overallObjectiveScoreFieldKey,
+        missingOverallObjectiveScore: resolvedScore === undefined,
+        objectiveSectionScore,
+        objectiveSectionContribution: (objectiveSectionScore / 100) * Number(section.weightage ?? 0),
+        activeBuckets: [],
+      },
+    };
+  }
+
+  private resolveOverallObjectiveScore(
+    section: PmsScoringConfig['sections'][number],
+    valueMap: Map<string, PmsScoringReviewValue>,
+  ): { score: number; fieldKey: string } | undefined {
+    const explicitFieldKey = section.overallObjectiveScoreFieldKey?.trim();
+    const fieldCandidates = section.scoringFields.filter((field) =>
+      this.isOverallObjectiveScoreField(field),
+    );
+    const candidateKeys = [
+      explicitFieldKey,
+      ...fieldCandidates.map((field) => field.fieldKey),
+      'overall_objective_score',
+      'objective_overall_score',
+      'overall_score',
+    ].filter((key): key is string => Boolean(key?.trim()));
+
+    for (const fieldKey of candidateKeys) {
+      const matchedValue = valueMap.get(`${section.sectionKey}::${fieldKey}`);
+      const score = this.parseReviewNumericValue(matchedValue);
+      if (score !== undefined) return { score, fieldKey };
+    }
+
+    for (const [key, value] of valueMap.entries()) {
+      const [sectionKey, fieldKey] = key.split('::');
+      if (sectionKey !== section.sectionKey) continue;
+      if (!this.isOverallObjectiveScoreKey(fieldKey)) continue;
+      const score = this.parseReviewNumericValue(value);
+      if (score !== undefined) return { score, fieldKey };
+    }
+
+    return undefined;
+  }
+
+  private isOverallObjectiveScoreField(field: any): boolean {
+    return (
+      field.semanticRole === 'OVERALL_OBJECTIVE_SCORE' ||
+      this.isOverallObjectiveScoreKey(field.fieldKey) ||
+      this.isOverallObjectiveScoreKey(field.fieldLabel)
+    );
+  }
+
+  private isOverallObjectiveScoreKey(value?: string): boolean {
+    const normalized = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return [
+      'overall_objective_score',
+      'objective_overall_score',
+      'overall_score',
+      'objective_score',
+    ].includes(normalized);
+  }
+
+  private parseReviewNumericValue(value?: PmsScoringReviewValue): number | undefined {
+    if (!value) return undefined;
+    const rawValue = value.valueNumber ?? value.valueJson ?? value.valueText;
+    if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
+    const score = Number(rawValue);
+    return Number.isFinite(score) ? score : undefined;
+  }
+
+  private isObjectiveScoreable(objective: any): boolean {
+    if (objective.objectiveSnapshot?.scoreable !== undefined) {
+      return objective.objectiveSnapshot.scoreable === true;
+    }
+    if (objective.scoreable !== undefined) {
+      return objective.scoreable === true;
+    }
+    return Number.isFinite(Number(objective.weightage ?? objective.objectiveSnapshot?.approvedWeightage));
+  }
+
+  private resolveObjectiveScoringMode(
+    section: PmsScoringConfig['sections'][number],
+    reviewConfig: PmsScoringConfig,
+  ): ObjectiveScoringModeType {
+    const mode = section.objectiveScoringMode ?? reviewConfig.objectiveScoringMode;
+    return Object.values(ObjectiveScoringMode).includes(mode as ObjectiveScoringModeType)
+      ? mode as ObjectiveScoringModeType
+      : ObjectiveScoringMode.CONTEXT_ONLY;
   }
 
   private resolveObjectiveRowWeights(bucket: any, bucketObjs: any[]): number[] {
@@ -534,30 +752,67 @@ export class PmsScoringService {
   calculateAnnualRollup(
     termScores: Record<string, number | undefined | null>,
     annualScoringConfig?: {
-      aggregationMethod?: 'WEIGHTED_AVERAGE' | 'SIMPLE_AVERAGE';
+      aggregationMethod?:
+        | 'WEIGHTED_AVERAGE'
+        | 'SIMPLE_AVERAGE'
+        | 'EQUAL_TERM_AVERAGE'
+        | 'TERM_WEIGHTED_AVERAGE'
+        | 'MANUAL_GROUP_OVERALL_SCORE';
       termWeights?: Record<string, number>;
+      quarterWeights?: Record<string, number>;
+      includedTerms?: string[];
       excludedQuarters?: string[];
+      manualGroupOverallScore?: number;
+      groupOverallScore?: number;
+      overallScore?: number;
       scoringPolicy?: PmsScoringPolicy;
     },
   ): number | undefined {
+    const included = new Set(annualScoringConfig?.includedTerms ?? []);
     const excluded = new Set(annualScoringConfig?.excludedQuarters ?? []);
     const entries = Object.entries(termScores)
-      .filter(([quarter, score]) => !excluded.has(quarter) && Number.isFinite(Number(score)))
+      .filter(([quarter, score]) =>
+        (included.size === 0 || included.has(quarter)) &&
+        !excluded.has(quarter) &&
+        Number.isFinite(Number(score)),
+      )
       .map(([quarter, score]) => ({ quarter, score: Number(score) }));
+
+    if (annualScoringConfig?.aggregationMethod === 'MANUAL_GROUP_OVERALL_SCORE') {
+      const manualScore =
+        annualScoringConfig.manualGroupOverallScore ??
+        annualScoringConfig.groupOverallScore ??
+        annualScoringConfig.overallScore;
+      if (!Number.isFinite(Number(manualScore))) return undefined;
+      return this.applyScorePolicies(Number(manualScore), annualScoringConfig.scoringPolicy);
+    }
 
     if (entries.length === 0) return undefined;
 
     const method = annualScoringConfig?.aggregationMethod ?? 'WEIGHTED_AVERAGE';
-    const rawScore = method === 'SIMPLE_AVERAGE'
+    const termWeights = annualScoringConfig?.termWeights ?? annualScoringConfig?.quarterWeights;
+    const rawScore = method === 'SIMPLE_AVERAGE' || method === 'EQUAL_TERM_AVERAGE'
       ? entries.reduce((sum, item) => sum + Number(item.score), 0) / entries.length
       : (() => {
+          if (method === 'TERM_WEIGHTED_AVERAGE') {
+            const totalConfiguredWeight = entries.reduce(
+              (sum, item) => sum + Number(termWeights?.[item.quarter] ?? 0),
+              0,
+            );
+            if (Math.abs(totalConfiguredWeight - 100) > 0.000001) {
+              throw new Error(
+                `Term weighted average requires included term weights to total 100%. Current total is ${totalConfiguredWeight}%.`,
+              );
+            }
+          }
+
           const totalWeight = entries.reduce(
-            (sum, item) => sum + Number(annualScoringConfig?.termWeights?.[item.quarter] ?? 0),
+            (sum, item) => sum + Number(termWeights?.[item.quarter] ?? 0),
             0,
           );
           return totalWeight > 0
             ? entries.reduce(
-                (sum, item) => sum + (Number(item.score) * Number(annualScoringConfig?.termWeights?.[item.quarter] ?? 0)),
+                (sum, item) => sum + (Number(item.score) * Number(termWeights?.[item.quarter] ?? 0)),
                 0,
               ) / totalWeight
             : entries.reduce((sum, item) => sum + Number(item.score), 0) / entries.length;

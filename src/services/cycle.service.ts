@@ -21,6 +21,7 @@ import { WorkflowEvent } from '../models/pms-workflow-event.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { emailService } from './email.service';
+import { ObjectiveService } from './objective.service';
 import { workflowService } from './workflow.service';
 import type { IAnnualCycle, ICommunicationRuleConfig } from '../models/pms-annual-cycle.model';
 import type { ITermCycle } from '../models/pms-term-cycle.model';
@@ -566,6 +567,8 @@ export class CycleService extends BaseService {
         { returnDocument: true },
       );
     }
+
+    await new ObjectiveService(this.context).applyObjectiveRulesForCycleLaunch(cycle._id.toString());
 
     const launchedCycle = await this.executeTransition(cycle, AnnualWorkflowState.ACTIVE, 'PMS_CYCLE_LAUNCHED', {
       launchedAt: new Date(),

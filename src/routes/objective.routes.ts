@@ -9,14 +9,31 @@ import { errorResponse, successResponse } from '../utilis/apiResponse';
 import { parseMultipartForm } from '../utilis/parseMultiPartForm';
 import type {
   AddObjectiveCommentInput,
+  AmendFlexibleObjectiveInput,
+  ApplyObjectiveAssignmentsInput,
+  ApplyObjectiveAssignmentPeriodInput,
   BulkCreateManagerObjectiveInput,
   CloseObjectiveSettingInput,
+  CreateObjectiveAssignmentPeriodInput,
+  CreateObjectiveAssignmentRuleInput,
+  CreateObjectiveMasterInput,
   CreateObjectiveInput,
+  ObjectiveAssignmentPeriodEmployeeInput,
+  ObjectiveAssignmentPeriodListQuery,
+  ObjectiveAssignmentPeriodReportQuery,
+  ObjectiveAssignmentPreviewInput,
+  ObjectiveEmployeeAssignmentListQuery,
+  ObjectiveReportingQuery,
   CorrectObjectiveInput,
   ManagerObjectiveLibraryDraftInput,
+  ObjectiveMasterListQuery,
   ReturnObjectiveInput,
   SaveAssignmentTemplateValuesInput,
+  SaveObjectiveEmployeeAssignmentValuesInput,
   SaveManagerObjectiveLibraryInput,
+  UpdateObjectiveAssignmentRuleInput,
+  UpdateObjectiveAssignmentPeriodInput,
+  UpdateObjectiveMasterVersionInput,
   UpdateObjectiveInput,
 } from '../services/objective.service';
 
@@ -128,6 +145,505 @@ export const objectiveRoutes: RouteHandler = async (
   );
 
   fastify.post(
+    '/masters',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.createObjectiveMaster(
+          request.body as CreateObjectiveMasterInput,
+        );
+        return reply.status(201).send(successResponse('Objective Master created successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/masters',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.listObjectiveMasters(
+          request.query as ObjectiveMasterListQuery,
+        );
+        return reply.send(successResponse('Objective Masters fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/masters/:objectiveMasterId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveMasterId } = request.params as { objectiveMasterId: string };
+        const result = await request.container!.objectiveService.getObjectiveMasterDetail(
+          objectiveMasterId,
+        );
+        return reply.send(successResponse('Objective Master fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/masters/:objectiveMasterId/versions',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveMasterId } = request.params as { objectiveMasterId: string };
+        const versions = await request.container!.objectiveService.listObjectiveMasterVersions(
+          objectiveMasterId,
+        );
+        return reply.send(successResponse('Objective Master versions fetched successfully', versions));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/masters/:objectiveMasterId/versions',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveMasterId } = request.params as { objectiveMasterId: string };
+        const { sourceVersionId } = (request.body ?? {}) as { sourceVersionId?: string };
+        const version = await request.container!.objectiveService.createObjectiveMasterVersion(
+          objectiveMasterId,
+          sourceVersionId,
+        );
+        return reply.status(201).send(successResponse('Objective Master version created successfully', version));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/master-versions/:objectiveVersionId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveVersionId } = request.params as { objectiveVersionId: string };
+        const version = await request.container!.objectiveService.updateDraftObjectiveMasterVersion(
+          objectiveVersionId,
+          request.body as UpdateObjectiveMasterVersionInput,
+        );
+        return reply.send(successResponse('Draft objective version updated successfully', version));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/master-versions/:objectiveVersionId/activate',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveVersionId } = request.params as { objectiveVersionId: string };
+        const result = await request.container!.objectiveService.activateObjectiveMasterVersion(
+          objectiveVersionId,
+        );
+        return reply.send(successResponse('Objective version activated successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/master-versions/:objectiveVersionId/deactivate',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveVersionId } = request.params as { objectiveVersionId: string };
+        const result = await request.container!.objectiveService.deactivateObjectiveMasterVersion(
+          objectiveVersionId,
+        );
+        return reply.send(successResponse('Objective version deactivated successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/master-versions/:objectiveVersionId/archive',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveVersionId } = request.params as { objectiveVersionId: string };
+        const result = await request.container!.objectiveService.archiveObjectiveMasterVersion(
+          objectiveVersionId,
+        );
+        return reply.send(successResponse('Objective version archived successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/master-versions/:objectiveVersionId/assignable',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveVersionId } = request.params as { objectiveVersionId: string };
+        const version = await request.container!.objectiveService.assertObjectiveVersionAssignable(
+          objectiveVersionId,
+        );
+        return reply.send(successResponse('Objective version is assignable', version));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/master-versions/:objectiveVersionId/reviewable',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Master'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveVersionId } = request.params as { objectiveVersionId: string };
+        const version = await request.container!.objectiveService.assertObjectiveVersionReviewable(
+          objectiveVersionId,
+        );
+        return reply.send(successResponse('Objective version is reviewable', version));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-rules',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Rules'] } },
+    async (request, reply) => {
+      try {
+        const rule = await request.container!.objectiveService.createObjectiveAssignmentRule(
+          request.body as CreateObjectiveAssignmentRuleInput,
+        );
+        return reply.status(201).send(successResponse('Objective assignment rule created successfully', rule));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/assignment-rules/:assignmentRuleId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Rules'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentRuleId } = request.params as { assignmentRuleId: string };
+        const rule = await request.container!.objectiveService.updateObjectiveAssignmentRule(
+          assignmentRuleId,
+          request.body as UpdateObjectiveAssignmentRuleInput,
+        );
+        return reply.send(successResponse('Objective assignment rule updated successfully', rule));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-rules/:assignmentRuleId/deactivate',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Rules'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentRuleId } = request.params as { assignmentRuleId: string };
+        const rule = await request.container!.objectiveService.deactivateObjectiveAssignmentRule(
+          assignmentRuleId,
+        );
+        return reply.send(successResponse('Objective assignment rule deactivated successfully', rule));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-rules/preview',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Rules'] } },
+    async (request, reply) => {
+      try {
+        const preview = await request.container!.objectiveService.previewObjectiveAssignments(
+          request.body as ObjectiveAssignmentPreviewInput,
+        );
+        return reply.send(successResponse('Objective assignment preview generated successfully', preview));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-rules/apply',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Rules'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.applyObjectiveAssignments(
+          request.body as ApplyObjectiveAssignmentsInput,
+        );
+        return reply.send(successResponse('Objective assignments applied successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-periods',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const period = await request.container!.objectiveService.createObjectiveAssignmentPeriod(
+          request.body as CreateObjectiveAssignmentPeriodInput,
+        );
+        return reply.status(201).send(successResponse('Objective Assignment Period created successfully', period));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/assignment-periods',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.listObjectiveAssignmentPeriods(
+          request.query as ObjectiveAssignmentPeriodListQuery,
+        );
+        return reply.send(successResponse('Objective Assignment Periods fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/assignment-periods/:periodId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const { periodId } = request.params as { periodId: string };
+        const period = await request.container!.objectiveService.getObjectiveAssignmentPeriod(periodId);
+        return reply.send(successResponse('Objective Assignment Period fetched successfully', period));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/assignment-periods/:periodId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const { periodId } = request.params as { periodId: string };
+        const period = await request.container!.objectiveService.updateObjectiveAssignmentPeriod(
+          periodId,
+          request.body as UpdateObjectiveAssignmentPeriodInput,
+        );
+        return reply.send(successResponse('Objective Assignment Period updated successfully', period));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-periods/:periodId/activate',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const { periodId } = request.params as { periodId: string };
+        const period = await request.container!.objectiveService.activateObjectiveAssignmentPeriod(periodId);
+        return reply.send(successResponse('Objective Assignment Period activated successfully', period));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-periods/:periodId/close',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const { periodId } = request.params as { periodId: string };
+        const period = await request.container!.objectiveService.closeObjectiveAssignmentPeriod(periodId);
+        return reply.send(successResponse('Objective Assignment Period closed successfully', period));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-periods/:periodId/preview',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const { periodId } = request.params as { periodId: string };
+        const preview = await request.container!.objectiveService.previewObjectiveAssignmentPeriodEmployees(
+          periodId,
+          request.body as ObjectiveAssignmentPeriodEmployeeInput,
+        );
+        return reply.send(successResponse('Objective Assignment Period preview generated successfully', preview));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-periods/:periodId/apply',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Periods'] } },
+    async (request, reply) => {
+      try {
+        const { periodId } = request.params as { periodId: string };
+        const result = await request.container!.objectiveService.applyObjectiveAssignmentPeriodEmployees(
+          periodId,
+          request.body as ApplyObjectiveAssignmentPeriodInput,
+        );
+        return reply.send(successResponse('Objective Assignment Period applied successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/employee-assignments',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const assignments = await request.container!.objectiveService.listObjectiveEmployeeAssignments(
+          request.query as ObjectiveEmployeeAssignmentListQuery,
+        );
+        return reply.send(successResponse('Objective employee assignments fetched successfully', assignments));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/employee-assignments/:assignmentId/values',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.saveObjectiveEmployeeAssignmentValues(
+          assignmentId,
+          request.body as SaveObjectiveEmployeeAssignmentValuesInput,
+        );
+        return reply.send(successResponse('Objective assignment values saved successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/submit',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.submitObjectiveEmployeeAssignment(
+          assignmentId,
+          (request.body ?? {}) as SaveObjectiveEmployeeAssignmentValuesInput,
+        );
+        return reply.send(successResponse('Objective assignment submitted successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/close',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.closeObjectiveEmployeeAssignment(assignmentId);
+        return reply.send(successResponse('Objective assignment closed successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/assignment-period-reports',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Period Reports'] } },
+    async (request, reply) => {
+      try {
+        const report = await request.container!.objectiveService.getObjectiveAssignmentPeriodReport(
+          request.query as ObjectiveAssignmentPeriodReportQuery,
+        );
+        return reply.send(successResponse('Objective Assignment Period report fetched successfully', report));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-periods/scheduled-close',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Period Reports'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.runScheduledObjectiveAssignmentPeriodClose();
+        return reply.send(successResponse('Objective Assignment Period scheduled close completed successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/reporting',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Reporting'] } },
+    async (request, reply) => {
+      try {
+        const data = await request.container!.objectiveService.getObjectiveReportingData(
+          request.query as ObjectiveReportingQuery,
+        );
+        return reply.send(successResponse('Objective reporting data fetched successfully', data));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/dashboard-statuses',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Reporting'] } },
+    async (request, reply) => {
+      try {
+        const data = await request.container!.objectiveService.getObjectiveDashboardStatuses(
+          request.query as ObjectiveReportingQuery,
+        );
+        return reply.send(successResponse('Objective dashboard statuses fetched successfully', data));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
     '/assignments/:termAssignmentId/close-objective-setting',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
     async (request, reply) => {
@@ -155,6 +671,20 @@ export const objectiveRoutes: RouteHandler = async (
           request.body as SaveAssignmentTemplateValuesInput,
         );
         return reply.send(successResponse('Objective template values saved successfully', values));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/:id/fillability',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const policy = await request.container!.objectiveService.getObjectiveFillabilityPolicy(id);
+        return reply.send(successResponse('Objective fillability policy fetched successfully', policy));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -283,6 +813,23 @@ export const objectiveRoutes: RouteHandler = async (
           request.body as CorrectObjectiveInput,
         );
         return reply.send(successResponse('Objective corrected successfully', objective));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/amendment',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.objectiveService.amendFlexibleObjective(
+          id,
+          request.body as AmendFlexibleObjectiveInput,
+        );
+        return reply.send(successResponse('Objective amendment applied successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

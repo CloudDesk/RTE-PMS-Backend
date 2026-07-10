@@ -4,6 +4,8 @@ export const ProbationReviewStatus = {
   SCHEDULED: 'SCHEDULED',
   REVIEW_OPEN: 'REVIEW_OPEN',
   MANAGER_1_SUBMITTED: 'MANAGER_1_SUBMITTED',
+  DELEGATED_TO_APPROVER: 'DELEGATED_TO_APPROVER',
+  APPROVAL_REASSIGNED: 'APPROVAL_REASSIGNED',
   RETURNED_TO_MANAGER_1: 'RETURNED_TO_MANAGER_1',
   FINALIZED: 'FINALIZED',
   CANCELLED: 'CANCELLED',
@@ -21,6 +23,33 @@ export interface IProbationReviewValue {
   updatedAt?: Date;
 }
 
+export type ProbationReviewerRole = 'MANAGER_1' | 'MANAGER_2';
+
+export interface IProbationReviewAccessRule {
+  visible: boolean;
+  editable: boolean;
+  mandatory?: boolean;
+}
+
+export interface IProbationReviewFieldPermission {
+  sectionKey: string;
+  sectionLabel?: string;
+  fieldKey: string;
+  fieldLabel?: string;
+  fieldType?: string;
+  parentFieldKey?: string;
+  isGridRow?: boolean;
+  gridRowKey?: string;
+  manager1: IProbationReviewAccessRule;
+  manager2: IProbationReviewAccessRule;
+}
+
+export interface IProbationReviewReviewerConfiguration {
+  fillingManagerRole: ProbationReviewerRole;
+  approvingManagerRole: ProbationReviewerRole;
+  permissions: IProbationReviewFieldPermission[];
+}
+
 interface IProbationReviewAuditEntry {
   action: string;
   actorId?: Types.ObjectId;
@@ -30,16 +59,31 @@ interface IProbationReviewAuditEntry {
 
 export interface IPmsProbationReviewAssignment extends Document {
   employeeId: Types.ObjectId;
+  joiningDate?: Date;
+  probationStartDate?: Date;
   probationEndDate: Date;
   reviewOpenDate: Date;
+  openedAt?: Date;
+  reviewOpenOffsetDays?: number;
   manager1Id: Types.ObjectId;
   manager2Id: Types.ObjectId;
   templateId: Types.ObjectId;
   templateVersionId: Types.ObjectId;
+  reviewerConfiguration?: IProbationReviewReviewerConfiguration;
   status: ProbationReviewStatus;
   reviewValues: IProbationReviewValue[];
   manager1SubmittedAt?: Date;
   manager1SubmittedBy?: Types.ObjectId;
+  delegatedAt?: Date;
+  delegatedBy?: Types.ObjectId;
+  delegatedToRole?: ProbationReviewerRole;
+  delegatedFromStatus?: ProbationReviewStatus;
+  delegationReason?: string;
+  approvalOwnerRoleOverride?: ProbationReviewerRole;
+  approvalOwnerOriginalRole?: ProbationReviewerRole;
+  approvalOwnerOverrideBy?: Types.ObjectId;
+  approvalOwnerOverrideAt?: Date;
+  approvalOwnerOverrideReason?: string;
   manager2ReviewedAt?: Date;
   manager2ReviewedBy?: Types.ObjectId;
   finalizedAt?: Date;
@@ -89,8 +133,12 @@ const probationReviewAssignmentSchema =
         ref: 'User',
         index: true,
       },
+      joiningDate: { type: Date },
+      probationStartDate: { type: Date },
       probationEndDate: { type: Date, required: true, index: true },
       reviewOpenDate: { type: Date, required: true, index: true },
+      openedAt: Date,
+      reviewOpenOffsetDays: { type: Number, min: 0, default: 30 },
       manager1Id: {
         type: Schema.Types.ObjectId,
         required: true,
@@ -115,6 +163,7 @@ const probationReviewAssignmentSchema =
         ref: 'PmsTemplateVersion',
         index: true,
       },
+      reviewerConfiguration: { type: Schema.Types.Mixed, default: undefined },
       status: {
         type: String,
         enum: Object.values(ProbationReviewStatus),
@@ -125,6 +174,16 @@ const probationReviewAssignmentSchema =
       reviewValues: { type: [probationReviewValueSchema], default: [] },
       manager1SubmittedAt: Date,
       manager1SubmittedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+      delegatedAt: Date,
+      delegatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+      delegatedToRole: { type: String, enum: ['MANAGER_1', 'MANAGER_2'] },
+      delegatedFromStatus: { type: String, enum: Object.values(ProbationReviewStatus) },
+      delegationReason: { type: String, trim: true },
+      approvalOwnerRoleOverride: { type: String, enum: ['MANAGER_1', 'MANAGER_2'] },
+      approvalOwnerOriginalRole: { type: String, enum: ['MANAGER_1', 'MANAGER_2'] },
+      approvalOwnerOverrideBy: { type: Schema.Types.ObjectId, ref: 'User' },
+      approvalOwnerOverrideAt: Date,
+      approvalOwnerOverrideReason: { type: String, trim: true },
       manager2ReviewedAt: Date,
       manager2ReviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
       finalizedAt: Date,

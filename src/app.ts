@@ -27,7 +27,8 @@ import { config } from './config';
 import fastifyMultipart from '@fastify/multipart';
 import { fileURLToPath } from 'url';
 import path, { join } from "path";
-
+ 
+dns.setServers(["1.1.1.1", "8.8.8.8"]);
 const currentFileUrl = fileURLToPath((require('url').pathToFileURL(__filename)).toString());
 const currentDir = path.dirname(currentFileUrl);
 
