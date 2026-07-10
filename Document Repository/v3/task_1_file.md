@@ -171,6 +171,8 @@ For non-technical users, we should show friendly wording, not only formula.
 **5. Configure Fill Permission**
 Yes, this is required.
 
+Current scope note: keep this configuration hidden for now. The assigned employee fills the sheet; Manager, Admin, and Director/Management have view access. Do not expose `Reviewer` as a user-facing role; future role options should come from Role LOV.
+
 After sheet layout is ready, admin configures who can fill each column/cell.
 
 Permission levels:

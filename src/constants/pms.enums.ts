@@ -218,6 +218,24 @@ export const ObjectiveAssignmentRuleStatus = {
 export type ObjectiveAssignmentRuleStatus =
   (typeof ObjectiveAssignmentRuleStatus)[keyof typeof ObjectiveAssignmentRuleStatus];
 
+export const ObjectiveAssignmentPeriodStatus = {
+  DRAFT: 'DRAFT',
+  ACTIVE: 'ACTIVE',
+  CLOSED: 'CLOSED',
+} as const;
+
+export type ObjectiveAssignmentPeriodStatus =
+  (typeof ObjectiveAssignmentPeriodStatus)[keyof typeof ObjectiveAssignmentPeriodStatus];
+
+export const ObjectiveEmployeeAssignmentStatus = {
+  ASSIGNED: 'ASSIGNED',
+  SUBMITTED: 'SUBMITTED',
+  CLOSED: 'CLOSED',
+} as const;
+
+export type ObjectiveEmployeeAssignmentStatus =
+  (typeof ObjectiveEmployeeAssignmentStatus)[keyof typeof ObjectiveEmployeeAssignmentStatus];
+
 export const ObjectiveTargetDirection = {
   HIGHER_IS_BETTER: 'HIGHER_IS_BETTER',
   LOWER_IS_BETTER: 'LOWER_IS_BETTER',
