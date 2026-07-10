@@ -20,6 +20,7 @@ import type {
   CreateObjectiveInput,
   ObjectiveAssignmentPeriodEmployeeInput,
   ObjectiveAssignmentPeriodListQuery,
+  ObjectiveAssignmentPeriodReportQuery,
   ObjectiveAssignmentPreviewInput,
   ObjectiveEmployeeAssignmentListQuery,
   ObjectiveReportingQuery,
@@ -578,6 +579,34 @@ export const objectiveRoutes: RouteHandler = async (
         const { assignmentId } = request.params as { assignmentId: string };
         const assignment = await request.container!.objectiveService.closeObjectiveEmployeeAssignment(assignmentId);
         return reply.send(successResponse('Objective assignment closed successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/assignment-period-reports',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Period Reports'] } },
+    async (request, reply) => {
+      try {
+        const report = await request.container!.objectiveService.getObjectiveAssignmentPeriodReport(
+          request.query as ObjectiveAssignmentPeriodReportQuery,
+        );
+        return reply.send(successResponse('Objective Assignment Period report fetched successfully', report));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/assignment-periods/scheduled-close',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Assignment Period Reports'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.runScheduledObjectiveAssignmentPeriodClose();
+        return reply.send(successResponse('Objective Assignment Period scheduled close completed successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

@@ -279,6 +279,60 @@ export interface ObjectiveEmployeeAssignmentListQuery {
   status?: string;
 }
 
+export interface ObjectiveAssignmentPeriodReportQuery {
+  objectiveAssignmentPeriodId?: string;
+  objectiveMasterId?: string;
+  objectiveVersionId?: string;
+  linkedPmsCycleId?: string;
+  status?: ObjectiveAssignmentPeriodStatusType | string;
+}
+
+export interface ObjectiveAssignmentPeriodReportRecord {
+  periodId: string;
+  periodName: string;
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  linkedPmsCycleId?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  fillStartDate?: string;
+  fillEndDate?: string;
+  status: string;
+  terms: string[];
+  totalAssignments: number;
+  assignedCount: number;
+  submittedCount: number;
+  closedCount: number;
+  overdueCount: number;
+  completionRate: number;
+  latestAuditAction?: string;
+  latestAuditAt?: string;
+}
+
+export interface ObjectiveAssignmentPeriodReportSummary {
+  totalPeriods: number;
+  activePeriods: number;
+  closedPeriods: number;
+  draftPeriods: number;
+  totalAssignments: number;
+  assignedCount: number;
+  submittedCount: number;
+  closedCount: number;
+  overdueCount: number;
+}
+
+export interface ObjectiveAssignmentPeriodReportResult {
+  summary: ObjectiveAssignmentPeriodReportSummary;
+  periods: ObjectiveAssignmentPeriodReportRecord[];
+}
+
+export interface ScheduledObjectiveAssignmentPeriodCloseResult {
+  checkedAt: string;
+  closedPeriodIds: string[];
+  closedPeriods: number;
+  closedAssignments: number;
+}
+
 export interface ObjectiveReportingRecord {
   objectiveId: string;
   objectiveSource: string;
@@ -2111,6 +2165,7 @@ export class ObjectiveService extends BaseService {
 
   async closeObjectiveAssignmentPeriod(
     periodId: string,
+    reason = 'Objective Assignment Period manually closed by admin',
   ): Promise<ObjectiveAssignmentPeriodRecord> {
     await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.close');
     const period = await ObjectiveAssignmentPeriod.findOne({
@@ -2145,8 +2200,203 @@ export class ObjectiveService extends BaseService {
       },
     );
     const nextValue = this.mapObjectiveAssignmentPeriodRecord(period);
-    await this.audit('PMS_OBJECTIVE_ASSIGNMENT_PERIOD_CLOSED', 'OBJECTIVE_ASSIGNMENT_PERIOD', period._id.toString(), previousValue, nextValue);
+    await this.audit(
+      'PMS_OBJECTIVE_ASSIGNMENT_PERIOD_CLOSED',
+      'OBJECTIVE_ASSIGNMENT_PERIOD',
+      period._id.toString(),
+      previousValue,
+      nextValue,
+      reason,
+    );
     return nextValue;
+  }
+
+  async getObjectiveAssignmentPeriodReport(
+    query: ObjectiveAssignmentPeriodReportQuery = {},
+  ): Promise<ObjectiveAssignmentPeriodReportResult> {
+    await this.requireAdminForObjectiveReporting('objectiveAssignmentPeriod.reporting');
+    const filter = this.buildObjectiveAssignmentPeriodReportFilter(query);
+    const periods = await ObjectiveAssignmentPeriod.find(filter)
+      .sort({ periodStartDate: -1, createdAt: -1 })
+      .lean();
+    const periodIds = periods.map((period) => period._id);
+    const now = this.getCurrentDate();
+
+    const [assignmentGroups, latestAuditLogs] = await Promise.all([
+      ObjectiveEmployeeAssignment.aggregate([
+        {
+          $match: {
+            objectiveAssignmentPeriodId: { $in: periodIds },
+            isDeleted: false,
+          },
+        },
+        {
+          $group: {
+            _id: {
+              periodId: '$objectiveAssignmentPeriodId',
+              status: '$status',
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      AuditLog.aggregate([
+        {
+          $match: {
+            entityType: 'OBJECTIVE_ASSIGNMENT_PERIOD',
+            entityId: { $in: periodIds },
+          },
+        },
+        { $sort: { timestamp: -1 } },
+        {
+          $group: {
+            _id: '$entityId',
+            action: { $first: '$action' },
+            timestamp: { $first: '$timestamp' },
+          },
+        },
+      ]),
+    ]);
+
+    const statusCountsByPeriod = new Map<string, Record<string, number>>();
+    assignmentGroups.forEach((group: any) => {
+      const periodId = group._id.periodId.toString();
+      const status = String(group._id.status || '');
+      const counts = statusCountsByPeriod.get(periodId) || {};
+      counts[status] = Number(group.count) || 0;
+      statusCountsByPeriod.set(periodId, counts);
+    });
+
+    const latestAuditByPeriod = new Map<string, { action?: string; timestamp?: Date }>();
+    latestAuditLogs.forEach((log: any) => {
+      latestAuditByPeriod.set(log._id.toString(), {
+        action: log.action,
+        timestamp: log.timestamp,
+      });
+    });
+
+    const records = periods.map((period) => {
+      const periodId = period._id.toString();
+      const counts = statusCountsByPeriod.get(periodId) || {};
+      const assignedCount = counts[ObjectiveEmployeeAssignmentStatus.ASSIGNED] || 0;
+      const submittedCount = counts[ObjectiveEmployeeAssignmentStatus.SUBMITTED] || 0;
+      const closedCount = counts[ObjectiveEmployeeAssignmentStatus.CLOSED] || 0;
+      const totalAssignments = assignedCount + submittedCount + closedCount;
+      const overdueCount =
+        period.status === ObjectiveAssignmentPeriodStatus.ACTIVE && now > period.fillEndDate
+          ? assignedCount
+          : 0;
+      const latestAudit = latestAuditByPeriod.get(periodId);
+
+      return {
+        periodId,
+        periodName: period.name,
+        objectiveMasterId: period.objectiveMasterId.toString(),
+        objectiveVersionId: period.objectiveVersionId.toString(),
+        linkedPmsCycleId: period.linkedPmsCycleId?.toString?.(),
+        periodStartDate: period.periodStartDate?.toISOString?.(),
+        periodEndDate: period.periodEndDate?.toISOString?.(),
+        fillStartDate: period.fillStartDate?.toISOString?.(),
+        fillEndDate: period.fillEndDate?.toISOString?.(),
+        status: period.status,
+        terms: period.terms ?? [],
+        totalAssignments,
+        assignedCount,
+        submittedCount,
+        closedCount,
+        overdueCount,
+        completionRate: totalAssignments > 0 ? Math.round((submittedCount / totalAssignments) * 100) : 0,
+        latestAuditAction: latestAudit?.action,
+        latestAuditAt: latestAudit?.timestamp?.toISOString?.(),
+      } satisfies ObjectiveAssignmentPeriodReportRecord;
+    });
+
+    const summary = records.reduce<ObjectiveAssignmentPeriodReportSummary>(
+      (acc, period) => {
+        acc.totalPeriods += 1;
+        if (period.status === ObjectiveAssignmentPeriodStatus.ACTIVE) acc.activePeriods += 1;
+        if (period.status === ObjectiveAssignmentPeriodStatus.CLOSED) acc.closedPeriods += 1;
+        if (period.status === ObjectiveAssignmentPeriodStatus.DRAFT) acc.draftPeriods += 1;
+        acc.totalAssignments += period.totalAssignments;
+        acc.assignedCount += period.assignedCount;
+        acc.submittedCount += period.submittedCount;
+        acc.closedCount += period.closedCount;
+        acc.overdueCount += period.overdueCount;
+        return acc;
+      },
+      {
+        totalPeriods: 0,
+        activePeriods: 0,
+        closedPeriods: 0,
+        draftPeriods: 0,
+        totalAssignments: 0,
+        assignedCount: 0,
+        submittedCount: 0,
+        closedCount: 0,
+        overdueCount: 0,
+      },
+    );
+
+    return { summary, periods: records };
+  }
+
+  async runScheduledObjectiveAssignmentPeriodClose(): Promise<ScheduledObjectiveAssignmentPeriodCloseResult> {
+    await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.close');
+    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
+    const now = this.getCurrentDate();
+    const periods = await ObjectiveAssignmentPeriod.find({
+      status: ObjectiveAssignmentPeriodStatus.ACTIVE,
+      fillEndDate: { $lt: now },
+      isDeleted: false,
+    });
+    const closedPeriodIds: string[] = [];
+    let closedAssignments = 0;
+
+    for (const period of periods) {
+      const previousValue = this.mapObjectiveAssignmentPeriodRecord(period);
+      period.status = ObjectiveAssignmentPeriodStatus.CLOSED;
+      period.closedAt = now;
+      period.closedBy = actorId;
+      period.updatedBy = actorId;
+      period.version += 1;
+      await period.save();
+
+      const assignmentUpdate = await ObjectiveEmployeeAssignment.updateMany(
+        {
+          objectiveAssignmentPeriodId: period._id,
+          status: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
+          isDeleted: false,
+        },
+        {
+          $set: {
+            status: ObjectiveEmployeeAssignmentStatus.CLOSED,
+            closedAt: now,
+            closedBy: actorId,
+            updatedBy: actorId,
+          },
+          $inc: { version: 1 },
+        },
+      );
+      closedAssignments += assignmentUpdate.modifiedCount || 0;
+
+      const nextValue = this.mapObjectiveAssignmentPeriodRecord(period);
+      await this.audit(
+        'PMS_OBJECTIVE_ASSIGNMENT_PERIOD_AUTO_CLOSED',
+        'OBJECTIVE_ASSIGNMENT_PERIOD',
+        period._id.toString(),
+        previousValue,
+        nextValue,
+        'Scheduled close after objective assignment fill end date',
+      );
+      closedPeriodIds.push(period._id.toString());
+    }
+
+    return {
+      checkedAt: now.toISOString(),
+      closedPeriodIds,
+      closedPeriods: closedPeriodIds.length,
+      closedAssignments,
+    };
   }
 
   async previewObjectiveAssignmentPeriodEmployees(
@@ -7961,6 +8211,31 @@ export class ObjectiveService extends BaseService {
     if (query.objectiveMasterId) filter.objectiveMasterId = this.toObjectId(query.objectiveMasterId, 'objectiveMasterId');
     if (query.objectiveVersionId) filter.objectiveVersionId = this.toObjectId(query.objectiveVersionId, 'objectiveVersionId');
     if (query.status) filter.status = query.status;
+    return filter;
+  }
+
+  private buildObjectiveAssignmentPeriodReportFilter(
+    query: ObjectiveAssignmentPeriodReportQuery,
+  ): Record<string, unknown> {
+    const filter: Record<string, unknown> = { isDeleted: false };
+    if (query.objectiveAssignmentPeriodId) {
+      filter._id = this.toObjectId(query.objectiveAssignmentPeriodId, 'objectiveAssignmentPeriodId');
+    }
+    if (query.objectiveMasterId) {
+      filter.objectiveMasterId = this.toObjectId(query.objectiveMasterId, 'objectiveMasterId');
+    }
+    if (query.objectiveVersionId) {
+      filter.objectiveVersionId = this.toObjectId(query.objectiveVersionId, 'objectiveVersionId');
+    }
+    if (query.linkedPmsCycleId) {
+      filter.linkedPmsCycleId = this.toObjectId(query.linkedPmsCycleId, 'linkedPmsCycleId');
+    }
+    if (query.status && query.status !== 'ALL') {
+      if (!Object.values(ObjectiveAssignmentPeriodStatus).includes(query.status as ObjectiveAssignmentPeriodStatusType)) {
+        throw new Error('Invalid Objective Assignment Period status');
+      }
+      filter.status = query.status;
+    }
     return filter;
   }
 
