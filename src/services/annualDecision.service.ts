@@ -11,6 +11,7 @@ import {
   isTermFinalized,
   normalizePmsRole,
   PmsRole,
+  PmsTemplateSectionType,
   TermWorkflowState,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
@@ -31,6 +32,7 @@ import { DelegationService } from './delegation.service';
 import { visibilityMaskService } from './visibilityMask.service';
 import {
   PmsTemplateService,
+  type ResolvedTemplateField,
   type ResolvedTemplateVersion,
 } from './pms-template.service';
 import { PmsScoringService } from './pms-scoring.service';
@@ -41,7 +43,7 @@ import type { IObjective } from '../models/pms-objective.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type { AppraisalOutcomeType as AppraisalOutcomeTypeType } from '../constants/pms.enums';
 import type { IAnnualDecisionValue } from '../models/pms-annual-decision-value.model';
-import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
 
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
@@ -1431,8 +1433,10 @@ export class AnnualDecisionService extends BaseService {
 
     const values = this.buildAnnualTemplateResolveValues(input);
     const missingFields: string[] = [];
-    const resolvedFieldMap = new Map(
-      resolvedTemplate.sections.flatMap((section) => section.fields).map((field) => [field.key, field]),
+    const resolvedFieldMap = await this.resolveAnnualDecisionEditableFieldMap(
+      annualAssignment,
+      input,
+      resolvedTemplate,
     );
 
     for (const decisionValue of input.decisionValues ?? []) {
@@ -1790,6 +1794,7 @@ export class AnnualDecisionService extends BaseService {
   private async resolveAnnualDecisionTemplate(
     annualAssignment: IAnnualAssignment,
     input: SaveDecisionDraftInput,
+    hierarchyScope?: string,
   ): Promise<ResolvedTemplateVersion | null> {
     if (!annualAssignment.templateVersionId) {
       return null;
@@ -1802,12 +1807,219 @@ export class AnnualDecisionService extends BaseService {
       annualAssignment.templateVersionId.toString(),
       {
         role,
-        workflowState: annualAssignment.annualState,
-        hierarchyScope: 'direct-report',
+        workflowState: this.resolveAnnualDecisionTemplateWorkflowState(annualAssignment),
+        ...(hierarchyScope ? { hierarchyScope } : {}),
         annualAssignmentId: annualAssignment._id.toString(),
         values: this.buildAnnualTemplateResolveValues(input),
       },
     );
+  }
+
+  private async resolveAnnualDecisionEditableFieldMap(
+    annualAssignment: IAnnualAssignment,
+    input: SaveDecisionDraftInput,
+    primaryTemplate: ResolvedTemplateVersion,
+  ): Promise<Map<string, ResolvedTemplateField>> {
+    const fieldMap = new Map(
+      primaryTemplate.sections.flatMap((section) => section.fields).map((field) => [field.key, field]),
+    );
+    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    if (role !== PmsRole.ADMIN) {
+      return fieldMap;
+    }
+
+    for (const hierarchyScope of ['global', 'direct-report', 'department']) {
+      const scopedTemplate = await this.resolveAnnualDecisionTemplate(
+        annualAssignment,
+        input,
+        hierarchyScope,
+      );
+      for (const field of scopedTemplate?.sections.flatMap((section) => section.fields) ?? []) {
+        if (!fieldMap.has(field.key) || field.editable === true) {
+          fieldMap.set(field.key, field);
+        }
+      }
+    }
+
+    for (const decisionValue of input.decisionValues ?? []) {
+      if (
+        !decisionValue.fieldKey?.trim() ||
+        fieldMap.has(decisionValue.fieldKey) ||
+        this.isStandardAnnualDecisionFieldKey(decisionValue.fieldKey)
+      ) {
+        continue;
+      }
+
+      const rawTemplateField = await this.resolveEditableRawAnnualDecisionField(
+        annualAssignment,
+        decisionValue,
+      );
+      if (rawTemplateField) {
+        fieldMap.set(decisionValue.fieldKey, rawTemplateField);
+        fieldMap.set(rawTemplateField.key, rawTemplateField);
+      }
+    }
+
+    return fieldMap;
+  }
+
+  private async resolveEditableRawAnnualDecisionField(
+    annualAssignment: IAnnualAssignment,
+    decisionValue: AnnualDecisionValueInput,
+  ): Promise<ResolvedTemplateField | null> {
+    if (!annualAssignment.templateVersionId || !decisionValue.fieldKey?.trim() || !decisionValue.sectionKey?.trim()) {
+      return null;
+    }
+
+    const templateVersion = await PmsTemplateVersion.findOne({
+      _id: annualAssignment.templateVersionId,
+      isDeleted: false,
+    }).lean();
+    if (!templateVersion) {
+      return null;
+    }
+
+    const requestedSectionKey = this.normalizeAnnualFieldKey(decisionValue.sectionKey);
+    const requestedFieldKeys = [
+      decisionValue.fieldKey,
+      decisionValue.templateFieldId,
+    ]
+      .map((value) => this.normalizeAnnualFieldKey(value ?? ''))
+      .filter(Boolean);
+    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const workflowState = this.resolveAnnualDecisionTemplateWorkflowState(annualAssignment);
+
+    for (const section of templateVersion.sections ?? []) {
+      if (this.normalizeAnnualFieldKey(section.sectionKey) !== requestedSectionKey) {
+        continue;
+      }
+      if (!this.isAnnualDecisionTemplateSection(section)) {
+        continue;
+      }
+
+      const field = (section.fields ?? []).find((item) =>
+        requestedFieldKeys.includes(this.normalizeAnnualFieldKey(item.fieldKey)),
+      );
+      if (!field || !this.isRawAnnualDecisionFieldEditable(field, section, role, workflowState)) {
+        return null;
+      }
+
+      return this.mapRawAnnualDecisionField(field);
+    }
+
+    return null;
+  }
+
+  private isAnnualDecisionTemplateSection(section: ITemplateSection): boolean {
+    const sectionRecord = section as ITemplateSection & Record<string, unknown>;
+    const metadata = this.asRecord(section.metadata);
+    const module = String(sectionRecord.module ?? metadata?.module ?? '').trim();
+    const sectionType = String(section.sectionType ?? '').trim();
+
+    const annualDecisionSectionTypes = new Set<string>([
+      PmsTemplateSectionType.ANNUAL_SUMMARY,
+      PmsTemplateSectionType.FINAL_GRADE,
+      PmsTemplateSectionType.MERIT,
+      PmsTemplateSectionType.APPRAISAL_COMMUNICATION,
+      PmsTemplateSectionType.OVERALL_FEEDBACK,
+    ]);
+
+    return module === 'Annual Appraisal Decision Management' || annualDecisionSectionTypes.has(sectionType);
+  }
+
+  private resolveAnnualDecisionTemplateWorkflowState(
+    annualAssignment: IAnnualAssignment,
+  ): string {
+    if (
+      annualAssignment.finalDecisionStatus === AnnualDecisionStatus.DRAFT &&
+      (
+        annualAssignment.annualState === AnnualWorkflowState.ALL_TERMS_FINALIZED ||
+        annualAssignment.annualState === AnnualWorkflowState.APPRAISAL_WINDOW_OPEN
+      )
+    ) {
+      return AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
+    }
+
+    return annualAssignment.annualState;
+  }
+
+  private isRawAnnualDecisionFieldEditable(
+    field: ITemplateField,
+    section: ITemplateSection,
+    role: string,
+    workflowState: string,
+  ): boolean {
+    const behavior = (field.behaviors ?? []).find((item) =>
+      normalizePmsRole(item.role) === role &&
+      item.workflowState === workflowState,
+    );
+    if (behavior) {
+      return behavior.visibility === 'VISIBLE' && behavior.editability === 'EDITABLE';
+    }
+
+    const fieldEditableBy = this.readAnnualDecisionRuleList(field.editabilityRules, 'editableBy')
+      .map((item: string) => normalizePmsRole(item))
+      .filter(Boolean);
+    const sectionEditableBy = this.readAnnualDecisionRuleList(section.editabilityRules, 'editableBy')
+      .map((item: string) => normalizePmsRole(item))
+      .filter(Boolean);
+    if (![...fieldEditableBy, ...sectionEditableBy].includes(role as PmsRole)) {
+      return false;
+    }
+
+    const editableStates = [
+      ...this.readAnnualDecisionRuleList(field.editabilityRules, 'editableStates'),
+      ...this.readAnnualDecisionRuleList(section.editabilityRules, 'editableStates'),
+    ];
+    return editableStates.length === 0 || editableStates.includes(workflowState);
+  }
+
+  private mapRawAnnualDecisionField(field: ITemplateField): ResolvedTemplateField {
+    const requiredFor = this.readAnnualDecisionRuleList(field.validationRules, 'requiredFor');
+    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const behavior = (field.behaviors ?? []).find((item) =>
+      normalizePmsRole(item.role) === role,
+    );
+
+    return {
+      id: field.fieldKey,
+      key: field.fieldKey,
+      label: field.fieldLabel,
+      type: String(field.fieldType).toLowerCase(),
+      required: behavior?.mandatory ?? field.isRequired ?? requiredFor.includes(role),
+      visible: true,
+      editable: true,
+      placeholder: field.placeholder,
+      helpText: field.helpText,
+      hideLabel: field.hideLabel,
+      colSpan: field.colSpan,
+      options: field.options ?? [],
+      matrixConfig: field.matrixConfig,
+      gridConfig: field.gridConfig,
+      scoringIncluded: field.scoringConfig?.participatesInScoring === true || field.fieldCategory === 'SCORING',
+      fieldCategory: field.fieldCategory,
+      semanticRole: field.semanticRole,
+      scoringConfig: field.scoringConfig,
+      validationRules: field.validationRules,
+      conditionalRendering: field.conditionalRendering,
+    };
+  }
+
+  private readAnnualDecisionRuleList(
+    rules: Record<string, unknown> | undefined,
+    key: string,
+  ): string[] {
+    const rawValue = rules?.[key];
+    if (Array.isArray(rawValue)) {
+      return rawValue.map(String).filter(Boolean);
+    }
+    if (typeof rawValue === 'string') {
+      return rawValue
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return [];
   }
 
   private async sanitizeAnnualDecisionInputForTemplate(

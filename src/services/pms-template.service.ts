@@ -1401,7 +1401,7 @@ export class PmsTemplateService extends BaseService {
       scoreableSources.push('MANAGER_DYNAMIC');
     }
 
-    if (scoreableSources.length === 0 && objectiveScoringEnabled) {
+    if (scoreableSources.length === 0) {
       if (hasActivePredefinedObjectives) {
         scoreableSources.push('TEMPLATE_PREDEFINED');
       } else {
@@ -2906,7 +2906,10 @@ export class PmsTemplateService extends BaseService {
 
     if (!hierarchyScope) {
       const actorId = this.context.user?._id.toString();
-      if (actorId && actorId === annualAssignment.employeeId?.toString()) {
+      const role = this.normalizeRoleCode(input.role);
+      if (role === PmsRole.ADMIN || role === PmsRole.MANAGEMENT || role === PmsRole.DIRECTOR) {
+        hierarchyScope = 'global';
+      } else if (actorId && actorId === annualAssignment.employeeId?.toString()) {
         hierarchyScope = 'self';
       } else if (actorId && actorId === annualAssignment.assignedManagerId?.toString()) {
         hierarchyScope = 'direct-report';
