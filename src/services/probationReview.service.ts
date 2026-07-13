@@ -851,7 +851,10 @@ export class ProbationReviewService extends BaseService {
         const fieldKey = String(field.fieldKey || field.key || field.id || '').trim();
         if (!fieldKey) continue;
 
-        const fieldType = String(field.fieldType || field.type || '');
+        const fieldType = String(field.fieldType || field.type || '')
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_');
         const fieldLabel = String(field.fieldLabel || field.label || fieldKey);
         const manager1Default: any = {
           visible: true,
@@ -1111,7 +1114,11 @@ export class ProbationReviewService extends BaseService {
     assignment: any,
     role: ProbationReviewerRole,
   ) {
-    if (!assignment.reviewerConfiguration) return requestedValues;
+    if (!assignment.reviewerConfiguration?.permissions?.length) {
+      throw new Error(
+        'This trainee review has no assigned field-permission snapshot. Recreate or migrate the assignment before editing it.',
+      );
+    }
     const permissionMap = this.editablePermissionMap(assignment.reviewerConfiguration, role);
 
     const merged = new Map<string, IProbationReviewValue>();
@@ -1162,16 +1169,44 @@ export class ProbationReviewService extends BaseService {
     const sections = (templateVersion.sections ?? [])
       .map((section: any) => {
         const sectionKey = String(section.sectionKey || section.key || section.id || '');
+        const sectionIdentity = String(
+          section.sectionLabel || section.label || section.title || sectionKey,
+        )
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_');
+        const isEmployeeInformationSection =
+          sectionIdentity.includes('employee_information') ||
+          sectionIdentity.includes('employee_details');
         const fields = (section.fields ?? [])
           .map((field: any) => {
             const fieldKey = String(field.fieldKey || field.key || field.id || '');
-            if (String(field.fieldType || field.type || '') === 'data_grid' && Array.isArray(field.gridConfig?.defaultRows)) {
+            // Employee details describe the assignment rather than a
+            // reviewer answer. They remain visible and read-only even though
+            // they intentionally have no field permission in the snapshot.
+            if (isEmployeeInformationSection) {
+              return {
+                ...field,
+                visible: true,
+                editable: false,
+                required: false,
+              };
+            }
+            const fieldType = String(field.fieldType || field.type || '')
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '_');
+            if (fieldType === 'data_grid' && Array.isArray(field.gridConfig?.defaultRows)) {
+              const parentPermission = permissionMap.get(
+                this.permissionKey(sectionKey, fieldKey),
+              );
               const visibleRows = field.gridConfig.defaultRows
                 .map((row: any, rowIndex: number) => {
                   const rowKey = this.gridRowKey(row, rowIndex);
-                  const permission = permissionMap.get(
-                    this.permissionKey(sectionKey, this.gridRowPermissionKey(fieldKey, rowKey)),
-                  );
+                  const permission =
+                    permissionMap.get(
+                      this.permissionKey(sectionKey, this.gridRowPermissionKey(fieldKey, rowKey)),
+                    ) || parentPermission;
                   const access = reviewerRole === 'MANAGER_1' ? permission?.manager1 : permission?.manager2;
                   return access?.visible ? { row, access } : null;
                 })
