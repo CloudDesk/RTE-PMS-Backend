@@ -1192,8 +1192,12 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     this.validateObjectiveActualValues(items, values, isSubmit, approvedObjectives);
 
     const gridColumns = Array.isArray(field.gridConfig?.columns) ? field.gridConfig.columns : [];
-    const subjectColumn = gridColumns.find((column) => column.key === 'achievement_subject');
-    const descriptionColumn = gridColumns.find((column) => column.key === 'achievement_description');
+    const subjectColumn = gridColumns.find((column) =>
+      ['achievement_subject', 'objective_ref'].includes(String(column.key ?? '')),
+    );
+    const descriptionColumn = gridColumns.find((column) =>
+      ['achievement_description', 'achievement'].includes(String(column.key ?? '')),
+    );
 
     if (!subjectColumn || !descriptionColumn) {
       throw new Error('Achievement Items field is missing required grid columns');

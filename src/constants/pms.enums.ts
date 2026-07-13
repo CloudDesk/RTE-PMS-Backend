@@ -152,6 +152,18 @@ export const TermReviewStatus = {
 export type TermReviewStatus =
   (typeof TermReviewStatus)[keyof typeof TermReviewStatus];
 
+export const ManagerReviewPeriodState = {
+  NOT_STARTED: 'NOT_STARTED',
+  MANAGER_REVIEW_OPEN: 'MANAGER_REVIEW_OPEN',
+  MANAGER_REVIEW_SUBMITTED: 'MANAGER_REVIEW_SUBMITTED',
+  FINALIZED: 'FINALIZED',
+  CLOSED_BY_ADMIN: 'CLOSED_BY_ADMIN',
+  REOPENED_BY_ADMIN: 'REOPENED_BY_ADMIN',
+} as const;
+
+export type ManagerReviewPeriodState =
+  (typeof ManagerReviewPeriodState)[keyof typeof ManagerReviewPeriodState];
+
 export const ObjectiveStatus = {
   OBJECTIVE_DRAFT: TermWorkflowState.OBJECTIVE_DRAFT,
   OBJECTIVE_SUBMITTED: TermWorkflowState.OBJECTIVE_SUBMITTED,
@@ -490,7 +502,7 @@ const objectiveStatuses = Object.values(ObjectiveStatus) as string[];
 
 export function normalizePmsRole(value: string): string {
   const normalized = value.replace(/[ /-]/g, '_').toUpperCase();
-  if (normalized === 'STAFF') return PmsRole.EMPLOYEE;
+  if (normalized === 'STAFF' || normalized === 'TRAINEE') return PmsRole.EMPLOYEE;
   if (normalized === 'HR_ADMIN' || normalized === 'HRADMIN') return PmsRole.ADMIN;
   if (normalized === 'SUPERADMIN' || normalized === 'SUPER_ADMIN') return PmsRole.DIRECTOR;
   return normalized;

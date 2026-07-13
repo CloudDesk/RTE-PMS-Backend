@@ -36,6 +36,7 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { emailService } from './email.service';
+import { ManagerReviewPeriodService } from './managerReviewPeriod.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
@@ -421,6 +422,10 @@ export class AssignmentService extends BaseService {
       seededTermAssignmentIds,
       termCycleById,
     );
+    await new ManagerReviewPeriodService(this.context).createPeriodsForAnnualAssignment(
+      annualAssignment,
+      termAssignments,
+    );
 
     await this.lockTemplateVersion(selectedTemplateVersionId);
 
@@ -679,6 +684,12 @@ export class AssignmentService extends BaseService {
       );
     }
 
+    await new ManagerReviewPeriodService(this.context).updateManagerForMutablePeriods(
+      annualAssignment._id,
+      mutableQuarters.map((quarter) => quarter._id),
+      newManagerId,
+    );
+
     const reassignment = await Reassignment.create({
       annualAssignmentId: annualAssignment._id,
       employeeId: annualAssignment.employeeId,
@@ -833,6 +844,12 @@ export class AssignmentService extends BaseService {
       },
     });
 
+    await new ManagerReviewPeriodService(this.context).updateManagerForMutablePeriods(
+      annualAssignment._id,
+      termAssignments.map((termAssignment) => termAssignment._id),
+      reassignment.fromManagerId,
+    );
+
     for (const quarter of termAssignments) {
       quarter.assignedManagerId = reassignment.fromManagerId;
       quarter.updatedBy = this.actorIdObject();
@@ -920,6 +937,11 @@ export class AssignmentService extends BaseService {
       termAssignment.version += 1;
       await termAssignment.save();
     }
+
+    await new ManagerReviewPeriodService(this.context).closePeriodsForAnnualAssignment(
+      annualAssignment._id,
+      input.reason.trim(),
+    );
 
     annualAssignment.annualState = AnnualWorkflowState.CLOSED;
     annualAssignment.updatedBy = this.actorIdObject();

@@ -9,8 +9,16 @@ import { WorkflowSyncService } from '../../src/services/workflow-sync.service';
 import { transitionTermAssignmentState } from '../../src/services/term-assignment-workflow.service';
 import { accessService } from '../../src/services/access.service';
 
+const mockOpenEligiblePeriodsForCycle = jest.fn();
+
 jest.mock('../../src/services/term-assignment-workflow.service', () => ({
   transitionTermAssignmentState: jest.fn(),
+}));
+
+jest.mock('../../src/services/managerReviewPeriod.service', () => ({
+  ManagerReviewPeriodService: jest.fn().mockImplementation(() => ({
+    openEligiblePeriodsForCycle: mockOpenEligiblePeriodsForCycle,
+  })),
 }));
 
 jest.mock('../../src/models/pms-annual-cycle.model', () => ({
@@ -180,9 +188,42 @@ function mockCommonQueries(
   (transitionTermAssignmentState as jest.Mock).mockResolvedValue(assignment);
 }
 
+function mockGroupedAnnualCycle() {
+  (AnnualCycle.findOne as jest.Mock).mockReturnValue({
+    lean: jest.fn().mockResolvedValue({
+      _id: cycleId,
+      isDeleted: false,
+      reviewCadenceConfig: {
+        version: 1,
+        managerReviewMode: 'GROUPED',
+        managerReviewCadence: 'HALF_YEARLY',
+        groups: [
+          {
+            reviewCode: 'H1',
+            label: 'H1 Manager Review',
+            includedTerms: ['Q1', 'Q2'],
+            anchorTerm: 'Q2',
+            windowSource: 'ANCHOR_TERM',
+          },
+          {
+            reviewCode: 'H2',
+            label: 'H2 Manager Review',
+            includedTerms: ['Q3', 'Q4'],
+            anchorTerm: 'Q4',
+            windowSource: 'ANCHOR_TERM',
+          },
+        ],
+        scoreDistribution: 'COPY_GROUP_SCORE_TO_INCLUDED_TERMS',
+        annualDecisionGate: 'ALL_MANAGER_REVIEW_GROUPS_FINALIZED',
+      },
+    }),
+  });
+}
+
 describe('Automatic workflow sync flow', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockOpenEligiblePeriodsForCycle.mockResolvedValue({ checked: 0, opened: 0 });
     (accessService.canPerform as jest.Mock).mockResolvedValue({
       allowed: true,
       mappedRole: 'ADMIN',
@@ -316,6 +357,55 @@ describe('Automatic workflow sync flow', () => {
     expect(result.totalUpdated).toBe(1);
     expect(result.results[0].warning).toBeUndefined();
     expect(result.results[0].message).toBe('Manager review window is eligible.');
+  });
+
+  it('does not open per-term manager review when grouped manager review is configured', async () => {
+    mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
+    mockGroupedAnnualCycle();
+    mockOpenEligiblePeriodsForCycle.mockResolvedValueOnce({ checked: 2, opened: 1 });
+    const service = createService('2026-09-16T00:00:00.000Z');
+
+    const result = await service.syncWorkflowStates(cycleId.toString(), {
+      reason: 'Automatic daily PMS workflow sync',
+      source: 'AUTOMATIC_DAILY_SYNC',
+    });
+
+    expect(result.totalUpdated).toBe(0);
+    expect(result.groupedReviewPeriodsChecked).toBe(2);
+    expect(result.groupedReviewPeriodsOpened).toBe(1);
+    expect(result.results[0].message).toBe(
+      'Grouped manager review is configured for this cycle. Manager review opens at the configured grouped review period.',
+    );
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
+    expect(mockOpenEligiblePeriodsForCycle).toHaveBeenCalledWith(cycleId.toString(), {
+      dryRun: false,
+      ignoreWindowDates: false,
+    });
+  });
+
+  it('reports grouped manager review readiness during dry-run preview', async () => {
+    mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
+    mockGroupedAnnualCycle();
+    mockOpenEligiblePeriodsForCycle.mockResolvedValueOnce({ checked: 2, opened: 1 });
+    const service = createService('2026-09-16T00:00:00.000Z');
+
+    const result = await service.syncWorkflowStates(cycleId.toString(), {
+      dryRun: true,
+      ignoreWindowDates: true,
+      reason: 'Manual admin workflow sync',
+      source: 'ADMIN_MANUAL_SYNC',
+    });
+
+    expect(result.totalUpdated).toBe(0);
+    expect(result.groupedReviewPeriodsChecked).toBe(2);
+    expect(result.groupedReviewPeriodsReady).toBe(1);
+    expect(result.groupedReviewPeriodsOpened).toBe(0);
+    expect(result.results[0].status).toBe('SKIPPED');
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
+    expect(mockOpenEligiblePeriodsForCycle).toHaveBeenCalledWith(cycleId.toString(), {
+      dryRun: true,
+      ignoreWindowDates: true,
+    });
   });
 
   it('does not overwrite assignments that already moved forward', async () => {

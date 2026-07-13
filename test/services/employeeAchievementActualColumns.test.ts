@@ -73,6 +73,33 @@ function createAchievementSection() {
   };
 }
 
+function createBuilderAchievementSection() {
+  const field = {
+    _id: new Types.ObjectId(),
+    fieldKey: 'achievement_items',
+    fieldLabel: 'Objective Achievements',
+    fieldType: 'DATA_GRID',
+    gridConfig: {
+      columns: [
+        { key: 'objective_ref', label: 'Objective' },
+        { key: 'achievement', label: 'Achievement' },
+        { key: 'impact_result', label: 'Impact / Result' },
+        { key: 'evidence_link', label: 'Evidence / Link' },
+      ],
+    },
+  };
+
+  return {
+    field,
+    section: {
+      sectionKey: 'employee_achievement_submission',
+      sectionLabel: 'Employee Achievement Submission',
+      level: 'TERM',
+      fields: [field],
+    },
+  };
+}
+
 describe('EmployeeAchievementSubmissionService - actual columns by cycle term type', () => {
   it('marks configured actual columns against the selected cycle term type', async () => {
     const service = createService();
@@ -95,6 +122,38 @@ describe('EmployeeAchievementSubmissionService - actual columns by cycle term ty
         expect.objectContaining({ key: 'q2_actual_summary', term: AssessmentTermCode.Q2, allowed: false }),
       ]),
     );
+  });
+
+  it('accepts existing builder-created achievement grid columns', () => {
+    const service = createService();
+    const { section, field } = createBuilderAchievementSection();
+
+    expect(() =>
+      service.validateAchievementPayload(
+        section,
+        field,
+        [
+          {
+            type: 'OBJECTIVE',
+            objectiveId: new Types.ObjectId().toString(),
+            subject: 'Skills',
+            description: 'Completed skill work.',
+          },
+        ],
+        [
+          {
+            fieldKey: 'achievement_items',
+            sectionKey: 'employee_achievement_submission',
+            valueJson: [{ objective_ref: 'Skills', achievement: 'Completed skill work.' }],
+          },
+        ],
+        false,
+        {
+          achievementSubmissionRequired: true,
+          objectiveLinkedAchievementRequired: true,
+        },
+      ),
+    ).not.toThrow();
   });
 
   it('rejects quarterly actual columns for a half-yearly cycle', async () => {

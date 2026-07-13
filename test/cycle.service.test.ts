@@ -1,80 +1,124 @@
 import { CycleService, CreateCycleInput } from '../src/services/cycle.service';
 
-const baseQuarters: CreateCycleInput['quarters'] = [
+type TermCycleTestInput = NonNullable<CreateCycleInput['quarters']>[number];
+
+const baseQuarters: TermCycleTestInput[] = [
   {
-    quarterCode: 'Q1',
+    assessmentTermCode: 'Q1',
     startDate: '2026-04-01',
     endDate: '2026-06-30',
     objectiveSettingWindow: { startDate: '2026-04-01', endDate: '2026-04-15' },
     objectiveApprovalWindow: { startDate: '2026-04-16', endDate: '2026-04-30' },
+    achievementSubmissionWindow: {
+      enabled: true,
+      startDate: '2026-05-01',
+      endDate: '2026-06-15',
+      dueDate: '2026-06-15',
+    },
     managerReviewWindow: { startDate: '2026-06-16', endDate: '2026-06-25' },
-    quarterFinalizationWindow: { startDate: '2026-06-26', endDate: '2026-06-30' },
+    termFinalizationWindow: { startDate: '2026-06-26', endDate: '2026-06-30' },
   },
   {
-    quarterCode: 'Q2',
+    assessmentTermCode: 'Q2',
     startDate: '2026-07-01',
     endDate: '2026-09-30',
     objectiveSettingWindow: { startDate: '2026-07-01', endDate: '2026-07-15' },
     objectiveApprovalWindow: { startDate: '2026-07-16', endDate: '2026-07-31' },
+    achievementSubmissionWindow: {
+      enabled: true,
+      startDate: '2026-08-01',
+      endDate: '2026-09-15',
+      dueDate: '2026-09-15',
+    },
     managerReviewWindow: { startDate: '2026-09-16', endDate: '2026-09-25' },
-    quarterFinalizationWindow: { startDate: '2026-09-26', endDate: '2026-09-30' },
+    termFinalizationWindow: { startDate: '2026-09-26', endDate: '2026-09-30' },
   },
   {
-    quarterCode: 'Q3',
+    assessmentTermCode: 'Q3',
     startDate: '2026-10-01',
     endDate: '2026-12-31',
     objectiveSettingWindow: { startDate: '2026-10-01', endDate: '2026-10-15' },
     objectiveApprovalWindow: { startDate: '2026-10-16', endDate: '2026-10-31' },
+    achievementSubmissionWindow: {
+      enabled: true,
+      startDate: '2026-11-01',
+      endDate: '2026-12-15',
+      dueDate: '2026-12-15',
+    },
     managerReviewWindow: { startDate: '2026-12-16', endDate: '2026-12-24' },
-    quarterFinalizationWindow: { startDate: '2026-12-26', endDate: '2026-12-31' },
+    termFinalizationWindow: { startDate: '2026-12-26', endDate: '2026-12-31' },
   },
   {
-    quarterCode: 'Q4',
+    assessmentTermCode: 'Q4',
     startDate: '2027-01-01',
     endDate: '2027-03-31',
     objectiveSettingWindow: { startDate: '2027-01-01', endDate: '2027-01-15' },
     objectiveApprovalWindow: { startDate: '2027-01-16', endDate: '2027-01-31' },
+    achievementSubmissionWindow: {
+      enabled: true,
+      startDate: '2027-02-01',
+      endDate: '2027-03-15',
+      dueDate: '2027-03-15',
+    },
     managerReviewWindow: { startDate: '2027-03-16', endDate: '2027-03-25' },
-    quarterFinalizationWindow: { startDate: '2027-03-26', endDate: '2027-03-31' },
+    termFinalizationWindow: { startDate: '2027-03-26', endDate: '2027-03-31' },
   },
 ];
 
-const halfYearlyTerms: CreateCycleInput['quarters'] = [
+const halfYearlyTerms: TermCycleTestInput[] = [
   {
-    quarterCode: 'H1',
+    assessmentTermCode: 'H1',
     termCode: 'H1',
     termLabel: 'H1',
     startDate: '2026-04-01',
     endDate: '2026-09-30',
     objectiveSettingWindow: { startDate: '2026-04-01', endDate: '2026-04-15' },
     objectiveApprovalWindow: { startDate: '2026-04-16', endDate: '2026-04-30' },
+    achievementSubmissionWindow: {
+      enabled: true,
+      startDate: '2026-05-01',
+      endDate: '2026-09-15',
+      dueDate: '2026-09-15',
+    },
     managerReviewWindow: { startDate: '2026-09-16', endDate: '2026-09-25' },
-    quarterFinalizationWindow: { startDate: '2026-09-26', endDate: '2026-09-30' },
+    termFinalizationWindow: { startDate: '2026-09-26', endDate: '2026-09-30' },
   },
   {
-    quarterCode: 'H2',
+    assessmentTermCode: 'H2',
     termCode: 'H2',
     termLabel: 'H2',
     startDate: '2026-10-01',
     endDate: '2027-03-31',
     objectiveSettingWindow: { startDate: '2026-10-01', endDate: '2026-10-15' },
     objectiveApprovalWindow: { startDate: '2026-10-16', endDate: '2026-10-31' },
+    achievementSubmissionWindow: {
+      enabled: true,
+      startDate: '2026-11-01',
+      endDate: '2027-03-15',
+      dueDate: '2027-03-15',
+    },
     managerReviewWindow: { startDate: '2027-03-16', endDate: '2027-03-25' },
-    quarterFinalizationWindow: { startDate: '2027-03-26', endDate: '2027-03-31' },
+    termFinalizationWindow: { startDate: '2027-03-26', endDate: '2027-03-31' },
   },
 ];
 
-const yearlyTerms: CreateCycleInput['quarters'] = [
+const yearlyTerms: TermCycleTestInput[] = [
   {
-    quarterCode: 'Y1',
+    assessmentTermCode: 'Y1',
     termCode: 'Y1',
     termLabel: 'Y1',
     startDate: '2026-04-01',
     endDate: '2027-03-31',
     objectiveSettingWindow: { startDate: '2026-04-01', endDate: '2026-04-15' },
     objectiveApprovalWindow: { startDate: '2026-04-16', endDate: '2026-04-30' },
+    achievementSubmissionWindow: {
+      enabled: true,
+      startDate: '2026-05-01',
+      endDate: '2027-03-15',
+      dueDate: '2027-03-15',
+    },
     managerReviewWindow: { startDate: '2027-03-16', endDate: '2027-03-25' },
-    quarterFinalizationWindow: { startDate: '2027-03-26', endDate: '2027-03-31' },
+    termFinalizationWindow: { startDate: '2027-03-26', endDate: '2027-03-31' },
   },
 ];
 
@@ -131,7 +175,7 @@ describe('CycleService cycle setup validation', () => {
 
   it('requires all Q1-Q4 child quarter configurations', () => {
     const quarters = structuredClone(baseQuarters).filter(
-      (quarter) => quarter.quarterCode !== 'Q4',
+      (quarter) => quarter.assessmentTermCode !== 'Q4',
     );
 
     expect(() => validate(buildCycle({ quarters }))).toThrow('Missing Q4 configuration');
@@ -139,7 +183,7 @@ describe('CycleService cycle setup validation', () => {
 
   it('requires both H1 and H2 for half-yearly cycles', () => {
     const quarters = structuredClone(halfYearlyTerms).filter(
-      (quarter) => quarter.quarterCode !== 'H2',
+      (quarter) => quarter.assessmentTermCode !== 'H2',
     );
 
     expect(() =>
@@ -168,7 +212,7 @@ describe('CycleService cycle setup validation', () => {
     quarters[0].startDate = '2026-03-31';
 
     expect(() => validate(buildCycle({ quarters }))).toThrow(
-      'Q1 dates must be within annual cycle dates',
+      'Q1 Assessment Term dates must be within annual cycle dates',
     );
   });
 
@@ -195,7 +239,7 @@ describe('CycleService cycle setup validation', () => {
           },
         }),
       ),
-    ).toThrow('Annual appraisal window must open after applicable quarter finalization windows');
+    ).toThrow('Annual appraisal window must open after applicable assessment term finalization windows');
   });
 
   it('validates relative appraisal offset values', () => {
@@ -210,5 +254,131 @@ describe('CycleService cycle setup validation', () => {
         }),
       ),
     ).toThrow('appraisalWindowConfig.offsetDays must be a non-negative integer');
+  });
+
+  it('accepts quarterly cycles with half-yearly grouped manager review cadence', () => {
+    expect(() =>
+      validate(
+        buildCycle({
+          reviewCadenceConfig: {
+            version: 1,
+            managerReviewMode: 'GROUPED',
+            managerReviewCadence: 'HALF_YEARLY',
+            groups: [],
+            scoreDistribution: 'COPY_GROUP_SCORE_TO_INCLUDED_TERMS',
+            annualDecisionGate: 'ALL_MANAGER_REVIEW_GROUPS_FINALIZED',
+          },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('rejects half-yearly grouped manager review cadence when employee terms are not quarterly', () => {
+    expect(() =>
+      validate(
+        buildCycle({
+          assessmentTermType: 'HALF_YEARLY',
+          quarters: structuredClone(halfYearlyTerms),
+          reviewCadenceConfig: {
+            version: 1,
+            managerReviewMode: 'GROUPED',
+            managerReviewCadence: 'HALF_YEARLY',
+            groups: [],
+            scoreDistribution: 'COPY_GROUP_SCORE_TO_INCLUDED_TERMS',
+            annualDecisionGate: 'ALL_MANAGER_REVIEW_GROUPS_FINALIZED',
+          },
+        }),
+      ),
+    ).toThrow('Grouped manager review requires at least one review group');
+  });
+
+  it('rejects grouped manager review when a term is missing from custom groups', () => {
+    expect(() =>
+      validate(
+        buildCycle({
+          reviewCadenceConfig: {
+            version: 1,
+            managerReviewMode: 'GROUPED',
+            managerReviewCadence: 'CUSTOM',
+            groups: [
+              {
+                reviewCode: 'H1',
+                label: 'H1 Manager Review',
+                includedTerms: ['Q1', 'Q2'],
+                anchorTerm: 'Q2',
+              },
+              {
+                reviewCode: 'Q3_ONLY',
+                label: 'Q3 Manager Review',
+                includedTerms: ['Q3'],
+                anchorTerm: 'Q3',
+              },
+            ],
+            scoreDistribution: 'COPY_GROUP_SCORE_TO_INCLUDED_TERMS',
+            annualDecisionGate: 'ALL_MANAGER_REVIEW_GROUPS_FINALIZED',
+          },
+        }),
+      ),
+    ).toThrow('Grouped manager review must cover every assessment term. Missing: Q4');
+  });
+
+  it('rejects grouped manager review when a term appears in multiple custom groups', () => {
+    expect(() =>
+      validate(
+        buildCycle({
+          reviewCadenceConfig: {
+            version: 1,
+            managerReviewMode: 'GROUPED',
+            managerReviewCadence: 'CUSTOM',
+            groups: [
+              {
+                reviewCode: 'G1',
+                label: 'Group 1',
+                includedTerms: ['Q1', 'Q2'],
+                anchorTerm: 'Q2',
+              },
+              {
+                reviewCode: 'G2',
+                label: 'Group 2',
+                includedTerms: ['Q2', 'Q3', 'Q4'],
+                anchorTerm: 'Q4',
+              },
+            ],
+            scoreDistribution: 'COPY_GROUP_SCORE_TO_INCLUDED_TERMS',
+            annualDecisionGate: 'ALL_MANAGER_REVIEW_GROUPS_FINALIZED',
+          },
+        }),
+      ),
+    ).toThrow('Q2 is included in more than one manager review group');
+  });
+
+  it('rejects grouped manager review when the anchor term is outside the group', () => {
+    expect(() =>
+      validate(
+        buildCycle({
+          reviewCadenceConfig: {
+            version: 1,
+            managerReviewMode: 'GROUPED',
+            managerReviewCadence: 'CUSTOM',
+            groups: [
+              {
+                reviewCode: 'H1',
+                label: 'H1 Manager Review',
+                includedTerms: ['Q1', 'Q2'],
+                anchorTerm: 'Q3',
+              },
+              {
+                reviewCode: 'H2',
+                label: 'H2 Manager Review',
+                includedTerms: ['Q3', 'Q4'],
+                anchorTerm: 'Q4',
+              },
+            ],
+            scoreDistribution: 'COPY_GROUP_SCORE_TO_INCLUDED_TERMS',
+            annualDecisionGate: 'ALL_MANAGER_REVIEW_GROUPS_FINALIZED',
+          },
+        }),
+      ),
+    ).toThrow('H1 anchorTerm must be one of its includedTerms');
   });
 });

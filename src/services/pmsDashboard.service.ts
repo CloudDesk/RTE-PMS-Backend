@@ -3,6 +3,7 @@ import { BaseService } from './base.service';
 import {
   AnnualAssignment,
   AnnualDecision,
+  VisibilityConfiguration,
   TermAssignment,
   Objective,
   TermReview,
@@ -53,10 +54,35 @@ export class PmsDashboardService extends BaseService {
       .sort({ assessmentTermCode: 1 })
       .lean();
 
-    const annualDecision = await AnnualDecision.findOne({
-      annualAssignmentId: annualAssignment._id,
-      isDeleted: false,
-    }).lean();
+    const [annualDecision, visibilityConfiguration] = await Promise.all([
+      AnnualDecision.findOne({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }).lean(),
+      VisibilityConfiguration.findOne({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }).lean(),
+    ]);
+    const visibilitySource = visibilityConfiguration ?? annualAssignment.visibility;
+    const visibilityEffective = this.isVisibilityEffective(visibilitySource);
+    const employeeVisibility = {
+      employeeReviewVisible: visibilityEffective
+        ? Boolean(visibilitySource?.employeeReviewVisible)
+        : false,
+      employeeGradeVisible: visibilityEffective
+        ? Boolean(visibilitySource?.employeeGradeVisible)
+        : false,
+      employeeMeritVisible: visibilityEffective
+        ? Boolean(visibilitySource?.employeeMeritVisible)
+        : false,
+      managerGradeVisible: visibilityEffective
+        ? Boolean(visibilitySource?.managerGradeVisible)
+        : false,
+      managerMeritVisible: visibilityEffective
+        ? Boolean(visibilitySource?.managerMeritVisible)
+        : false,
+    };
 
     // Query Objectives count for this annual assignment
     const objectives = await Objective.find({
@@ -78,7 +104,7 @@ export class PmsDashboardService extends BaseService {
       isDeleted: false,
     }).lean();
 
-    const employeeReviewVisible = annualAssignment.visibility?.employeeReviewVisible === true;
+    const employeeReviewVisible = employeeVisibility.employeeReviewVisible === true;
     const termReviews = termReviewsRaw.map((rev) => {
       if (!employeeReviewVisible) {
         // Redact comments, ratings and scores if employee review visibility is disabled
@@ -102,11 +128,11 @@ export class PmsDashboardService extends BaseService {
     
     const maskContext = {
       actorRole,
-      employeeReviewVisible: annualAssignment.visibility?.employeeReviewVisible ?? false,
-      employeeGradeVisible: annualAssignment.visibility?.employeeGradeVisible ?? false,
-      employeeMeritVisible: annualAssignment.visibility?.employeeMeritVisible ?? false,
-      managerGradeVisible: annualAssignment.visibility?.managerGradeVisible ?? false,
-      managerMeritVisible: annualAssignment.visibility?.managerMeritVisible ?? false,
+      employeeReviewVisible: employeeVisibility.employeeReviewVisible,
+      employeeGradeVisible: employeeVisibility.employeeGradeVisible,
+      employeeMeritVisible: employeeVisibility.employeeMeritVisible,
+      managerGradeVisible: employeeVisibility.managerGradeVisible,
+      managerMeritVisible: employeeVisibility.managerMeritVisible,
       hasVisibilityOverride,
     };
 
@@ -137,7 +163,11 @@ export class PmsDashboardService extends BaseService {
       objectiveStats,
       termReviews,
       reassignmentHistory,
-      visibilityConfig: maskContext,
+      visibilityConfig: {
+        ...maskContext,
+        visibleFrom: visibilityConfiguration?.visibleFrom,
+        visibilityEffective,
+      },
     };
   }
 
@@ -178,14 +208,43 @@ export class PmsDashboardService extends BaseService {
     const quarterActivityIds = new Set(
       quarterActivity.map((item) => item._id.toString()),
     );
+    const visibilityRows = await VisibilityConfiguration.find({
+      annualAssignmentId: { $in: annualAssignmentIds },
+      isDeleted: false,
+    }).lean();
+    const visibilityByAssignmentId = new Map(
+      visibilityRows.map((item) => [item.annualAssignmentId.toString(), item]),
+    );
+    const hasEmployeeReleasedVisibility = (item: any) => {
+      const released =
+        ['VISIBILITY_ENABLED', 'CLOSED'].includes(String(item.annualState || '').toUpperCase()) ||
+        String(item.finalDecisionStatus || '').toUpperCase() === 'VISIBILITY_ENABLED';
+      if (!released) return false;
+
+      const visibility = visibilityByAssignmentId.get(item._id.toString()) ?? item.visibility;
+      if (!this.isVisibilityEffective(visibility)) return false;
+      return [
+        visibility?.employeeReviewVisible,
+        visibility?.employeeGradeVisible,
+        visibility?.employeeMeritVisible,
+      ].some(Boolean);
+    };
 
     return (
+      annualAssignments.find(hasEmployeeReleasedVisibility) ??
       annualAssignments.find((item) => objectiveActivityIds.has(item._id.toString())) ??
       annualAssignments.find((item) => quarterActivityIds.has(item._id.toString())) ??
       annualAssignments.find((item) => ['ACTIVE', 'IN_PROGRESS'].includes(item.annualState)) ??
       annualAssignments[0] ??
       null
     );
+  }
+
+  private isVisibilityEffective(visibility?: { visibleFrom?: Date | string | null } | null): boolean {
+    if (!visibility?.visibleFrom) return true;
+    const visibleFrom = new Date(visibility.visibleFrom);
+    if (Number.isNaN(visibleFrom.getTime())) return true;
+    return visibleFrom.getTime() <= Date.now();
   }
 
   /**
@@ -299,6 +358,80 @@ export class PmsDashboardService extends BaseService {
         .limit(10)
         .lean(),
     ]);
+    const visibilityRows = annualAssignmentIds.length > 0
+      ? await VisibilityConfiguration.find({
+          annualAssignmentId: { $in: annualAssignmentIds },
+          isDeleted: false,
+          $or: [
+            { managerGradeVisible: true },
+            { managerMeritVisible: true },
+          ],
+        }).lean()
+      : [];
+    const releasedVisibilityRows = visibilityRows.filter((visibility) =>
+      this.isVisibilityEffective(visibility) &&
+      (visibility.managerGradeVisible || visibility.managerMeritVisible),
+    );
+    const visibilityByAssignmentId = new Map(
+      releasedVisibilityRows.map((visibility) => [
+        visibility.annualAssignmentId.toString(),
+        visibility,
+      ]),
+    );
+    const releasedAnnualAssignmentIds = releasedVisibilityRows.map(
+      (visibility) => visibility.annualAssignmentId,
+    );
+    const releasedAssignments = releasedAnnualAssignmentIds.length > 0
+      ? await AnnualAssignment.find({
+          _id: { $in: releasedAnnualAssignmentIds },
+          isDeleted: false,
+          $or: [
+            { annualState: { $in: ['VISIBILITY_ENABLED', 'CLOSED'] } },
+            { finalDecisionStatus: 'VISIBILITY_ENABLED' },
+          ],
+        })
+          .populate('employeeId', 'name email employeeCode')
+          .sort({ updatedAt: -1 })
+          .lean()
+      : [];
+    const releasedDecisions = releasedAssignments.length > 0
+      ? await AnnualDecision.find({
+          annualAssignmentId: { $in: releasedAssignments.map((assignment) => assignment._id) },
+          isDeleted: false,
+        }).lean()
+      : [];
+    const decisionByAssignmentId = new Map(
+      releasedDecisions.map((decision) => [decision.annualAssignmentId.toString(), decision]),
+    );
+    const releasedOutcomes = releasedAssignments.map((assignment) => {
+      const assignmentRecord = assignment as Record<string, any>;
+      const visibility = visibilityByAssignmentId.get(assignment._id.toString());
+      const decision = decisionByAssignmentId.get(assignment._id.toString());
+      const canSeeGrade = Boolean(visibility?.managerGradeVisible);
+      const canSeeMerit = Boolean(visibility?.managerMeritVisible);
+
+      return {
+        ...assignment,
+        gradeDetails: canSeeGrade
+          ? decision?.gradeDetails ?? assignment.gradeDetails
+          : undefined,
+        meritDetails: canSeeMerit
+          ? decision?.meritDetails ?? assignment.meritDetails
+          : undefined,
+        finalScore: canSeeGrade
+          ? decision?.finalScore ?? assignmentRecord.finalScore
+          : undefined,
+        finalRating: canSeeGrade
+          ? decision?.finalRating ?? assignmentRecord.finalRating
+          : undefined,
+        appraisalOutcomeType: decision?.appraisalOutcomeType ?? assignment.appraisalOutcomeType,
+        visibility: {
+          managerGradeVisible: canSeeGrade,
+          managerMeritVisible: canSeeMerit,
+          visibleFrom: visibility?.visibleFrom,
+        },
+      };
+    });
 
     return {
       teamStats: {
@@ -317,6 +450,7 @@ export class PmsDashboardService extends BaseService {
         overdueSlas,
         recentReassignments,
       },
+      releasedOutcomes,
     };
   }
 

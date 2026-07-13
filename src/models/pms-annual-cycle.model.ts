@@ -4,6 +4,7 @@ import type {
   AnnualWorkflowState as AnnualWorkflowStateType,
   AssessmentTermType as AssessmentTermTypeType,
 } from '../constants/pms.enums';
+import type { ReviewCadenceConfig } from '../utilis/pmsReviewCadence';
 
 export interface ICommunicationRuleConfig {
   skipNilOutcome?: boolean;
@@ -42,6 +43,7 @@ export interface IAnnualCycle extends Document {
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
   assignmentTemplateSuggestionConfig?: IAssignmentTemplateSuggestionConfig;
+  reviewCadenceConfig?: ReviewCadenceConfig;
   launchSource?: 'ADMIN_CYCLE' | 'MANAGER_INITIATED';
   launchedByRole?: 'ADMIN' | 'MANAGER';
   launchedByUserId?: Types.ObjectId;
@@ -102,6 +104,7 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
     appraisalWindowConfig: { type: Schema.Types.Mixed, default: {} },
     communicationRuleConfig: { type: Schema.Types.Mixed, default: {} },
     assignmentTemplateSuggestionConfig: { type: Schema.Types.Mixed, default: {} },
+    reviewCadenceConfig: { type: Schema.Types.Mixed, default: undefined },
     launchSource: {
       type: String,
       enum: ['ADMIN_CYCLE', 'MANAGER_INITIATED'],

@@ -21,7 +21,9 @@ import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import type { ITermCycle } from '../models/pms-term-cycle.model';
 import { workflowService } from './workflow.service';
+import { ManagerReviewPeriodService } from './managerReviewPeriod.service';
 import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
+import { isGroupedManagerReviewConfig } from '../utilis/pmsReviewCadence';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
   TermWorkflowState as TermWorkflowStateType,
@@ -95,6 +97,12 @@ export interface WorkflowSyncResultItem {
 export interface WorkflowSyncResult {
   totalChecked: number;
   totalUpdated: number;
+  groupedReviewPeriodsChecked: number;
+  groupedReviewPeriodsReady: number;
+  groupedReviewPeriodsOpened: number;
+  groupedReviewPeriodsAlreadyOpen: number;
+  groupedReviewPeriodsAlreadyAdvanced: number;
+  groupedReviewPeriodsNotReady: number;
   skippedNotEligible: number;
   skippedAlreadyAdvanced: number;
   skippedObjectiveSettingOpen: number;
@@ -136,6 +144,7 @@ export class WorkflowSyncService extends BaseService {
     if (!cycle) {
       throw new Error('PMS cycle not found');
     }
+    const groupedManagerReviewEnabled = isGroupedManagerReviewConfig(cycle.reviewCadenceConfig);
 
     const filter: Record<string, unknown> = {
       cycleId: cycleObjectId,
@@ -184,6 +193,12 @@ export class WorkflowSyncService extends BaseService {
     const result: WorkflowSyncResult = {
       totalChecked: termAssignments.length,
       totalUpdated: 0,
+      groupedReviewPeriodsChecked: 0,
+      groupedReviewPeriodsReady: 0,
+      groupedReviewPeriodsOpened: 0,
+      groupedReviewPeriodsAlreadyOpen: 0,
+      groupedReviewPeriodsAlreadyAdvanced: 0,
+      groupedReviewPeriodsNotReady: 0,
       skippedNotEligible: 0,
       skippedAlreadyAdvanced: 0,
       skippedObjectiveSettingOpen: 0,
@@ -209,6 +224,7 @@ export class WorkflowSyncService extends BaseService {
         termCycleMap,
         annualAssignmentMap,
         input,
+        groupedManagerReviewEnabled,
       );
       result.results.push(item);
 
@@ -229,6 +245,23 @@ export class WorkflowSyncService extends BaseService {
       }
     }
 
+    const groupedReviewResult = await new ManagerReviewPeriodService(this.context).openEligiblePeriodsForCycle(
+      cycleObjectId.toString(),
+      {
+        dryRun: input.dryRun === true,
+        ignoreWindowDates: input.ignoreWindowDates === true,
+      },
+    );
+    result.groupedReviewPeriodsChecked = groupedReviewResult.checked;
+    result.groupedReviewPeriodsAlreadyOpen = groupedReviewResult.alreadyOpen ?? 0;
+    result.groupedReviewPeriodsAlreadyAdvanced = groupedReviewResult.alreadyAdvanced ?? 0;
+    result.groupedReviewPeriodsNotReady = groupedReviewResult.notReady ?? 0;
+    if (input.dryRun === true) {
+      result.groupedReviewPeriodsReady = groupedReviewResult.opened;
+    } else {
+      result.groupedReviewPeriodsOpened = groupedReviewResult.opened;
+    }
+
     return result;
   }
 
@@ -240,6 +273,7 @@ export class WorkflowSyncService extends BaseService {
     termCycleMap: Map<AssessmentTermCodeType, ITermCycle>,
     annualAssignmentMap: Map<string, Record<string, any>>,
     input: WorkflowSyncInput,
+    groupedManagerReviewEnabled: boolean,
   ): Promise<WorkflowSyncResultItem> {
     if (termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
       return this.processObjectiveSettingOpenAssignment(
@@ -252,6 +286,7 @@ export class WorkflowSyncService extends BaseService {
 
     const candidate = await this.resolveCandidate(termAssignment, termCycle, {
       ignoreWindowDates: input.ignoreWindowDates === true,
+      groupedManagerReviewEnabled,
     }, assignmentTerms, termCycleMap, annualAssignment, annualAssignmentMap);
     const baseItem = this.buildBaseResultItem(termAssignment, candidate);
 
@@ -529,7 +564,7 @@ export class WorkflowSyncService extends BaseService {
   private async resolveCandidate(
     termAssignment: ITermAssignment,
     termCycle?: ITermCycle,
-    options: { ignoreWindowDates?: boolean } = {},
+    options: { ignoreWindowDates?: boolean; groupedManagerReviewEnabled?: boolean } = {},
     assignmentTerms: ITermAssignment[] = [],
     termCycleMap: Map<AssessmentTermCodeType, ITermCycle> = new Map(),
     annualAssignment?: Record<string, any>,
@@ -538,6 +573,7 @@ export class WorkflowSyncService extends BaseService {
     const state = termAssignment.termState;
     const now = this.getCurrentDate();
     const ignoreWindowDates = options.ignoreWindowDates === true;
+    const groupedManagerReviewEnabled = options.groupedManagerReviewEnabled === true;
 
     if (!termCycle) {
       return {
@@ -568,6 +604,7 @@ export class WorkflowSyncService extends BaseService {
           effectiveWindows,
           ignoreWindowDates,
           now,
+          groupedManagerReviewEnabled,
         );
         if (customCandidate) return customCandidate;
       }
@@ -612,11 +649,18 @@ export class WorkflowSyncService extends BaseService {
         termCycle,
         termAssignment,
         annualAssignment,
-        { ignoreWindowDates },
+        { ignoreWindowDates, groupedManagerReviewEnabled },
       );
     }
 
     if (state === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
+      if (groupedManagerReviewEnabled) {
+        return {
+          skipReason: 'NOT_ELIGIBLE',
+          reason: 'Grouped manager review is configured for this cycle. Manager review opens at the configured grouped review period.',
+        };
+      }
+
       const effectiveWindows = resolveEffectiveTermWindows(
         termAssignment,
         termCycle,
@@ -711,6 +755,7 @@ export class WorkflowSyncService extends BaseService {
     effectiveWindows: ReturnType<typeof resolveEffectiveTermWindows>,
     ignoreWindowDates: boolean,
     now: Date,
+    groupedManagerReviewEnabled: boolean,
   ): WorkflowSyncCandidate | undefined {
     const active = (window?: DateWindowLike) =>
       ignoreWindowDates || this.isWindowActive(now, window);
@@ -730,6 +775,13 @@ export class WorkflowSyncService extends BaseService {
             TermWorkflowState.OBJECTIVE_APPROVED,
             TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
           ],
+        };
+      }
+
+      if (groupedManagerReviewEnabled) {
+        return {
+          skipReason: 'NOT_ELIGIBLE',
+          reason: 'Grouped manager review is configured for this cycle. Custom manager review and finalization jumps are handled by grouped review periods.',
         };
       }
 
@@ -1127,10 +1179,11 @@ export class WorkflowSyncService extends BaseService {
     termCycle: ITermCycle | undefined,
     termAssignment: ITermAssignment,
     annualAssignment?: Record<string, any>,
-    options: { ignoreWindowDates?: boolean } = {},
+    options: { ignoreWindowDates?: boolean; groupedManagerReviewEnabled?: boolean } = {},
   ): WorkflowSyncCandidate {
     const now = this.getCurrentDate();
     const ignoreWindowDates = options.ignoreWindowDates === true;
+    const groupedManagerReviewEnabled = options.groupedManagerReviewEnabled === true;
 
     if (!termCycle) {
       return {
@@ -1163,6 +1216,13 @@ export class WorkflowSyncService extends BaseService {
           : 'Employee achievement submission window is eligible.',
         ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
       );
+    }
+
+    if (groupedManagerReviewEnabled) {
+      return {
+        skipReason: 'NOT_ELIGIBLE',
+        reason: 'Employee achievement is disabled and grouped manager review is configured for this cycle. Manager review opens at the configured grouped review period.',
+      };
     }
 
     const managerReviewWindow = effectiveWindows.managerReviewWindow;

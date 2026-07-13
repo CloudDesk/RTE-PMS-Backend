@@ -3,13 +3,28 @@ import { AssignmentService } from '../../src/services/assignment.service';
 import { WorkflowSyncService } from '../../src/services/workflow-sync.service';
 import { TermWorkflowState } from '../../src/constants/pms.enums';
 import { transitionTermAssignmentState } from '../../src/services/term-assignment-workflow.service';
+import { AnnualAssignment } from '../../src/models/pms-annual-assignment.model';
 import { AnnualCycle } from '../../src/models/pms-annual-cycle.model';
 import { TermAssignment } from '../../src/models/pms-term-assignment.model';
 import { TermCycle } from '../../src/models/pms-term-cycle.model';
 import { accessService } from '../../src/services/access.service';
 
+const mockOpenEligiblePeriodsForCycle = jest.fn();
+
 jest.mock('../../src/services/term-assignment-workflow.service', () => ({
   transitionTermAssignmentState: jest.fn(),
+}));
+
+jest.mock('../../src/services/managerReviewPeriod.service', () => ({
+  ManagerReviewPeriodService: jest.fn().mockImplementation(() => ({
+    openEligiblePeriodsForCycle: mockOpenEligiblePeriodsForCycle,
+  })),
+}));
+
+jest.mock('../../src/models/pms-annual-assignment.model', () => ({
+  AnnualAssignment: {
+    find: jest.fn(),
+  },
 }));
 
 jest.mock('../../src/models/pms-annual-cycle.model', () => ({
@@ -137,6 +152,19 @@ describe('Term workflow scheduling', () => {
       allowed: true,
       mappedRole: 'ADMIN',
     });
+    mockOpenEligiblePeriodsForCycle.mockResolvedValue({
+      checked: 0,
+      opened: 0,
+      alreadyOpen: 0,
+      alreadyAdvanced: 0,
+      notReady: 0,
+      results: [],
+    });
+    (AnnualAssignment.find as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    });
   });
 
   it('opens only the currently active seeded term at assignment launch', async () => {
@@ -174,7 +202,8 @@ describe('Term workflow scheduling', () => {
       termState: TermWorkflowState.OBJECTIVE_SETTING_OPEN,
     });
 
-    await service.openSeededTermAssignmentsForObjectiveSetting(
+    await service.syncInitialTermAssignmentStates(
+      { _id: annualAssignmentId, assignmentWindowSnapshot: undefined },
       [q1, q2],
       new Set([q1Id.toString(), q2Id.toString()]),
       termCycleById,
@@ -185,7 +214,13 @@ describe('Term workflow scheduling', () => {
       q1Id.toString(),
       TermWorkflowState.OBJECTIVE_SETTING_OPEN,
       { actorId: actorId.toString(), actorRole: 'ADMIN' },
-      'Seeded predefined objectives are approved and the current objective-setting window is active',
+      'Current objective-setting window is active at assignment launch.',
+      'PMS_TERM_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
+      expect.objectContaining({
+        annualAssignmentId: annualAssignmentId.toString(),
+        assessmentTermCode: 'Q1',
+        windowSource: 'CYCLE_INHERITED',
+      }),
     );
   });
 

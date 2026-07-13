@@ -26,6 +26,7 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
 import { TermReviewValue } from '../models/pms-term-review-value.model';
+import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
 import { AuditLog } from '../models/audit-log.model';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -89,6 +90,7 @@ export interface AnnualSummaryResult {
   termAssignments: Array<Record<string, unknown>>;
   objectives: IObjective[];
   termReviews: Array<Record<string, unknown>>;
+  managerReviewPeriods: Array<Record<string, unknown>>;
   annualDecisionValues: Array<Record<string, unknown>>;
   calculatedFinalScore?: number;
   finalScoreOverride: Record<string, unknown> | null;
@@ -331,9 +333,20 @@ export class AnnualDecisionService extends BaseService {
 
     const termAssignmentIds = termAssignments.map((termAssignment) => termAssignment._id);
 
-    const [objectives, termReviews, annualDecision, visibilityConfiguration, cycle] = await Promise.all([
+    const [
+      objectives,
+      termReviews,
+      managerReviewPeriods,
+      annualDecision,
+      visibilityConfiguration,
+      cycle,
+    ] = await Promise.all([
       Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
       TermReview.find({ termAssignmentId: { $in: termAssignmentIds }, isDeleted: false }),
+      ManagerReviewPeriodAssignment.find({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }).sort({ reviewCode: 1 }),
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
@@ -535,6 +548,40 @@ export class AnnualDecisionService extends BaseService {
             valueNumber: value.valueNumber,
             valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
             valueStatus: value.valueStatus,
+          })),
+        };
+      }),
+      managerReviewPeriods: managerReviewPeriods.map((review) => {
+        const reviewObject =
+          typeof review.toObject === 'function'
+            ? review.toObject()
+            : review;
+
+        return {
+          ...reviewObject,
+          _id: reviewObject._id?.toString?.() ?? reviewObject._id,
+          annualAssignmentId: reviewObject.annualAssignmentId?.toString?.(),
+          cycleId: reviewObject.cycleId?.toString?.(),
+          employeeId: reviewObject.employeeId?.toString?.(),
+          managerId: reviewObject.managerId?.toString?.(),
+          templateVersionId: reviewObject.templateVersionId?.toString?.(),
+          includedTermAssignmentIds: (reviewObject.includedTermAssignmentIds ?? []).map(
+            (id: unknown) => id && typeof id === 'object' && 'toString' in id
+              ? (id as { toString: () => string }).toString()
+              : String(id),
+          ),
+          anchorTermAssignmentId: reviewObject.anchorTermAssignmentId?.toString?.(),
+          reviewValues: (reviewObject.reviewValues ?? []).map((value: Record<string, any>) => ({
+            templateFieldId: value.templateFieldId,
+            fieldKey: value.fieldKey,
+            sectionKey: value.sectionKey,
+            roleCode: value.roleCode,
+            actorUserId: value.actorUserId?.toString?.(),
+            workflowStage: value.workflowStage,
+            valueJson: value.valueJson,
+            valueText: value.valueText,
+            valueNumber: value.valueNumber,
+            valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
           })),
         };
       }),
