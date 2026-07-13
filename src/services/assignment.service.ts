@@ -459,7 +459,12 @@ export class AssignmentService extends BaseService {
       input.specialWindowReason,
     );
 
-    return { annualAssignment, termAssignments };
+    const refreshedTermAssignments = await TermAssignment.find({
+      _id: { $in: termAssignments.map((termAssignment) => termAssignment._id) },
+      isDeleted: false,
+    }).sort({ assessmentTermCode: 1 });
+
+    return { annualAssignment, termAssignments: refreshedTermAssignments };
   }
 
   async bulkAssign(cycleId: string, input: BulkAssignInput): Promise<BulkAssignResult> {
@@ -1465,10 +1470,24 @@ export class AssignmentService extends BaseService {
         annualAssignment,
       );
       const customTermWindow = annualAssignment.assignmentWindowSnapshot?.terms?.[termCode];
-      const transitionPlan = this.initialTransitionPlanForWindows(
-        effectiveWindows,
-        customTermWindow?.customFlowMode,
-      );
+      let transitionPlan: TermWorkflowState[];
+
+      if (customTermWindow?.customFlowMode === 'CONTINUE_FROM_ACHIEVEMENT') {
+        transitionPlan = this.initialTransitionPlanForWindows(
+          effectiveWindows,
+          customTermWindow.customFlowMode,
+        );
+      } else {
+        const effectiveState = this.getEffectiveAssignmentTermState(
+          termAssignment,
+          termAssignments,
+          termCycleById,
+          annualAssignment,
+        );
+        transitionPlan = effectiveState === TermWorkflowState.OBJECTIVE_SETTING_OPEN
+          ? [TermWorkflowState.OBJECTIVE_SETTING_OPEN]
+          : [];
+      }
 
       if (transitionPlan.length === 0) {
         continue;
