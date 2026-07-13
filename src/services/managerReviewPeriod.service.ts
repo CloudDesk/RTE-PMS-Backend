@@ -130,6 +130,8 @@ export interface ManagerReviewPeriodAssignmentRecord {
   anchorTerm: AssessmentTermCodeType;
   anchorTermAssignmentId?: string;
   reviewState: ManagerReviewPeriodStateType;
+  assessmentStartDate?: string;
+  assessmentEndDate?: string;
   reviewWindow?: { startDate?: string; endDate?: string };
   finalizationWindow?: { startDate?: string; endDate?: string };
   approvedObjectives: Array<{
@@ -757,11 +759,38 @@ export class ManagerReviewPeriodService extends BaseService {
       _id: { $in: reviews.map((review) => review.cycleId) },
       isDeleted: false,
     })
-      .select({ name: 1, code: 1 })
+      .select({ name: 1, code: 1, startDate: 1, endDate: 1 })
       .lean();
     const annualById = new Map(annualAssignments.map((item) => [item._id.toString(), item]));
     const cycleById = new Map(cycles.map((item) => [item._id.toString(), item]));
     const termAssignmentIds = reviews.flatMap((review) => review.includedTermAssignmentIds);
+    const termAssignments = await TermAssignment.find({
+      _id: { $in: termAssignmentIds },
+      isDeleted: false,
+    })
+      .select({ _id: 1, cycleTermId: 1 })
+      .lean();
+    const termCycles = await TermCycle.find({
+      _id: {
+        $in: termAssignments
+          .map((assignment) => assignment.cycleTermId)
+          .filter(Boolean),
+      },
+      isDeleted: false,
+    })
+      .select({
+        startDate: 1,
+        endDate: 1,
+        managerReviewWindow: 1,
+        termFinalizationWindow: 1,
+      })
+      .lean();
+    const termAssignmentById = new Map(
+      termAssignments.map((assignment) => [assignment._id.toString(), assignment]),
+    );
+    const termCycleById = new Map(
+      termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]),
+    );
     const objectives = await Objective.find({
       termAssignmentId: { $in: termAssignmentIds },
       isDeleted: false,
@@ -803,8 +832,42 @@ export class ManagerReviewPeriodService extends BaseService {
         employeeSnapshot.departmentId ??
         '',
       );
-      const reviewWindow = await this.getReviewWindow(review);
-      const finalizationWindow = await this.getFinalizationWindow(review);
+      const includedTermCycles = review.includedTermAssignmentIds
+        .map((termAssignmentId) =>
+          termAssignmentById.get(termAssignmentId.toString()))
+        .map((termAssignment) =>
+          termAssignment?.cycleTermId
+            ? termCycleById.get(termAssignment.cycleTermId.toString())
+            : undefined)
+        .filter((termCycle): termCycle is NonNullable<typeof termCycle> =>
+          Boolean(termCycle));
+      const anchorTermAssignment = review.anchorTermAssignmentId
+        ? termAssignmentById.get(review.anchorTermAssignmentId.toString())
+        : undefined;
+      const anchorTermCycle = anchorTermAssignment?.cycleTermId
+        ? termCycleById.get(anchorTermAssignment.cycleTermId.toString())
+        : undefined;
+      const reviewWindow = anchorTermCycle?.managerReviewWindow;
+      const finalizationWindow = anchorTermCycle?.termFinalizationWindow;
+      const includedStartDates = includedTermCycles
+        .map((termCycle) => termCycle.startDate)
+        .filter((date): date is Date => Boolean(date));
+      const includedEndDates = includedTermCycles
+        .map((termCycle) => termCycle.endDate)
+        .filter((date): date is Date => Boolean(date));
+      const isAnnualReview = review.reviewCode.trim().toUpperCase() === 'ANNUAL';
+      const assessmentStartDate = isAnnualReview && cycle?.startDate
+        ? cycle.startDate
+        : includedStartDates.reduce<Date | undefined>(
+          (earliest, date) => !earliest || date < earliest ? date : earliest,
+          undefined,
+        );
+      const assessmentEndDate = isAnnualReview && cycle?.endDate
+        ? cycle.endDate
+        : includedEndDates.reduce<Date | undefined>(
+          (latest, date) => !latest || date > latest ? date : latest,
+          undefined,
+        );
       const approvedObjectives = review.includedTermAssignmentIds.flatMap((termAssignmentId) =>
         (objectivesByTermId.get(termAssignmentId.toString()) ?? []).map((objective) => ({
           id: objective._id.toString(),
@@ -859,6 +922,8 @@ export class ManagerReviewPeriodService extends BaseService {
         anchorTerm: review.anchorTerm,
         anchorTermAssignmentId: review.anchorTermAssignmentId?.toString(),
         reviewState: review.reviewState,
+        assessmentStartDate: assessmentStartDate?.toISOString(),
+        assessmentEndDate: assessmentEndDate?.toISOString(),
         reviewWindow: this.mapWindow(reviewWindow),
         finalizationWindow: this.mapWindow(finalizationWindow),
         approvedObjectives,
@@ -1042,11 +1107,6 @@ export class ManagerReviewPeriodService extends BaseService {
   private async getReviewWindow(review: IManagerReviewPeriodAssignment) {
     const termCycle = await this.getAnchorTermCycle(review);
     return termCycle?.managerReviewWindow;
-  }
-
-  private async getFinalizationWindow(review: IManagerReviewPeriodAssignment) {
-    const termCycle = await this.getAnchorTermCycle(review);
-    return termCycle?.termFinalizationWindow;
   }
 
   private async getAnchorTermCycle(review: IManagerReviewPeriodAssignment) {
