@@ -64,9 +64,12 @@ export async function pmsAuditRoutes(fastify: FastifyInstance) {
           managerMeritVisible: annualAssignment.visibility?.managerMeritVisible === true,
           visibleFrom: undefined,
         };
+    const visibleFrom = visibility.visibleFrom ? new Date(visibility.visibleFrom) : null;
     const visibilityActive =
       isVisibilityEnabled &&
-      (!visibility.visibleFrom || new Date(visibility.visibleFrom).getTime() <= Date.now());
+      visibleFrom !== null &&
+      !Number.isNaN(visibleFrom.getTime()) &&
+      visibleFrom.getTime() <= Date.now();
 
     // Get all audit logs for this assignment
     const logs = await auditService.getHistory(annualAssignmentId);

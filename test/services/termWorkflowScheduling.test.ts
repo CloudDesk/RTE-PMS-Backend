@@ -167,6 +167,66 @@ describe('Term workflow scheduling', () => {
     });
   });
 
+  it('shows a not-started assignment as objective setting open during its active window', () => {
+    const service = createAssignmentService('2026-07-13T00:00:00.000Z');
+    const termAssignment = mockTermAssignment(
+      q1Id,
+      'Q1',
+      q1CycleId,
+      TermWorkflowState.NOT_STARTED,
+    );
+
+    const effectiveState = service.getEffectiveAssignmentTermState(
+      termAssignment,
+      [termAssignment],
+      new Map([
+        [
+          q1CycleId.toString(),
+          {
+            startDate: new Date('2026-07-13T00:00:00.000Z'),
+            objectiveSettingWindow: {
+              startDate: new Date('2026-07-13T00:00:00.000Z'),
+              endDate: new Date('2026-07-19T00:00:00.000Z'),
+            },
+          },
+        ],
+      ]),
+      { _id: annualAssignmentId },
+    );
+
+    expect(effectiveState).toBe(TermWorkflowState.OBJECTIVE_SETTING_OPEN);
+  });
+
+  it('keeps a not-started assignment scheduled before its objective setting window', () => {
+    const service = createAssignmentService('2026-07-12T00:00:00.000Z');
+    const termAssignment = mockTermAssignment(
+      q1Id,
+      'Q1',
+      q1CycleId,
+      TermWorkflowState.NOT_STARTED,
+    );
+
+    const effectiveState = service.getEffectiveAssignmentTermState(
+      termAssignment,
+      [termAssignment],
+      new Map([
+        [
+          q1CycleId.toString(),
+          {
+            startDate: new Date('2026-07-13T00:00:00.000Z'),
+            objectiveSettingWindow: {
+              startDate: new Date('2026-07-13T00:00:00.000Z'),
+              endDate: new Date('2026-07-19T00:00:00.000Z'),
+            },
+          },
+        ],
+      ]),
+      { _id: annualAssignmentId },
+    );
+
+    expect(effectiveState).toBe(TermWorkflowState.NOT_STARTED);
+  });
+
   it('opens only the currently active seeded term at assignment launch', async () => {
     const service = createAssignmentService();
     const q1 = mockTermAssignment(q1Id, 'Q1', q1CycleId, TermWorkflowState.NOT_STARTED);

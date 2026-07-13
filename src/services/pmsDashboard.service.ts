@@ -133,6 +133,7 @@ export class PmsDashboardService extends BaseService {
       employeeMeritVisible: employeeVisibility.employeeMeritVisible,
       managerGradeVisible: employeeVisibility.managerGradeVisible,
       managerMeritVisible: employeeVisibility.managerMeritVisible,
+      visibleFrom: visibilitySource?.visibleFrom,
       hasVisibilityOverride,
     };
 
@@ -241,9 +242,9 @@ export class PmsDashboardService extends BaseService {
   }
 
   private isVisibilityEffective(visibility?: { visibleFrom?: Date | string | null } | null): boolean {
-    if (!visibility?.visibleFrom) return true;
+    if (!visibility?.visibleFrom) return false;
     const visibleFrom = new Date(visibility.visibleFrom);
-    if (Number.isNaN(visibleFrom.getTime())) return true;
+    if (Number.isNaN(visibleFrom.getTime())) return false;
     return visibleFrom.getTime() <= Date.now();
   }
 

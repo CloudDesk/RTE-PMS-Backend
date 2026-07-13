@@ -53,7 +53,7 @@ export class VisibilityMaskService {
     // Evaluate visibleFrom date
     let effectiveContext = { ...context };
     const visibleFrom = context.visibleFrom ? new Date(context.visibleFrom) : null;
-    if (visibleFrom && !Number.isNaN(visibleFrom.getTime()) && new Date() < visibleFrom) {
+    if (!visibleFrom || Number.isNaN(visibleFrom.getTime()) || new Date() < visibleFrom) {
       effectiveContext.employeeGradeVisible = false;
       effectiveContext.employeeMeritVisible = false;
       effectiveContext.managerGradeVisible = false;

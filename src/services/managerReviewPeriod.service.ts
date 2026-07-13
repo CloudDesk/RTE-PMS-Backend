@@ -21,6 +21,7 @@ import {
   isGroupedManagerReviewConfig,
   normalizeReviewCadenceConfig,
 } from '../utilis/pmsReviewCadence';
+import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 import type { RequestContext } from '../types/context';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
@@ -264,8 +265,30 @@ export class ManagerReviewPeriodService extends BaseService {
         review.reviewState === ManagerReviewPeriodState.MANAGER_REVIEW_OPEN ||
         review.reviewState === ManagerReviewPeriodState.REOPENED_BY_ADMIN
       ) {
-        alreadyOpen += 1;
-        continue;
+        const termsReady = await this.isReviewPeriodOpenEligible(review, true);
+        if (termsReady) {
+          alreadyOpen += 1;
+          continue;
+        }
+
+        if (options.dryRun === true) {
+          notReady += 1;
+          continue;
+        }
+
+        review.previousReviewState = review.reviewState;
+        review.reviewState = ManagerReviewPeriodState.NOT_STARTED;
+        review.updatedBy = this.actorIdObject();
+        review.version += 1;
+        await review.save();
+        await this.audit(
+          'PMS_GROUPED_MANAGER_REVIEW_RESET_NOT_READY',
+          'MANAGER_REVIEW_PERIOD',
+          review._id.toString(),
+          { reviewState: review.previousReviewState },
+          { reviewState: review.reviewState },
+          'Grouped manager review was previously opened before all included terms reached manager review.',
+        );
       }
 
       if (review.reviewState !== ManagerReviewPeriodState.NOT_STARTED) {
@@ -273,13 +296,30 @@ export class ManagerReviewPeriodService extends BaseService {
         continue;
       }
 
-      const eligible = await this.isReviewPeriodOpenEligible(review, options.ignoreWindowDates === true);
+      const eligible = await this.isReviewPeriodOpenEligible(
+        review,
+        options.ignoreWindowDates === true,
+        true,
+      );
       if (!eligible) {
         notReady += 1;
         continue;
       }
 
       if (options.dryRun !== true) {
+        await this.promoteIncludedTermsToManagerReview(
+          review,
+          options.ignoreWindowDates === true,
+        );
+        const strictlyReady = await this.isReviewPeriodOpenEligible(
+          review,
+          options.ignoreWindowDates === true,
+        );
+        if (!strictlyReady) {
+          notReady += 1;
+          continue;
+        }
+
         review.previousReviewState = review.reviewState;
         review.reviewState = ManagerReviewPeriodState.MANAGER_REVIEW_OPEN;
         review.openedAt = new Date();
@@ -311,6 +351,7 @@ export class ManagerReviewPeriodService extends BaseService {
     if (review.reviewState !== ManagerReviewPeriodState.MANAGER_REVIEW_OPEN) {
       throw new Error('Grouped manager review draft can be saved only when manager review is open');
     }
+    await this.assertIncludedTermsReadyForManagerReview(review);
 
     this.applyReviewInput(review, input, false);
     await review.save();
@@ -335,6 +376,7 @@ export class ManagerReviewPeriodService extends BaseService {
     if (review.reviewState !== ManagerReviewPeriodState.MANAGER_REVIEW_OPEN) {
       throw new Error('Grouped manager review can be submitted only when manager review is open');
     }
+    await this.assertIncludedTermsReadyForManagerReview(review);
     if (!Number.isFinite(Number(input.score))) {
       throw new Error('Grouped manager review requires a numeric score');
     }
@@ -533,14 +575,44 @@ export class ManagerReviewPeriodService extends BaseService {
   private async isReviewPeriodOpenEligible(
     review: IManagerReviewPeriodAssignment,
     ignoreWindowDates: boolean,
+    allowTermPromotion = false,
   ): Promise<boolean> {
+    const readiness = await this.getGroupedReviewTermReadiness(review, ignoreWindowDates);
+    if (!readiness) {
+      return false;
+    }
+
+    if (!allowTermPromotion && readiness.pendingPromotion.length > 0) {
+      return false;
+    }
+
+    if (!ignoreWindowDates) {
+      const window = await this.getReviewWindow(review);
+      if (
+        window?.startDate &&
+        window?.endDate &&
+        !this.isWindowActive(this.getCurrentDate(), window)
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async getGroupedReviewTermReadiness(
+    review: IManagerReviewPeriodAssignment,
+    ignoreWindowDates: boolean,
+  ): Promise<{
+    pendingPromotion: ITermAssignment[];
+  } | null> {
     const termAssignments = await TermAssignment.find({
       _id: { $in: review.includedTermAssignmentIds },
       isDeleted: false,
     }).lean();
 
     if (termAssignments.length !== review.includedTermAssignmentIds.length) {
-      return false;
+      return null;
     }
 
     const termCycleIds = termAssignments
@@ -548,46 +620,99 @@ export class ManagerReviewPeriodService extends BaseService {
       .filter((id): id is Types.ObjectId => Boolean(id));
     const termCycles = termCycleIds.length > 0
       ? await TermCycle.find({ _id: { $in: termCycleIds } })
-          .select('achievementSubmissionWindow')
+          .select(
+            'objectiveSettingWindow objectiveApprovalWindow achievementSubmissionWindow managerReviewWindow termFinalizationWindow',
+          )
           .lean()
       : [];
-    const termCycleById = new Map(termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]));
-
-    const managerReviewReadyStates = new Set<string>([
-      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-      TermWorkflowState.MANAGER_REVIEW_OPEN,
-      TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
-      TermWorkflowState.TERM_FINALIZED,
-    ]);
+    const termCycleById = new Map(
+      termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]),
+    );
+    const annualAssignment = await AnnualAssignment.findById(review.annualAssignmentId)
+      .select('assignmentWindowSnapshot')
+      .lean();
+    const pendingPromotion: ITermAssignment[] = [];
 
     for (const term of termAssignments) {
-      if (managerReviewReadyStates.has(term.termState)) {
+      const state = term.termState;
+      if (
+        state === TermWorkflowState.MANAGER_REVIEW_OPEN ||
+        state === TermWorkflowState.MANAGER_REVIEW_SUBMITTED ||
+        state === TermWorkflowState.TERM_FINALIZED
+      ) {
         continue;
       }
 
-      if (term.termState === TermWorkflowState.OBJECTIVE_APPROVED) {
-        const termCycle = term.cycleTermId
-          ? termCycleById.get(term.cycleTermId.toString())
-          : undefined;
-        if (termCycle?.achievementSubmissionWindow?.enabled === true) {
-          return false;
-        }
-        continue;
+      if (
+        state !== TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
+        state !== TermWorkflowState.OBJECTIVE_APPROVED
+      ) {
+        return null;
       }
 
-      return false;
+      const termCycle = term.cycleTermId
+        ? termCycleById.get(term.cycleTermId.toString())
+        : undefined;
+      const effectiveWindows = resolveEffectiveTermWindows(
+        term,
+        termCycle,
+        annualAssignment,
+      );
+      const achievementWindow = effectiveWindows.achievementSubmissionWindow;
+      const achievementClosed =
+        achievementWindow?.enabled !== true ||
+        (ignoreWindowDates || this.isDateWindowClosed(achievementWindow));
+
+      if (!achievementClosed) {
+        return null;
+      }
+
+      pendingPromotion.push(term as ITermAssignment);
     }
 
-    if (ignoreWindowDates) {
-      return true;
+    return { pendingPromotion };
+  }
+
+  private async promoteIncludedTermsToManagerReview(
+    review: IManagerReviewPeriodAssignment,
+    ignoreWindowDates: boolean,
+  ): Promise<void> {
+    const readiness = await this.getGroupedReviewTermReadiness(review, ignoreWindowDates);
+    if (!readiness || readiness.pendingPromotion.length === 0) {
+      return;
     }
 
-    const window = await this.getReviewWindow(review);
-    if (!window?.startDate || !window?.endDate) {
-      return true;
+    const actor = this.requireActor();
+    for (const termAssignment of readiness.pendingPromotion) {
+      await transitionTermAssignmentState(
+        termAssignment._id.toString(),
+        TermWorkflowState.MANAGER_REVIEW_OPEN,
+        actor,
+        'All included employee achievement windows are closed; grouped manager review is ready.',
+        'PMS_GROUPED_MANAGER_REVIEW_TERM_OPENED',
+        {
+          managerReviewPeriodId: review._id.toString(),
+          windowOverrideApplied: ignoreWindowDates,
+        },
+      );
     }
+  }
 
-    const now = this.getCurrentDate();
+  private isDateWindowClosed(window?: { endDate?: Date; dueDate?: Date }): boolean {
+    const endDate = window?.endDate ?? window?.dueDate;
+    if (!endDate) return false;
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    return this.getCurrentDate() > end;
+  }
+
+  private isWindowActive(
+    now: Date,
+    window?: { startDate?: Date; endDate?: Date },
+  ): boolean {
+    if (!window?.startDate || !window?.endDate) return false;
+
     const start = new Date(window.startDate);
     const end = new Date(window.endDate);
     start.setHours(0, 0, 0, 0);
@@ -628,7 +753,14 @@ export class ManagerReviewPeriodService extends BaseService {
       _id: { $in: reviews.map((review) => review.annualAssignmentId) },
       isDeleted: false,
     }).lean();
+    const cycles = await AnnualCycle.find({
+      _id: { $in: reviews.map((review) => review.cycleId) },
+      isDeleted: false,
+    })
+      .select({ name: 1, code: 1 })
+      .lean();
     const annualById = new Map(annualAssignments.map((item) => [item._id.toString(), item]));
+    const cycleById = new Map(cycles.map((item) => [item._id.toString(), item]));
     const termAssignmentIds = reviews.flatMap((review) => review.includedTermAssignmentIds);
     const objectives = await Objective.find({
       termAssignmentId: { $in: termAssignmentIds },
@@ -655,6 +787,7 @@ export class ManagerReviewPeriodService extends BaseService {
 
     return Promise.all(reviews.map(async (review) => {
       const annualAssignment = annualById.get(review.annualAssignmentId.toString());
+      const cycle = cycleById.get(review.cycleId.toString());
       const employeeSnapshot = annualAssignment?.employeeSnapshot ?? {};
       const managerSnapshot = annualAssignment?.managerSnapshot ?? {};
       const orgSnapshot = annualAssignment?.orgSnapshot ?? {};
@@ -697,11 +830,12 @@ export class ManagerReviewPeriodService extends BaseService {
         annualAssignmentId: review.annualAssignmentId.toString(),
         cycleId: review.cycleId.toString(),
         cycleName: String(
+          cycle?.name ??
           orgSnapshot.cycleName ??
           orgSnapshot.cycleCode ??
           review.cycleId.toString(),
         ),
-        cycleCode: orgSnapshot.cycleCode as string | undefined,
+        cycleCode: cycle?.code ?? (orgSnapshot.cycleCode as string | undefined),
         employeeId: review.employeeId.toString(),
         employeeName: String(employeeSnapshot.name ?? 'Employee'),
         employeeCode: employeeSnapshot.employeeCode as string | undefined,
@@ -891,6 +1025,17 @@ export class ManagerReviewPeriodService extends BaseService {
 
     if (now < start || now > end) {
       throw new Error('Grouped manager review window is closed for this review period.');
+    }
+  }
+
+  private async assertIncludedTermsReadyForManagerReview(
+    review: IManagerReviewPeriodAssignment,
+  ): Promise<void> {
+    const ready = await this.isReviewPeriodOpenEligible(review, false);
+    if (!ready) {
+      throw new Error(
+        'Grouped manager review is unavailable until all included terms reach Manager Review Open.',
+      );
     }
   }
 
