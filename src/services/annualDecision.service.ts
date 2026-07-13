@@ -1013,8 +1013,8 @@ export class AnnualDecisionService extends BaseService {
     }
 
     const overrideScore = Number(input.overrideScore);
-    if (!Number.isFinite(overrideScore) || overrideScore < 0) {
-      throw new Error('Valid final score override value is required');
+    if (!Number.isFinite(overrideScore) || overrideScore < 0 || overrideScore > 100) {
+      throw new Error('Final score override must be a number from 0 to 100');
     }
 
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
@@ -1107,6 +1107,15 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Visibility can be updated only after annual decision is frozen');
     }
 
+    const visibleFrom = String(input.visibleFrom ?? '').trim();
+    if (!visibleFrom) {
+      throw new Error('Please select a visibility start date.');
+    }
+    const visibleFromDate = new Date(visibleFrom);
+    if (Number.isNaN(visibleFromDate.getTime())) {
+      throw new Error('Please select a valid visibility start date.');
+    }
+
     const previousAssignmentValue = annualAssignment.toObject();
     const visibilityConfig = await this.ensureVisibilityConfiguration(annualAssignment);
     const previousVisibilityValue = visibilityConfig.toObject();
@@ -1122,7 +1131,7 @@ export class AnnualDecisionService extends BaseService {
       input.managerGradeVisible ?? visibilityConfig.managerGradeVisible;
     visibilityConfig.managerMeritVisible =
       input.managerMeritVisible ?? visibilityConfig.managerMeritVisible;
-    visibilityConfig.visibleFrom = input.visibleFrom ? new Date(input.visibleFrom) : visibilityConfig.visibleFrom;
+    visibilityConfig.visibleFrom = visibleFromDate;
     visibilityConfig.reason = input.reason ?? visibilityConfig.reason;
     visibilityConfig.updatedBy = this.actorIdObject();
     visibilityConfig.version += 1;
@@ -1394,6 +1403,13 @@ export class AnnualDecisionService extends BaseService {
     input: SaveDecisionDraftInput,
     outcomeType: AppraisalOutcomeTypeType,
   ): void {
+    if (input.finalScore !== undefined && input.finalScore !== null) {
+      const finalScore = Number(input.finalScore);
+      if (!Number.isFinite(finalScore) || finalScore < 0 || finalScore > 100) {
+        throw new Error('Final Score must be a number from 0 to 100');
+      }
+    }
+
     if (typeof input.isGradeApplied !== 'boolean') {
       throw new Error('isGradeApplied is required');
     }
@@ -1410,8 +1426,28 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('meritDetails is required when merit is applied');
     }
 
+    if (input.isMeritApplied && input.meritDetails) {
+      const meritPercentage =
+        input.meritDetails.percentage ??
+        input.meritDetails.meritPercentage ??
+        input.meritDetails.amount ??
+        input.meritDetails.meritAmount;
+      if (meritPercentage !== undefined && meritPercentage !== null && String(meritPercentage).trim()) {
+        const normalizedMeritPercentage = String(meritPercentage).trim();
+        const numericMeritPercentage = Number(normalizedMeritPercentage);
+        if (
+          !/^\d*(?:\.\d*)?$/.test(normalizedMeritPercentage) ||
+          !Number.isFinite(numericMeritPercentage) ||
+          numericMeritPercentage < 0 ||
+          numericMeritPercentage > 100
+        ) {
+          throw new Error('Merit Percentage must be a number from 0 to 100');
+        }
+      }
+    }
+
     if (outcomeType === AppraisalOutcomeType.NIL && !input.nilReason?.trim()) {
-      throw new Error('nilReason is required when grade and merit are not applied');
+      throw new Error('Please provide a reason when neither grade nor merit is applied.');
     }
   }
 
@@ -3079,7 +3115,7 @@ export class AnnualDecisionService extends BaseService {
     }
 
     const visibleFrom = visibility.visibleFrom ? new Date(visibility.visibleFrom) : null;
-    if (visibleFrom && !Number.isNaN(visibleFrom.getTime()) && this.getCurrentDate() < visibleFrom) {
+    if (!visibleFrom || Number.isNaN(visibleFrom.getTime()) || this.getCurrentDate() < visibleFrom) {
       return {
         ...visibility,
         employeeReviewVisible: false,

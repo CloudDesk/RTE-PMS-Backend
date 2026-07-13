@@ -238,7 +238,7 @@ export class AssignmentService extends BaseService {
     ]);
 
     const assignmentIds = items.map((item) => item._id);
-    const [termAssignments, reassignments] = await Promise.all([
+    const [termAssignments, reassignments, termCycles] = await Promise.all([
       TermAssignment.find({
         annualAssignmentId: { $in: assignmentIds },
         isDeleted: false,
@@ -247,7 +247,15 @@ export class AssignmentService extends BaseService {
         annualAssignmentId: { $in: assignmentIds },
         isDeleted: false,
       }).sort({ effectiveFrom: -1 }).lean(),
+      TermCycle.find({
+        cycleId: annualCycleId,
+        isDeleted: false,
+      }).lean(),
     ]);
+
+    const termCycleMap = new Map(
+      termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]),
+    );
 
     const quartersByAssignment = new Map<string, unknown[]>();
     for (const termAssignment of termAssignments) {
@@ -296,13 +304,22 @@ export class AssignmentService extends BaseService {
         hasVisibilityOverride,
       };
 
+      const assignmentTerms = quartersByAssignment.get(item._id.toString()) ?? [];
       const mappedItem = {
         ...item,
         annualState:
           annualCycle.status === AnnualWorkflowState.CANCELLED
             ? AnnualWorkflowState.CANCELLED
             : item.annualState,
-        termAssignments: quartersByAssignment.get(item._id.toString()) ?? [],
+        termAssignments: assignmentTerms.map((termAssignment: any) => ({
+          ...termAssignment,
+          termState: this.getEffectiveAssignmentTermState(
+            termAssignment,
+            assignmentTerms as any[],
+            termCycleMap,
+            item,
+          ),
+        })),
         assignmentHistory: historyByAssignment.get(item._id.toString()) ?? [],
       };
 
@@ -442,7 +459,12 @@ export class AssignmentService extends BaseService {
       input.specialWindowReason,
     );
 
-    return { annualAssignment, termAssignments };
+    const refreshedTermAssignments = await TermAssignment.find({
+      _id: { $in: termAssignments.map((termAssignment) => termAssignment._id) },
+      isDeleted: false,
+    }).sort({ assessmentTermCode: 1 });
+
+    return { annualAssignment, termAssignments: refreshedTermAssignments };
   }
 
   async bulkAssign(cycleId: string, input: BulkAssignInput): Promise<BulkAssignResult> {
@@ -1448,10 +1470,24 @@ export class AssignmentService extends BaseService {
         annualAssignment,
       );
       const customTermWindow = annualAssignment.assignmentWindowSnapshot?.terms?.[termCode];
-      const transitionPlan = this.initialTransitionPlanForWindows(
-        effectiveWindows,
-        customTermWindow?.customFlowMode,
-      );
+      let transitionPlan: TermWorkflowState[];
+
+      if (customTermWindow?.customFlowMode === 'CONTINUE_FROM_ACHIEVEMENT') {
+        transitionPlan = this.initialTransitionPlanForWindows(
+          effectiveWindows,
+          customTermWindow.customFlowMode,
+        );
+      } else {
+        const effectiveState = this.getEffectiveAssignmentTermState(
+          termAssignment,
+          termAssignments,
+          termCycleById,
+          annualAssignment,
+        );
+        transitionPlan = effectiveState === TermWorkflowState.OBJECTIVE_SETTING_OPEN
+          ? [TermWorkflowState.OBJECTIVE_SETTING_OPEN]
+          : [];
+      }
 
       if (transitionPlan.length === 0) {
         continue;
@@ -1546,6 +1582,77 @@ export class AssignmentService extends BaseService {
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
     return now >= start && now <= end;
+  }
+
+  private getEffectiveAssignmentTermState(
+    termAssignment: Pick<ITermAssignment, '_id' | 'assessmentTermCode' | 'assessmentTermType' | 'termState' | 'cycleTermId'>,
+    assignmentTerms: Array<Pick<ITermAssignment, '_id' | 'assessmentTermCode' | 'assessmentTermType' | 'termState' | 'cycleTermId'>>,
+    termCycleMap: Map<string, any>,
+    annualAssignment: unknown,
+  ): TermWorkflowState {
+    if (termAssignment.termState !== TermWorkflowState.NOT_STARTED) {
+      return termAssignment.termState;
+    }
+
+    const orderedTerms = [...assignmentTerms].sort((left, right) => {
+      const orderedCodes = getAssessmentTerms(
+        left.assessmentTermType ?? getDefaultAssessmentTermType(),
+      );
+      const leftRank = orderedCodes.indexOf(left.assessmentTermCode);
+      const rightRank = orderedCodes.indexOf(right.assessmentTermCode);
+      if (leftRank !== rightRank) return leftRank - rightRank;
+
+      const leftCycle = left.cycleTermId
+        ? termCycleMap.get(left.cycleTermId.toString())
+        : undefined;
+      const rightCycle = right.cycleTermId
+        ? termCycleMap.get(right.cycleTermId.toString())
+        : undefined;
+      return (
+        new Date(leftCycle?.startDate ?? 0).getTime() -
+        new Date(rightCycle?.startDate ?? 0).getTime()
+      );
+    });
+
+    for (const currentTerm of orderedTerms) {
+      if (this.isTermPastObjectiveSetting(currentTerm.termState)) {
+        continue;
+      }
+
+      if (
+        currentTerm._id.toString() !== termAssignment._id.toString() ||
+        currentTerm.termState !== TermWorkflowState.NOT_STARTED
+      ) {
+        return termAssignment.termState;
+      }
+
+      const termCycle = currentTerm.cycleTermId
+        ? termCycleMap.get(currentTerm.cycleTermId.toString())
+        : undefined;
+      const windows = resolveEffectiveTermWindows(
+        currentTerm as ITermAssignment,
+        termCycle,
+        annualAssignment as IAnnualAssignment,
+      );
+
+      return this.isWindowActive(windows.objectiveSettingWindow)
+        ? TermWorkflowState.OBJECTIVE_SETTING_OPEN
+        : termAssignment.termState;
+    }
+
+    return termAssignment.termState;
+  }
+
+  private isTermPastObjectiveSetting(termState: TermWorkflowState): boolean {
+    const pastStates = new Set<TermWorkflowState>([
+      TermWorkflowState.OBJECTIVE_APPROVED,
+      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
+      TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+      TermWorkflowState.TERM_FINALIZED,
+      TermWorkflowState.CLOSED_BY_ADMIN,
+    ]);
+    return pastStates.has(termState);
   }
 
   private getCurrentDate(): Date {
