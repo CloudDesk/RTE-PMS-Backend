@@ -13,9 +13,14 @@ import {
   AssignmentExceptionQueue,
   Delegation,
   Reassignment,
+  User,
 } from '../models';
 import { visibilityMaskService } from './visibilityMask.service';
 import { accessService } from './access.service';
+import {
+  PmsProbationReviewAssignment,
+  ProbationReviewStatus,
+} from '../models/pms-probation-review-assignment.model';
 
 export class PmsDashboardService extends BaseService {
   /**
@@ -434,6 +439,8 @@ export class PmsDashboardService extends BaseService {
       };
     });
 
+    const traineeReviews = await this.getTraineeReviewSummary(managerObjectId);
+
     return {
       teamStats: {
         totalDirectReports: employeeIds.length,
@@ -452,6 +459,7 @@ export class PmsDashboardService extends BaseService {
         recentReassignments,
       },
       releasedOutcomes,
+      traineeReviews,
     };
   }
 
@@ -530,7 +538,7 @@ export class PmsDashboardService extends BaseService {
     };
 
     // 6. Reopen tracking (Audits showing transitions to REOPENED)
-    const reopenTrackingLogs = await AuditLog.find({
+    const reopenTrackingLogRows = await AuditLog.find({
       action: { $regex: /reopen/i },
       ...(annualAssignmentIds.length > 0
         ? { assignmentId: { $in: annualAssignmentIds } }
@@ -541,6 +549,38 @@ export class PmsDashboardService extends BaseService {
       .sort({ createdAt: -1 })
       .limit(10)
       .lean();
+    const reopenActorIds = [
+      ...new Set(
+        reopenTrackingLogRows
+          .map((log) => String(log.actorId || log.userId || ''))
+          .filter((actorId) => Types.ObjectId.isValid(actorId)),
+      ),
+    ];
+    const reopenActors = reopenActorIds.length > 0
+      ? await User.find({ _id: { $in: reopenActorIds } })
+          .select('_id name employeeCode role')
+          .lean()
+      : [];
+    const reopenActorById = new Map(
+      reopenActors.map((actor) => [actor._id.toString(), actor]),
+    );
+    const reopenTrackingLogs = reopenTrackingLogRows.map((log) => {
+      const actorId = String(log.actorId || log.userId || '');
+      const actor = reopenActorById.get(actorId);
+      const newValue = log.newValue as Record<string, any> | undefined;
+      const metadata = log.metadata as Record<string, any> | undefined;
+
+      return {
+        ...log,
+        actorName: actor?.name || actor?.employeeCode || actorId || 'System',
+        actorRole: log.actorRole || actor?.role || '',
+        details:
+          log.reason ||
+          metadata?.reason ||
+          newValue?.reason ||
+          '',
+      };
+    });
 
     // 7. Assignment Exception Queue Metrics
     const [totalExceptions, openExceptions, resolvedExceptions, recentExceptions] = await Promise.all([
@@ -595,6 +635,8 @@ export class PmsDashboardService extends BaseService {
         .lean(),
     ]);
 
+    const traineeReviews = await this.getTraineeReviewSummary();
+
     return {
       annualProgress,
       termProgress,
@@ -610,6 +652,7 @@ export class PmsDashboardService extends BaseService {
       reassignmentMetrics: {
         recent: recentReassignments,
       },
+      traineeReviews,
     };
   }
 
@@ -784,6 +827,8 @@ export class PmsDashboardService extends BaseService {
       ? Math.round((finalizedOrVisibleCount / totalAssignments) * 100) 
       : 0;
 
+    const traineeReviews = await this.getTraineeReviewSummary();
+
     return {
       appraisalStates,
       gradeDistribution,
@@ -805,6 +850,174 @@ export class PmsDashboardService extends BaseService {
       reassignmentMetrics: {
         reopens: reopenCount,
       },
+      traineeReviews,
+    };
+  }
+
+  private async getTraineeReviewSummary(managerId?: Types.ObjectId): Promise<any> {
+    const now = new Date();
+    const dueSoonAt = new Date(now);
+    dueSoonAt.setDate(dueSoonAt.getDate() + 7);
+
+    const activeStatuses = [
+      ProbationReviewStatus.REVIEW_OPEN,
+      ProbationReviewStatus.MANAGER_1_SUBMITTED,
+      ProbationReviewStatus.DELEGATED_TO_APPROVER,
+      ProbationReviewStatus.APPROVAL_REASSIGNED,
+      ProbationReviewStatus.RETURNED_TO_MANAGER_1,
+    ];
+    const approvalStatuses = [
+      ProbationReviewStatus.MANAGER_1_SUBMITTED,
+      ProbationReviewStatus.DELEGATED_TO_APPROVER,
+      ProbationReviewStatus.APPROVAL_REASSIGNED,
+    ];
+    const scopeFilter: Record<string, any> = managerId
+      ? {
+          $and: [
+            { isDeleted: false },
+            { $or: [{ manager1Id: managerId }, { manager2Id: managerId }] },
+          ],
+        }
+      : { isDeleted: false };
+
+    const effectiveManagerExpression = (roleExpression: any) => ({
+      $cond: [{ $eq: [roleExpression, 'MANAGER_1'] }, '$manager1Id', '$manager2Id'],
+    });
+    const fillingRoleExpression = {
+      $ifNull: ['$reviewerConfiguration.fillingManagerRole', 'MANAGER_1'],
+    };
+    const approvingRoleExpression = {
+      $ifNull: [
+        '$approvalOwnerRoleOverride',
+        { $ifNull: ['$reviewerConfiguration.approvingManagerRole', 'MANAGER_2'] },
+      ],
+    };
+    const managerActionFilter = managerId
+      ? {
+          $or: [
+            {
+              status: {
+                $in: [
+                  ProbationReviewStatus.REVIEW_OPEN,
+                  ProbationReviewStatus.RETURNED_TO_MANAGER_1,
+                ],
+              },
+              $expr: {
+                $eq: [effectiveManagerExpression(fillingRoleExpression), managerId],
+              },
+            },
+            {
+              status: { $in: approvalStatuses },
+              $expr: {
+                $eq: [effectiveManagerExpression(approvingRoleExpression), managerId],
+              },
+            },
+          ],
+        }
+      : { status: { $in: activeStatuses } };
+
+    const [statusRows, actionRequired, overdue, dueSoon, recent] = await Promise.all([
+      PmsProbationReviewAssignment.aggregate([
+        { $match: scopeFilter },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      PmsProbationReviewAssignment.countDocuments({
+        $and: [scopeFilter, managerActionFilter],
+      }),
+      PmsProbationReviewAssignment.countDocuments({
+        $and: [
+          scopeFilter,
+          managerActionFilter,
+          { probationEndDate: { $lt: now } },
+        ],
+      }),
+      PmsProbationReviewAssignment.countDocuments({
+        $and: [
+          scopeFilter,
+          managerActionFilter,
+          { probationEndDate: { $gte: now, $lte: dueSoonAt } },
+        ],
+      }),
+      PmsProbationReviewAssignment.find(scopeFilter)
+        .select(
+          '_id employeeId manager1Id manager2Id status reviewOpenDate probationEndDate delegatedAt delegatedBy updatedAt',
+        )
+        .populate('employeeId', 'name employeeCode departmentId')
+        .populate('manager1Id', 'name employeeCode')
+        .populate('manager2Id', 'name employeeCode')
+        .populate('delegatedBy', 'name employeeCode')
+        .sort({ updatedAt: -1 })
+        .limit(10)
+        .lean(),
+    ]);
+
+    const byStatus = Object.fromEntries(
+      statusRows.map((row) => [String(row._id), Number(row.count || 0)]),
+    );
+    const statusCount = (...statuses: string[]) =>
+      statuses.reduce((total, status) => total + Number(byStatus[status] || 0), 0);
+    const total = statusRows.reduce((sum, row) => sum + Number(row.count || 0), 0);
+    const finalized = statusCount(ProbationReviewStatus.FINALIZED);
+    const cancelled = statusCount(ProbationReviewStatus.CANCELLED);
+    const eligibleForCompletion = Math.max(0, total - cancelled);
+
+    let forwardedToMe = 0;
+    let forwardedByMe = 0;
+    if (managerId) {
+      [forwardedToMe, forwardedByMe] = await Promise.all([
+        PmsProbationReviewAssignment.countDocuments({
+          $and: [
+            scopeFilter,
+            { status: { $in: approvalStatuses } },
+            {
+              $expr: {
+                $eq: [effectiveManagerExpression(approvingRoleExpression), managerId],
+              },
+            },
+          ],
+        }),
+        PmsProbationReviewAssignment.countDocuments({
+          $and: [
+            scopeFilter,
+            { status: { $in: approvalStatuses } },
+            {
+              $or: [
+                { delegatedBy: managerId },
+                { manager1SubmittedBy: managerId },
+                { approvalOwnerOverrideBy: managerId },
+              ],
+            },
+          ],
+        }),
+      ]);
+    }
+
+    return {
+      asOf: now,
+      dueSoonDays: 7,
+      total,
+      active: Math.max(0, total - finalized - cancelled),
+      actionRequired,
+      overdue,
+      dueSoon,
+      scheduled: statusCount(ProbationReviewStatus.SCHEDULED),
+      open: statusCount(ProbationReviewStatus.REVIEW_OPEN),
+      awaitingApproval: statusCount(...approvalStatuses),
+      returned: statusCount(ProbationReviewStatus.RETURNED_TO_MANAGER_1),
+      finalized,
+      cancelled,
+      forwardedInProgress: statusCount(
+        ProbationReviewStatus.DELEGATED_TO_APPROVER,
+        ProbationReviewStatus.APPROVAL_REASSIGNED,
+      ),
+      forwardedToMe,
+      forwardedByMe,
+      completionRate:
+        eligibleForCompletion > 0
+          ? Math.round((finalized / eligibleForCompletion) * 100)
+          : 0,
+      byStatus,
+      recent,
     };
   }
 }
