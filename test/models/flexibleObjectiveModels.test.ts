@@ -48,6 +48,17 @@ describe('Flexible objective model foundation', () => {
     expect(master.status).toBe('ACTIVE');
   });
 
+  it('accepts an LOV-defined objective master source type without a hardcoded enum', () => {
+    const master = new ObjectiveMaster({
+      sourceType: 'CUSTOM_GROUP_OBJECTIVE',
+      ownerUserId: userId,
+      ownerRole: 'ADMIN',
+      createdBy: userId,
+    });
+
+    expect(master.validateSync()).toBeUndefined();
+  });
+
   it('validates objective master versions as immutable business-detail records', () => {
     const version = new ObjectiveMasterVersion({
       objectiveMasterId: new Types.ObjectId(),

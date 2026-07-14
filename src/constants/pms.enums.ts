@@ -190,8 +190,7 @@ export const FlexibleObjectiveSourceType = {
   EMPLOYEE_CREATED_OBJECTIVE: 'EMPLOYEE_CREATED_OBJECTIVE',
 } as const;
 
-export type FlexibleObjectiveSourceType =
-  (typeof FlexibleObjectiveSourceType)[keyof typeof FlexibleObjectiveSourceType];
+export type FlexibleObjectiveSourceType = string;
 
 export const ObjectiveMasterStatus = {
   ACTIVE: 'ACTIVE',

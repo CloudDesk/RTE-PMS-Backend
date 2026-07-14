@@ -49,6 +49,7 @@ import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { AuditLog } from '../models/audit-log.model';
 import { User } from '../models/user.model';
+import { LOV } from '../models/lov.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -1178,11 +1179,8 @@ export class ObjectiveService extends BaseService {
     if (query.status && Object.values(ObjectiveMasterStatus).includes(query.status as ObjectiveMasterStatusType)) {
       filter.status = query.status;
     }
-    if (
-      query.sourceType &&
-      Object.values(FlexibleObjectiveSourceType).includes(query.sourceType as FlexibleObjectiveSourceTypeType)
-    ) {
-      filter.sourceType = query.sourceType;
+    if (query.sourceType?.trim()) {
+      filter.sourceType = this.toObjectiveSourceTypeIdentifier(query.sourceType);
     }
     if (query.ownerDepartment?.trim()) {
       filter.ownerDepartment = { $regex: query.ownerDepartment.trim(), $options: 'i' };
@@ -1296,7 +1294,7 @@ export class ObjectiveService extends BaseService {
     const actor = this.requireActor();
     const actorId = this.toObjectId(actor.actorId, 'actorId');
     const sourceType = this.requireFlexibleObjectiveSourceType(input.sourceType);
-    this.assertObjectiveMasterCreatableSourceType(sourceType);
+    await this.assertObjectiveMasterCreatableSourceType(sourceType);
     const owner = this.normalizeObjectiveOwnerInput(input, actor);
 
     await this.assertObjectiveOwnerPermission(sourceType, owner);
@@ -1355,7 +1353,7 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective Master not found');
     }
 
-    this.assertObjectiveMasterCreatableSourceType(master.sourceType);
+    await this.assertObjectiveMasterCreatableSourceType(master.sourceType);
     await this.assertObjectiveOwnerPermission(master.sourceType, master);
 
     const sourceVersion = sourceVersionId
@@ -6858,29 +6856,31 @@ export class ObjectiveService extends BaseService {
   private requireFlexibleObjectiveSourceType(
     sourceType: FlexibleObjectiveSourceTypeType,
   ): FlexibleObjectiveSourceTypeType {
-    if (!Object.values(FlexibleObjectiveSourceType).includes(sourceType)) {
+    const normalized = String(sourceType ?? '').trim().toUpperCase();
+    if (!/^[A-Z0-9]+(?:_[A-Z0-9]+)*_OBJECTIVE$/.test(normalized)) {
       throw new Error('Valid objective source type is required');
     }
 
-    return sourceType;
+    return normalized;
   }
 
-  private assertObjectiveMasterCreatableSourceType(sourceType: FlexibleObjectiveSourceTypeType): void {
-    if (
-      sourceType !== FlexibleObjectiveSourceType.COMPANY_OBJECTIVE &&
-      sourceType !== FlexibleObjectiveSourceType.DEPARTMENT_OBJECTIVE
-    ) {
-      throw new Error('Objective Master can be created only for Company/Global or Department objectives.');
+  private async assertObjectiveMasterCreatableSourceType(
+    sourceType: FlexibleObjectiveSourceTypeType,
+  ): Promise<void> {
+    const sourceTypeLov = await LOV.findOne({ type: 'sourcetype' }).select('values').lean();
+    const activeSourceTypes = (sourceTypeLov?.values ?? [])
+      .filter((value) => value.isActive !== false)
+      .map((value) => this.toObjectiveSourceTypeIdentifier(value.value || value.label));
+
+    if (!activeSourceTypes.includes(sourceType)) {
+      throw new Error('Objective source type must be an active sourcetype LOV value.');
     }
   }
 
   private async generateObjectiveMasterCode(
     sourceType: FlexibleObjectiveSourceTypeType,
   ): Promise<string> {
-    const prefix =
-      sourceType === FlexibleObjectiveSourceType.DEPARTMENT_OBJECTIVE
-        ? 'D-OBJ'
-        : 'G-OBJ';
+    const prefix = this.objectiveMasterCodePrefix(sourceType);
 
     const latest = await ObjectiveMaster.findOne({
       code: { $regex: `^${prefix}-\\d+$` },
@@ -6903,6 +6903,21 @@ export class ObjectiveService extends BaseService {
     }
 
     return code;
+  }
+
+  private objectiveMasterCodePrefix(sourceType: FlexibleObjectiveSourceTypeType): string {
+    const sourceName = sourceType.replace(/_OBJECTIVE$/, '').replace(/[^A-Z0-9]/g, '');
+    return `${sourceName.charAt(0) || 'O'}-OBJ`;
+  }
+
+  private toObjectiveSourceTypeIdentifier(value?: string): string {
+    const normalized = String(value ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    if (!normalized) return '';
+    return normalized.endsWith('_OBJECTIVE') ? normalized : `${normalized}_OBJECTIVE`;
   }
 
   private normalizeObjectiveOwnerInput(
@@ -6955,7 +6970,10 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective title is required');
     }
 
-    const objectiveType = this.normalizeObjectiveMasterType(input.objectiveType);
+    const objectiveType = this.normalizeObjectiveMasterType(
+      input.objectiveType,
+      ObjectiveMasterType.SHEET,
+    );
     const scoreable = false;
     const approvedWeightage = undefined;
 
@@ -7067,12 +7085,13 @@ export class ObjectiveService extends BaseService {
 
   private normalizeObjectiveMasterType(
     objectiveType?: ObjectiveMasterTypeType | string,
+    fallback: ObjectiveMasterTypeType = ObjectiveMasterType.SIMPLE,
   ): ObjectiveMasterTypeType {
     if (objectiveType && Object.values(ObjectiveMasterType).includes(objectiveType as ObjectiveMasterTypeType)) {
       return objectiveType as ObjectiveMasterTypeType;
     }
 
-    return ObjectiveMasterType.SIMPLE;
+    return fallback;
   }
 
   private normalizeObjectiveSheetLayout(

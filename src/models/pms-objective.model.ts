@@ -1,7 +1,6 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 import {
   AssessmentTermCode,
-  FlexibleObjectiveSourceType,
   ObjectiveApplicabilityStatus,
   ObjectiveAttachmentPolicy,
   ObjectiveActualAggregationMode,
@@ -223,7 +222,6 @@ const objectiveSchema = new Schema<IObjective>(
     },
     sourceType: {
       type: String,
-      enum: Object.values(FlexibleObjectiveSourceType),
       index: true,
     },
     parentObjectiveId: {
