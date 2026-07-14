@@ -116,15 +116,18 @@ export class AuthService {
   private async sendPasswordResetEmail(email: string, resetToken: string, user: IUser) {
     try {
       // Application URL - adjust based on your environment
-      const appUrl = process.env.APP_URL || 'http://localhost:5173';
+      const appUrl = (process.env.APP_URL || 'http://localhost:5173')
+        .trim()
+        .replace(/[,/]+$/, '');
+      const resetUrl = `${appUrl}/login?view=reset-password&token=${encodeURIComponent(resetToken)}`;
 
       // Generate reset URL with query parameters
       // const resetUrl = `${appUrl}/login?view=reset-password&token=${resetToken}`;
 
       const htmlContent = generateEmailTemplate('passwordResetEmail', {
         userName: user.name,
-        companyName: 'CloudDesk HRMS',
-        resetUrl: `${appUrl}/login?view=reset-password&token=${resetToken}`,
+        companyName: 'RTE PMS',
+        resetUrl,
         expiryMinutes: 2
       });
 
@@ -132,8 +135,8 @@ export class AuthService {
       const emailRequest = {
         body: {
           to: email,
-          subject: 'Reset Your HRMS Password',
-          text: `Hi ${user.name},\n\nYou requested a password reset.\nReset your password using the following link:\n${appUrl}/login?view=reset-password&token=${resetToken}\n\nThis link expires in 2 minutes.`,
+          subject: 'Reset Your RTE PMS Password',
+          text: `Hi ${user.name},\n\nYou requested a password reset.\nReset your password using the following link:\n${resetUrl}\n\nThis link expires in 2 minutes.\n\nRTE PMS`,
           html: htmlContent
         }
       };

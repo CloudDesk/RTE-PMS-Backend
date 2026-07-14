@@ -243,4 +243,84 @@ describe('ManagerReviewPeriodService grouped review eligibility', () => {
       expect.any(String),
     );
   });
+
+  it('does not bulk-promote annual review terms that are still in achievement', async () => {
+    const annualReview = {
+      _id: new Types.ObjectId(),
+      cycleId: new Types.ObjectId(),
+      reviewCode: 'ANNUAL',
+      reviewState: 'NOT_STARTED',
+      includedTermAssignmentIds: [termAssignmentId1, termAssignmentId2],
+      version: 1,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    (ManagerReviewPeriodAssignment.find as jest.Mock).mockResolvedValue([annualReview]);
+    mockTermAssignments([
+      {
+        _id: termAssignmentId1,
+        cycleTermId: termCycleId1,
+        termState: TermWorkflowState.MANAGER_REVIEW_OPEN,
+      },
+      {
+        _id: termAssignmentId2,
+        cycleTermId: termCycleId2,
+        termState: TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+      },
+    ]);
+    mockTermCycles([
+      { _id: termCycleId1, achievementEnabled: true },
+      { _id: termCycleId2, achievementEnabled: true },
+    ]);
+
+    const result = await service.openEligiblePeriodsForCycle(
+      annualReview.cycleId.toString(),
+      { ignoreWindowDates: true, promoteIncludedTerms: false },
+    );
+
+    expect(result.opened).toBe(0);
+    expect(result.notReady).toBe(1);
+    expect(annualReview.reviewState).toBe('NOT_STARTED');
+    expect(annualReview.save).not.toHaveBeenCalled();
+  });
+
+  it('opens the annual manager review after every included term reaches manager review', async () => {
+    const annualReview = {
+      _id: new Types.ObjectId(),
+      cycleId: new Types.ObjectId(),
+      reviewCode: 'ANNUAL',
+      reviewState: 'NOT_STARTED',
+      previousReviewState: undefined,
+      includedTermAssignmentIds: [termAssignmentId1, termAssignmentId2],
+      version: 1,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    (ManagerReviewPeriodAssignment.find as jest.Mock).mockResolvedValue([annualReview]);
+    (service as unknown as { audit: jest.Mock }).audit = jest.fn();
+    mockTermAssignments([
+      {
+        _id: termAssignmentId1,
+        cycleTermId: termCycleId1,
+        termState: TermWorkflowState.MANAGER_REVIEW_OPEN,
+      },
+      {
+        _id: termAssignmentId2,
+        cycleTermId: termCycleId2,
+        termState: TermWorkflowState.MANAGER_REVIEW_OPEN,
+      },
+    ]);
+    mockTermCycles([
+      { _id: termCycleId1, achievementEnabled: true },
+      { _id: termCycleId2, achievementEnabled: true },
+    ]);
+
+    const result = await service.openEligiblePeriodsForCycle(
+      annualReview.cycleId.toString(),
+      { ignoreWindowDates: true, promoteIncludedTerms: false },
+    );
+
+    expect(result.opened).toBe(1);
+    expect(result.notReady).toBe(0);
+    expect(annualReview.reviewState).toBe('MANAGER_REVIEW_OPEN');
+    expect(annualReview.save).toHaveBeenCalledTimes(1);
+  });
 });

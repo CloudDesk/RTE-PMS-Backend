@@ -537,6 +537,21 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.post(
+    '/employee-assignments/sync-term-states',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.syncObjectiveEmployeeAssignmentTermStates(
+          (request.body ?? {}) as any,
+        );
+        return reply.send(successResponse('Objective assignment term states synced successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.put(
     '/employee-assignments/:assignmentId/values',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
