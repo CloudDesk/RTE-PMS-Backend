@@ -9506,8 +9506,18 @@ export class ObjectiveService extends BaseService {
     const windowsByTerm = new Map(
       (period?.termFillWindows ?? []).map((window: any) => [String(window.term), window]),
     );
+    const latestTerminalIndex = terms.reduce((latest: number, term: string, index: number) => {
+      const existing: any = existingByTerm.get(String(term));
+      if (
+        existing?.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED ||
+        existing?.status === ObjectiveEmployeeAssignmentStatus.CLOSED
+      ) {
+        return Math.max(latest, index);
+      }
+      return latest;
+    }, -1);
 
-    return terms.map((term: string) => {
+    return terms.map((term: string, index: number) => {
       const existing: any = existingByTerm.get(String(term));
       const window: any = windowsByTerm.get(String(term));
       const fillStartDate = window?.fillStartDate ?? existing?.fillStartDate ?? period?.fillStartDate;
@@ -9518,6 +9528,11 @@ export class ObjectiveService extends BaseService {
         existing?.status === ObjectiveEmployeeAssignmentStatus.CLOSED;
       const state = terminalStatus
         ? { status: existing.status, readOnlyReason: existing.readOnlyReason }
+        : latestTerminalIndex > index
+          ? {
+              status: 'LOCKED',
+              readOnlyReason: 'Earlier term is locked because a later term is already submitted',
+            }
         : this.resolveObjectiveEmployeeAssignmentTermWindowState(period, fillStartDate, fillEndDate);
       return {
         ...existingState,
