@@ -790,6 +790,10 @@ export interface CreateObjectiveAssignmentPeriodInput {
     fillStartDate: Date | string;
     fillEndDate: Date | string;
   }>;
+  pastTermEntryWindows?: Array<{
+    term: AssessmentTermCodeType | string;
+    closesAt: Date | string;
+  }>;
   status?: ObjectiveAssignmentPeriodStatusType;
   note?: string;
 }
@@ -812,6 +816,10 @@ export interface ObjectiveAssignmentPeriodRecord {
     term: string;
     fillStartDate?: string;
     fillEndDate?: string;
+  }>;
+  pastTermEntryWindows?: Array<{
+    term: string;
+    closesAt?: string;
   }>;
   status: string;
   note?: string;
@@ -2035,6 +2043,12 @@ export class ObjectiveService extends BaseService {
       dates.periodStartDate,
       dates.periodEndDate,
     );
+    const pastTermEntryWindows = this.normalizePastTermEntryWindows(
+      terms,
+      termFillWindows,
+      input.pastTermEntryWindows,
+      dates.periodEndDate,
+    );
     const period = await ObjectiveAssignmentPeriod.create({
       name: this.requireTrimmed(input.name, 'name'),
       objectiveMasterId: version.objectiveMasterId,
@@ -2044,6 +2058,7 @@ export class ObjectiveService extends BaseService {
       termType: input.termType,
       terms,
       termFillWindows,
+      pastTermEntryWindows,
       status: input.status ?? ObjectiveAssignmentPeriodStatus.DRAFT,
       note: input.note?.trim() || undefined,
       createdBy: actorId,
@@ -2201,6 +2216,29 @@ export class ObjectiveService extends BaseService {
         throw new Error('Assignment period fill windows cannot be changed after employees are assigned');
       }
       period.termFillWindows = normalizedTermFillWindows;
+    }
+    if (
+      input.pastTermEntryWindows !== undefined ||
+      input.termFillWindows !== undefined ||
+      input.terms !== undefined ||
+      input.periodEndDate !== undefined
+    ) {
+      const normalizedPastTermEntryWindows = this.normalizePastTermEntryWindows(
+        normalizedTerms,
+        period.termFillWindows ?? [],
+        input.pastTermEntryWindows ?? period.pastTermEntryWindows ?? [],
+        normalizedDates.periodEndDate,
+      );
+      if (
+        hasEmployeeAssignments &&
+        !this.samePastTermEntryWindows(
+          normalizedPastTermEntryWindows,
+          period.pastTermEntryWindows ?? [],
+        )
+      ) {
+        throw new Error('Past-term entry settings cannot be changed after employees are assigned');
+      }
+      period.pastTermEntryWindows = normalizedPastTermEntryWindows;
     }
     if (input.status !== undefined) {
       if (!Object.values(ObjectiveAssignmentPeriodStatus).includes(input.status)) {
@@ -2603,7 +2641,7 @@ export class ObjectiveService extends BaseService {
           ? new Types.ObjectId(employee.managerId)
           : undefined,
         selectedTerms: period.terms,
-        termStates: this.buildObjectiveEmployeeAssignmentTermStates(period),
+        termStates: this.buildObjectiveEmployeeAssignmentTermStates(period, actorId),
         frozenObjectiveSnapshot: snapshot,
         values: {},
         status: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
@@ -9526,6 +9564,58 @@ export class ObjectiveService extends BaseService {
     return normalizedWindows;
   }
 
+  private normalizePastTermEntryWindows(
+    terms: AssessmentTermCodeType[] | string[],
+    termFillWindows: Array<{
+      term?: AssessmentTermCodeType | string;
+      fillEndDate?: Date | string;
+    }>,
+    windows: Array<{
+      term?: AssessmentTermCodeType | string;
+      closesAt?: Date | string;
+    }> | undefined,
+    periodEndDate: Date,
+  ): Array<{ term: AssessmentTermCodeType; closesAt: Date }> {
+    const selectedTerms = new Set((terms ?? []).map((term) => String(term)));
+    const fillEndByTerm = new Map(
+      (termFillWindows ?? []).map((window) => [String(window.term), window.fillEndDate]),
+    );
+    const now = this.getCurrentDate();
+    const normalized = (windows ?? []).map((window) => {
+      const term = String(window?.term ?? '').trim();
+      if (!term || !selectedTerms.has(term)) {
+        throw new Error('Past-term entry can only be allowed for a selected term');
+      }
+      const fillEndValue = fillEndByTerm.get(term);
+      const fillEndDate = fillEndValue instanceof Date
+        ? fillEndValue
+        : new Date(fillEndValue ?? '');
+      if (
+        Number.isNaN(fillEndDate.getTime()) ||
+        fillEndDate.toISOString().slice(0, 10) >= now.toISOString().slice(0, 10)
+      ) {
+        throw new Error(`${getAssessmentTermLabel(term)} is not a past term`);
+      }
+      const closesAt = this.normalizeDate(window.closesAt, `${getAssessmentTermLabel(term)} pastTermClosesAt`);
+      if (typeof window.closesAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(window.closesAt)) {
+        closesAt.setUTCHours(23, 59, 59, 999);
+      }
+      const periodEndOfDay = new Date(periodEndDate);
+      periodEndOfDay.setUTCHours(23, 59, 59, 999);
+      if (closesAt < now) {
+        throw new Error(`${getAssessmentTermLabel(term)} allowed-entry end date cannot be in the past`);
+      }
+      if (closesAt > periodEndOfDay) {
+        throw new Error(`${getAssessmentTermLabel(term)} allowed-entry end date cannot be after the assignment period`);
+      }
+      return { term: term as AssessmentTermCodeType, closesAt };
+    });
+    if (new Set(normalized.map((window) => window.term)).size !== normalized.length) {
+      throw new Error('Past-term entry settings cannot contain duplicate terms');
+    }
+    return normalized;
+  }
+
   private normalizePeriodTerms(
     termType: AssessmentTermTypeType | string | undefined,
     terms: AssessmentTermCodeType[] | string[] | undefined,
@@ -9587,6 +9677,20 @@ export class ObjectiveService extends BaseService {
         }))
         .sort((leftWindow, rightWindow) => leftWindow.term.localeCompare(rightWindow.term));
 
+    return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+  }
+
+  private samePastTermEntryWindows(
+    left: Array<{ term?: string; closesAt?: Date | string }>,
+    right: Array<{ term?: string; closesAt?: Date | string }>,
+  ): boolean {
+    const normalize = (windows: Array<{ term?: string; closesAt?: Date | string }>) =>
+      windows
+        .map((window) => ({
+          term: String(window.term ?? '').trim(),
+          closesAt: this.dateKey(window.closesAt),
+        }))
+        .sort((leftWindow, rightWindow) => leftWindow.term.localeCompare(rightWindow.term));
     return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
   }
 
@@ -9674,6 +9778,10 @@ export class ObjectiveService extends BaseService {
         fillStartDate: window.fillStartDate?.toISOString?.(),
         fillEndDate: window.fillEndDate?.toISOString?.(),
       })),
+      pastTermEntryWindows: (period.pastTermEntryWindows ?? []).map((window: any) => ({
+        term: window.term,
+        closesAt: window.closesAt?.toISOString?.(),
+      })),
       status: period.status,
       note: period.note,
       createdBy: period.createdBy?.toString?.(),
@@ -9685,23 +9793,40 @@ export class ObjectiveService extends BaseService {
     };
   }
 
-  private buildObjectiveEmployeeAssignmentTermStates(period: any) {
+  private buildObjectiveEmployeeAssignmentTermStates(period: any, actorId: Types.ObjectId) {
     const windowsByTerm = new Map(
       (period.termFillWindows ?? []).map((window: any) => [String(window.term), window]),
     );
+    const pastEntryByTerm = new Map(
+      (period.pastTermEntryWindows ?? []).map((window: any) => [String(window.term), window]),
+    );
+    const now = this.getCurrentDate();
     return (period.terms ?? []).map((term: string) => {
       const window: any = windowsByTerm.get(String(term));
+      const pastEntry: any = pastEntryByTerm.get(String(term));
       const state = this.resolveObjectiveEmployeeAssignmentTermWindowState(
         period,
         window?.fillStartDate ?? period.fillStartDate,
         window?.fillEndDate ?? period.fillEndDate,
       );
+      const entryOverride = pastEntry
+        ? {
+            type: 'PAST_TERM' as const,
+            status: ObjectiveTermEntryOverrideStatus.ACTIVE,
+            opensAt: now,
+            closesAt: pastEntry.closesAt,
+            reason: 'Past-term entry allowed during assignment setup',
+            enabledAt: now,
+            enabledBy: actorId,
+          }
+        : undefined;
       return {
         term,
-        status: state.status,
+        status: entryOverride ? 'OPEN' : state.status,
         fillStartDate: window?.fillStartDate ?? period.fillStartDate,
         fillEndDate: window?.fillEndDate ?? period.fillEndDate,
-        readOnlyReason: state.readOnlyReason,
+        readOnlyReason: entryOverride ? undefined : state.readOnlyReason,
+        entryOverride,
       };
     });
   }
@@ -10131,7 +10256,23 @@ export class ObjectiveService extends BaseService {
     const existingAssignmentsByEmployeeId = new Map(
       existingAssignments.map((assignment: any) => [assignment.employeeId.toString(), assignment]),
     );
-    const currentDateText = this.getCurrentDate().toISOString().slice(0, 10);
+    const currentDate = this.getCurrentDate();
+    const currentDateText = currentDate.toISOString().slice(0, 10);
+    const allowedPastTermWindows = (period.pastTermEntryWindows ?? [])
+      .filter((window: any) => {
+        const closesAt = window.closesAt instanceof Date
+          ? window.closesAt
+          : new Date(window.closesAt);
+        return !Number.isNaN(closesAt.getTime()) && closesAt >= currentDate;
+      });
+    const allowedPastTerms = new Set(
+      allowedPastTermWindows.map((window: any) => String(window.term)),
+    );
+    const allowedPastTermWarning = allowedPastTermWindows.length
+      ? `Past-term entry is allowed for ${allowedPastTermWindows
+          .map((window: any) => `${getAssessmentTermLabel(String(window.term))} until ${this.dateKey(window.closesAt)}`)
+          .join(', ')}.`
+      : undefined;
     const expiredTerms = (period.termFillWindows ?? [])
       .filter((window: any) => {
         const fillEndDate = window.fillEndDate instanceof Date
@@ -10139,12 +10280,13 @@ export class ObjectiveService extends BaseService {
           : new Date(window.fillEndDate);
         return (
           !Number.isNaN(fillEndDate.getTime()) &&
-          fillEndDate.toISOString().slice(0, 10) < currentDateText
+          fillEndDate.toISOString().slice(0, 10) < currentDateText &&
+          !allowedPastTerms.has(String(window.term))
         );
       })
       .map((window: any) => String(window.term));
     const expiredTermReason = expiredTerms.length
-      ? `${expiredTerms.map((term: string) => getAssessmentTermLabel(term)).join(', ')} ${expiredTerms.length === 1 ? 'has' : 'have'} already ended. Remove past terms and align the assignment period with the current term before assigning employees.`
+      ? `${expiredTerms.map((term: string) => getAssessmentTermLabel(term)).join(', ')} ${expiredTerms.length === 1 ? 'has' : 'have'} already ended. Set each past term to Skip or configure a valid Allow entry end date before assigning employees.`
       : undefined;
     const rows: ObjectiveAssignmentPeriodPreviewRow[] = employeeIds.map((employeeId) => {
       const employee = employeesById.get(employeeId);
@@ -10199,7 +10341,7 @@ export class ObjectiveService extends BaseService {
         managerId: employee.managerId,
         terms: period.terms ?? [],
         status: 'NEW',
-        warnings: [],
+        warnings: allowedPastTermWarning ? [allowedPastTermWarning] : [],
       };
     });
 

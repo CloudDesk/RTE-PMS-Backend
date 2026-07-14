@@ -361,6 +361,10 @@ export const userRoutes: RouteHandler = async (
               type: 'string',
               description: 'Search by name or email'
             },
+            nameCodeSearch: {
+              type: 'string',
+              description: 'Optional exact-purpose search by employee name or employee code'
+            },
             role: {
               type: 'string',
               description: 'Filter by user role'
@@ -482,6 +486,7 @@ export const userRoutes: RouteHandler = async (
           my?: boolean;
           subordinates?: boolean;
           search?: string;
+          nameCodeSearch?: string;
           role?: string;
           status?: string;
           active?: boolean | 'all';
