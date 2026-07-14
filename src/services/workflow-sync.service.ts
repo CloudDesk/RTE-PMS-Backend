@@ -23,7 +23,10 @@ import type { ITermCycle } from '../models/pms-term-cycle.model';
 import { workflowService } from './workflow.service';
 import { ManagerReviewPeriodService } from './managerReviewPeriod.service';
 import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
-import { isGroupedManagerReviewConfig } from '../utilis/pmsReviewCadence';
+import {
+  isAnnualManagerReviewConfig,
+  isGroupedManagerReviewConfig,
+} from '../utilis/pmsReviewCadence';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
   TermWorkflowState as TermWorkflowStateType,
@@ -145,6 +148,9 @@ export class WorkflowSyncService extends BaseService {
       throw new Error('PMS cycle not found');
     }
     const groupedManagerReviewEnabled = isGroupedManagerReviewConfig(cycle.reviewCadenceConfig);
+    const groupedManagerReviewControlsTermOpening =
+      groupedManagerReviewEnabled &&
+      !isAnnualManagerReviewConfig(cycle.reviewCadenceConfig);
 
     const filter: Record<string, unknown> = {
       cycleId: cycleObjectId,
@@ -224,7 +230,7 @@ export class WorkflowSyncService extends BaseService {
         termCycleMap,
         annualAssignmentMap,
         input,
-        groupedManagerReviewEnabled,
+        groupedManagerReviewControlsTermOpening,
       );
       result.results.push(item);
 
@@ -250,6 +256,7 @@ export class WorkflowSyncService extends BaseService {
       {
         dryRun: input.dryRun === true,
         ignoreWindowDates: input.ignoreWindowDates === true,
+        promoteIncludedTerms: !isAnnualManagerReviewConfig(cycle.reviewCadenceConfig),
       },
     );
     result.groupedReviewPeriodsChecked = groupedReviewResult.checked;

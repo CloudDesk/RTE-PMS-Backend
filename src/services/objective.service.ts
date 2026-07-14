@@ -2063,7 +2063,14 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective Assignment Period not found');
     }
     const previousValue = this.mapObjectiveAssignmentPeriodRecord(period);
+    const hasEmployeeAssignments = await ObjectiveEmployeeAssignment.exists({
+      objectiveAssignmentPeriodId: period._id,
+      isDeleted: false,
+    });
     if (input.objectiveVersionId !== undefined) {
+      if (hasEmployeeAssignments && input.objectiveVersionId !== period.objectiveVersionId.toString()) {
+        throw new Error('Assignment period setup cannot be changed after employees are assigned');
+      }
       const version = await this.loadActiveObjectiveVersionForPeriod(input.objectiveVersionId);
       await this.assertObjectiveAssignerPermissionForVersion(version);
       period.objectiveMasterId = version.objectiveMasterId;
@@ -2073,6 +2080,12 @@ export class ObjectiveService extends BaseService {
       period.name = this.requireTrimmed(input.name, 'name');
     }
     if (input.linkedPmsCycleId !== undefined) {
+      if (
+        hasEmployeeAssignments &&
+        (input.linkedPmsCycleId || '') !== (period.linkedPmsCycleId?.toString?.() || '')
+      ) {
+        throw new Error('Assignment period setup cannot be changed after employees are assigned');
+      }
       period.linkedPmsCycleId = input.linkedPmsCycleId
         ? this.toObjectId(input.linkedPmsCycleId, 'linkedPmsCycleId')
         : undefined;
@@ -2090,6 +2103,9 @@ export class ObjectiveService extends BaseService {
       input.fillStartDate !== undefined ||
       input.fillEndDate !== undefined
     ) {
+      if (hasEmployeeAssignments && !this.sameObjectiveAssignmentPeriodDates(period, normalizedDates)) {
+        throw new Error('Assignment period setup cannot be changed after employees are assigned');
+      }
       period.periodStartDate = normalizedDates.periodStartDate;
       period.periodEndDate = normalizedDates.periodEndDate;
       period.fillStartDate = normalizedDates.fillStartDate;
@@ -2098,8 +2114,14 @@ export class ObjectiveService extends BaseService {
     let normalizedTerms = period.terms;
     if (input.termType !== undefined || input.terms !== undefined) {
       const termType = input.termType ?? period.termType;
-      period.termType = termType;
       normalizedTerms = this.normalizePeriodTerms(termType, input.terms ?? period.terms);
+      if (
+        hasEmployeeAssignments &&
+        (termType !== period.termType || !this.sameStringList(normalizedTerms, period.terms ?? []))
+      ) {
+        throw new Error('Assignment period terms cannot be changed after employees are assigned');
+      }
+      period.termType = termType;
       period.terms = normalizedTerms;
     }
     if (
@@ -2108,16 +2130,26 @@ export class ObjectiveService extends BaseService {
       input.periodStartDate !== undefined ||
       input.periodEndDate !== undefined
     ) {
-      period.termFillWindows = this.normalizeTermFillWindows(
+      const normalizedTermFillWindows = this.normalizeTermFillWindows(
         normalizedTerms,
         input.termFillWindows ?? period.termFillWindows ?? [],
         normalizedDates.periodStartDate,
         normalizedDates.periodEndDate,
       );
+      if (
+        hasEmployeeAssignments &&
+        !this.sameTermFillWindows(normalizedTermFillWindows, period.termFillWindows ?? [])
+      ) {
+        throw new Error('Assignment period fill windows cannot be changed after employees are assigned');
+      }
+      period.termFillWindows = normalizedTermFillWindows;
     }
     if (input.status !== undefined) {
       if (!Object.values(ObjectiveAssignmentPeriodStatus).includes(input.status)) {
         throw new Error('Invalid Objective Assignment Period status');
+      }
+      if (hasEmployeeAssignments && input.status !== period.status) {
+        throw new Error('Assignment period status cannot be changed after employees are assigned');
       }
       period.status = input.status;
     } else if (period.status === ObjectiveAssignmentPeriodStatus.CLOSED) {
@@ -9121,6 +9153,51 @@ export class ObjectiveService extends BaseService {
     return uniqueTerms as AssessmentTermCodeType[];
   }
 
+  private dateKey(value: Date | string | undefined): string {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
+  }
+
+  private sameStringList(left: Array<string | undefined>, right: Array<string | undefined>): boolean {
+    const normalize = (values: Array<string | undefined>) =>
+      values.map((value) => String(value ?? '').trim()).filter(Boolean).join('|');
+    return normalize(left) === normalize(right);
+  }
+
+  private sameObjectiveAssignmentPeriodDates(
+    period: any,
+    dates: {
+      periodStartDate: Date;
+      periodEndDate: Date;
+      fillStartDate: Date;
+      fillEndDate: Date;
+    },
+  ): boolean {
+    return (
+      this.dateKey(period.periodStartDate) === this.dateKey(dates.periodStartDate) &&
+      this.dateKey(period.periodEndDate) === this.dateKey(dates.periodEndDate) &&
+      this.dateKey(period.fillStartDate) === this.dateKey(dates.fillStartDate) &&
+      this.dateKey(period.fillEndDate) === this.dateKey(dates.fillEndDate)
+    );
+  }
+
+  private sameTermFillWindows(
+    left: Array<{ term?: string; fillStartDate?: Date | string; fillEndDate?: Date | string }>,
+    right: Array<{ term?: string; fillStartDate?: Date | string; fillEndDate?: Date | string }>,
+  ): boolean {
+    const normalize = (windows: Array<{ term?: string; fillStartDate?: Date | string; fillEndDate?: Date | string }>) =>
+      windows
+        .map((window) => ({
+          term: String(window.term ?? '').trim(),
+          fillStartDate: this.dateKey(window.fillStartDate),
+          fillEndDate: this.dateKey(window.fillEndDate),
+        }))
+        .sort((leftWindow, rightWindow) => leftWindow.term.localeCompare(rightWindow.term));
+
+    return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+  }
+
   private async loadActiveObjectiveVersionForPeriod(objectiveVersionId: string) {
     const version = await ObjectiveMasterVersion.findOne({
       _id: this.toObjectId(objectiveVersionId, 'objectiveVersionId'),
@@ -9297,12 +9374,14 @@ export class ObjectiveService extends BaseService {
     const employees = await User.find({ _id: { $in: objectIds }, active: { $ne: false } }).lean();
     const employeesById = new Map(employees.map((employee: any) => [employee._id.toString(), employee]));
     const existingAssignments = await ObjectiveEmployeeAssignment.find({
-      objectiveAssignmentPeriodId: period._id,
       objectiveVersionId: period.objectiveVersionId,
       employeeId: { $in: objectIds },
       isDeleted: false,
+      status: { $ne: ObjectiveEmployeeAssignmentStatus.CLOSED },
     }).lean();
-    const existingEmployeeIds = new Set(existingAssignments.map((assignment: any) => assignment.employeeId.toString()));
+    const existingAssignmentsByEmployeeId = new Map(
+      existingAssignments.map((assignment: any) => [assignment.employeeId.toString(), assignment]),
+    );
     const rows: ObjectiveAssignmentPeriodPreviewRow[] = employeeIds.map((employeeId) => {
       const employee = employeesById.get(employeeId);
       if (!employee) {
@@ -9314,7 +9393,9 @@ export class ObjectiveService extends BaseService {
           warnings: [],
         };
       }
-      if (existingEmployeeIds.has(employeeId)) {
+      const existingAssignment = existingAssignmentsByEmployeeId.get(employeeId);
+      if (existingAssignment) {
+        const samePeriod = existingAssignment.objectiveAssignmentPeriodId?.toString?.() === period._id.toString();
         return {
           employeeId,
           employeeName: employee.name,
@@ -9324,7 +9405,11 @@ export class ObjectiveService extends BaseService {
           managerId: employee.managerId,
           terms: period.terms ?? [],
           status: 'ALREADY_ASSIGNED',
-          warnings: ['Employee is already assigned in this period.'],
+          warnings: [
+            samePeriod
+              ? 'Employee is already assigned in this period.'
+              : 'Employee is already assigned to this objective version.',
+          ],
         };
       }
       return {
