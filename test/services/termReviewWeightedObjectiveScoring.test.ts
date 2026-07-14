@@ -87,7 +87,42 @@ function overallReviewConfig(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function manualReviewConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    mode: 'MANUAL',
+    objectiveRatingRule: null,
+    objectiveScoringMode: ObjectiveScoringMode.CONTEXT_ONLY,
+    objectiveScoringEnabled: false,
+    perObjectiveScoreEntryAllowed: false,
+    overallScoreEntryAllowed: false,
+    noObjectiveScoringPolicy: NoObjectiveScoringPolicy.NO_OBJECTIVES_NOT_APPLICABLE,
+    overallScoreMax: null,
+    sections: [],
+    ...overrides,
+  };
+}
+
 describe('TermReviewService - weighted objective scoring validation', () => {
+  it('accepts 100 and rejects a manual assessment term score above 100 for draft and submit', () => {
+    const service = createService();
+    const input = {
+      ratings: [],
+      comments: 'Reviewed.',
+      score: 101,
+    };
+    const config = manualReviewConfig();
+
+    expect(() => service.validateDraftInput({ ...input, score: 100 }, [], config, 100)).not.toThrow();
+    expect(() => service.validateReviewInput({ ...input, score: 100 }, [], config, 100)).not.toThrow();
+
+    expect(() => service.validateDraftInput(input, [], config, 101)).toThrow(
+      'Assessment Term Score cannot exceed 100.',
+    );
+    expect(() => service.validateReviewInput(input, [], config, 101)).toThrow(
+      'Assessment Term Score cannot exceed 100.',
+    );
+  });
+
   it('rejects manager objective score above 100', () => {
     const service = createService();
     const objectiveId = new Types.ObjectId();

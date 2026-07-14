@@ -1,6 +1,7 @@
 import { AssessmentTermCode, AssessmentTermType } from '../../src/constants/pms.enums';
 import {
   intersectGroupTerms,
+  isAnnualManagerReviewConfig,
   normalizeReviewCadenceConfig,
 } from '../../src/utilis/pmsReviewCadence';
 
@@ -61,6 +62,32 @@ describe('pmsReviewCadence utilities', () => {
         label: 'Annual Manager Review',
         includedTerms: [AssessmentTermCode.H1, AssessmentTermCode.H2],
         anchorTerm: AssessmentTermCode.H2,
+        windowSource: 'ANCHOR_TERM',
+      },
+    ]);
+  });
+
+  it('builds one annual manager review across all quarterly employee terms', () => {
+    const config = normalizeReviewCadenceConfig(
+      {
+        managerReviewMode: 'GROUPED',
+        managerReviewCadence: 'ANNUAL',
+      },
+      AssessmentTermType.QUARTERLY,
+    );
+
+    expect(isAnnualManagerReviewConfig(config)).toBe(true);
+    expect(config.groups).toEqual([
+      {
+        reviewCode: 'ANNUAL',
+        label: 'Annual Manager Review',
+        includedTerms: [
+          AssessmentTermCode.Q1,
+          AssessmentTermCode.Q2,
+          AssessmentTermCode.Q3,
+          AssessmentTermCode.Q4,
+        ],
+        anchorTerm: AssessmentTermCode.Q4,
         windowSource: 'ANCHOR_TERM',
       },
     ]);

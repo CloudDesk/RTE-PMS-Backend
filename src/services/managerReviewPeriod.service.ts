@@ -250,7 +250,11 @@ export class ManagerReviewPeriodService extends BaseService {
 
   async openEligiblePeriodsForCycle(
     cycleId: string,
-    options: { dryRun?: boolean; ignoreWindowDates?: boolean } = {},
+    options: {
+      dryRun?: boolean;
+      ignoreWindowDates?: boolean;
+      promoteIncludedTerms?: boolean;
+    } = {},
   ): Promise<OpenEligibleManagerReviewPeriodsResult> {
     const cycleObjectId = this.toObjectId(cycleId, 'cycleId');
     const reviews = await ManagerReviewPeriodAssignment.find({
@@ -263,6 +267,7 @@ export class ManagerReviewPeriodService extends BaseService {
     let notReady = 0;
 
     for (const review of reviews) {
+      const canPromoteIncludedTerms = options.promoteIncludedTerms !== false;
       if (
         review.reviewState === ManagerReviewPeriodState.MANAGER_REVIEW_OPEN ||
         review.reviewState === ManagerReviewPeriodState.REOPENED_BY_ADMIN
@@ -301,7 +306,7 @@ export class ManagerReviewPeriodService extends BaseService {
       const eligible = await this.isReviewPeriodOpenEligible(
         review,
         options.ignoreWindowDates === true,
-        true,
+        canPromoteIncludedTerms,
       );
       if (!eligible) {
         notReady += 1;
@@ -309,10 +314,12 @@ export class ManagerReviewPeriodService extends BaseService {
       }
 
       if (options.dryRun !== true) {
-        await this.promoteIncludedTermsToManagerReview(
-          review,
-          options.ignoreWindowDates === true,
-        );
+        if (canPromoteIncludedTerms) {
+          await this.promoteIncludedTermsToManagerReview(
+            review,
+            options.ignoreWindowDates === true,
+          );
+        }
         const strictlyReady = await this.isReviewPeriodOpenEligible(
           review,
           options.ignoreWindowDates === true,

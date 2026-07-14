@@ -80,6 +80,14 @@ export function isGroupedManagerReviewConfig(input: unknown): boolean {
   return isRecord(input) && input.managerReviewMode === 'GROUPED';
 }
 
+export function isAnnualManagerReviewConfig(input: unknown): boolean {
+  return (
+    isRecord(input) &&
+    input.managerReviewMode === 'GROUPED' &&
+    input.managerReviewCadence === 'ANNUAL'
+  );
+}
+
 export function intersectGroupTerms(
   group: ManagerReviewGroupConfig,
   applicableTerms: AssessmentTermCodeType[],

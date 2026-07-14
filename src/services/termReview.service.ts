@@ -97,6 +97,8 @@ const SYSTEM_MANAGED_TERM_REVIEW_FIELD_KEYS = new Set([
   'objective_rating',
 ]);
 
+const MAX_MANUAL_ASSESSMENT_TERM_SCORE = 100;
+
 export interface SaveTermReviewDraftInput extends TermReviewBaseInput {}
 
 export interface SubmitTermReviewInput extends TermReviewBaseInput {
@@ -1751,6 +1753,17 @@ export class TermReviewService extends BaseService {
     reviewConfig: TermReviewConfig,
   ): void {
     if (score === undefined || score === null) {
+      return;
+    }
+
+    if (reviewConfig.mode === 'MANUAL') {
+      const manualScoreMax = Math.min(
+        reviewConfig.overallScoreMax ?? MAX_MANUAL_ASSESSMENT_TERM_SCORE,
+        MAX_MANUAL_ASSESSMENT_TERM_SCORE,
+      );
+      if (score > manualScoreMax) {
+        throw new Error(`Assessment Term Score cannot exceed ${manualScoreMax}.`);
+      }
       return;
     }
 

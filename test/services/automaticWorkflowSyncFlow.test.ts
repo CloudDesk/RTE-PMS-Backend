@@ -220,6 +220,31 @@ function mockGroupedAnnualCycle() {
   });
 }
 
+function mockAnnualManagerReviewCycle() {
+  (AnnualCycle.findOne as jest.Mock).mockReturnValue({
+    lean: jest.fn().mockResolvedValue({
+      _id: cycleId,
+      isDeleted: false,
+      reviewCadenceConfig: {
+        version: 1,
+        managerReviewMode: 'GROUPED',
+        managerReviewCadence: 'ANNUAL',
+        groups: [
+          {
+            reviewCode: 'ANNUAL',
+            label: 'Annual Manager Review',
+            includedTerms: ['H1', 'H2'],
+            anchorTerm: 'H2',
+            windowSource: 'ANCHOR_TERM',
+          },
+        ],
+        scoreDistribution: 'COPY_GROUP_SCORE_TO_INCLUDED_TERMS',
+        annualDecisionGate: 'ALL_MANAGER_REVIEW_GROUPS_FINALIZED',
+      },
+    }),
+  });
+}
+
 describe('Automatic workflow sync flow', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -380,6 +405,36 @@ describe('Automatic workflow sync flow', () => {
     expect(mockOpenEligiblePeriodsForCycle).toHaveBeenCalledWith(cycleId.toString(), {
       dryRun: false,
       ignoreWindowDates: false,
+      promoteIncludedTerms: true,
+    });
+  });
+
+  it('allows each term to reach manager review before opening an annual manager review', async () => {
+    mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
+    mockAnnualManagerReviewCycle();
+    const service = createService('2026-09-16T00:00:00.000Z');
+
+    const result = await service.syncWorkflowStates(cycleId.toString(), {
+      reason: 'Automatic daily PMS workflow sync',
+      source: 'AUTOMATIC_DAILY_SYNC',
+    });
+
+    expect(result.totalUpdated).toBe(1);
+    expect(transitionTermAssignmentState).toHaveBeenCalledWith(
+      termAssignmentId.toString(),
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
+      { actorId: actorId.toString(), actorRole: 'ADMIN' },
+      'Automatic daily PMS workflow sync',
+      'ADMIN_WORKFLOW_SYNC',
+      expect.objectContaining({
+        source: 'AUTOMATIC_DAILY_SYNC',
+        windowName: 'Manager Review Window',
+      }),
+    );
+    expect(mockOpenEligiblePeriodsForCycle).toHaveBeenCalledWith(cycleId.toString(), {
+      dryRun: false,
+      ignoreWindowDates: false,
+      promoteIncludedTerms: false,
     });
   });
 
@@ -405,6 +460,7 @@ describe('Automatic workflow sync flow', () => {
     expect(mockOpenEligiblePeriodsForCycle).toHaveBeenCalledWith(cycleId.toString(), {
       dryRun: true,
       ignoreWindowDates: true,
+      promoteIncludedTerms: true,
     });
   });
 
