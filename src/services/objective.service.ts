@@ -435,6 +435,7 @@ interface ObjectiveSheetLayoutInput {
     label?: string;
     group?: string;
   }>;
+  cellValues?: Record<string, unknown>;
   headerGroups?: Array<{
     id?: string;
     label?: string;
@@ -490,6 +491,7 @@ interface NormalizedObjectiveSheetLayout {
     label: string;
     group?: string;
   }>;
+  cellValues: Record<string, string>;
   headerGroups: Array<{
     id: string;
     label: string;
@@ -7166,6 +7168,20 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective table requires at least one row.');
     }
 
+    const columnIds = new Set(columns.map((column) => column.id));
+    const rowIds = new Set(rows.map((row) => row.id));
+    const cellValues = Object.fromEntries(
+      Object.entries(layout?.cellValues ?? {}).flatMap(([key, rawValue]) => {
+        const separatorIndex = key.indexOf(':');
+        if (separatorIndex <= 0) return [];
+        const rowId = this.normalizeSheetKey(key.slice(0, separatorIndex), '');
+        const columnId = this.normalizeSheetKey(key.slice(separatorIndex + 1), '');
+        const cellValue = String(rawValue ?? '').trim();
+        if (!rowIds.has(rowId) || !columnIds.has(columnId) || !cellValue) return [];
+        return [[`${rowId}:${columnId}`, cellValue]];
+      }),
+    );
+
     const columnIndexByKey = new Map<string, number>();
     columns.forEach((column, index) => {
       columnIndexByKey.set(this.normalizeSheetKey(column.id, ''), index);
@@ -7567,7 +7583,7 @@ export class ObjectiveService extends BaseService {
       columns.findIndex((column) => column.id === b.columnId),
     );
 
-    return { columns, rows, headerGroups, rowGroups, formulas, fillPermissions, termAvailability };
+    return { columns, rows, cellValues, headerGroups, rowGroups, formulas, fillPermissions, termAvailability };
   }
 
   private normalizeSheetKey(value: unknown, fallback: string): string {
@@ -7640,6 +7656,7 @@ export class ObjectiveService extends BaseService {
       rows: [
         { id: 'row_1', label: 'Objective line 1' },
       ],
+      cellValues: {},
       headerGroups: [],
       rowGroups: [],
       formulas: [
