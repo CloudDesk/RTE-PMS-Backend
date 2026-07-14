@@ -648,8 +648,8 @@ export class AnnualDecisionService extends BaseService {
       decisionInput.isGradeApplied,
       decisionInput.isMeritApplied,
     );
-    this.validateDecisionInput(decisionInput, appraisalOutcomeType);
-    await this.validateAnnualTemplateInput(annualAssignment, decisionInput);
+    this.validateDecisionInput(decisionInput, appraisalOutcomeType, false);
+    await this.validateAnnualTemplateInput(annualAssignment, decisionInput, false);
 
     const payload = {
       annualAssignmentId: annualAssignment._id,
@@ -1402,6 +1402,7 @@ export class AnnualDecisionService extends BaseService {
   private validateDecisionInput(
     input: SaveDecisionDraftInput,
     outcomeType: AppraisalOutcomeTypeType,
+    requireComplete = true,
   ): void {
     if (input.finalScore !== undefined && input.finalScore !== null) {
       const finalScore = Number(input.finalScore);
@@ -1418,11 +1419,19 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('isMeritApplied is required');
     }
 
-    if (input.isGradeApplied && !this.hasMeaningfulDecisionDetails(input.gradeDetails)) {
+    if (
+      requireComplete &&
+      input.isGradeApplied &&
+      !this.hasMeaningfulDecisionDetails(input.gradeDetails)
+    ) {
       throw new Error('gradeDetails is required when grade is applied');
     }
 
-    if (input.isMeritApplied && !this.hasMeaningfulDecisionDetails(input.meritDetails)) {
+    if (
+      requireComplete &&
+      input.isMeritApplied &&
+      !this.hasMeaningfulDecisionDetails(input.meritDetails)
+    ) {
       throw new Error('meritDetails is required when merit is applied');
     }
 
@@ -1446,7 +1455,11 @@ export class AnnualDecisionService extends BaseService {
       }
     }
 
-    if (outcomeType === AppraisalOutcomeType.NIL && !input.nilReason?.trim()) {
+    if (
+      requireComplete &&
+      outcomeType === AppraisalOutcomeType.NIL &&
+      !input.nilReason?.trim()
+    ) {
       throw new Error('Please provide a reason when neither grade nor merit is applied.');
     }
   }
@@ -1508,6 +1521,7 @@ export class AnnualDecisionService extends BaseService {
   private async validateAnnualTemplateInput(
     annualAssignment: IAnnualAssignment,
     input: SaveDecisionDraftInput,
+    requireComplete = true,
   ): Promise<void> {
     const resolvedTemplate = await this.resolveAnnualDecisionTemplate(annualAssignment, input);
     if (!resolvedTemplate) {
@@ -1539,14 +1553,16 @@ export class AnnualDecisionService extends BaseService {
       }
     }
 
-    for (const section of resolvedTemplate.sections) {
-      for (const field of section.fields) {
-        if (!field.required || field.editable !== true) {
-          continue;
-        }
+    if (requireComplete) {
+      for (const section of resolvedTemplate.sections) {
+        for (const field of section.fields) {
+          if (!field.required || field.editable !== true) {
+            continue;
+          }
 
-        if (!this.hasMeaningfulAnnualTemplateFieldValue(field.key, field.type, values)) {
-          missingFields.push(field.label || field.key);
+          if (!this.hasMeaningfulAnnualTemplateFieldValue(field.key, field.type, values)) {
+            missingFields.push(field.label || field.key);
+          }
         }
       }
     }
