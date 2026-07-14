@@ -23,6 +23,7 @@ import { pmsDocumentRoutes } from "./pmsDocument.routes";
 import { managerInitiatedReviewRoutes } from "./managerInitiatedReview.routes";
 import { probationReviewRoutes } from "./probationReview.routes";
 import { publicPmsCleanupRoutes } from "./public-pms-cleanup.routes";
+import { managerReviewPeriodRoutes } from "./managerReviewPeriod.routes";
 import mongoose from "mongoose";
 
 export async function routes(fastify: FastifyInstance) {
@@ -49,6 +50,7 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(pmsBulkOperationsRoutes, { prefix: "/pms/bulk" });
   fastify.register(pmsDocumentRoutes, { prefix: "/pms/documents" });
   fastify.register(managerInitiatedReviewRoutes, { prefix: "/pms/manager-initiated-reviews" });
+  fastify.register(managerReviewPeriodRoutes, { prefix: "/pms/manager-review-periods" });
   fastify.register(probationReviewRoutes, { prefix: "/pms/probation-reviews" });
   fastify.register(publicPmsCleanupRoutes, { prefix: "/public/pms" });
   fastify.get("/test", async (_request, reply) => {

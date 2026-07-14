@@ -130,6 +130,7 @@ export interface TemplateListQuery {
   limit?: string | number;
   owner?: string;
   templateType?: string;
+  isFullPmsTemplate?: string | boolean;
   sort?: string;
 }
 
@@ -200,6 +201,13 @@ export class PmsTemplateService extends BaseService {
           ],
         },
       ];
+    }
+
+    if (query.isFullPmsTemplate !== undefined) {
+      const isFullPmsTemplate = String(query.isFullPmsTemplate).toLowerCase();
+      if (isFullPmsTemplate === 'true' || isFullPmsTemplate === 'false') {
+        filter['metadata.isFullPmsTemplate'] = isFullPmsTemplate === 'true';
+      }
     }
 
     if (query.status?.trim()) {

@@ -43,27 +43,32 @@ export function startAutomaticWorkflowSyncScheduler(): ScheduledTask | undefined
   scheduledTask = cron.schedule(
     schedule,
     () => {
-      void runAutomaticWorkflowSyncOnce()
-        .then((result) => {
-          if (result.skippedReason) {
-            console.log(`[PMS Workflow Sync] Skipped automatic sync: ${result.skippedReason}`);
-            return;
-          }
-
-          console.log(
-            `[PMS Workflow Sync] Automatic sync completed. ` +
-              `Cycles=${result.checkedCycles}, updated=${result.updatedAssignments}, failed=${result.failedAssignments}.`,
-          );
-        })
-        .catch((error) => {
-          console.error('[PMS Workflow Sync] Automatic sync failed:', error);
-        });
+      triggerAutomaticWorkflowSync('Scheduled');
     },
     { timezone },
   );
 
   console.log(`[PMS Workflow Sync] Automatic daily sync scheduled: "${schedule}" (${timezone}).`);
+  triggerAutomaticWorkflowSync('Startup');
   return scheduledTask;
+}
+
+function triggerAutomaticWorkflowSync(trigger: 'Startup' | 'Scheduled'): void {
+  void runAutomaticWorkflowSyncOnce()
+    .then((result) => {
+      if (result.skippedReason) {
+        console.log(`[PMS Workflow Sync] ${trigger} sync skipped: ${result.skippedReason}`);
+        return;
+      }
+
+      console.log(
+        `[PMS Workflow Sync] ${trigger} sync completed. ` +
+          `Cycles=${result.checkedCycles}, updated=${result.updatedAssignments}, failed=${result.failedAssignments}.`,
+      );
+    })
+    .catch((error) => {
+      console.error(`[PMS Workflow Sync] ${trigger} sync failed:`, error);
+    });
 }
 
 export async function runAutomaticWorkflowSyncOnce(

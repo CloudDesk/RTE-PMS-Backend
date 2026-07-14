@@ -26,6 +26,7 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
 import { TermReviewValue } from '../models/pms-term-review-value.model';
+import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
 import { AuditLog } from '../models/audit-log.model';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -89,6 +90,7 @@ export interface AnnualSummaryResult {
   termAssignments: Array<Record<string, unknown>>;
   objectives: IObjective[];
   termReviews: Array<Record<string, unknown>>;
+  managerReviewPeriods: Array<Record<string, unknown>>;
   annualDecisionValues: Array<Record<string, unknown>>;
   calculatedFinalScore?: number;
   finalScoreOverride: Record<string, unknown> | null;
@@ -331,9 +333,20 @@ export class AnnualDecisionService extends BaseService {
 
     const termAssignmentIds = termAssignments.map((termAssignment) => termAssignment._id);
 
-    const [objectives, termReviews, annualDecision, visibilityConfiguration, cycle] = await Promise.all([
+    const [
+      objectives,
+      termReviews,
+      managerReviewPeriods,
+      annualDecision,
+      visibilityConfiguration,
+      cycle,
+    ] = await Promise.all([
       Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
       TermReview.find({ termAssignmentId: { $in: termAssignmentIds }, isDeleted: false }),
+      ManagerReviewPeriodAssignment.find({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }).sort({ reviewCode: 1 }),
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
@@ -538,6 +551,40 @@ export class AnnualDecisionService extends BaseService {
           })),
         };
       }),
+      managerReviewPeriods: managerReviewPeriods.map((review) => {
+        const reviewObject =
+          typeof review.toObject === 'function'
+            ? review.toObject()
+            : review;
+
+        return {
+          ...reviewObject,
+          _id: reviewObject._id?.toString?.() ?? reviewObject._id,
+          annualAssignmentId: reviewObject.annualAssignmentId?.toString?.(),
+          cycleId: reviewObject.cycleId?.toString?.(),
+          employeeId: reviewObject.employeeId?.toString?.(),
+          managerId: reviewObject.managerId?.toString?.(),
+          templateVersionId: reviewObject.templateVersionId?.toString?.(),
+          includedTermAssignmentIds: (reviewObject.includedTermAssignmentIds ?? []).map(
+            (id: unknown) => id && typeof id === 'object' && 'toString' in id
+              ? (id as { toString: () => string }).toString()
+              : String(id),
+          ),
+          anchorTermAssignmentId: reviewObject.anchorTermAssignmentId?.toString?.(),
+          reviewValues: (reviewObject.reviewValues ?? []).map((value: Record<string, any>) => ({
+            templateFieldId: value.templateFieldId,
+            fieldKey: value.fieldKey,
+            sectionKey: value.sectionKey,
+            roleCode: value.roleCode,
+            actorUserId: value.actorUserId?.toString?.(),
+            workflowStage: value.workflowStage,
+            valueJson: value.valueJson,
+            valueText: value.valueText,
+            valueNumber: value.valueNumber,
+            valueDate: value.valueDate ? new Date(value.valueDate).toISOString() : undefined,
+          })),
+        };
+      }),
       annualDecisionValues: annualDecisionValues.map((value) => ({
         templateFieldId: value.templateFieldId,
         fieldKey: value.fieldKey,
@@ -601,8 +648,8 @@ export class AnnualDecisionService extends BaseService {
       decisionInput.isGradeApplied,
       decisionInput.isMeritApplied,
     );
-    this.validateDecisionInput(decisionInput, appraisalOutcomeType);
-    await this.validateAnnualTemplateInput(annualAssignment, decisionInput);
+    this.validateDecisionInput(decisionInput, appraisalOutcomeType, false);
+    await this.validateAnnualTemplateInput(annualAssignment, decisionInput, false);
 
     const payload = {
       annualAssignmentId: annualAssignment._id,
@@ -966,8 +1013,8 @@ export class AnnualDecisionService extends BaseService {
     }
 
     const overrideScore = Number(input.overrideScore);
-    if (!Number.isFinite(overrideScore) || overrideScore < 0) {
-      throw new Error('Valid final score override value is required');
+    if (!Number.isFinite(overrideScore) || overrideScore < 0 || overrideScore > 100) {
+      throw new Error('Final score override must be a number from 0 to 100');
     }
 
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
@@ -1060,6 +1107,15 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Visibility can be updated only after annual decision is frozen');
     }
 
+    const visibleFrom = String(input.visibleFrom ?? '').trim();
+    if (!visibleFrom) {
+      throw new Error('Please select a visibility start date.');
+    }
+    const visibleFromDate = new Date(visibleFrom);
+    if (Number.isNaN(visibleFromDate.getTime())) {
+      throw new Error('Please select a valid visibility start date.');
+    }
+
     const previousAssignmentValue = annualAssignment.toObject();
     const visibilityConfig = await this.ensureVisibilityConfiguration(annualAssignment);
     const previousVisibilityValue = visibilityConfig.toObject();
@@ -1075,7 +1131,7 @@ export class AnnualDecisionService extends BaseService {
       input.managerGradeVisible ?? visibilityConfig.managerGradeVisible;
     visibilityConfig.managerMeritVisible =
       input.managerMeritVisible ?? visibilityConfig.managerMeritVisible;
-    visibilityConfig.visibleFrom = input.visibleFrom ? new Date(input.visibleFrom) : visibilityConfig.visibleFrom;
+    visibilityConfig.visibleFrom = visibleFromDate;
     visibilityConfig.reason = input.reason ?? visibilityConfig.reason;
     visibilityConfig.updatedBy = this.actorIdObject();
     visibilityConfig.version += 1;
@@ -1346,7 +1402,15 @@ export class AnnualDecisionService extends BaseService {
   private validateDecisionInput(
     input: SaveDecisionDraftInput,
     outcomeType: AppraisalOutcomeTypeType,
+    requireComplete = true,
   ): void {
+    if (input.finalScore !== undefined && input.finalScore !== null) {
+      const finalScore = Number(input.finalScore);
+      if (!Number.isFinite(finalScore) || finalScore < 0 || finalScore > 100) {
+        throw new Error('Final Score must be a number from 0 to 100');
+      }
+    }
+
     if (typeof input.isGradeApplied !== 'boolean') {
       throw new Error('isGradeApplied is required');
     }
@@ -1355,16 +1419,48 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('isMeritApplied is required');
     }
 
-    if (input.isGradeApplied && !this.hasMeaningfulDecisionDetails(input.gradeDetails)) {
+    if (
+      requireComplete &&
+      input.isGradeApplied &&
+      !this.hasMeaningfulDecisionDetails(input.gradeDetails)
+    ) {
       throw new Error('gradeDetails is required when grade is applied');
     }
 
-    if (input.isMeritApplied && !this.hasMeaningfulDecisionDetails(input.meritDetails)) {
+    if (
+      requireComplete &&
+      input.isMeritApplied &&
+      !this.hasMeaningfulDecisionDetails(input.meritDetails)
+    ) {
       throw new Error('meritDetails is required when merit is applied');
     }
 
-    if (outcomeType === AppraisalOutcomeType.NIL && !input.nilReason?.trim()) {
-      throw new Error('nilReason is required when grade and merit are not applied');
+    if (input.isMeritApplied && input.meritDetails) {
+      const meritPercentage =
+        input.meritDetails.percentage ??
+        input.meritDetails.meritPercentage ??
+        input.meritDetails.amount ??
+        input.meritDetails.meritAmount;
+      if (meritPercentage !== undefined && meritPercentage !== null && String(meritPercentage).trim()) {
+        const normalizedMeritPercentage = String(meritPercentage).trim();
+        const numericMeritPercentage = Number(normalizedMeritPercentage);
+        if (
+          !/^\d*(?:\.\d*)?$/.test(normalizedMeritPercentage) ||
+          !Number.isFinite(numericMeritPercentage) ||
+          numericMeritPercentage < 0 ||
+          numericMeritPercentage > 100
+        ) {
+          throw new Error('Merit Percentage must be a number from 0 to 100');
+        }
+      }
+    }
+
+    if (
+      requireComplete &&
+      outcomeType === AppraisalOutcomeType.NIL &&
+      !input.nilReason?.trim()
+    ) {
+      throw new Error('Please provide a reason when neither grade nor merit is applied.');
     }
   }
 
@@ -1425,6 +1521,7 @@ export class AnnualDecisionService extends BaseService {
   private async validateAnnualTemplateInput(
     annualAssignment: IAnnualAssignment,
     input: SaveDecisionDraftInput,
+    requireComplete = true,
   ): Promise<void> {
     const resolvedTemplate = await this.resolveAnnualDecisionTemplate(annualAssignment, input);
     if (!resolvedTemplate) {
@@ -1456,14 +1553,16 @@ export class AnnualDecisionService extends BaseService {
       }
     }
 
-    for (const section of resolvedTemplate.sections) {
-      for (const field of section.fields) {
-        if (!field.required || field.editable !== true) {
-          continue;
-        }
+    if (requireComplete) {
+      for (const section of resolvedTemplate.sections) {
+        for (const field of section.fields) {
+          if (!field.required || field.editable !== true) {
+            continue;
+          }
 
-        if (!this.hasMeaningfulAnnualTemplateFieldValue(field.key, field.type, values)) {
-          missingFields.push(field.label || field.key);
+          if (!this.hasMeaningfulAnnualTemplateFieldValue(field.key, field.type, values)) {
+            missingFields.push(field.label || field.key);
+          }
         }
       }
     }
@@ -3032,7 +3131,7 @@ export class AnnualDecisionService extends BaseService {
     }
 
     const visibleFrom = visibility.visibleFrom ? new Date(visibility.visibleFrom) : null;
-    if (visibleFrom && !Number.isNaN(visibleFrom.getTime()) && this.getCurrentDate() < visibleFrom) {
+    if (!visibleFrom || Number.isNaN(visibleFrom.getTime()) || this.getCurrentDate() < visibleFrom) {
       return {
         ...visibility,
         employeeReviewVisible: false,

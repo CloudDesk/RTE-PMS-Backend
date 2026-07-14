@@ -23,8 +23,13 @@ import { auditService } from './audit.service';
 import { emailService } from './email.service';
 import { ObjectiveService } from './objective.service';
 import { workflowService } from './workflow.service';
+import {
+  defaultReviewCadenceConfig,
+  normalizeReviewCadenceConfig,
+} from '../utilis/pmsReviewCadence';
 import type { IAnnualCycle, ICommunicationRuleConfig } from '../models/pms-annual-cycle.model';
 import type { ITermCycle } from '../models/pms-term-cycle.model';
+import type { ReviewCadenceConfig } from '../utilis/pmsReviewCadence';
 import type {
   AnnualWorkflowState as AnnualWorkflowStateType,
   AssessmentTermCode as AssessmentTermCodeType,
@@ -92,6 +97,7 @@ export interface CreateCycleInput {
   quarters?: TermCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
+  reviewCadenceConfig?: Partial<ReviewCadenceConfig> | Record<string, unknown>;
 }
 
 interface AppraisalWindowConfigInput {
@@ -128,6 +134,7 @@ export interface UpdateCycleInput {
   quarters?: TermCycleInput[];
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
+  reviewCadenceConfig?: Partial<ReviewCadenceConfig> | Record<string, unknown>;
 }
 
 export interface CycleListQuery {
@@ -301,6 +308,10 @@ export class CycleService extends BaseService {
               input.appraisalWindowConfig,
             ),
             communicationRuleConfig: input.communicationRuleConfig ?? {},
+            reviewCadenceConfig: this.normalizeReviewCadenceConfig(
+              input.reviewCadenceConfig,
+              input.assessmentTermType ?? getDefaultAssessmentTermType(),
+            ),
             createdBy: this.actorIdObject(),
           },
         ],
@@ -437,6 +448,15 @@ export class CycleService extends BaseService {
       }
       if (input.communicationRuleConfig !== undefined) {
         cycle.communicationRuleConfig = input.communicationRuleConfig;
+      }
+      if (
+        input.reviewCadenceConfig !== undefined ||
+        input.assessmentTermType !== undefined
+      ) {
+        cycle.reviewCadenceConfig = this.normalizeReviewCadenceConfig(
+          input.reviewCadenceConfig ?? cycle.reviewCadenceConfig ?? defaultReviewCadenceConfig(),
+          input.assessmentTermType ?? cycle.assessmentTermType ?? getDefaultAssessmentTermType(),
+        );
       }
       cycle.updatedBy = this.actorIdObject();
 
@@ -1019,6 +1039,8 @@ export class CycleService extends BaseService {
       appraisalWindowConfig: input.appraisalWindowConfig ?? cycle.appraisalWindowConfig ?? {},
       communicationRuleConfig:
         input.communicationRuleConfig ?? cycle.communicationRuleConfig ?? {},
+      reviewCadenceConfig:
+        input.reviewCadenceConfig ?? cycle.reviewCadenceConfig ?? defaultReviewCadenceConfig(),
     };
   }
 
@@ -1173,6 +1195,7 @@ export class CycleService extends BaseService {
       assessmentTermType,
     );
     this.validateQuarterWindows(quarters, cycleStart, cycleEnd, assessmentTermType);
+    this.normalizeReviewCadenceConfig(input.reviewCadenceConfig, assessmentTermType);
     const appraisalWindowConfig = this.normalizeAppraisalWindowConfig(
       input.appraisalWindowConfig,
     );
@@ -1182,6 +1205,13 @@ export class CycleService extends BaseService {
       cycleEnd,
     );
     this.validateAppraisalWindowAfterQuarterFinalization(quarters, appraisalWindowConfig);
+  }
+
+  private normalizeReviewCadenceConfig(
+    config: unknown,
+    assessmentTermType: AssessmentTermTypeType,
+  ): ReviewCadenceConfig {
+    return normalizeReviewCadenceConfig(config, assessmentTermType);
   }
 
   private validateAppraisalWindowAfterQuarterFinalization(

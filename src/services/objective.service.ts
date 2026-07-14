@@ -2895,6 +2895,14 @@ export class ObjectiveService extends BaseService {
     const termCycleMap = new Map(
       termCycles.map((item) => [item._id.toString(), item]),
     );
+    const termAssignmentsByAnnualAssignmentId = new Map<string, typeof termAssignments>();
+
+    for (const termAssignment of termAssignments) {
+      const key = termAssignment.annualAssignmentId.toString();
+      const bucket = termAssignmentsByAnnualAssignmentId.get(key) ?? [];
+      bucket.push(termAssignment);
+      termAssignmentsByAnnualAssignmentId.set(key, bucket);
+    }
 
     await this.ensurePredefinedObjectivesForAssignments(annualAssignments, termAssignments);
 
@@ -3001,9 +3009,13 @@ export class ObjectiveService extends BaseService {
         ? termCycleMap.get(termAssignment.cycleTermId.toString())
         : undefined;
       const effectiveTermState = this.getEffectiveTermStateForDisplay(
-        termAssignment.termState,
+        termAssignment,
         annualAssignment?.annualState,
         annualCycle?.status,
+        termCycle,
+        termAssignmentsByAnnualAssignmentId.get(termAssignment.annualAssignmentId.toString()) ?? [],
+        termCycleMap,
+        annualAssignment,
       );
       const objectiveConfig = configMap.get(termAssignment._id.toString()) ?? this.defaultObjectiveConfig();
       const objectiveRecords = (objectivesByTermAssignmentId.get(termAssignment._id.toString()) ?? [])
@@ -3131,14 +3143,25 @@ export class ObjectiveService extends BaseService {
     termAssignmentId: string,
     input: SaveAssignmentTemplateValuesInput,
   ): Promise<Array<Record<string, unknown>>> {
-    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    let termAssignment = await this.getTermAssignment(termAssignmentId);
     const actor = this.requireActor();
     const mappedRole = accessService.mapRole(actor.actorRole);
 
     await this.assertAssignmentAccess('objective.create', termAssignment);
     await this.assertObjectiveWindow(termAssignment, 'setting');
+    if (termAssignment.termState === TermWorkflowState.NOT_STARTED) {
+      await this.ensureQuarterState(
+        termAssignment._id.toString(),
+        termAssignment.termState,
+        TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+      );
+      termAssignment = await this.getTermAssignment(termAssignmentId);
+    }
 
-    const policy = await this.resolveObjectiveFillabilityPolicy(termAssignment);
+    const policyRole = this.assignmentTemplateValuePolicyRole(termAssignment, actor, mappedRole);
+    const policy = await this.resolveObjectiveFillabilityPolicy(termAssignment, undefined, {
+      actorRole: policyRole,
+    });
     const hasTemplatePolicy = policy.source === 'TEMPLATE';
     if (
       !hasTemplatePolicy &&
@@ -3164,12 +3187,13 @@ export class ObjectiveService extends BaseService {
         valueStatus: value.valueStatus ?? 'ACTIVE',
       }));
 
-    this.assertObjectiveValuesFillable(normalizedValues, policy);
+    const fillableValues = this.filterObjectiveValuesFillable(normalizedValues, policy);
+    this.assertObjectiveValuesFillable(fillableValues, policy);
 
     const previousSummary = (termAssignment.termSummary ?? {}) as Record<string, unknown>;
     termAssignment.termSummary = {
       ...previousSummary,
-      objectiveTemplateValues: normalizedValues,
+      objectiveTemplateValues: fillableValues,
     };
     termAssignment.updatedBy = this.toObjectId(actor.actorId, 'actorId');
     termAssignment.version += 1;
@@ -3183,7 +3207,7 @@ export class ObjectiveService extends BaseService {
       termAssignment.termSummary,
     );
 
-    return this.mapTemplateObjectiveValues(normalizedValues);
+    return this.mapTemplateObjectiveValues(fillableValues);
   }
 
   async createObjective(input: CreateObjectiveInput): Promise<IObjective> {
@@ -4957,8 +4981,11 @@ export class ObjectiveService extends BaseService {
   private async resolveObjectiveFillabilityPolicy(
     termAssignment: ITermAssignment,
     objective?: IObjective,
+    perspective: { actorRole?: string; workflowState?: string } = {},
   ): Promise<ObjectiveFillabilityPolicy> {
     const actor = this.requireActor();
+    const actorRole = perspective.actorRole ?? actor.actorRole;
+    const workflowState = perspective.workflowState ?? termAssignment.termState;
     const templateVersionId = termAssignment.templateVersionId?.toString()
       || (await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString()))
         .templateVersionId?.toString();
@@ -4971,9 +4998,9 @@ export class ObjectiveService extends BaseService {
       employeeId: termAssignment.employeeId.toString(),
       assignedManagerId: termAssignment.assignedManagerId.toString(),
       assessmentTermCode: termAssignment.assessmentTermCode,
-      actorRole: actor.actorRole,
+      actorRole,
       actorUserId: actor.actorId,
-      workflowState: termAssignment.termState,
+      workflowState,
     };
 
     if (!templateVersionId) {
@@ -4988,8 +5015,8 @@ export class ObjectiveService extends BaseService {
     const resolvedTemplate = await new PmsTemplateService(this.context).resolveTemplateVersion(
       templateVersionId,
       {
-        role: actor.actorRole,
-        workflowState: termAssignment.termState,
+        role: actorRole,
+        workflowState,
         quarter: termAssignment.assessmentTermCode,
         annualAssignmentId: termAssignment.annualAssignmentId.toString(),
         termAssignmentId: termAssignment._id.toString(),
@@ -5001,8 +5028,8 @@ export class ObjectiveService extends BaseService {
         this.toObjectiveFillabilityFieldPolicy(
           field,
           section.key,
-          actor.actorRole,
-          termAssignment.termState,
+          actorRole,
+          workflowState,
         ),
       ),
     );
@@ -5015,6 +5042,18 @@ export class ObjectiveService extends BaseService {
       source: 'TEMPLATE',
       fields,
     };
+  }
+
+  private assignmentTemplateValuePolicyRole(
+    termAssignment: ITermAssignment,
+    actor: { actorId: string; actorRole: string },
+    mappedRole: string,
+  ): string {
+    const isAssignedEmployee = actor.actorId === termAssignment.employeeId.toString();
+    if (isAssignedEmployee && mappedRole !== PmsRole.ADMIN) {
+      return PmsRole.EMPLOYEE;
+    }
+    return actor.actorRole;
   }
 
   private toObjectiveFillabilityFieldPolicy(
@@ -5048,9 +5087,6 @@ export class ObjectiveService extends BaseService {
     }
 
     const actorRole = accessService.mapRole(policy.actorRole);
-    const fieldPolicyByKey = new Map(
-      policy.fields.map((field) => [`${field.sectionKey}:${field.fieldKey}`, field]),
-    );
 
     for (const value of values) {
       const fieldKey = String(value.fieldKey ?? '').trim();
@@ -5059,7 +5095,7 @@ export class ObjectiveService extends BaseService {
         continue;
       }
 
-      const fieldPolicy = fieldPolicyByKey.get(`${sectionKey}:${fieldKey}`);
+      const fieldPolicy = this.resolveObjectiveValueFieldPolicy(value, policy);
       if (!fieldPolicy || fieldPolicy.visible === false) {
         throw new Error(`Field "${fieldKey}" is not visible for objective entry`);
       }
@@ -5071,6 +5107,47 @@ export class ObjectiveService extends BaseService {
         );
       }
     }
+  }
+
+  private filterObjectiveValuesFillable(
+    values: Array<Record<string, any>>,
+    policy: ObjectiveFillabilityPolicy,
+  ): Array<Record<string, any>> {
+    if (values.length === 0 || policy.source === 'LEGACY_NO_TEMPLATE') {
+      return values;
+    }
+
+    const actorRole = accessService.mapRole(policy.actorRole);
+    return values.filter((value) => {
+      const fieldPolicy = this.resolveObjectiveValueFieldPolicy(value, policy);
+      if (!fieldPolicy || fieldPolicy.visible === false) {
+        return false;
+      }
+
+      const adminVisibleFallback = actorRole === PmsRole.ADMIN && fieldPolicy.visible === true;
+      return fieldPolicy.editable === true || adminVisibleFallback;
+    });
+  }
+
+  private resolveObjectiveValueFieldPolicy(
+    value: Record<string, any>,
+    policy: ObjectiveFillabilityPolicy,
+  ): ObjectiveFillabilityFieldPolicy | undefined {
+    const fieldKey = String(value.fieldKey ?? '').trim();
+    const sectionKey = String(value.sectionKey ?? '').trim();
+    if (!fieldKey || !sectionKey) {
+      return undefined;
+    }
+
+    const exact = policy.fields.find(
+      (field) => field.sectionKey === sectionKey && field.fieldKey === fieldKey,
+    );
+    if (exact) {
+      return exact;
+    }
+
+    const sameFieldKey = policy.fields.filter((field) => field.fieldKey === fieldKey);
+    return sameFieldKey.length === 1 ? sameFieldKey[0] : undefined;
   }
 
   private groupCommentsByObjective(comments: Array<Record<string, any>>) {
@@ -8625,10 +8702,16 @@ export class ObjectiveService extends BaseService {
   }
 
   private getEffectiveTermStateForDisplay(
-    termState: TermWorkflowState,
+    termAssignment: Pick<ITermAssignment, '_id' | 'assessmentTermCode' | 'assessmentTermType' | 'termState'>,
     annualState?: AnnualWorkflowState,
     cycleState?: AnnualWorkflowState,
+    termCycle?: unknown,
+    assignmentTerms: Array<Pick<ITermAssignment, '_id' | 'annualAssignmentId' | 'assessmentTermCode' | 'assessmentTermType' | 'termState' | 'cycleTermId'>> = [],
+    termCycleMap: Map<string, unknown> = new Map(),
+    annualAssignment?: unknown,
   ): TermWorkflowState {
+    const termState = termAssignment.termState;
+
     if (
       annualState === AnnualWorkflowState.CANCELLED ||
       cycleState === AnnualWorkflowState.CANCELLED
@@ -8638,7 +8721,129 @@ export class ObjectiveService extends BaseService {
         : TermWorkflowState.CLOSED_BY_ADMIN;
     }
 
+    if (
+      termState === TermWorkflowState.NOT_STARTED &&
+      this.isObjectiveSettingEffectivelyOpen(
+        termAssignment,
+        termCycle,
+        assignmentTerms,
+        termCycleMap,
+        annualAssignment,
+      )
+    ) {
+      return TermWorkflowState.OBJECTIVE_SETTING_OPEN;
+    }
+
     return termState;
+  }
+
+  private isObjectiveSettingEffectivelyOpen(
+    termAssignment: Pick<ITermAssignment, '_id' | 'assessmentTermCode' | 'assessmentTermType' | 'termState'>,
+    termCycle: unknown,
+    assignmentTerms: Array<Pick<ITermAssignment, '_id' | 'annualAssignmentId' | 'assessmentTermCode' | 'assessmentTermType' | 'termState' | 'cycleTermId'>>,
+    termCycleMap: Map<string, unknown>,
+    annualAssignment?: unknown,
+  ): boolean {
+    const orderedTerms = [...(assignmentTerms.length > 0 ? assignmentTerms : [termAssignment])]
+      .sort((left, right) => this.compareTermAssignmentsForDisplay(left, right, termCycleMap));
+
+    for (const currentTerm of orderedTerms) {
+      const currentState = currentTerm.termState;
+
+      if (this.isTermPastObjectiveSettingForDisplay(currentState)) {
+        continue;
+      }
+
+      const currentIsTarget = currentTerm._id.toString() === termAssignment._id.toString();
+
+      if (currentState !== TermWorkflowState.NOT_STARTED || !currentIsTarget) {
+        return false;
+      }
+
+      const effectiveWindows = resolveEffectiveTermWindows(
+        currentTerm,
+        termCycle as Parameters<typeof resolveEffectiveTermWindows>[1],
+        annualAssignment as Parameters<typeof resolveEffectiveTermWindows>[2],
+      );
+
+      return this.isCurrentDateInWindow(effectiveWindows.objectiveSettingWindow);
+    }
+
+    return false;
+  }
+
+  private compareTermAssignmentsForDisplay(
+    left: Pick<ITermAssignment, 'assessmentTermCode' | 'assessmentTermType' | 'cycleTermId'>,
+    right: Pick<ITermAssignment, 'assessmentTermCode' | 'assessmentTermType' | 'cycleTermId'>,
+    termCycleMap: Map<string, unknown>,
+  ): number {
+    const leftCycle = this.getDisplayTermCycleForAssignment(left, termCycleMap) as
+      | { startDate?: Date; objectiveSettingWindow?: { startDate?: Date } }
+      | undefined;
+    const rightCycle = this.getDisplayTermCycleForAssignment(right, termCycleMap) as
+      | { startDate?: Date; objectiveSettingWindow?: { startDate?: Date } }
+      | undefined;
+    const leftRank = this.getAssessmentTermDisplayRank(left.assessmentTermCode, left.assessmentTermType);
+    const rightRank = this.getAssessmentTermDisplayRank(right.assessmentTermCode, right.assessmentTermType);
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    const leftStart =
+      leftCycle?.objectiveSettingWindow?.startDate?.getTime?.() ??
+      leftCycle?.startDate?.getTime?.() ??
+      Number.MAX_SAFE_INTEGER;
+    const rightStart =
+      rightCycle?.objectiveSettingWindow?.startDate?.getTime?.() ??
+      rightCycle?.startDate?.getTime?.() ??
+      Number.MAX_SAFE_INTEGER;
+
+    return leftStart - rightStart;
+  }
+
+  private getDisplayTermCycleForAssignment(
+    termAssignment: Pick<ITermAssignment, 'cycleTermId'>,
+    termCycleMap: Map<string, unknown>,
+  ): unknown {
+    return termAssignment.cycleTermId
+      ? termCycleMap.get(termAssignment.cycleTermId.toString())
+      : undefined;
+  }
+
+  private getAssessmentTermDisplayRank(
+    assessmentTermCode: AssessmentTermCodeType,
+    assessmentTermType?: AssessmentTermTypeType,
+  ): number {
+    const orderedTerms = getAssessmentTerms(assessmentTermType ?? AssessmentTermType.QUARTERLY);
+    const rank = orderedTerms.indexOf(assessmentTermCode);
+    return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
+  }
+
+  private isTermPastObjectiveSettingForDisplay(termState: TermWorkflowState): boolean {
+    const pastObjectiveSettingStates: readonly TermWorkflowState[] = [
+      TermWorkflowState.OBJECTIVE_APPROVED,
+      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
+      TermWorkflowState.MANAGER_REVIEW_SUBMITTED,
+      TermWorkflowState.TERM_FINALIZED,
+      TermWorkflowState.CLOSED_BY_ADMIN,
+    ];
+    return pastObjectiveSettingStates.includes(termState);
+  }
+
+  private isCurrentDateInWindow(window?: { startDate?: Date; endDate?: Date }): boolean {
+    if (!window?.startDate || !window?.endDate) {
+      return false;
+    }
+
+    const currentDate = new Date(this.getCurrentDate());
+    const startDate = new Date(window.startDate);
+    const endDate = new Date(window.endDate);
+    currentDate.setHours(0, 0, 0, 0);
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+    return currentDate >= startDate && currentDate <= endDate;
   }
 
   private async assertObjectiveWorkflowAllowed(termAssignment: ITermAssignment): Promise<void> {

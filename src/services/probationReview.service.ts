@@ -583,6 +583,11 @@ export class ProbationReviewService extends BaseService {
       );
     }
 
+    await this.assertMandatoryReviewValues(
+      assignment,
+      this.fillingManagerRole(assignment),
+    );
+
     assignment.status = ProbationReviewStatus.MANAGER_1_SUBMITTED;
     assignment.manager1SubmittedAt = this.getCurrentDate();
     assignment.manager1SubmittedBy = this.getActorObjectId();
@@ -645,6 +650,11 @@ export class ProbationReviewService extends BaseService {
         this.approvingManagerRole(assignment),
       );
     }
+
+    await this.assertMandatoryReviewValues(
+      assignment,
+      this.approvingManagerRole(assignment),
+    );
 
     assignment.status = ProbationReviewStatus.FINALIZED;
     assignment.manager2ReviewedAt = this.getCurrentDate();
@@ -851,7 +861,10 @@ export class ProbationReviewService extends BaseService {
         const fieldKey = String(field.fieldKey || field.key || field.id || '').trim();
         if (!fieldKey) continue;
 
-        const fieldType = String(field.fieldType || field.type || '');
+        const fieldType = String(field.fieldType || field.type || '')
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_');
         const fieldLabel = String(field.fieldLabel || field.label || fieldKey);
         const manager1Default: any = {
           visible: true,
@@ -1111,7 +1124,11 @@ export class ProbationReviewService extends BaseService {
     assignment: any,
     role: ProbationReviewerRole,
   ) {
-    if (!assignment.reviewerConfiguration) return requestedValues;
+    if (!assignment.reviewerConfiguration?.permissions?.length) {
+      throw new Error(
+        'This trainee review has no assigned field-permission snapshot. Recreate or migrate the assignment before editing it.',
+      );
+    }
     const permissionMap = this.editablePermissionMap(assignment.reviewerConfiguration, role);
 
     const merged = new Map<string, IProbationReviewValue>();
@@ -1146,6 +1163,121 @@ export class ProbationReviewService extends BaseService {
     return [...merged.values()];
   }
 
+  private async assertMandatoryReviewValues(
+    assignment: any,
+    role: ProbationReviewerRole,
+  ) {
+    const mandatoryPermissions = (assignment.reviewerConfiguration?.permissions ?? []).filter(
+      (permission: IProbationReviewFieldPermission) => {
+        const access = role === 'MANAGER_1' ? permission.manager1 : permission.manager2;
+        return Boolean(access?.visible && access.editable && access.mandatory);
+      },
+    );
+    if (mandatoryPermissions.length === 0) return;
+
+    const valueMap = new Map<string, IProbationReviewValue>();
+    for (const value of assignment.reviewValues ?? []) {
+      valueMap.set(this.permissionKey(value.sectionKey, value.fieldKey), value);
+    }
+
+    const mandatoryGridPermissions = mandatoryPermissions.filter(
+      (permission: IProbationReviewFieldPermission) => permission.isGridRow && permission.parentFieldKey,
+    );
+    const templateVersion = mandatoryGridPermissions.length > 0
+      ? await PmsTemplateVersion.findOne({
+          _id: assignment.templateVersionId,
+          isDeleted: false,
+        }).lean()
+      : null;
+    if (mandatoryGridPermissions.length > 0 && !templateVersion) {
+      throw new Error('The assigned template version is unavailable for mandatory-field validation.');
+    }
+
+    const templateFieldMap = new Map<string, any>();
+    for (const section of templateVersion?.sections ?? []) {
+      for (const field of section.fields ?? []) {
+        templateFieldMap.set(
+          this.permissionKey(String(section.sectionKey), String(field.fieldKey)),
+          field,
+        );
+      }
+    }
+
+    const missing: string[] = [];
+    for (const permission of mandatoryPermissions) {
+      if (permission.isGridRow && permission.parentFieldKey) {
+        const parentKey = this.permissionKey(permission.sectionKey, permission.parentFieldKey);
+        const savedRows = this.reviewGridRows(valueMap.get(parentKey)?.value);
+        const requiredRowKey = permission.gridRowKey ||
+          this.gridRowKeyFromPermission(permission.fieldKey, permission.parentFieldKey);
+        const savedRow = savedRows.find(
+          (row, rowIndex) => this.gridRowKey(row, rowIndex) === requiredRowKey,
+        );
+        const templateField = templateFieldMap.get(parentKey);
+        const requiredColumns = (templateField?.gridConfig?.columns ?? []).filter(
+          (column: any) => column.required && column.editable !== false && column.readOnly !== true,
+        );
+        const rowIsIncomplete =
+          !savedRow ||
+          (requiredColumns.length > 0 && requiredColumns.some((column: any) =>
+            this.isBlankReviewValue(this.recordValue(savedRow, column.key, column.label)),
+          ));
+        if (rowIsIncomplete) {
+          missing.push(permission.fieldLabel || `row ${requiredRowKey}`);
+        }
+        continue;
+      }
+
+      const value = valueMap.get(this.permissionKey(permission.sectionKey, permission.fieldKey))?.value;
+      if (this.isBlankReviewValue(value)) {
+        missing.push(permission.fieldLabel || permission.fieldKey);
+      }
+    }
+
+    if (missing.length > 0) {
+      const visible = missing.slice(0, 6);
+      const remaining = missing.length - visible.length;
+      const detail = `${visible.join(', ')}${remaining > 0 ? `, and ${remaining} more` : ''}`;
+      throw new Error(`Cannot submit. Complete the following required fields: ${detail}.`);
+    }
+  }
+
+  private reviewGridRows(value: unknown): Array<Record<string, unknown>> {
+    if (Array.isArray(value)) {
+      return value.filter((row) => row && typeof row === 'object') as Array<Record<string, unknown>>;
+    }
+    if (!value || typeof value !== 'object') return [];
+    const record = value as Record<string, unknown>;
+    const rows = record.rows || record.items || record.values || record.data || record.entries || record.tableRows;
+    return Array.isArray(rows)
+      ? rows.filter((row) => row && typeof row === 'object') as Array<Record<string, unknown>>
+      : [];
+  }
+
+  private recordValue(record: Record<string, unknown>, ...keys: unknown[]) {
+    for (const key of keys) {
+      if (!key) continue;
+      if (record[String(key)] !== undefined) return record[String(key)];
+    }
+    const normalizedKeys = keys.map((key) => this.normalizeFieldToken(key)).filter(Boolean);
+    const match = Object.entries(record).find(([key]) =>
+      normalizedKeys.includes(this.normalizeFieldToken(key)),
+    );
+    return match?.[1];
+  }
+
+  private normalizeFieldToken(value: unknown) {
+    return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  private isBlankReviewValue(value: unknown): boolean {
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'string') return value.trim().length === 0;
+    if (Array.isArray(value)) return value.length === 0;
+    if (typeof value === 'object') return Object.keys(value as Record<string, unknown>).length === 0;
+    return false;
+  }
+
   private applyActorPermissionsToAssignment(assignment: any) {
     if (this.isPrivilegedActor()) return assignment;
     const reviewerRole = this.actorReviewerRole(assignment);
@@ -1162,16 +1294,44 @@ export class ProbationReviewService extends BaseService {
     const sections = (templateVersion.sections ?? [])
       .map((section: any) => {
         const sectionKey = String(section.sectionKey || section.key || section.id || '');
+        const sectionIdentity = String(
+          section.sectionLabel || section.label || section.title || sectionKey,
+        )
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_');
+        const isEmployeeInformationSection =
+          sectionIdentity.includes('employee_information') ||
+          sectionIdentity.includes('employee_details');
         const fields = (section.fields ?? [])
           .map((field: any) => {
             const fieldKey = String(field.fieldKey || field.key || field.id || '');
-            if (String(field.fieldType || field.type || '') === 'data_grid' && Array.isArray(field.gridConfig?.defaultRows)) {
+            // Employee details describe the assignment rather than a
+            // reviewer answer. They remain visible and read-only even though
+            // they intentionally have no field permission in the snapshot.
+            if (isEmployeeInformationSection) {
+              return {
+                ...field,
+                visible: true,
+                editable: false,
+                required: false,
+              };
+            }
+            const fieldType = String(field.fieldType || field.type || '')
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '_');
+            if (fieldType === 'data_grid' && Array.isArray(field.gridConfig?.defaultRows)) {
+              const parentPermission = permissionMap.get(
+                this.permissionKey(sectionKey, fieldKey),
+              );
               const visibleRows = field.gridConfig.defaultRows
                 .map((row: any, rowIndex: number) => {
                   const rowKey = this.gridRowKey(row, rowIndex);
-                  const permission = permissionMap.get(
-                    this.permissionKey(sectionKey, this.gridRowPermissionKey(fieldKey, rowKey)),
-                  );
+                  const permission =
+                    permissionMap.get(
+                      this.permissionKey(sectionKey, this.gridRowPermissionKey(fieldKey, rowKey)),
+                    ) || parentPermission;
                   const access = reviewerRole === 'MANAGER_1' ? permission?.manager1 : permission?.manager2;
                   return access?.visible ? { row, access } : null;
                 })

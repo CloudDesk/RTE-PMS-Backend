@@ -16,6 +16,7 @@ export * from './pms-objective-evidence.model';
 export * from './pms-employee-achievement-submission.model';
 export * from './pms-term-review.model';
 export * from './pms-term-review-value.model';
+export * from './pms-manager-review-period-assignment.model';
 export * from './pms-annual-cycle.model';
 export * from './pms-term-cycle.model';
 export * from './pms-annual-assignment.model';

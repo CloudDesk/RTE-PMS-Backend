@@ -2,16 +2,37 @@ import { Types } from 'mongoose';
 import { AssignmentService } from '../../src/services/assignment.service';
 import { ObjectiveService } from '../../src/services/objective.service';
 import { WorkflowSyncService } from '../../src/services/workflow-sync.service';
-import { QuarterWorkflowState } from '../../src/constants/pms.enums';
-import { transitionQuarterAssignmentState } from '../../src/services/quarter-assignment-workflow.service';
+import { TermWorkflowState } from '../../src/constants/pms.enums';
+import { transitionTermAssignmentState } from '../../src/services/term-assignment-workflow.service';
 import { Objective } from '../../src/models/pms-objective.model';
+import { AnnualAssignment } from '../../src/models/pms-annual-assignment.model';
 import { AnnualCycle } from '../../src/models/pms-annual-cycle.model';
-import { QuarterAssignment } from '../../src/models/pms-quarter-assignment.model';
-import { QuarterCycle } from '../../src/models/pms-quarter-cycle.model';
+import { TermAssignment } from '../../src/models/pms-term-assignment.model';
+import { TermCycle } from '../../src/models/pms-term-cycle.model';
 import { accessService } from '../../src/services/access.service';
 
-jest.mock('../../src/services/quarter-assignment-workflow.service', () => ({
-  transitionQuarterAssignmentState: jest.fn(),
+const mockOpenEligiblePeriodsForCycle = jest.fn();
+
+jest.mock('../../src/services/term-assignment-workflow.service', () => ({
+  transitionTermAssignmentState: jest.fn(),
+}));
+
+jest.mock('../../src/services/managerReviewPeriod.service', () => ({
+  ManagerReviewPeriodService: jest.fn().mockImplementation(() => ({
+    openEligiblePeriodsForCycle: mockOpenEligiblePeriodsForCycle,
+  })),
+}));
+
+jest.mock('../../src/services/workflow.service', () => ({
+  workflowService: {
+    validateTransition: jest.fn(() => ({ allowed: true })),
+    transition: jest.fn(({ currentState, nextState }) => ({
+      previousState: currentState,
+      currentState: nextState,
+      transitionedAt: new Date('2026-06-17T00:00:00.000Z'),
+      metadata: {},
+    })),
+  },
 }));
 
 jest.mock('../../src/models/pms-objective.model', () => ({
@@ -26,14 +47,20 @@ jest.mock('../../src/models/pms-annual-cycle.model', () => ({
   },
 }));
 
-jest.mock('../../src/models/pms-quarter-assignment.model', () => ({
-  QuarterAssignment: {
+jest.mock('../../src/models/pms-annual-assignment.model', () => ({
+  AnnualAssignment: {
     find: jest.fn(),
   },
 }));
 
-jest.mock('../../src/models/pms-quarter-cycle.model', () => ({
-  QuarterCycle: {
+jest.mock('../../src/models/pms-term-assignment.model', () => ({
+  TermAssignment: {
+    find: jest.fn(),
+  },
+}));
+
+jest.mock('../../src/models/pms-term-cycle.model', () => ({
+  TermCycle: {
     find: jest.fn(),
   },
 }));
@@ -58,7 +85,8 @@ jest.mock('../../src/services/access.service', () => ({
 
 const actorId = new Types.ObjectId();
 const cycleId = new Types.ObjectId();
-const quarterAssignmentId = new Types.ObjectId();
+const termAssignmentId = new Types.ObjectId();
+const termCycleId = new Types.ObjectId();
 const annualAssignmentId = new Types.ObjectId();
 const employeeId = new Types.ObjectId();
 const managerId = new Types.ObjectId();
@@ -93,6 +121,7 @@ function createAssignmentService() {
   const service: any = new AssignmentService({
     requestId: 'test-request',
     reqRole: 'ADMIN',
+    pmsCurrentDate: new Date('2026-06-17T00:00:00.000Z'),
     user: {
       _id: actorId,
       email: 'admin@test.local',
@@ -136,105 +165,143 @@ function createWorkflowSyncService() {
   });
 }
 
-function mockQuarterAssignment(state: string) {
+function mockTermAssignment(state: string) {
   return {
-    _id: quarterAssignmentId,
+    _id: termAssignmentId,
     annualAssignmentId,
     cycleId,
+    cycleTermId: termCycleId,
     employeeId,
     assignedManagerId: managerId,
-    quarterCode: 'Q1',
-    quarterState: state,
+    assessmentTermCode: 'Q1',
+    assessmentTermType: 'QUARTERLY',
+    termLabel: 'Q1',
+    termState: state,
   };
 }
 
-describe('Quarter assignment workflow state ownership', () => {
+describe('Term assignment workflow state ownership', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (accessService.canPerform as jest.Mock).mockResolvedValue({
       allowed: true,
       mappedRole: 'ADMIN',
     });
+    mockOpenEligiblePeriodsForCycle.mockResolvedValue({
+      checked: 0,
+      opened: 0,
+      alreadyOpen: 0,
+      alreadyAdvanced: 0,
+      notReady: 0,
+      results: [],
+    });
+    (AnnualAssignment.find as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    });
   });
 
-  it('does not let objective submit move quarterState from OBJECTIVE_SETTING_OPEN', async () => {
+  it('does not let objective submit move termState from OBJECTIVE_SETTING_OPEN', async () => {
     const service = createObjectiveService();
-    service.getQuarterAssignment = jest.fn().mockResolvedValue(
-      mockQuarterAssignment(QuarterWorkflowState.OBJECTIVE_SETTING_OPEN),
+    service.getTermAssignment = jest.fn().mockResolvedValue(
+      mockTermAssignment(TermWorkflowState.OBJECTIVE_SETTING_OPEN),
     );
 
     await service.transitionQuarterIfNeeded(
-      quarterAssignmentId.toString(),
-      QuarterWorkflowState.OBJECTIVE_SUBMITTED,
+      termAssignmentId.toString(),
+      TermWorkflowState.OBJECTIVE_SUBMITTED,
     );
 
-    expect(transitionQuarterAssignmentState).not.toHaveBeenCalled();
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
 
-  it('does not let objective return move quarterState from OBJECTIVE_SETTING_OPEN', async () => {
+  it('does not let objective return move termState from OBJECTIVE_SETTING_OPEN', async () => {
     const service = createObjectiveService();
-    service.getQuarterAssignment = jest.fn().mockResolvedValue(
-      mockQuarterAssignment(QuarterWorkflowState.OBJECTIVE_SETTING_OPEN),
+    service.getTermAssignment = jest.fn().mockResolvedValue(
+      mockTermAssignment(TermWorkflowState.OBJECTIVE_SETTING_OPEN),
     );
 
     await service.transitionQuarterIfNeeded(
-      quarterAssignmentId.toString(),
-      QuarterWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+      termAssignmentId.toString(),
+      TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
     );
 
-    expect(transitionQuarterAssignmentState).not.toHaveBeenCalled();
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
 
   it('does not let objective approval silently close objective setting', async () => {
     const service = createObjectiveService();
-    service.getQuarterAssignment = jest.fn().mockResolvedValue(
-      mockQuarterAssignment(QuarterWorkflowState.OBJECTIVE_SETTING_OPEN),
+    service.getTermAssignment = jest.fn().mockResolvedValue(
+      mockTermAssignment(TermWorkflowState.OBJECTIVE_SETTING_OPEN),
     );
 
-    await service.updateQuarterStateAfterApproval(quarterAssignmentId.toString());
+    await service.updateTermStateAfterApproval(termAssignmentId.toString());
 
     expect(Objective.find).not.toHaveBeenCalled();
-    expect(transitionQuarterAssignmentState).not.toHaveBeenCalled();
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
 
   it('opens seeded predefined-objective assignments to OBJECTIVE_SETTING_OPEN at launch', async () => {
     const service = createAssignmentService();
-    const quarterAssignment = mockQuarterAssignment(QuarterWorkflowState.NOT_STARTED);
-    (transitionQuarterAssignmentState as jest.Mock).mockResolvedValue(
-      mockQuarterAssignment(QuarterWorkflowState.OBJECTIVE_SETTING_OPEN),
+    const termAssignment = mockTermAssignment(TermWorkflowState.NOT_STARTED);
+    (transitionTermAssignmentState as jest.Mock).mockResolvedValue(
+      mockTermAssignment(TermWorkflowState.OBJECTIVE_SETTING_OPEN),
     );
 
-    await service.openSeededQuarterAssignmentsForObjectiveSetting(
-      [quarterAssignment],
-      new Set([quarterAssignmentId.toString()]),
+    await service.syncInitialTermAssignmentStates(
+      { _id: annualAssignmentId, assignmentWindowSnapshot: undefined },
+      [termAssignment],
+      new Set([termAssignmentId.toString()]),
+      new Map([
+        [
+          termCycleId.toString(),
+          {
+            assessmentTermCode: 'Q1',
+            assessmentTermType: 'QUARTERLY',
+            objectiveSettingWindow: {
+              startDate: new Date('2026-06-01T00:00:00.000Z'),
+              endDate: new Date('2026-06-30T00:00:00.000Z'),
+            },
+          },
+        ],
+      ]),
     );
 
-    expect(transitionQuarterAssignmentState).toHaveBeenCalledWith(
-      quarterAssignmentId.toString(),
-      QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
+    expect(transitionTermAssignmentState).toHaveBeenCalledWith(
+      termAssignmentId.toString(),
+      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
       { actorId: actorId.toString(), actorRole: 'ADMIN' },
-      'Seeded predefined objectives are approved; objective setting remains open for additional objectives',
+      'Current objective-setting window is active at assignment launch.',
+      'PMS_TERM_ASSIGNMENT_SEEDED_OBJECTIVE_SETTING_OPEN',
+      expect.objectContaining({
+        annualAssignmentId: annualAssignmentId.toString(),
+        assessmentTermCode: 'Q1',
+      }),
     );
   });
 
   it('closes objective setting explicitly from OBJECTIVE_SETTING_OPEN to OBJECTIVE_APPROVED', async () => {
     const service = createObjectiveService();
-    const initialQuarterAssignment = mockQuarterAssignment(
-      QuarterWorkflowState.OBJECTIVE_SETTING_OPEN,
+    const initialTermAssignment = mockTermAssignment(
+      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
     );
-    const approvedQuarterAssignment = mockQuarterAssignment(
-      QuarterWorkflowState.OBJECTIVE_APPROVED,
+    const approvedTermAssignment = mockTermAssignment(
+      TermWorkflowState.OBJECTIVE_APPROVED,
     );
-    const closedQuarterAssignment = {
-      ...approvedQuarterAssignment,
+    const closedTermAssignment = {
+      ...approvedTermAssignment,
       version: 1,
       save: jest.fn().mockResolvedValue(undefined),
     };
 
-    service.getQuarterAssignment = jest.fn()
-      .mockResolvedValueOnce(initialQuarterAssignment)
-      .mockResolvedValueOnce(approvedQuarterAssignment)
-      .mockResolvedValueOnce(closedQuarterAssignment);
+    service.getTermAssignment = jest.fn()
+      .mockResolvedValueOnce(initialTermAssignment)
+      .mockResolvedValueOnce(approvedTermAssignment)
+      .mockResolvedValueOnce(closedTermAssignment);
+    service.getAnnualAssignment = jest.fn().mockResolvedValue({});
+    service.getObjectiveConfigForAssignment = jest.fn().mockResolvedValue({});
+    service.validateObjectiveWeightageBeforeClose = jest.fn().mockResolvedValue(undefined);
     service.getObjectiveDelegation = jest.fn().mockResolvedValue(null);
     service.audit = jest.fn();
     (Objective.find as jest.Mock).mockReturnValue({
@@ -242,23 +309,23 @@ describe('Quarter assignment workflow state ownership', () => {
         lean: jest.fn().mockResolvedValue([]),
       }),
     });
-    (transitionQuarterAssignmentState as jest.Mock).mockResolvedValue(
-      approvedQuarterAssignment,
+    (transitionTermAssignmentState as jest.Mock).mockResolvedValue(
+      approvedTermAssignment,
     );
 
     const result = await service.closeObjectiveSetting(
-      quarterAssignmentId.toString(),
+      termAssignmentId.toString(),
       { confirm: true, reason: 'Ready for sync' },
     );
 
-    expect(transitionQuarterAssignmentState).toHaveBeenCalledWith(
-      quarterAssignmentId.toString(),
-      QuarterWorkflowState.OBJECTIVE_APPROVED,
+    expect(transitionTermAssignmentState).toHaveBeenCalledWith(
+      termAssignmentId.toString(),
+      TermWorkflowState.OBJECTIVE_APPROVED,
       { actorId: actorId.toString(), actorRole: 'ADMIN' },
       'Ready for sync',
       'CLOSE_OBJECTIVE_SETTING',
     );
-    expect(closedQuarterAssignment.save).toHaveBeenCalled();
+    expect(closedTermAssignment.save).toHaveBeenCalled();
     expect(result.objectiveSettingCloseSource).toBe('ADMIN');
   });
 
@@ -267,15 +334,16 @@ describe('Quarter assignment workflow state ownership', () => {
     (AnnualCycle.findOne as jest.Mock).mockReturnValue({
       lean: jest.fn().mockResolvedValue({ _id: cycleId, isDeleted: false }),
     });
-    (QuarterAssignment.find as jest.Mock).mockReturnValue({
+    (TermAssignment.find as jest.Mock).mockReturnValue({
       sort: jest.fn().mockResolvedValue([
-        mockQuarterAssignment(QuarterWorkflowState.OBJECTIVE_SETTING_OPEN),
+        mockTermAssignment(TermWorkflowState.OBJECTIVE_SETTING_OPEN),
       ]),
     });
-    (QuarterCycle.find as jest.Mock).mockResolvedValue([
+    (TermCycle.find as jest.Mock).mockResolvedValue([
       {
         cycleId,
-        quarterCode: 'Q1',
+        assessmentTermCode: 'Q1',
+        assessmentTermType: 'QUARTERLY',
         objectiveSettingWindow: {
           startDate: new Date('2026-06-01T00:00:00.000Z'),
           endDate: new Date('2026-06-30T00:00:00.000Z'),
@@ -288,23 +356,27 @@ describe('Quarter assignment workflow state ownership', () => {
     expect(result.totalChecked).toBe(1);
     expect(result.totalUpdated).toBe(0);
     expect(result.skippedObjectiveSettingOpen).toBe(1);
-    expect(transitionQuarterAssignmentState).not.toHaveBeenCalled();
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
 
   it('manual sync moves OBJECTIVE_APPROVED forward after objective setting is closed', async () => {
     const service = createWorkflowSyncService();
+    (service as any).validateObjectiveScoringReadyForAchievementOpen = jest.fn().mockResolvedValue({
+      ready: true,
+    });
     (AnnualCycle.findOne as jest.Mock).mockReturnValue({
       lean: jest.fn().mockResolvedValue({ _id: cycleId, isDeleted: false }),
     });
-    (QuarterAssignment.find as jest.Mock).mockReturnValue({
+    (TermAssignment.find as jest.Mock).mockReturnValue({
       sort: jest.fn().mockResolvedValue([
-        mockQuarterAssignment(QuarterWorkflowState.OBJECTIVE_APPROVED),
+        mockTermAssignment(TermWorkflowState.OBJECTIVE_APPROVED),
       ]),
     });
-    (QuarterCycle.find as jest.Mock).mockResolvedValue([
+    (TermCycle.find as jest.Mock).mockResolvedValue([
       {
         cycleId,
-        quarterCode: 'Q1',
+        assessmentTermCode: 'Q1',
+        assessmentTermType: 'QUARTERLY',
         achievementSubmissionWindow: {
           enabled: true,
           startDate: new Date('2026-06-01T00:00:00.000Z'),
@@ -312,17 +384,17 @@ describe('Quarter assignment workflow state ownership', () => {
         },
       },
     ]);
-    (transitionQuarterAssignmentState as jest.Mock).mockResolvedValue(
-      mockQuarterAssignment(QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN),
+    (transitionTermAssignmentState as jest.Mock).mockResolvedValue(
+      mockTermAssignment(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN),
     );
 
     const result = await service.syncWorkflowStates(cycleId.toString());
 
     expect(result.totalChecked).toBe(1);
     expect(result.totalUpdated).toBe(1);
-    expect(transitionQuarterAssignmentState).toHaveBeenCalledWith(
-      quarterAssignmentId.toString(),
-      QuarterWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+    expect(transitionTermAssignmentState).toHaveBeenCalledWith(
+      termAssignmentId.toString(),
+      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
       { actorId: actorId.toString(), actorRole: 'ADMIN' },
       'Employee achievement submission window is eligible.',
       'ADMIN_WORKFLOW_SYNC',

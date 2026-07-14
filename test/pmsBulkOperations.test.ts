@@ -27,6 +27,25 @@ jest.mock('../src/models', () => {
         return chain;
       }),
     },
+    AnnualCycle: {
+      findById: jest.fn(() => ({
+        lean: jest.fn(() => ({ _id: new Types.ObjectId('507f1f77bcf86cd799439011') })),
+      })),
+    },
+    TermCycle: {
+      find: jest.fn(() => ({
+        lean: jest.fn(() => mockQuarterCycleFindVal),
+      })),
+    },
+    TermAssignment: {
+      find: jest.fn(() => ({
+        populate: jest.fn(() => ({
+          populate: jest.fn(() => ({
+            lean: jest.fn(() => mockQuarterAssignmentFindVal),
+          })),
+        })),
+      })),
+    },
     QuarterCycle: {
       find: jest.fn(() => ({
         lean: jest.fn(() => mockQuarterCycleFindVal),

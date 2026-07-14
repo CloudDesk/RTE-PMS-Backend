@@ -61,7 +61,7 @@ const annualDecisionSchema = new Schema<IAnnualDecision>(
     meritDetails: Schema.Types.Mixed,
     nilReason: String,
     managementRemarks: String,
-    finalScore: { type: Number, min: 0 },
+    finalScore: { type: Number, min: 0, max: 100 },
     finalRating: String,
     decisionStatus: {
       type: String,
