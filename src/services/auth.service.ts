@@ -6,9 +6,16 @@ import { generateEmailTemplate } from '../emails/templates';
 
 export class AuthService {
   async login(email: string, password: string) {
-    // Only allow login for users with portal access (payroll-only duplicate-email users cannot log in).
+    // Only active, non-trainee, non-intern users with portal access can log in.
+    // Employment status is intentionally not used: experienced hires may also be on probation.
     // Treat missing/undefined portalAccess as portal (existing users created before field existed).
-    const user = await User.findOne({ email: email.toLowerCase().trim(), active: true, portalAccess: { $ne: false } }).select('+password');
+    const user = await User.findOne({
+      email: email.toLowerCase().trim(),
+      active: true,
+      portalAccess: { $ne: false },
+      role: { $not: /^Trainee$/i },
+      isIntern: { $ne: true },
+    }).select('+password');
     console.log('User Found', user);
     if (!user) {
       throw new Error('Invalid email or password');
@@ -145,4 +152,4 @@ export class AuthService {
     }
 
   }
-} 
+}
