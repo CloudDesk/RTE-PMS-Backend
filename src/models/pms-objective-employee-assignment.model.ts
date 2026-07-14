@@ -19,6 +19,17 @@ export interface IObjectiveEmployeeAssignment extends Document {
   employeeId: Types.ObjectId;
   managerId?: Types.ObjectId;
   selectedTerms: AssessmentTermCodeType[];
+  termStates?: Array<{
+    term: AssessmentTermCodeType;
+    status: ObjectiveEmployeeAssignmentStatusType | 'LOCKED' | 'OPEN' | 'RETURNED';
+    fillStartDate: Date;
+    fillEndDate: Date;
+    submittedAt?: Date;
+    submittedBy?: Types.ObjectId;
+    closedAt?: Date;
+    closedBy?: Types.ObjectId;
+    readOnlyReason?: string;
+  }>;
   frozenObjectiveSnapshot: IObjectiveBusinessSnapshot;
   values?: Record<string, unknown>;
   status: ObjectiveEmployeeAssignmentStatusType;
@@ -71,6 +82,38 @@ const objectiveEmployeeAssignmentSchema = new Schema<IObjectiveEmployeeAssignmen
       default: [],
       index: true,
     },
+    termStates: {
+      type: [
+        {
+          term: {
+            type: String,
+            required: true,
+            enum: Object.values(AssessmentTermCode),
+          },
+          status: {
+            type: String,
+            required: true,
+            enum: [...Object.values(ObjectiveEmployeeAssignmentStatus), 'LOCKED', 'OPEN', 'RETURNED'],
+            default: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
+            index: true,
+          },
+          fillStartDate: {
+            type: Date,
+            required: true,
+          },
+          fillEndDate: {
+            type: Date,
+            required: true,
+          },
+          submittedAt: Date,
+          submittedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+          closedAt: Date,
+          closedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+          readOnlyReason: { type: String, trim: true },
+        },
+      ],
+      default: [],
+    },
     frozenObjectiveSnapshot: {
       type: objectiveFrozenSnapshotSchema,
       required: true,
@@ -120,6 +163,7 @@ objectiveEmployeeAssignmentSchema.index({
 });
 objectiveEmployeeAssignmentSchema.index({ managerId: 1, status: 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({ selectedTerms: 1, status: 1, isDeleted: 1 });
+objectiveEmployeeAssignmentSchema.index({ 'termStates.term': 1, 'termStates.status': 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index(
   {
     objectiveAssignmentPeriodId: 1,
