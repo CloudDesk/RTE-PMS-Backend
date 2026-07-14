@@ -2,15 +2,44 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 import {
   AssessmentTermCode,
   ObjectiveEmployeeAssignmentStatus,
+  ObjectiveTermEntryOverrideStatus,
+  ObjectiveTermSubmissionMode,
 } from '../constants/pms.enums';
 import type {
   AssessmentTermCode as AssessmentTermCodeType,
   ObjectiveEmployeeAssignmentStatus as ObjectiveEmployeeAssignmentStatusType,
+  ObjectiveTermEntryOverrideStatus as ObjectiveTermEntryOverrideStatusType,
+  ObjectiveTermSubmissionMode as ObjectiveTermSubmissionModeType,
 } from '../constants/pms.enums';
 import {
   objectiveFrozenSnapshotSchema,
   type IObjectiveBusinessSnapshot,
 } from './pms-objective-master-version.model';
+
+const objectiveTermEntryOverrideSchema = new Schema(
+  {
+    type: {
+      type: String,
+      enum: ['PAST_TERM'],
+      required: true,
+      default: 'PAST_TERM',
+    },
+    status: {
+      type: String,
+      enum: Object.values(ObjectiveTermEntryOverrideStatus),
+      required: true,
+    },
+    opensAt: { type: Date, required: true },
+    closesAt: { type: Date, required: true },
+    reason: { type: String, required: true, trim: true, maxlength: 500 },
+    enabledAt: { type: Date, required: true },
+    enabledBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    revokedAt: Date,
+    revokedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    revocationReason: { type: String, trim: true, maxlength: 500 },
+  },
+  { _id: false },
+);
 
 export interface IObjectiveEmployeeAssignment extends Document {
   objectiveAssignmentPeriodId: Types.ObjectId;
@@ -29,6 +58,19 @@ export interface IObjectiveEmployeeAssignment extends Document {
     closedAt?: Date;
     closedBy?: Types.ObjectId;
     readOnlyReason?: string;
+    submissionMode?: ObjectiveTermSubmissionModeType;
+    entryOverride?: {
+      type: 'PAST_TERM';
+      status: ObjectiveTermEntryOverrideStatusType;
+      opensAt: Date;
+      closesAt: Date;
+      reason: string;
+      enabledAt: Date;
+      enabledBy: Types.ObjectId;
+      revokedAt?: Date;
+      revokedBy?: Types.ObjectId;
+      revocationReason?: string;
+    };
   }>;
   frozenObjectiveSnapshot: IObjectiveBusinessSnapshot;
   values?: Record<string, unknown>;
@@ -110,6 +152,15 @@ const objectiveEmployeeAssignmentSchema = new Schema<IObjectiveEmployeeAssignmen
           closedAt: Date,
           closedBy: { type: Schema.Types.ObjectId, ref: 'User' },
           readOnlyReason: { type: String, trim: true },
+          submissionMode: {
+            type: String,
+            enum: Object.values(ObjectiveTermSubmissionMode),
+          },
+          entryOverride: {
+            type: objectiveTermEntryOverrideSchema,
+            required: false,
+            default: undefined,
+          },
         },
       ],
       default: [],
@@ -164,6 +215,11 @@ objectiveEmployeeAssignmentSchema.index({
 objectiveEmployeeAssignmentSchema.index({ managerId: 1, status: 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({ selectedTerms: 1, status: 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({ 'termStates.term': 1, 'termStates.status': 1, isDeleted: 1 });
+objectiveEmployeeAssignmentSchema.index({
+  'termStates.entryOverride.status': 1,
+  'termStates.entryOverride.closesAt': 1,
+  isDeleted: 1,
+});
 objectiveEmployeeAssignmentSchema.index(
   {
     objectiveAssignmentPeriodId: 1,

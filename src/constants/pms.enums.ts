@@ -248,6 +248,23 @@ export const ObjectiveEmployeeAssignmentStatus = {
 export type ObjectiveEmployeeAssignmentStatus =
   (typeof ObjectiveEmployeeAssignmentStatus)[keyof typeof ObjectiveEmployeeAssignmentStatus];
 
+export const ObjectiveTermEntryOverrideStatus = {
+  ACTIVE: 'ACTIVE',
+  EXPIRED: 'EXPIRED',
+  REVOKED: 'REVOKED',
+} as const;
+
+export type ObjectiveTermEntryOverrideStatus =
+  (typeof ObjectiveTermEntryOverrideStatus)[keyof typeof ObjectiveTermEntryOverrideStatus];
+
+export const ObjectiveTermSubmissionMode = {
+  SCHEDULED: 'SCHEDULED',
+  BACKFILL: 'BACKFILL',
+} as const;
+
+export type ObjectiveTermSubmissionMode =
+  (typeof ObjectiveTermSubmissionMode)[keyof typeof ObjectiveTermSubmissionMode];
+
 export const ObjectiveTargetDirection = {
   HIGHER_IS_BETTER: 'HIGHER_IS_BETTER',
   LOWER_IS_BETTER: 'LOWER_IS_BETTER',
