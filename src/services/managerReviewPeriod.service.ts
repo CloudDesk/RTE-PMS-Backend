@@ -15,6 +15,7 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { DelegationService } from './delegation.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   intersectGroupTerms,
@@ -130,6 +131,7 @@ export interface ManagerReviewPeriodAssignmentRecord {
   anchorTerm: AssessmentTermCodeType;
   anchorTermAssignmentId?: string;
   reviewState: ManagerReviewPeriodStateType;
+  isDelegated?: boolean;
   assessmentStartDate?: string;
   assessmentEndDate?: string;
   reviewWindow?: { startDate?: string; endDate?: string };
@@ -233,7 +235,9 @@ export class ManagerReviewPeriodService extends BaseService {
     } else if (mode === 'admin' && actorRole === PmsRole.ADMIN) {
       // Admin can inspect all grouped manager reviews.
     } else {
-      filter.managerId = this.toObjectId(actor.actorId, 'actorId');
+      const managerId = this.toObjectId(actor.actorId, 'actorId');
+      const delegatedClauses = await this.delegatedReviewPeriodClausesForActor(actor.actorId);
+      filter.$or = [{ managerId }, ...delegatedClauses];
     }
 
     const reviews = await ManagerReviewPeriodAssignment.find(filter)
@@ -821,6 +825,8 @@ export class ManagerReviewPeriodService extends BaseService {
       ]),
     );
 
+    const actorId = this.context.user?._id.toString();
+
     return Promise.all(reviews.map(async (review) => {
       const annualAssignment = annualById.get(review.annualAssignmentId.toString());
       const cycle = cycleById.get(review.cycleId.toString());
@@ -918,6 +924,7 @@ export class ManagerReviewPeriodService extends BaseService {
         departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: review.managerId.toString(),
         managerName: String(managerSnapshot.name ?? 'Manager'),
+        isDelegated: Boolean(actorId && actorId !== review.managerId.toString()),
         templateVersionId:
           review.templateVersionId?.toString() ??
           annualAssignment?.templateVersionId?.toString() ??
@@ -1063,9 +1070,22 @@ export class ManagerReviewPeriodService extends BaseService {
         managerId: review.managerId.toString(),
       },
     });
-    if (!access.allowed) {
-      throw new Error(access.message ?? 'Access denied');
+    if (access.allowed) {
+      return;
     }
+
+    const delegation = await this.getReviewDelegation(
+      actor.actorId,
+      review.managerId.toString(),
+      review.cycleId.toString(),
+      review.annualAssignmentId.toString(),
+    );
+
+    if (delegation) {
+      return;
+    }
+
+    throw new Error(access.message ?? 'Access denied');
   }
 
   private async assertManagerAccess(
@@ -1080,7 +1100,58 @@ export class ManagerReviewPeriodService extends BaseService {
     if (actor.actorId === review.managerId.toString()) {
       return;
     }
+
+    const delegation = await this.getReviewDelegation(
+      actor.actorId,
+      review.managerId.toString(),
+      review.cycleId.toString(),
+      review.annualAssignmentId.toString(),
+    );
+
+    if (delegation) {
+      return;
+    }
+
     await this.assertReviewAccess(action, review);
+  }
+
+  private async delegatedReviewPeriodClausesForActor(actorId: string): Promise<Record<string, unknown>[]> {
+    const delegations = await new DelegationService(this.context).getActiveDelegationsForDelegate(
+      actorId,
+      'PMS_REVIEWS',
+    );
+
+    return delegations.map((delegation) => {
+      if (delegation.annualAssignmentId) {
+        return {
+          annualAssignmentId: delegation.annualAssignmentId,
+          managerId: delegation.delegatorUserId,
+        };
+      }
+
+      const clause: Record<string, unknown> = {
+        managerId: delegation.delegatorUserId,
+      };
+      if (delegation.cycleId) {
+        clause.cycleId = delegation.cycleId;
+      }
+      return clause;
+    });
+  }
+
+  private async getReviewDelegation(
+    delegateUserId: string,
+    delegatorUserId: string,
+    cycleId?: string,
+    annualAssignmentId?: string,
+  ): Promise<any | null> {
+    return new DelegationService(this.context).getActiveDelegation(
+      delegateUserId,
+      delegatorUserId,
+      'PMS_REVIEWS',
+      cycleId,
+      annualAssignmentId,
+    );
   }
 
   private async assertReviewWindow(review: IManagerReviewPeriodAssignment): Promise<void> {

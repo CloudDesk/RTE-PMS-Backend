@@ -216,6 +216,7 @@ export type TermReviewAssignmentRecord = {
   departmentId?: string;
   managerId: string;
   managerName: string;
+  isDelegated?: boolean;
   templateVersionId?: string;
   reviewConfig: {
     mode?: 'AUTO' | 'MANUAL';
@@ -309,6 +310,10 @@ export class TermReviewService extends BaseService {
         actor.actorId,
         'PMS_REVIEWS',
       );
+      const objectiveDelegations = await new DelegationService(this.context).getActiveDelegationsForDelegate(
+        actor.actorId,
+        'PMS_OBJECTIVES',
+      );
       const managerClauses: Record<string, unknown>[] = [{ assignedManagerId: managerId }];
 
       for (const delegation of delegations) {
@@ -318,6 +323,31 @@ export class TermReviewService extends BaseService {
               assignedManagerId: delegation.delegatorUserId,
             }
           : { assignedManagerId: delegation.delegatorUserId };
+        if (!delegation.annualAssignmentId && delegation.cycleId) {
+          clause.cycleId = delegation.cycleId;
+        }
+        managerClauses.push(clause);
+      }
+
+      const objectiveDelegationStates = [
+        TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+        TermWorkflowState.OBJECTIVE_DRAFT,
+        TermWorkflowState.OBJECTIVE_SUBMITTED,
+        TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+        TermWorkflowState.REOPENED_BY_ADMIN,
+      ];
+
+      for (const delegation of objectiveDelegations) {
+        const clause: Record<string, unknown> = delegation.annualAssignmentId
+          ? {
+              annualAssignmentId: delegation.annualAssignmentId,
+              assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: objectiveDelegationStates },
+            }
+          : {
+              assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: objectiveDelegationStates },
+            };
         if (!delegation.annualAssignmentId && delegation.cycleId) {
           clause.cycleId = delegation.cycleId;
         }
@@ -472,6 +502,7 @@ export class TermReviewService extends BaseService {
         departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: termAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
+        isDelegated: actor.actorId !== termAssignment.assignedManagerId.toString(),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
           mode: reviewConfig.mode ?? 'AUTO',
@@ -1101,6 +1132,7 @@ export class TermReviewService extends BaseService {
         departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: termAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
+        isDelegated: actor.actorId !== termAssignment.assignedManagerId.toString(),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
           mode: reviewConfig.mode ?? 'AUTO',
