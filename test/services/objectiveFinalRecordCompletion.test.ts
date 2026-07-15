@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { ObjectiveEmployeeAssignmentStatus } from '../../src/constants/pms.enums';
 import { ObjectiveEmployeeAssignment } from '../../src/models/pms-objective-employee-assignment.model';
+import { User } from '../../src/models/user.model';
 import { ObjectiveService } from '../../src/services/objective.service';
 import type { RequestContext } from '../../src/types/context';
 
@@ -360,6 +361,49 @@ describe('ObjectiveService - final objective record completion contract', () => 
     expect(service.mapObjectiveFinalRecordForView(snapshot, 'EMPLOYEE').integrityVerified).toBe(false);
   });
 
+  it('verifies legacy omitted optional fields stored as null without accepting changed values', () => {
+    const payload = {
+      schemaVersion: 1,
+      selectedTerms: ['Q1'],
+      employeeSnapshot: { id: new Types.ObjectId().toString() },
+    };
+    const legacyRecord = {
+      ...payload,
+      employeeSnapshot: {
+        ...payload.employeeSnapshot,
+        name: null,
+        employeeCode: null,
+      },
+      contentHash: service.hashObjectiveFinalRecordPayload(payload),
+    };
+
+    expect(service.verifyObjectiveFinalRecordIntegrity(legacyRecord)).toBe(true);
+    legacyRecord.selectedTerms = ['Q2'];
+    expect(service.verifyObjectiveFinalRecordIntegrity(legacyRecord)).toBe(false);
+  });
+
+  it('resolves an unpopulated employee ObjectId instead of treating it as a user snapshot', async () => {
+    const employeeId = new Types.ObjectId();
+    jest.spyOn(User, 'findById').mockReturnValue({
+      select: () => ({
+        lean: async () => ({
+          _id: employeeId,
+          name: 'Deepika',
+          employeeCode: 'CD0308',
+          departmentId: 'production',
+        }),
+      }),
+    } as any);
+
+    await expect(service.resolveObjectiveFinalRecordParticipantSnapshot(employeeId)).resolves.toEqual({
+      id: employeeId.toString(),
+      name: 'Deepika',
+      employeeCode: 'CD0308',
+      department: 'production',
+      role: undefined,
+    });
+  });
+
   it('freezes calculated Actual and Gap values in the final record', async () => {
     service.getCurrentDate = jest.fn(() => new Date('2027-03-31T10:05:00.000Z'));
     const assignment = {
@@ -480,6 +524,10 @@ describe('ObjectiveService - final objective record completion contract', () => 
     });
     service.buildObjectiveFinalRecordSnapshot = jest.fn().mockResolvedValue(candidate);
     service.mapObjectiveFinalRecordForView = jest.fn().mockReturnValue({ id: 'mapped-record' });
+    service.resolveObjectiveFinalRecordParticipantSnapshot = jest.fn().mockResolvedValue({
+      id: employeeId.toString(),
+      name: 'Employee',
+    });
     service.audit = jest.fn().mockResolvedValue(undefined);
     const updateSpy = jest
       .spyOn(ObjectiveEmployeeAssignment, 'updateOne')

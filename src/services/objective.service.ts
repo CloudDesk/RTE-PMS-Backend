@@ -966,6 +966,8 @@ export interface ObjectiveFinalRecordViewRecord {
   assignmentPeriodSnapshot: Record<string, unknown>;
   employeeSnapshot: IObjectiveFinalRecordParticipantSnapshot;
   managerSnapshot?: IObjectiveFinalRecordParticipantSnapshot;
+  employeeDisplay?: IObjectiveFinalRecordParticipantSnapshot;
+  managerDisplay?: IObjectiveFinalRecordParticipantSnapshot;
   frozenObjectiveSnapshot: Record<string, unknown>;
   employeeValues: Record<string, unknown>;
   calculatedValues: Record<string, number>;
@@ -3339,10 +3341,24 @@ export class ObjectiveService extends BaseService {
       throw new Error('Final objective record could not be prepared');
     }
 
+    const [employeeDisplay, managerDisplay] = await Promise.all([
+      finalRecord.employeeSnapshot?.name
+        ? Promise.resolve(undefined)
+        : this.resolveObjectiveFinalRecordParticipantSnapshot(assignment.employeeId),
+      finalRecord.managerSnapshot?.name || !assignment.managerId
+        ? Promise.resolve(undefined)
+        : this.resolveObjectiveFinalRecordParticipantSnapshot(assignment.managerId),
+    ]);
+
     return {
       availability: 'AVAILABLE',
       readiness,
-      record: this.mapObjectiveFinalRecordForView(finalRecord, viewAs),
+      record: this.mapObjectiveFinalRecordForView(
+        finalRecord,
+        viewAs,
+        employeeDisplay,
+        managerDisplay,
+      ),
     };
   }
 
@@ -10781,9 +10797,10 @@ export class ObjectiveService extends BaseService {
         readiness.selectedTerms,
       ),
     };
+    const canonicalPayload = this.objectiveFinalRecordPlainValue(payload);
     return {
-      ...payload,
-      contentHash: this.hashObjectiveFinalRecordPayload(payload),
+      ...canonicalPayload,
+      contentHash: this.hashObjectiveFinalRecordPayload(canonicalPayload),
     };
   }
 
@@ -10792,7 +10809,10 @@ export class ObjectiveService extends BaseService {
   ): Promise<IObjectiveFinalRecordParticipantSnapshot> {
     const participantId = participant?._id ?? participant;
     const id = participantId?.toString?.() ?? '';
-    const embedded = participant?._id ? participant?.toObject?.() ?? participant : undefined;
+    const isObjectId = participant instanceof Types.ObjectId || typeof participant?.toHexString === 'function';
+    const embedded = participant?._id && !isObjectId
+      ? participant?.toObject?.() ?? participant
+      : undefined;
     const user = embedded ?? (id && Types.ObjectId.isValid(id)
       ? await User.findById(id)
           .select('name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
@@ -11080,6 +11100,8 @@ export class ObjectiveService extends BaseService {
   private mapObjectiveFinalRecordForView(
     sourceRecord: IObjectiveAssignmentFinalRecordSnapshot,
     viewAs: ObjectiveFinalRecordViewActor,
+    employeeDisplay?: IObjectiveFinalRecordParticipantSnapshot,
+    managerDisplay?: IObjectiveFinalRecordParticipantSnapshot,
   ): ObjectiveFinalRecordViewRecord {
     const finalRecord = this.objectiveFinalRecordPlainValue(sourceRecord);
     const frozenObjectiveSnapshot = this.objectiveFinalRecordPlainValue(
@@ -11142,6 +11164,8 @@ export class ObjectiveService extends BaseService {
       contentHash,
       integrityVerified: this.verifyObjectiveFinalRecordIntegrity(finalRecord),
       viewAs,
+      employeeDisplay,
+      managerDisplay,
     } as unknown as ObjectiveFinalRecordViewRecord;
   }
 
@@ -11177,7 +11201,26 @@ export class ObjectiveService extends BaseService {
   private verifyObjectiveFinalRecordIntegrity(record: IObjectiveAssignmentFinalRecordSnapshot): boolean {
     const plainRecord = this.objectiveFinalRecordPlainValue(record);
     const { contentHash, ...payload } = plainRecord;
-    return Boolean(contentHash) && contentHash === this.hashObjectiveFinalRecordPayload(payload);
+    if (!contentHash) return false;
+    if (contentHash === this.hashObjectiveFinalRecordPayload(payload)) return true;
+
+    // Early schema-v1 records were hashed before Mongoose converted omitted optional
+    // Mixed values to null. Treat only that representation difference as equivalent.
+    const legacyPayload = this.objectiveFinalRecordStripNullObjectFields(payload);
+    return contentHash === this.hashObjectiveFinalRecordPayload(legacyPayload);
+  }
+
+  private objectiveFinalRecordStripNullObjectFields(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.objectiveFinalRecordStripNullObjectFields(item));
+    }
+    if (!value || typeof value !== 'object' || value instanceof Date) return value;
+    if (typeof (value as any)?.toHexString === 'function') return value;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== null && item !== undefined)
+        .map(([key, item]) => [key, this.objectiveFinalRecordStripNullObjectFields(item)]),
+    );
   }
 
   private hashObjectiveFinalRecordPayload(payload: unknown): string {
