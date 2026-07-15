@@ -9,6 +9,7 @@ import { VisibilityConfiguration } from '../models/pms-visibility-configuration.
 import { User } from '../models/user.model';
 import type { IAuditLog } from '../models/audit-log.model';
 import type { CreateAuditLogInput } from '../types/pms.types';
+import { SYSTEM_WORKFLOW_SYNC_ACTOR } from '../constants/system-actors';
 
 export interface AuditHistoryEntry {
   _id: string;
@@ -295,6 +296,15 @@ export class AuditService {
 
     return logs.map((log) => {
       const actorId = log.actorId?.toString?.() ?? '';
+
+      if (actorId === SYSTEM_WORKFLOW_SYNC_ACTOR.id) {
+        return {
+          ...log,
+          actorName: SYSTEM_WORKFLOW_SYNC_ACTOR.name,
+          actorEmail: SYSTEM_WORKFLOW_SYNC_ACTOR.email,
+        };
+      }
+
       const actor = userMap.get(actorId);
 
       if (!actor) {

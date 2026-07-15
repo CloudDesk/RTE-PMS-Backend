@@ -8,6 +8,7 @@ import type {
   CancelProbationReviewInput,
   CreateProbationReviewInput,
   OpenProbationReviewInput,
+  ProbationReviewHistoryQuery,
   ProbationReviewListQuery,
   ReturnProbationReviewInput,
   SaveProbationReviewDraftInput,
@@ -142,6 +143,21 @@ export const probationReviewRoutes: RouteHandler = async (
         const { draftId } = request.params as { draftId: string };
         const result = await request.container!.probationReviewService.assignDraft(draftId);
         return reply.send(successResponse('Trainee review draft assigned successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/history',
+    { onRequest: [authenticate], schema: { tags: ['PMS Trainee Reviews'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.probationReviewService.listHistory(
+          request.query as ProbationReviewHistoryQuery,
+        );
+        return reply.send(successResponse('Trainee review history fetched successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

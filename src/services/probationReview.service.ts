@@ -43,6 +43,34 @@ export interface CreateProbationReviewInput {
   allowExistingAssignment?: boolean;
 }
 
+export interface ProbationReviewHistoryQuery {
+  page?: string | number;
+  limit?: string | number;
+  action?: string;
+  status?: string;
+  search?: string;
+  dateFrom?: string | Date;
+  dateTo?: string | Date;
+}
+
+export interface ProbationReviewHistoryEntry {
+  id: string;
+  assignmentId: string;
+  employeeId: string;
+  employeeName: string;
+  employeeCode?: string;
+  department?: string;
+  action: string;
+  actorId?: string;
+  actorName: string;
+  actorRole?: string;
+  filledByName: string;
+  approvedByName: string;
+  status: string;
+  comment?: string;
+  createdAt: Date;
+}
+
 export interface BulkCreateProbationReviewInput {
   templateId: string;
   templateVersionId: string;
@@ -189,6 +217,120 @@ export class ProbationReviewService extends BaseService {
       page,
       limit,
     };
+  }
+
+  async listHistory(query: ProbationReviewHistoryQuery = {}) {
+    const page = this.normalizePositiveInteger(query.page, 1);
+    const limit = Math.min(this.normalizePositiveInteger(query.limit, 20), 100);
+    const assignmentFilter: Record<string, unknown> = { isDeleted: false };
+
+    if (!this.isPrivilegedActor()) {
+      const actorId = this.requireActorObjectId();
+      assignmentFilter.$or = [{ manager1Id: actorId }, { manager2Id: actorId }];
+    }
+
+    const assignments = await PmsProbationReviewAssignment.find(assignmentFilter)
+      .select('_id employeeId manager1Id manager2Id reviewerConfiguration auditTrail')
+      .populate('employeeId', 'name email employeeCode departmentId department')
+      .populate('manager1Id', 'name email employeeCode')
+      .populate('manager2Id', 'name email employeeCode')
+      .lean();
+
+    const actorIds = Array.from(new Set(
+      assignments.flatMap((assignment: any) =>
+        (assignment.auditTrail || [])
+          .map((entry: any) => entry.actorId?.toString?.() || '')
+          .filter((value: string) => value && Types.ObjectId.isValid(value)),
+      ),
+    ));
+    const actors = actorIds.length > 0
+      ? await User.find({ _id: { $in: actorIds } })
+        .select('name email employeeCode role specificRole')
+        .lean()
+      : [];
+    const actorMap = new Map(actors.map((actor: any) => [actor._id.toString(), actor]));
+    const normalizedAction = query.action?.trim().toUpperCase();
+    const normalizedStatus = query.status?.trim().toUpperCase();
+    const normalizedSearch = query.search?.trim().toLowerCase();
+    const dateFrom = query.dateFrom ? this.parseDate(query.dateFrom, 'From date') : undefined;
+    const dateTo = query.dateTo ? this.parseDate(query.dateTo, 'To date') : undefined;
+    if (dateTo) dateTo.setHours(23, 59, 59, 999);
+
+    const entries: ProbationReviewHistoryEntry[] = assignments.flatMap((assignment: any) => {
+      const employee = assignment.employeeId || {};
+      const employeeId = employee._id?.toString?.() || employee.toString?.() || '';
+      const employeeName = employee.name || employee.employeeCode || employee.email || 'Unknown employee';
+      const fillingManager = assignment.reviewerConfiguration?.fillingManagerRole === 'MANAGER_2'
+        ? assignment.manager2Id
+        : assignment.manager1Id;
+      const approvingManager = assignment.reviewerConfiguration?.approvingManagerRole === 'MANAGER_1'
+        ? assignment.manager1Id
+        : assignment.manager2Id;
+      const personName = (person: any) =>
+        person?.name || person?.employeeCode || person?.email || person?.toString?.() || '-';
+      return (assignment.auditTrail || []).map((entry: any, index: number) => {
+        const actorId = entry.actorId?.toString?.() || '';
+        const actor = actorMap.get(actorId) as any;
+        return {
+          id: `${assignment._id.toString()}:${index}:${new Date(entry.createdAt).getTime()}`,
+          assignmentId: assignment._id.toString(),
+          employeeId,
+          employeeName,
+          employeeCode: employee.employeeCode,
+          department: employee.departmentId || employee.department,
+          action: String(entry.action || 'UNKNOWN'),
+          actorId: actorId || undefined,
+          actorName: actor?.name || actor?.employeeCode || actor?.email || actorId || 'System',
+          actorRole: actor?.role || actor?.specificRole,
+          filledByName: personName(fillingManager),
+          approvedByName: personName(approvingManager),
+          status: this.historyStatusForAction(String(entry.action || 'UNKNOWN')),
+          comment: entry.comment,
+          createdAt: new Date(entry.createdAt),
+        };
+      });
+    }).filter((entry) => {
+      if (normalizedAction && entry.action.toUpperCase() !== normalizedAction) return false;
+      if (normalizedStatus && entry.status !== normalizedStatus) return false;
+      if (dateFrom && entry.createdAt < dateFrom) return false;
+      if (dateTo && entry.createdAt > dateTo) return false;
+      if (normalizedSearch) {
+        const searchable = [
+          entry.employeeName,
+          entry.employeeCode,
+          entry.action,
+          entry.status,
+          entry.actorName,
+          entry.filledByName,
+          entry.approvedByName,
+          entry.comment,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!searchable.includes(normalizedSearch)) return false;
+      }
+      return true;
+    }).sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
+
+    const start = (page - 1) * limit;
+    return {
+      items: entries.slice(start, start + limit),
+      total: entries.length,
+      page,
+      limit,
+    };
+  }
+
+  private historyStatusForAction(action: string): string {
+    const normalized = action.toUpperCase();
+    if (normalized === 'CREATED') return 'SCHEDULED';
+    if (['OPENED', 'FORCE_OPENED', 'AUTO_OPENED_ON_READ', 'SYNC_OPENED'].includes(normalized)) return 'OPENED';
+    if (normalized === 'MANAGER_1_DRAFT_SAVED') return 'DRAFTED';
+    if (normalized === 'MANAGER_1_SUBMITTED') return 'SUBMITTED';
+    if (normalized === 'DELEGATED_TO_MANAGER_2') return 'FORWARDED';
+    if (normalized === 'RETURNED_TO_MANAGER_1') return 'RETURNED';
+    if (normalized === 'APPROVAL_REASSIGNED_TO_MANAGER_1') return 'REASSIGNED';
+    if (normalized === 'MANAGER_2_APPROVED') return 'FINALIZED';
+    if (normalized === 'CANCELLED') return 'CANCELLED';
+    return normalized;
   }
 
   async getAssignment(id: string) {
