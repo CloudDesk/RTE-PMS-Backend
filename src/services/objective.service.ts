@@ -289,6 +289,7 @@ export interface ObjectiveEmployeeAssignmentListQuery {
   objectiveVersionId?: string;
   employeeId?: string;
   status?: string;
+  scope?: 'SELF' | 'TEAM';
 }
 
 export interface ObjectiveAssignmentPeriodReportQuery {
@@ -3257,8 +3258,6 @@ export class ObjectiveService extends BaseService {
   async listObjectiveEmployeeAssignments(
     query: ObjectiveEmployeeAssignmentListQuery = {},
   ): Promise<ObjectiveEmployeeAssignmentRecord[]> {
-    const actor = this.requireActor();
-    const mappedRole = accessService.mapRole(actor.actorRole);
     const filter: Record<string, unknown> = { isDeleted: false };
     if (query.objectiveAssignmentPeriodId) {
       filter.objectiveAssignmentPeriodId = this.toObjectId(query.objectiveAssignmentPeriodId, 'objectiveAssignmentPeriodId');
@@ -3276,13 +3275,7 @@ export class ObjectiveService extends BaseService {
       filter.status = query.status;
     }
 
-    if (mappedRole === PmsRole.EMPLOYEE) {
-      filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
-    } else if (mappedRole === PmsRole.MANAGER) {
-      filter.managerId = this.toObjectId(actor.actorId, 'actorId');
-    } else if (mappedRole !== PmsRole.ADMIN && mappedRole !== PmsRole.MANAGEMENT && mappedRole !== PmsRole.DIRECTOR) {
-      throw new Error('PMS access denied');
-    }
+    this.applyObjectiveEmployeeAssignmentListScope(filter, query);
 
     const assignments = await ObjectiveEmployeeAssignment.find(filter)
       .sort({ createdAt: -1 })
@@ -3292,6 +3285,58 @@ export class ObjectiveService extends BaseService {
       .lean();
 
     return assignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
+  }
+
+  private applyObjectiveEmployeeAssignmentListScope(
+    filter: Record<string, unknown>,
+    query: ObjectiveEmployeeAssignmentListQuery,
+  ): void {
+    const actor = this.requireActor();
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    const allowedRoles = new Set<string>([
+      PmsRole.EMPLOYEE,
+      PmsRole.MANAGER,
+      PmsRole.ADMIN,
+      PmsRole.MANAGEMENT,
+      PmsRole.DIRECTOR,
+    ]);
+    if (!allowedRoles.has(mappedRole)) {
+      throw new Error('PMS access denied');
+    }
+
+    const scope = query.scope?.toUpperCase();
+    if (scope && scope !== 'SELF' && scope !== 'TEAM') {
+      throw new Error('Invalid objective employee assignment scope');
+    }
+
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    if (scope === 'SELF') {
+      filter.employeeId = actorId;
+      delete filter.managerId;
+      return;
+    }
+
+    if (scope === 'TEAM') {
+      if (mappedRole === PmsRole.EMPLOYEE) {
+        throw new Error('PMS team access denied');
+      }
+      filter.managerId = actorId;
+      return;
+    }
+
+    if (mappedRole === PmsRole.EMPLOYEE) {
+      filter.employeeId = actorId;
+      return;
+    }
+
+    if (mappedRole === PmsRole.MANAGER) {
+      // Preserve older My Objectives clients that sent only their own employeeId.
+      if (query.employeeId === actor.actorId) {
+        filter.employeeId = actorId;
+        return;
+      }
+      filter.managerId = actorId;
+    }
   }
 
   async getObjectiveEmployeeAssignmentFinalRecord(
