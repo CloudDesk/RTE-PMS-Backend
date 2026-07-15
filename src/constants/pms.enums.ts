@@ -190,8 +190,7 @@ export const FlexibleObjectiveSourceType = {
   EMPLOYEE_CREATED_OBJECTIVE: 'EMPLOYEE_CREATED_OBJECTIVE',
 } as const;
 
-export type FlexibleObjectiveSourceType =
-  (typeof FlexibleObjectiveSourceType)[keyof typeof FlexibleObjectiveSourceType];
+export type FlexibleObjectiveSourceType = string;
 
 export const ObjectiveMasterStatus = {
   ACTIVE: 'ACTIVE',
@@ -247,6 +246,23 @@ export const ObjectiveEmployeeAssignmentStatus = {
 
 export type ObjectiveEmployeeAssignmentStatus =
   (typeof ObjectiveEmployeeAssignmentStatus)[keyof typeof ObjectiveEmployeeAssignmentStatus];
+
+export const ObjectiveTermEntryOverrideStatus = {
+  ACTIVE: 'ACTIVE',
+  EXPIRED: 'EXPIRED',
+  REVOKED: 'REVOKED',
+} as const;
+
+export type ObjectiveTermEntryOverrideStatus =
+  (typeof ObjectiveTermEntryOverrideStatus)[keyof typeof ObjectiveTermEntryOverrideStatus];
+
+export const ObjectiveTermSubmissionMode = {
+  SCHEDULED: 'SCHEDULED',
+  BACKFILL: 'BACKFILL',
+} as const;
+
+export type ObjectiveTermSubmissionMode =
+  (typeof ObjectiveTermSubmissionMode)[keyof typeof ObjectiveTermSubmissionMode];
 
 export const ObjectiveTargetDirection = {
   HIGHER_IS_BETTER: 'HIGHER_IS_BETTER',

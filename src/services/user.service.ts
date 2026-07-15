@@ -340,6 +340,7 @@ export class UserService extends BaseService {
     my?: boolean;
     subordinates?: boolean;
     search?: string;
+    nameCodeSearch?: string;
     role?: string;
     status?: string;
     active?: boolean | string;
@@ -362,6 +363,7 @@ export class UserService extends BaseService {
       my,
       subordinates,
       search,
+      nameCodeSearch,
       role,
       status,
       active,
@@ -441,8 +443,15 @@ export class UserService extends BaseService {
       }
     }
 
-    // Apply filters
-    if (search) {
+    // Objective-assignment candidate search is intentionally isolated from the
+    // shared user-list search so existing screens keep their current behavior.
+    if (nameCodeSearch) {
+      const escapedNameCodeSearch = nameCodeSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { name: { $regex: escapedNameCodeSearch, $options: 'i' } },
+        { employeeCode: { $regex: escapedNameCodeSearch, $options: 'i' } },
+      ];
+    } else if (search) {
       // Escape special regex characters in search string
       const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

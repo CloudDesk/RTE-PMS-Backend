@@ -1,6 +1,5 @@
 import mongoose, { Document, Schema, Types } from 'mongoose';
 import {
-  FlexibleObjectiveSourceType,
   ObjectiveMasterStatus,
 } from '../constants/pms.enums';
 import type {
@@ -44,7 +43,6 @@ const objectiveMasterSchema = new Schema<IObjectiveMaster>(
     sourceType: {
       type: String,
       required: true,
-      enum: Object.values(FlexibleObjectiveSourceType),
       index: true,
     },
     status: {
