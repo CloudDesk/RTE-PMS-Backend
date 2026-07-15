@@ -7967,7 +7967,7 @@ export class ObjectiveService extends BaseService {
       { id: 'q2_actual', label: 'Q2 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
       { id: 'q3_actual', label: 'Q3 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
       { id: 'q4_actual', label: 'Q4 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-      { id: 'actual', label: 'Actual', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from term actuals' },
+      { id: 'actual', label: 'Actual', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Shows latest filled term actual' },
       { id: 'gap', label: 'Gap', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from target and actual' },
       { id: 'remarks', label: 'Remarks', type: 'LONG_TEXT', width: 'LARGE', required: false },
     ];
@@ -7987,7 +7987,7 @@ export class ObjectiveService extends BaseService {
           kind: 'ACTUAL',
           label: 'Actual',
           targetColumnId: 'actual',
-          mode: 'SUM_TERMS',
+          mode: 'LATEST_FILLED_TERM',
           sourceColumnIds: ['q1_actual', 'q2_actual', 'q3_actual', 'q4_actual'],
         },
         {

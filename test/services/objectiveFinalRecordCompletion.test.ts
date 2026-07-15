@@ -483,6 +483,29 @@ describe('ObjectiveService - final objective record completion contract', () => 
       .not.toHaveProperty('leftColumnId');
   });
 
+  it('uses the latest filled term value for the default Actual formula', () => {
+    const sheetLayout = service.defaultObjectiveSheetLayout();
+    const actualFormula = sheetLayout.formulas.find(
+      (formula: { kind: string }) => formula.kind === 'ACTUAL',
+    );
+
+    expect(actualFormula).toMatchObject({
+      targetColumnId: 'actual',
+      mode: 'LATEST_FILLED_TERM',
+      sourceColumnIds: ['q1_actual', 'q2_actual', 'q3_actual', 'q4_actual'],
+    });
+    expect(service.calculateObjectiveFinalRecordValues(
+      { sheetLayout },
+      {
+        'Q1:row_1:q1_actual': '30',
+        'Q2:row_1:q2_actual': '40',
+      },
+      ['Q1', 'Q2'],
+    )).toEqual({
+      'row_1:actual': 40,
+    });
+  });
+
   it('authorizes only the employee, assigned manager, admin, management, and director views', () => {
     const employeeId = new Types.ObjectId();
     const managerId = new Types.ObjectId();
