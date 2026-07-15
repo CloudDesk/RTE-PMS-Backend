@@ -1058,7 +1058,7 @@ export class UserService extends BaseService {
           (data as any).portalAccess = false;
           console.log(`[Create] allowDuplicateEmail=true and duplicate email found: creating payroll-only employee (portalAccess=false, no login).`);
         } else {
-          throw new Error(`Email "${data.email}" already exists. Send allowDuplicateEmail: true to create payroll-only employee with same email (no login, override attendance, generate payroll).`);
+          throw new Error(`Email "${data.email}" already exists. Please use a different email.`);
         }
       } else {
         // No duplicate: normal employee process. Enforce only one portal user per email.
