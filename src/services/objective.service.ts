@@ -7874,29 +7874,29 @@ export class ObjectiveService extends BaseService {
     inputFillPermissions.forEach((permission: NonNullable<ObjectiveSheetLayoutInput['fillPermissions']>[number], index: number) => {
       const columnIndex = columnIndexByKey.get(this.normalizeSheetKey(permission?.columnId, ''));
       if (columnIndex === undefined) {
-        throw new Error(`Fill permission ${index + 1} references an invalid column.`);
+        throw new Error(`Column access ${index + 1} references an invalid column.`);
       }
       const column = columns[columnIndex];
       const actor = String(permission?.actor ?? '').trim().toUpperCase();
       const access = String(permission?.access ?? '').trim().toUpperCase();
       const lockRule = String(permission?.lockRule ?? 'NONE').trim().toUpperCase() || 'NONE';
       if (!allowedFillActors.has(actor) || !allowedFillAccess.has(access) || !allowedFillLockRules.has(lockRule)) {
-        throw new Error(`Fill permission for "${column.label}" has an invalid actor, access, or lock rule.`);
+        throw new Error(`Column access for "${column.label}" has an invalid actor, access, or lock rule.`);
       }
       if (permission?.required === true && access !== 'FILL') {
-        throw new Error(`Fill permission for "${column.label}" can be required only when access is Can fill.`);
+        throw new Error(`Column access for "${column.label}" can be required only when access is Can edit.`);
       }
       if (lockRule !== 'NONE' && access !== 'FILL') {
-        throw new Error(`Fill permission for "${column.label}" can use lock rules only when access is Can fill.`);
+        throw new Error(`Column access for "${column.label}" can use lock rules only when access is Can edit.`);
       }
       if (column.type === 'FORMULA' && actor !== 'SYSTEM' && access === 'FILL') {
-        throw new Error(`Formula column "${column.label}" can only be filled by the system.`);
+        throw new Error(`Formula column "${column.label}" can only be calculated by the system.`);
       }
       if (column.type === 'FORMULA' && actor === 'SYSTEM' && access !== 'FILL') {
         throw new Error(`Formula column "${column.label}" must remain system calculated.`);
       }
       if (column.type !== 'FORMULA' && actor === 'SYSTEM' && access === 'FILL') {
-        throw new Error(`System can fill only calculated formula columns. "${column.label}" must use View or Hidden for System.`);
+        throw new Error(`System access is limited to calculated formula columns. "${column.label}" must use View or Hidden for System.`);
       }
 
       fillPermissionMap.set(`${column.id}:${actor}`, {
@@ -10514,7 +10514,7 @@ export class ObjectiveService extends BaseService {
     const actor = this.requireActor();
     if (assignment.employeeId?.toString?.() === actor.actorId) return 'EMPLOYEE';
     if (assignment.managerId?.toString?.() === actor.actorId) return 'MANAGER';
-    throw new Error('Only the assigned employee or manager can enter objective values');
+    throw new Error('Only the assigned employee or manager can edit objective values');
   }
 
   private resolveObjectiveAssignmentInputTerm(
@@ -11539,7 +11539,7 @@ export class ObjectiveService extends BaseService {
     const actor = this.requireActor();
     const expectedActorId = entryActor === 'MANAGER' ? assignment.managerId : assignment.employeeId;
     if (expectedActorId?.toString?.() !== actor.actorId) {
-      throw new Error(`Only the assigned ${entryActor.toLowerCase()} can fill this objective`);
+      throw new Error(`Only the assigned ${entryActor.toLowerCase()} can edit this objective`);
     }
     if (assignment.status === ObjectiveEmployeeAssignmentStatus.CLOSED) {
       throw new Error('Closed objective assignments are read-only');
