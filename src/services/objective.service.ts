@@ -1167,6 +1167,7 @@ type BulkCreateManagerObjectiveResult = {
 };
 
 const DELEGATED_OBJECTIVE_ASSIGNMENT_STATES = [
+  TermWorkflowState.NOT_STARTED,
   TermWorkflowState.OBJECTIVE_SETTING_OPEN,
   TermWorkflowState.OBJECTIVE_DRAFT,
   TermWorkflowState.OBJECTIVE_SUBMITTED,
@@ -3248,6 +3249,7 @@ export class ObjectiveService extends BaseService {
   async listAssignments(mode: AssignmentMode): Promise<AssignmentRecord[]> {
     const actor = this.requireActor();
     const filter: Record<string, unknown> = { isDeleted: false };
+    let objectiveDelegationsForList: any[] = [];
 
     if (mode === 'employee') {
       filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
@@ -3259,6 +3261,7 @@ export class ObjectiveService extends BaseService {
         actor.actorId,
         'PMS_OBJECTIVES',
       );
+      objectiveDelegationsForList = delegations;
       const managerClauses: Record<string, unknown>[] = [{ assignedManagerId: managerId }];
 
       for (const delegation of delegations) {
@@ -3321,6 +3324,23 @@ export class ObjectiveService extends BaseService {
     const termCycleMap = new Map(
       termCycles.map((item) => [item._id.toString(), item]),
     );
+    const visibleTermAssignments = mode === 'manager'
+      ? termAssignments.filter((termAssignment) =>
+          this.isVisibleInObjectiveAssignmentList(
+            termAssignment,
+            termAssignment.cycleTermId
+              ? termCycleMap.get(termAssignment.cycleTermId.toString())
+              : undefined,
+            actor.actorId,
+            objectiveDelegationsForList,
+          ),
+        )
+      : termAssignments;
+
+    if (visibleTermAssignments.length === 0) {
+      return [];
+    }
+
     const termAssignmentsByAnnualAssignmentId = new Map<string, typeof termAssignments>();
 
     for (const termAssignment of termAssignments) {
@@ -3330,10 +3350,10 @@ export class ObjectiveService extends BaseService {
       termAssignmentsByAnnualAssignmentId.set(key, bucket);
     }
 
-    await this.ensurePredefinedObjectivesForAssignments(annualAssignments, termAssignments);
+    await this.ensurePredefinedObjectivesForAssignments(annualAssignments, visibleTermAssignments);
 
     const objectiveFilter: Record<string, unknown> = {
-      termAssignmentId: { $in: termAssignments.map((item) => item._id) },
+      termAssignmentId: { $in: visibleTermAssignments.map((item) => item._id) },
       isDeleted: false,
     };
 
@@ -3426,7 +3446,7 @@ export class ObjectiveService extends BaseService {
       }
     }
 
-    return termAssignments.map((termAssignment) => {
+    return visibleTermAssignments.map((termAssignment) => {
       const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
       const annualCycle = annualAssignment?.cycleId
         ? annualCycleMap.get(annualAssignment.cycleId.toString())
@@ -9416,6 +9436,71 @@ export class ObjectiveService extends BaseService {
       cycleId,
       annualAssignmentId,
     );
+  }
+
+  private isVisibleInObjectiveAssignmentList(
+    termAssignment: any,
+    termCycle: any,
+    actorId: string,
+    objectiveDelegations: any[],
+  ): boolean {
+    if (termAssignment.assignedManagerId?.toString() === actorId) {
+      return true;
+    }
+
+    return objectiveDelegations.some((delegation) =>
+      this.delegationMatchesTermAssignmentScope(delegation, termAssignment) &&
+      (
+        this.windowsOverlap(
+          termCycle?.objectiveSettingWindow?.startDate,
+          termCycle?.objectiveSettingWindow?.endDate,
+          delegation.validFrom,
+          delegation.validTo,
+        ) ||
+        this.windowsOverlap(
+          termCycle?.objectiveApprovalWindow?.startDate,
+          termCycle?.objectiveApprovalWindow?.endDate,
+          delegation.validFrom,
+          delegation.validTo,
+        )
+      ));
+  }
+
+  private delegationMatchesTermAssignmentScope(
+    delegation: any,
+    termAssignment: any,
+  ): boolean {
+    if (delegation.delegatorUserId?.toString() !== termAssignment.assignedManagerId?.toString()) {
+      return false;
+    }
+
+    const delegationAnnualAssignmentId = delegation.annualAssignmentId?.toString();
+    if (
+      delegationAnnualAssignmentId &&
+      delegationAnnualAssignmentId !== termAssignment.annualAssignmentId?.toString()
+    ) {
+      return false;
+    }
+
+    const delegationCycleId = delegation.cycleId?.toString();
+    if (delegationCycleId && delegationCycleId !== termAssignment.cycleId?.toString()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private windowsOverlap(
+    leftStart?: Date,
+    leftEnd?: Date,
+    rightStart?: Date,
+    rightEnd?: Date,
+  ): boolean {
+    if (!leftStart || !leftEnd || !rightStart || !rightEnd) {
+      return false;
+    }
+
+    return leftStart <= rightEnd && leftEnd >= rightStart;
   }
 
   private getCurrentDate(): Date {

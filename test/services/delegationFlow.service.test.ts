@@ -5,6 +5,7 @@ import { TermAssignment } from '../../src/models/pms-term-assignment.model';
 import { TermCycle } from '../../src/models/pms-term-cycle.model';
 import { DelegationService } from '../../src/services/delegation.service';
 import { ManagerReviewPeriodService } from '../../src/services/managerReviewPeriod.service';
+import { ObjectiveService } from '../../src/services/objective.service';
 import type { RequestContext } from '../../src/types/context';
 
 jest.mock('../../src/models/pms-delegation.model', () => ({
@@ -406,5 +407,61 @@ describe('PMS delegation full-flow guardrails', () => {
     const query = (Delegation.find as jest.Mock).mock.calls[0][0];
     expect(query.delegateUserId.toString()).toBe(delegateUserId);
     expect(query.scopeType.$in).toEqual(['ALL', 'PMS_REVIEWS']);
+  });
+
+  it('limits delegated objective list visibility to the delegated objective window', () => {
+    const delegateUserId = new Types.ObjectId().toString();
+    const delegatorUserId = new Types.ObjectId();
+    const annualAssignmentId = new Types.ObjectId();
+    const cycleId = new Types.ObjectId();
+    const objectiveService = new ObjectiveService(context()) as any;
+    const termAssignment = {
+      assignedManagerId: delegatorUserId,
+      annualAssignmentId,
+      cycleId,
+    };
+    const delegation = {
+      delegatorUserId,
+      annualAssignmentId,
+      cycleId,
+      validFrom: new Date('2026-09-29T18:30:00.000Z'),
+      validTo: new Date('2026-10-06T18:29:59.999Z'),
+    };
+
+    expect(
+      objectiveService.isVisibleInObjectiveAssignmentList(
+        termAssignment,
+        {
+          objectiveSettingWindow: {
+            startDate: new Date('2026-07-14T18:30:00.000Z'),
+            endDate: new Date('2026-07-20T18:29:59.999Z'),
+          },
+          objectiveApprovalWindow: {
+            startDate: new Date('2026-09-29T18:30:00.000Z'),
+            endDate: new Date('2026-10-06T18:29:59.999Z'),
+          },
+        },
+        delegateUserId,
+        [delegation],
+      ),
+    ).toBe(true);
+
+    expect(
+      objectiveService.isVisibleInObjectiveAssignmentList(
+        termAssignment,
+        {
+          objectiveSettingWindow: {
+            startDate: new Date('2026-10-13T18:30:00.000Z'),
+            endDate: new Date('2026-10-19T18:29:59.999Z'),
+          },
+          objectiveApprovalWindow: {
+            startDate: new Date('2026-10-20T18:30:00.000Z'),
+            endDate: new Date('2026-10-26T18:29:59.999Z'),
+          },
+        },
+        delegateUserId,
+        [delegation],
+      ),
+    ).toBe(false);
   });
 });
