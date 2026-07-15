@@ -10,6 +10,7 @@
     "start": "ts-node src/local.ts",
     "dev": "nodemon src/local.ts",
     "test": "jest",
+    "test:pms-delegation": "jest test/services/delegationFlow.service.test.ts",
     "lint": "eslint . --ext .ts",
     "seed:pms-demo": "ts-node scripts/seed-pms-demo.ts", 
     "seed:pms-template:cmmi-fullstack": "ts-node scripts/seed-cmmi-fullstack-template.ts",

@@ -25,6 +25,7 @@ import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
+import { Delegation } from '../models/pms-delegation.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
   IPmsTemplateVersion,
@@ -2903,7 +2904,7 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Template version does not belong to the requested assignment');
     }
 
-    await this.assertRuntimeTemplateAccess(annualAssignment, termAssignment);
+    await this.assertRuntimeTemplateAccess(annualAssignment, termAssignment, input);
 
     const assignmentVisibility = annualAssignment.visibility ?? {};
     if (assignmentVisibility.employeeReviewVisible) visibilityFlags.add('employee_review');
@@ -2938,6 +2939,7 @@ export class PmsTemplateService extends BaseService {
   private async assertRuntimeTemplateAccess(
     annualAssignment: Record<string, any>,
     termAssignment?: Record<string, any> | null,
+    input?: ResolveTemplateVersionInput,
   ): Promise<void> {
     const actor = this.context.user;
     if (!actor) {
@@ -2971,8 +2973,98 @@ export class PmsTemplateService extends BaseService {
     });
 
     if (!access.allowed) {
+      const delegated = await this.hasRuntimeTemplateDelegation(
+        annualAssignment,
+        termAssignment,
+        input,
+      );
+      if (delegated) {
+        return;
+      }
+
       throw new Error(access.message ?? 'Access denied');
     }
+  }
+
+  private async hasRuntimeTemplateDelegation(
+    annualAssignment: Record<string, any>,
+    termAssignment?: Record<string, any> | null,
+    input?: ResolveTemplateVersionInput,
+  ): Promise<boolean> {
+    const actorId = this.context.user?._id?.toString();
+    const delegatorId =
+      termAssignment?.assignedManagerId?.toString() ??
+      annualAssignment.assignedManagerId?.toString();
+    if (!actorId || !delegatorId || actorId === delegatorId) return false;
+    if (!Types.ObjectId.isValid(actorId) || !Types.ObjectId.isValid(delegatorId)) {
+      return false;
+    }
+
+    const annualAssignmentId = annualAssignment._id?.toString();
+    const cycleId = annualAssignment.cycleId?.toString();
+    const now = this.context.pmsCurrentDate ?? new Date();
+    const assignmentScope: Record<string, unknown>[] = [];
+
+    if (annualAssignmentId && Types.ObjectId.isValid(annualAssignmentId)) {
+      assignmentScope.push({
+        annualAssignmentId: new Types.ObjectId(annualAssignmentId),
+      });
+    }
+    if (cycleId && Types.ObjectId.isValid(cycleId)) {
+      assignmentScope.push(
+        {
+          annualAssignmentId: null,
+          cycleId: new Types.ObjectId(cycleId),
+        },
+        {
+          annualAssignmentId: { $exists: false },
+          cycleId: new Types.ObjectId(cycleId),
+        },
+      );
+    }
+    assignmentScope.push(
+      { annualAssignmentId: null, cycleId: null },
+      { annualAssignmentId: null, cycleId: { $exists: false } },
+      { annualAssignmentId: { $exists: false }, cycleId: null },
+      { annualAssignmentId: { $exists: false }, cycleId: { $exists: false } },
+    );
+
+    const delegation = await Delegation.findOne({
+      delegateUserId: new Types.ObjectId(actorId),
+      delegatorUserId: new Types.ObjectId(delegatorId),
+      status: 'ACTIVE',
+      validFrom: { $lte: now },
+      validTo: { $gte: now },
+      scopeType: { $in: this.templateDelegationScopesFor(input) },
+      isDeleted: false,
+      $or: assignmentScope,
+    }).lean();
+
+    return Boolean(delegation);
+  }
+
+  private templateDelegationScopesFor(input?: ResolveTemplateVersionInput): string[] {
+    const workflowState = input?.workflowState;
+
+    if (
+      workflowState === TermWorkflowState.MANAGER_REVIEW_OPEN ||
+      workflowState === TermWorkflowState.MANAGER_REVIEW_SUBMITTED ||
+      workflowState === TermWorkflowState.TERM_FINALIZED
+    ) {
+      return ['ALL', 'PMS_REVIEWS'];
+    }
+
+    if (
+      workflowState === TermWorkflowState.OBJECTIVE_SETTING_OPEN ||
+      workflowState === TermWorkflowState.OBJECTIVE_DRAFT ||
+      workflowState === TermWorkflowState.OBJECTIVE_REVISION_REQUIRED ||
+      workflowState === TermWorkflowState.OBJECTIVE_SUBMITTED ||
+      workflowState === TermWorkflowState.OBJECTIVE_APPROVED
+    ) {
+      return ['ALL', 'PMS_OBJECTIVES', 'PMS_REVIEWS'];
+    }
+
+    return ['ALL', 'PMS_OBJECTIVES', 'PMS_REVIEWS'];
   }
 
   private async assertAdmin(action: string): Promise<void> {
