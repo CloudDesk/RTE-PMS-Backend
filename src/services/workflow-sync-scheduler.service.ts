@@ -5,11 +5,10 @@ import { getDatabaseHealth } from '../config/database';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { WorkflowSyncService, type WorkflowSyncResult } from './workflow-sync.service';
 import type { RequestContext } from '../types/context';
+import { SYSTEM_WORKFLOW_SYNC_ACTOR } from '../constants/system-actors';
 
 const DEFAULT_WORKFLOW_SYNC_CRON = '0 0 * * *';
 const DEFAULT_WORKFLOW_SYNC_TIMEZONE = 'Asia/Kolkata';
-const SYSTEM_WORKFLOW_SYNC_USER_ID = '000000000000000000000000';
-
 let scheduledTask: ScheduledTask | undefined;
 let running = false;
 
@@ -169,9 +168,9 @@ function createSystemWorkflowSyncContext(asOfDate: Date): RequestContext {
     reqRole: PmsRole.ADMIN,
     pmsCurrentDate: asOfDate,
     user: {
-      _id: new Types.ObjectId(SYSTEM_WORKFLOW_SYNC_USER_ID),
-      email: 'system-workflow-sync@rte-pms.local',
-      name: 'System Workflow Sync',
+      _id: new Types.ObjectId(SYSTEM_WORKFLOW_SYNC_ACTOR.id),
+      email: SYSTEM_WORKFLOW_SYNC_ACTOR.email,
+      name: SYSTEM_WORKFLOW_SYNC_ACTOR.name,
       role: PmsRole.ADMIN,
       departmentId: '',
       active: true,
