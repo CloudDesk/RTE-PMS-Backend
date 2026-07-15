@@ -183,7 +183,7 @@ export class AccessService {
         return this.checkHierarchyScope(input.actor, input.resource, mappedRole);
 
       case 'DELEGATED':
-        return this.checkDelegatedScope(input.actor, input.resource, mappedRole);
+        return this.checkDelegatedScope(input.actor, input.resource, mappedRole, input.action);
 
       case 'DEPARTMENT':
         return this.checkDepartmentScope(input.actor, input.resource, mappedRole);
@@ -309,6 +309,7 @@ export class AccessService {
     actor: AccessActorContext,
     resource: AccessResourceContext | undefined,
     mappedRole: PmsMappedRole,
+    action: string,
   ): Promise<AccessCheckResult> {
     const delegatorId = resource?.delegatorId ?? resource?.managerId ?? resource?.assignedManagerId;
 
@@ -345,12 +346,14 @@ export class AccessService {
       }
 
       const now = new Date();
+      const scopeCandidates = this.getDelegationScopeCandidatesForAction(action);
       const delegationQuery: Record<string, unknown> = {
         delegateUserId: new Types.ObjectId(actor.actorId),
         delegatorUserId: new Types.ObjectId(delegatorId),
         status: 'ACTIVE',
         validFrom: { $lte: now },
         validTo: { $gte: now },
+        scopeType: { $in: scopeCandidates },
         isDeleted: false,
       };
 
@@ -384,6 +387,25 @@ export class AccessService {
         mappedRole,
       };
     }
+  }
+
+  private getDelegationScopeCandidatesForAction(action: string): string[] {
+    const normalizedAction = action.toLowerCase();
+
+    if (normalizedAction.startsWith('objective.')) {
+      return ['ALL', 'PMS_OBJECTIVES'];
+    }
+
+    if (
+      normalizedAction.startsWith('termreview.') ||
+      normalizedAction.startsWith('achievementsubmission.') ||
+      normalizedAction.startsWith('managerreview.') ||
+      normalizedAction.startsWith('managerreviewperiod.')
+    ) {
+      return ['ALL', 'PMS_REVIEWS'];
+    }
+
+    return ['ALL', 'PMS_OBJECTIVES', 'PMS_REVIEWS'];
   }
 
   private async checkDepartmentScope(

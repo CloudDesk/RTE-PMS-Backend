@@ -2,7 +2,9 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
 import { Delegation } from '../models/pms-delegation.model';
+import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
+import { TermCycle } from '../models/pms-term-cycle.model';
 import { User } from '../models/user.model';
 import { auditService } from './audit.service';
 import { emailService } from './email.service';
@@ -122,7 +124,7 @@ export class DelegationService extends BaseService {
       reason: delegation.reason,
     });
 
-    return delegation;
+    return this.toDelegationResponse(delegation);
   }
 
   /**
@@ -174,6 +176,7 @@ export class DelegationService extends BaseService {
     }
 
     const activeOn = query.activeOn ? new Date(query.activeOn) : this.getCurrentDate();
+    const activeOnDate = this.formatDelegationDateOnly(activeOn);
     const delegations = await Delegation.find(filter)
       .populate('delegatorUserId', 'name email employeeCode')
       .populate('delegateUserId', 'name email employeeCode')
@@ -181,13 +184,12 @@ export class DelegationService extends BaseService {
       .sort({ createdAt: -1 })
       .lean();
 
-    return delegations.map((delegation) => ({
-      ...delegation,
-      isCurrentlyActive:
-        delegation.status === 'ACTIVE' &&
-        delegation.validFrom <= activeOn &&
-        delegation.validTo >= activeOn,
-    }));
+    return delegations.map((delegation) =>
+      this.toDelegationResponse({
+        ...delegation,
+        isCurrentlyActive: this.isDelegationActiveOnDate(delegation, activeOnDate),
+      }),
+    );
   }
 
   /**
@@ -244,7 +246,7 @@ export class DelegationService extends BaseService {
       reason,
     });
 
-    return delegation;
+    return this.toDelegationResponse(delegation);
   }
 
   private assertEligibleManagerRole(role: string | undefined, label: string): void {
@@ -289,6 +291,7 @@ export class DelegationService extends BaseService {
 
     const overlappingDelegation = await Delegation.findOne({
       delegatorUserId: this.toObjectId(input.delegatorUserId, 'delegatorUserId'),
+      delegateUserId: this.toObjectId(input.delegateUserId, 'delegateUserId'),
       status: 'ACTIVE',
       isDeleted: false,
       scopeType: { $in: scopeCandidates },
@@ -304,14 +307,7 @@ export class DelegationService extends BaseService {
       return;
     }
 
-    const isSameDelegate =
-      overlappingDelegation.delegateUserId?.toString() === input.delegateUserId;
-
-    if (isSameDelegate) {
-      throw new Error('An overlapping active delegation already exists for this delegator, delegate, scope, and assignment.');
-    }
-
-    throw new Error('A conflicting active delegation already exists for this delegator within the selected scope, assignment, and date range.');
+    throw new Error('An overlapping active delegation already exists for this delegator, delegate, scope, and assignment.');
   }
 
   private async assertAssignmentHasDelegableWork(input: {
@@ -323,7 +319,7 @@ export class DelegationService extends BaseService {
       annualAssignmentId: this.toObjectId(input.annualAssignmentId, 'annualAssignmentId'),
       assignedManagerId: this.toObjectId(input.delegatorUserId, 'delegatorUserId'),
       isDeleted: false,
-    }).select('termState').lean();
+    }).select('termState cycleId cycleTermId').lean();
 
     if (termAssignments.length === 0) {
       throw new Error('Delegation is not allowed because the selected assignment no longer belongs to this manager.');
@@ -336,6 +332,10 @@ export class DelegationService extends BaseService {
       TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
       TermWorkflowState.REOPENED_BY_ADMIN,
     ]);
+    const groupedFutureObjectiveStates = new Set<string>([
+      TermWorkflowState.NOT_STARTED,
+      'SCHEDULED',
+    ]);
     const reviewActionableStates = new Set<string>([
       TermWorkflowState.OBJECTIVE_APPROVED,
       TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
@@ -343,9 +343,13 @@ export class DelegationService extends BaseService {
       TermWorkflowState.REOPENED_BY_ADMIN,
     ]);
 
-    const hasObjectiveWork = termAssignments.some((term) =>
+    const hasStateBasedObjectiveWork = termAssignments.some((term) =>
       objectiveActionableStates.has(term.termState),
     );
+    const hasGroupedObjectiveWindowWork = hasStateBasedObjectiveWork
+      ? false
+      : await this.hasGroupedObjectiveWindowWork(termAssignments, groupedFutureObjectiveStates);
+    const hasObjectiveWork = hasStateBasedObjectiveWork || hasGroupedObjectiveWindowWork;
     const hasReviewWork = termAssignments.some((term) =>
       reviewActionableStates.has(term.termState),
     );
@@ -372,6 +376,53 @@ export class DelegationService extends BaseService {
 
       throw new Error('All PMS Actions delegation is available only when both objective and review actions are pending for this assignment. Choose the available specific scope instead.');
     }
+  }
+
+  private async hasGroupedObjectiveWindowWork(
+    termAssignments: any[],
+    eligibleStates: Set<string>,
+  ): Promise<boolean> {
+    const cycleId = termAssignments
+      .map((term) => term.cycleId?.toString?.())
+      .find(Boolean);
+    if (!cycleId) return false;
+
+    const cycle = await AnnualCycle.findById(cycleId)
+      .select('reviewCadenceConfig')
+      .lean();
+    if (cycle?.reviewCadenceConfig?.managerReviewMode !== 'GROUPED') {
+      return false;
+    }
+
+    const eligibleCycleTermIds = termAssignments
+      .filter((term) => eligibleStates.has(String(term.termState || '').toUpperCase()))
+      .map((term) => term.cycleTermId)
+      .filter(Boolean);
+    if (eligibleCycleTermIds.length === 0) return false;
+
+    const termCycles = await TermCycle.find({
+      _id: { $in: eligibleCycleTermIds },
+      isDeleted: false,
+    }).select('objectiveSettingWindow objectiveApprovalWindow').lean();
+    const now = this.getCurrentDate();
+
+    return termCycles.some((termCycle) =>
+      this.windowEndsOnOrAfter(termCycle.objectiveSettingWindow, now) ||
+      this.windowEndsOnOrAfter(termCycle.objectiveApprovalWindow, now),
+    );
+  }
+
+  private windowEndsOnOrAfter(
+    window: { endDate?: Date | string } | undefined,
+    date: Date,
+  ): boolean {
+    if (!window?.endDate) return false;
+
+    const endDate = new Date(window.endDate);
+    if (isNaN(endDate.getTime())) return false;
+    endDate.setHours(23, 59, 59, 999);
+
+    return endDate >= date;
   }
 
   /**
@@ -517,6 +568,49 @@ export class DelegationService extends BaseService {
     );
   }
 
+  private toDelegationResponse(delegation: any): any {
+    const rawDelegation =
+      delegation && typeof delegation.toObject === 'function'
+        ? delegation.toObject()
+        : delegation;
+
+    if (!rawDelegation) return rawDelegation;
+
+    return {
+      ...rawDelegation,
+      validFrom: this.formatDelegationDateOnly(rawDelegation.validFrom),
+      validTo: this.formatDelegationDateOnly(rawDelegation.validTo),
+    };
+  }
+
+  private isDelegationActiveOnDate(
+    delegation: any,
+    activeOnDate: string | undefined,
+  ): boolean {
+    if (!activeOnDate || delegation.status !== 'ACTIVE') return false;
+
+    const validFrom = this.formatDelegationDateOnly(delegation.validFrom);
+    const validTo = this.formatDelegationDateOnly(delegation.validTo);
+
+    return Boolean(validFrom && validTo && validFrom <= activeOnDate && validTo >= activeOnDate);
+  }
+
+  private formatDelegationDateOnly(value: Date | string | undefined | null): string | undefined {
+    if (!value) return undefined;
+
+    const date = value instanceof Date ? value : new Date(value);
+    if (isNaN(date.getTime())) return undefined;
+
+    const localDate = new Date(
+      date.getTime() + this.delegationTimezoneOffsetMinutes * 60 * 1000,
+    );
+    const year = localDate.getUTCFullYear();
+    const month = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(localDate.getUTCDate()).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  }
+
   private requireActor() {
     const user = this.context.user;
     if (!user) {
@@ -638,7 +732,11 @@ export class DelegationService extends BaseService {
   }
 
   private formatDate(value: Date): string {
-    return value.toLocaleDateString('en-GB');
+    const dateOnly = this.formatDelegationDateOnly(value);
+    if (!dateOnly) return value.toLocaleDateString('en-GB');
+
+    const [year, month, day] = dateOnly.split('-');
+    return `${day}/${month}/${year}`;
   }
 
   private escapeHtml(value: string): string {
