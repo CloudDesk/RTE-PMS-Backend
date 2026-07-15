@@ -66,6 +66,7 @@ export interface ProbationReviewHistoryEntry {
   actorRole?: string;
   filledByName: string;
   approvedByName: string;
+  finalizedByName: string;
   status: string;
   comment?: string;
   createdAt: Date;
@@ -202,6 +203,7 @@ export class ProbationReviewService extends BaseService {
         .populate('employeeId', 'name email employeeCode departmentId designation role specificRole joiningDate probationStartDate probationEndDate probationDate')
         .populate('manager1Id', 'name email employeeCode role specificRole')
         .populate('manager2Id', 'name email employeeCode role specificRole')
+        .populate('manager2ReviewedBy', 'name email employeeCode role specificRole')
         .populate('templateId', 'name code status metadata')
         .populate('templateVersionId')
         .sort({ reviewOpenDate: -1, createdAt: -1 })
@@ -230,10 +232,12 @@ export class ProbationReviewService extends BaseService {
     }
 
     const assignments = await PmsProbationReviewAssignment.find(assignmentFilter)
-      .select('_id employeeId manager1Id manager2Id reviewerConfiguration auditTrail')
+      .select('_id employeeId manager1Id manager2Id manager1SubmittedBy manager1SubmittedAt manager2ReviewedBy finalizedAt reviewerConfiguration auditTrail')
       .populate('employeeId', 'name email employeeCode departmentId department')
       .populate('manager1Id', 'name email employeeCode')
       .populate('manager2Id', 'name email employeeCode')
+      .populate('manager1SubmittedBy', 'name email employeeCode role specificRole')
+      .populate('manager2ReviewedBy', 'name email employeeCode role specificRole')
       .lean();
 
     const actorIds = Array.from(new Set(
@@ -260,14 +264,30 @@ export class ProbationReviewService extends BaseService {
       const employee = assignment.employeeId || {};
       const employeeId = employee._id?.toString?.() || employee.toString?.() || '';
       const employeeName = employee.name || employee.employeeCode || employee.email || 'Unknown employee';
-      const fillingManager = assignment.reviewerConfiguration?.fillingManagerRole === 'MANAGER_2'
-        ? assignment.manager2Id
-        : assignment.manager1Id;
-      const approvingManager = assignment.reviewerConfiguration?.approvingManagerRole === 'MANAGER_1'
-        ? assignment.manager1Id
-        : assignment.manager2Id;
       const personName = (person: any) =>
         person?.name || person?.employeeCode || person?.email || person?.toString?.() || '-';
+      const submissionEntry = [...(assignment.auditTrail || [])]
+        .reverse()
+        .find((entry: any) => String(entry.action || '').toUpperCase() === 'MANAGER_1_SUBMITTED');
+      const submissionActorId = submissionEntry?.actorId?.toString?.() || '';
+      const submissionActor = submissionActorId ? actorMap.get(submissionActorId) : undefined;
+      const recordedFiller = submissionActor || assignment.manager1SubmittedBy;
+      const recordedFillerId = recordedFiller?._id?.toString?.() || recordedFiller?.toString?.() || '';
+      const matchingFillingManager = [assignment.manager1Id, assignment.manager2Id].find((manager: any) =>
+        (manager?._id?.toString?.() || manager?.toString?.() || '') === recordedFillerId,
+      );
+      const filledByName = personName(matchingFillingManager || recordedFiller);
+      const finalizationEntry = [...(assignment.auditTrail || [])]
+        .reverse()
+        .find((entry: any) => String(entry.action || '').toUpperCase() === 'MANAGER_2_APPROVED');
+      const finalizationActorId = finalizationEntry?.actorId?.toString?.() || '';
+      const finalizationActor = finalizationActorId ? actorMap.get(finalizationActorId) : undefined;
+      const recordedFinalizer = finalizationActor || (assignment.finalizedAt ? assignment.manager2ReviewedBy : undefined);
+      const recordedFinalizerId = recordedFinalizer?._id?.toString?.() || recordedFinalizer?.toString?.() || '';
+      const matchingManager = [assignment.manager1Id, assignment.manager2Id].find((manager: any) =>
+        (manager?._id?.toString?.() || manager?.toString?.() || '') === recordedFinalizerId,
+      );
+      const finalizedByName = personName(matchingManager || recordedFinalizer);
       return (assignment.auditTrail || []).map((entry: any, index: number) => {
         const actorId = entry.actorId?.toString?.() || '';
         const actor = actorMap.get(actorId) as any;
@@ -282,8 +302,9 @@ export class ProbationReviewService extends BaseService {
           actorId: actorId || undefined,
           actorName: actor?.name || actor?.employeeCode || actor?.email || actorId || 'System',
           actorRole: actor?.role || actor?.specificRole,
-          filledByName: personName(fillingManager),
-          approvedByName: personName(approvingManager),
+          filledByName,
+          approvedByName: finalizedByName,
+          finalizedByName,
           status: this.historyStatusForAction(String(entry.action || 'UNKNOWN')),
           comment: entry.comment,
           createdAt: new Date(entry.createdAt),
@@ -303,6 +324,7 @@ export class ProbationReviewService extends BaseService {
           entry.actorName,
           entry.filledByName,
           entry.approvedByName,
+          entry.finalizedByName,
           entry.comment,
         ].filter(Boolean).join(' ').toLowerCase();
         if (!searchable.includes(normalizedSearch)) return false;
@@ -342,6 +364,7 @@ export class ProbationReviewService extends BaseService {
       .populate('employeeId', 'name email employeeCode departmentId designation role specificRole joiningDate probationStartDate probationEndDate probationDate')
       .populate('manager1Id', 'name email employeeCode role specificRole')
       .populate('manager2Id', 'name email employeeCode role specificRole')
+      .populate('manager2ReviewedBy', 'name email employeeCode role specificRole')
       .populate('templateId', 'name code status metadata')
       .populate('templateVersionId')
       .lean();
