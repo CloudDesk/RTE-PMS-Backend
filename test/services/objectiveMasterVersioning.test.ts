@@ -6,6 +6,7 @@ import {
 } from '../../src/constants/pms.enums';
 import { ObjectiveMaster } from '../../src/models/pms-objective-master.model';
 import { ObjectiveMasterVersion } from '../../src/models/pms-objective-master-version.model';
+import { LOV } from '../../src/models/lov.model';
 import { ObjectiveService } from '../../src/services/objective.service';
 import type { RequestContext } from '../../src/types/context';
 
@@ -55,6 +56,35 @@ describe('ObjectiveService - Objective Master versioning', () => {
     };
     return new ObjectiveService(context);
   }
+
+  it('accepts every active sourcetype LOV value and derives its code prefix', async () => {
+    jest.spyOn(LOV, 'findOne').mockReturnValueOnce({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          values: [
+            { label: 'Company', value: 'company', isActive: true },
+            { label: 'Cell', value: 'cell', isActive: true },
+            { label: 'Business Unit', value: 'business_unit', isActive: true },
+          ],
+        }),
+      }),
+    } as any);
+
+    await expect(
+      (service as any).assertObjectiveMasterCreatableSourceType('BUSINESS_UNIT_OBJECTIVE'),
+    ).resolves.toBeUndefined();
+    expect((service as any).objectiveMasterCodePrefix('BUSINESS_UNIT_OBJECTIVE')).toBe('B-OBJ');
+  });
+
+  it('stores Objective Table when a new objective omits the hidden format', () => {
+    const details = (service as any).normalizeObjectiveMasterVersionDetails(
+      { title: 'Default table objective' },
+      { actorId: actorId.toString(), actorRole: 'ADMIN' },
+    );
+
+    expect(details.objectiveType).toBe('SHEET');
+    expect(details.sheetLayout).toBeDefined();
+  });
 
   it('allows only the current active Objective Master Version to be assigned', async () => {
     jest.spyOn(ObjectiveMasterVersion, 'findOne').mockReturnValueOnce({

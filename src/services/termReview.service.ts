@@ -216,6 +216,7 @@ export type TermReviewAssignmentRecord = {
   departmentId?: string;
   managerId: string;
   managerName: string;
+  isDelegated?: boolean;
   templateVersionId?: string;
   reviewConfig: {
     mode?: 'AUTO' | 'MANUAL';
@@ -297,6 +298,8 @@ export class TermReviewService extends BaseService {
     const actor = this.requireActor();
     const actorRole = normalizePmsRole(actor.actorRole);
     const filter: Record<string, unknown> = { isDeleted: false };
+    let reviewDelegationsForList: any[] = [];
+    let objectiveDelegationsForList: any[] = [];
 
     if (mode === 'employee') {
       filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
@@ -309,6 +312,12 @@ export class TermReviewService extends BaseService {
         actor.actorId,
         'PMS_REVIEWS',
       );
+      const objectiveDelegations = await new DelegationService(this.context).getActiveDelegationsForDelegate(
+        actor.actorId,
+        'PMS_OBJECTIVES',
+      );
+      reviewDelegationsForList = delegations;
+      objectiveDelegationsForList = objectiveDelegations;
       const managerClauses: Record<string, unknown>[] = [{ assignedManagerId: managerId }];
 
       for (const delegation of delegations) {
@@ -318,6 +327,31 @@ export class TermReviewService extends BaseService {
               assignedManagerId: delegation.delegatorUserId,
             }
           : { assignedManagerId: delegation.delegatorUserId };
+        if (!delegation.annualAssignmentId && delegation.cycleId) {
+          clause.cycleId = delegation.cycleId;
+        }
+        managerClauses.push(clause);
+      }
+
+      const objectiveDelegationStates = [
+        TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+        TermWorkflowState.OBJECTIVE_DRAFT,
+        TermWorkflowState.OBJECTIVE_SUBMITTED,
+        TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+        TermWorkflowState.REOPENED_BY_ADMIN,
+      ];
+
+      for (const delegation of objectiveDelegations) {
+        const clause: Record<string, unknown> = delegation.annualAssignmentId
+          ? {
+              annualAssignmentId: delegation.annualAssignmentId,
+              assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: objectiveDelegationStates },
+            }
+          : {
+              assignedManagerId: delegation.delegatorUserId,
+              termState: { $in: objectiveDelegationStates },
+            };
         if (!delegation.annualAssignmentId && delegation.cycleId) {
           clause.cycleId = delegation.cycleId;
         }
@@ -379,6 +413,20 @@ export class TermReviewService extends BaseService {
     );
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
     const termCycleMap = new Map(termCycles.map((item) => [item._id.toString(), item]));
+    const visibleTermAssignments = termAssignments.filter((termAssignment) =>
+      this.isVisibleInManagerReviewList(
+        termAssignment,
+        termAssignment.cycleTermId
+          ? termCycleMap.get(termAssignment.cycleTermId.toString())
+          : undefined,
+        actor.actorId,
+        reviewDelegationsForList,
+        objectiveDelegationsForList,
+      ),
+    );
+    if (visibleTermAssignments.length === 0) {
+      return [];
+    }
     const objectivesByTermAssignmentId = new Map<string, typeof approvedObjectives>();
     const termReviewByTermAssignmentId = new Map(
       termReviews.map((item) => [item.termAssignmentId.toString(), item]),
@@ -400,7 +448,7 @@ export class TermReviewService extends BaseService {
       objectivesByTermAssignmentId.set(key, bucket);
     }
 
-    return await Promise.all(termAssignments.map(async (termAssignment) => {
+    return await Promise.all(visibleTermAssignments.map(async (termAssignment) => {
       const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
       const cycle = termAssignment.cycleId
         ? cycleMap.get(termAssignment.cycleId.toString())
@@ -472,6 +520,7 @@ export class TermReviewService extends BaseService {
         departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: termAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
+        isDelegated: actor.actorId !== termAssignment.assignedManagerId.toString(),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
           mode: reviewConfig.mode ?? 'AUTO',
@@ -500,6 +549,81 @@ export class TermReviewService extends BaseService {
         backendConnected: true,
       };
     }));
+  }
+
+  private isVisibleInManagerReviewList(
+    termAssignment: any,
+    termCycle: any,
+    actorId: string,
+    reviewDelegations: any[],
+    objectiveDelegations: any[],
+  ): boolean {
+    const assignedManagerId = termAssignment.assignedManagerId?.toString();
+    if (assignedManagerId === actorId) {
+      return true;
+    }
+
+    const objectiveDelegationStates = new Set([
+      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+      TermWorkflowState.OBJECTIVE_DRAFT,
+      TermWorkflowState.OBJECTIVE_SUBMITTED,
+      TermWorkflowState.OBJECTIVE_REVISION_REQUIRED,
+      TermWorkflowState.REOPENED_BY_ADMIN,
+    ]);
+
+    if (
+      objectiveDelegationStates.has(termAssignment.termState) &&
+      objectiveDelegations.some((delegation) =>
+        this.delegationMatchesTermAssignmentScope(delegation, termAssignment))
+    ) {
+      return true;
+    }
+
+    return reviewDelegations.some((delegation) =>
+      this.delegationMatchesTermAssignmentScope(delegation, termAssignment) &&
+      this.windowsOverlap(
+        termCycle?.managerReviewWindow?.startDate,
+        termCycle?.managerReviewWindow?.endDate,
+        delegation.validFrom,
+        delegation.validTo,
+      ));
+  }
+
+  private delegationMatchesTermAssignmentScope(
+    delegation: any,
+    termAssignment: any,
+  ): boolean {
+    if (delegation.delegatorUserId?.toString() !== termAssignment.assignedManagerId?.toString()) {
+      return false;
+    }
+
+    const delegationAnnualAssignmentId = delegation.annualAssignmentId?.toString();
+    if (
+      delegationAnnualAssignmentId &&
+      delegationAnnualAssignmentId !== termAssignment.annualAssignmentId?.toString()
+    ) {
+      return false;
+    }
+
+    const delegationCycleId = delegation.cycleId?.toString();
+    if (delegationCycleId && delegationCycleId !== termAssignment.cycleId?.toString()) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private windowsOverlap(
+    leftStart?: Date,
+    leftEnd?: Date,
+    rightStart?: Date,
+    rightEnd?: Date,
+  ): boolean {
+    if (!leftStart || !leftEnd || !rightStart || !rightEnd) {
+      return false;
+    }
+
+    return leftStart <= rightEnd && leftEnd >= rightStart;
   }
 
   async getAssignment(termAssignmentId: string): Promise<TermReviewAssignmentRecord> {
@@ -1101,6 +1225,7 @@ export class TermReviewService extends BaseService {
         departmentId: String(employeeSnapshot.departmentId ?? employeeDepartment),
         managerId: termAssignment.assignedManagerId.toString(),
         managerName: String(annualAssignment?.managerSnapshot?.name ?? 'Manager'),
+        isDelegated: actor.actorId !== termAssignment.assignedManagerId.toString(),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
           mode: reviewConfig.mode ?? 'AUTO',

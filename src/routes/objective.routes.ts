@@ -25,9 +25,11 @@ import type {
   ObjectiveEmployeeAssignmentListQuery,
   ObjectiveReportingQuery,
   CorrectObjectiveInput,
+  EnableObjectiveEmployeeAssignmentPastTermEntryInput,
   ManagerObjectiveLibraryDraftInput,
   ObjectiveMasterListQuery,
   ReturnObjectiveInput,
+  RevokeObjectiveEmployeeAssignmentPastTermEntryInput,
   SaveAssignmentTemplateValuesInput,
   SaveObjectiveEmployeeAssignmentValuesInput,
   SaveManagerObjectiveLibraryInput,
@@ -552,6 +554,22 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/employee-assignments/:assignmentId/final-record',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const finalRecord = await request.container!.objectiveService.getObjectiveEmployeeAssignmentFinalRecord(
+          assignmentId,
+        );
+        return reply.send(successResponse('Final objective record fetched successfully', finalRecord));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.put(
     '/employee-assignments/:assignmentId/values',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
@@ -580,6 +598,42 @@ export const objectiveRoutes: RouteHandler = async (
           (request.body ?? {}) as SaveObjectiveEmployeeAssignmentValuesInput,
         );
         return reply.send(successResponse('Objective assignment submitted successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/terms/:term/past-entry',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId, term } = request.params as { assignmentId: string; term: string };
+        const assignment = await request.container!.objectiveService.enableObjectiveEmployeeAssignmentPastTermEntry(
+          assignmentId,
+          term,
+          request.body as EnableObjectiveEmployeeAssignmentPastTermEntryInput,
+        );
+        return reply.send(successResponse('Past-term employee entry enabled successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/terms/:term/past-entry/revoke',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId, term } = request.params as { assignmentId: string; term: string };
+        const assignment = await request.container!.objectiveService.revokeObjectiveEmployeeAssignmentPastTermEntry(
+          assignmentId,
+          term,
+          request.body as RevokeObjectiveEmployeeAssignmentPastTermEntryInput,
+        );
+        return reply.send(successResponse('Past-term employee entry revoked successfully', assignment));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
