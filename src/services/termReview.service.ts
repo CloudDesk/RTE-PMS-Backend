@@ -28,6 +28,7 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
 import { TermReviewValue } from '../models/pms-term-review-value.model';
+import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
@@ -1074,7 +1075,15 @@ export class TermReviewService extends BaseService {
       .map((item) => item.cycleTermId)
       .filter((value): value is Types.ObjectId => Boolean(value));
 
-    const [annualAssignments, cycles, termCycles, approvedObjectives, termReviews, termReviewValues] = await Promise.all([
+    const [
+      annualAssignments,
+      cycles,
+      termCycles,
+      approvedObjectives,
+      termReviews,
+      termReviewValues,
+      groupedManagerReviews,
+    ] = await Promise.all([
       AnnualAssignment.find({
         _id: { $in: annualAssignmentIds },
         isDeleted: false,
@@ -1102,6 +1111,12 @@ export class TermReviewService extends BaseService {
         termAssignmentId: { $in: termAssignments.map((item) => item._id) },
         isDeleted: false,
       }).lean(),
+      ManagerReviewPeriodAssignment.find({
+        includedTermAssignmentIds: { $in: termAssignments.map((item) => item._id) },
+        isDeleted: false,
+      })
+        .sort({ updatedAt: -1 })
+        .lean(),
     ]);
 
     const annualAssignmentMap = new Map(
@@ -1113,6 +1128,18 @@ export class TermReviewService extends BaseService {
     const termReviewByTermAssignmentId = new Map(
       termReviews.map((item) => [item.termAssignmentId.toString(), item]),
     );
+    const groupedReviewByTermAssignmentId = new Map<
+      string,
+      (typeof groupedManagerReviews)[number]
+    >();
+    for (const groupedReview of groupedManagerReviews) {
+      for (const includedTermAssignmentId of groupedReview.includedTermAssignmentIds ?? []) {
+        const key = includedTermAssignmentId.toString();
+        if (!groupedReviewByTermAssignmentId.has(key)) {
+          groupedReviewByTermAssignmentId.set(key, groupedReview);
+        }
+      }
+    }
 
     const templateVersionIds = annualAssignments
       .map((item) => item.templateVersionId)
@@ -1160,7 +1187,18 @@ export class TermReviewService extends BaseService {
       const termCycle = termAssignment.cycleTermId
         ? termCycleMap.get(termAssignment.cycleTermId.toString())
         : undefined;
-      const review = termReviewByTermAssignmentId.get(termAssignment._id.toString()) ?? null;
+      const termAssignmentId = termAssignment._id.toString();
+      const review = termReviewByTermAssignmentId.get(termAssignmentId) ?? null;
+      const groupedReview = review
+        ? null
+        : groupedReviewByTermAssignmentId.get(termAssignmentId) ?? null;
+      const visibleReview = review ?? (groupedReview
+        ? {
+            ...groupedReview,
+            termAssignmentId: termAssignment._id,
+            reviewStatus: groupedReview.reviewState,
+          }
+        : null);
       const objectives = objectivesByTermAssignmentId.get(termAssignment._id.toString()) ?? [];
       const reviewConfig = annualAssignment
         ? await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode)
@@ -1172,7 +1210,9 @@ export class TermReviewService extends BaseService {
         isReviewVisible = annualAssignment?.visibility?.employeeReviewVisible === true;
       }
 
-      let filteredReviewValues = reviewValuesByReviewId.get(review?._id.toString()) ?? [];
+      let filteredReviewValues = review
+        ? reviewValuesByReviewId.get(review._id.toString()) ?? []
+        : groupedReview?.reviewValues ?? [];
       if (actorRole === PmsRole.EMPLOYEE && annualAssignment?.templateVersionId) {
         const confidentialSet = confidentialFieldsByTemplateId.get(annualAssignment.templateVersionId.toString());
         if (confidentialSet) {
@@ -1244,9 +1284,9 @@ export class TermReviewService extends BaseService {
           successCriteria: objective.successCriteria ?? '',
           weightage: objective.weightage,
         })),
-        termReview: review
+        termReview: visibleReview
           ? this.mapTermReviewRecord(
-              review,
+              visibleReview,
               isReviewVisible,
               filteredReviewValues,
             )
