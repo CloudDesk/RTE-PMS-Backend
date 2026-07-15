@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
@@ -31,7 +32,11 @@ import {
 import { Objective } from '../models/pms-objective.model';
 import { ObjectiveAssignmentPeriod } from '../models/pms-objective-assignment-period.model';
 import { ObjectiveAssignmentRule } from '../models/pms-objective-assignment-rule.model';
-import { ObjectiveEmployeeAssignment } from '../models/pms-objective-employee-assignment.model';
+import {
+  ObjectiveEmployeeAssignment,
+  type IObjectiveAssignmentFinalRecordSnapshot,
+  type IObjectiveFinalRecordParticipantSnapshot,
+} from '../models/pms-objective-employee-assignment.model';
 import { ObjectiveMaster } from '../models/pms-objective-master.model';
 import { ObjectiveMasterVersion } from '../models/pms-objective-master-version.model';
 import { ObjectiveValue } from '../models/pms-objective-value.model';
@@ -898,11 +903,15 @@ export interface ObjectiveEmployeeAssignmentRecord {
   managerName?: string;
   selectedTerms: string[];
   termStates?: ObjectiveEmployeeAssignmentTermStateRecord[];
+  managerTermStates?: ObjectiveEmployeeAssignmentTermStateRecord[];
   frozenObjectiveSnapshot: Record<string, unknown>;
   values: Record<string, unknown>;
+  managerValues: Record<string, unknown>;
   status: string;
   submittedAt?: string;
   submittedBy?: string;
+  managerSubmittedAt?: string;
+  managerSubmittedBy?: string;
   closedAt?: string;
   closedBy?: string;
   createdAt?: string;
@@ -910,6 +919,71 @@ export interface ObjectiveEmployeeAssignmentRecord {
   version: number;
   canEdit?: boolean;
   readOnlyReason?: string;
+  managerCanEdit?: boolean;
+  managerReadOnlyReason?: string;
+  finalRecordReadiness: ObjectiveFinalRecordReadinessRecord;
+  hasFinalRecord: boolean;
+  finalRecordGeneratedAt?: string;
+}
+
+export type ObjectiveFinalRecordAvailability = 'AVAILABLE' | 'PENDING';
+
+export type ObjectiveFinalRecordReadinessReason =
+  | 'READY'
+  | 'NO_SELECTED_TERMS'
+  | 'EMPLOYEE_TERMS_PENDING';
+
+export interface ObjectiveFinalRecordReadinessRecord {
+  availability: ObjectiveFinalRecordAvailability;
+  reason: ObjectiveFinalRecordReadinessReason;
+  completionBasis: 'EMPLOYEE_SELECTED_TERMS';
+  selectedTerms: string[];
+  submittedTerms: string[];
+  pendingTerms: string[];
+  completedAt?: string;
+  message: string;
+}
+
+export type ObjectiveFinalRecordViewActor = 'EMPLOYEE' | 'MANAGER' | 'REVIEWER' | 'ADMIN';
+
+export interface ObjectiveFinalRecordViewRecord {
+  schemaVersion: 1;
+  generatedAt: string;
+  generationMode: 'SUBMISSION' | 'BACKFILL';
+  completedAt?: string;
+  completionBasis: 'EMPLOYEE_SELECTED_TERMS';
+  objectiveAssignmentId: string;
+  objectiveAssignmentPeriodId: string;
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  selectedTerms: string[];
+  termSubmissions: Array<{
+    term: string;
+    submittedAt?: string;
+    submittedBy?: string;
+    submissionMode?: string;
+  }>;
+  assignmentPeriodSnapshot: Record<string, unknown>;
+  employeeSnapshot: IObjectiveFinalRecordParticipantSnapshot;
+  managerSnapshot?: IObjectiveFinalRecordParticipantSnapshot;
+  frozenObjectiveSnapshot: Record<string, unknown>;
+  employeeValues: Record<string, unknown>;
+  calculatedValues: Record<string, number>;
+  consolidatedNotes: Array<{
+    rowId: string;
+    columnId: string;
+    entries: Array<{ term: string; value: string }>;
+    value: string;
+  }>;
+  contentHash: string;
+  integrityVerified: boolean;
+  viewAs: ObjectiveFinalRecordViewActor;
+}
+
+export interface ObjectiveFinalRecordResponse {
+  availability: ObjectiveFinalRecordAvailability;
+  readiness: ObjectiveFinalRecordReadinessRecord;
+  record?: ObjectiveFinalRecordViewRecord;
 }
 
 export interface ObjectiveEmployeeAssignmentTermStateSyncInput {
@@ -973,6 +1047,8 @@ export interface SaveObjectiveEmployeeAssignmentValuesInput {
   term?: string;
   values: Record<string, unknown>;
 }
+
+type ObjectiveAssignmentEntryActor = 'EMPLOYEE' | 'MANAGER';
 
 type AssignmentMode = 'employee' | 'manager';
 
@@ -2558,6 +2634,24 @@ export class ObjectiveService extends BaseService {
       await ObjectiveEmployeeAssignment.updateMany(
         {
           objectiveAssignmentPeriodId: period._id,
+          managerTermStates: {
+            $elemMatch: { status: { $ne: ObjectiveEmployeeAssignmentStatus.SUBMITTED } },
+          },
+          isDeleted: false,
+        },
+        {
+          $set: {
+            'managerTermStates.$[term].status': ObjectiveEmployeeAssignmentStatus.CLOSED,
+            'managerTermStates.$[term].closedAt': now,
+            'managerTermStates.$[term].closedBy': actorId,
+            'managerTermStates.$[term].readOnlyReason': 'Objective Assignment Period is closed',
+          },
+        },
+        { arrayFilters: [{ 'term.status': { $ne: ObjectiveEmployeeAssignmentStatus.SUBMITTED } }] },
+      );
+      await ObjectiveEmployeeAssignment.updateMany(
+        {
+          objectiveAssignmentPeriodId: period._id,
           'termStates.entryOverride.status': ObjectiveTermEntryOverrideStatus.ACTIVE,
           isDeleted: false,
         },
@@ -2672,19 +2766,43 @@ export class ObjectiveService extends BaseService {
     const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
-    const selectedTerm = this.resolveObjectiveEmployeeAssignmentInputTerm(assignment, input.term);
-    await this.assertObjectiveEmployeeAssignmentEditable(assignment, selectedTerm, period);
-    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
-    assignment.values = this.mergeObjectiveEmployeeAssignmentTermValues(
-      assignment.values ?? {},
-      input.values ?? {},
+    this.syncObjectiveManagerAssignmentTerms(assignment, period);
+    const entryActor = this.resolveObjectiveAssignmentEntryActor(assignment);
+    const selectedTerm = this.resolveObjectiveAssignmentInputTerm(assignment, input.term, entryActor);
+    await this.assertObjectiveAssignmentEditable(assignment, selectedTerm, entryActor, period);
+    this.assertObjectiveAssignmentInputValuesAllowed(
+      assignment,
       selectedTerm,
+      entryActor,
+      input.values ?? {},
     );
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
+    if (entryActor === 'MANAGER') {
+      assignment.managerValues = this.mergeObjectiveEmployeeAssignmentTermValues(
+        assignment.managerValues ?? {},
+        input.values ?? {},
+        selectedTerm,
+      );
+    } else {
+      assignment.values = this.mergeObjectiveEmployeeAssignmentTermValues(
+        assignment.values ?? {},
+        input.values ?? {},
+        selectedTerm,
+      );
+    }
     assignment.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
     assignment.version += 1;
     await assignment.save();
     const nextValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
-    await this.audit('PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_VALUES_SAVED', 'OBJECTIVE_EMPLOYEE_ASSIGNMENT', assignment._id.toString(), previousValue, nextValue);
+    await this.audit(
+      entryActor === 'MANAGER'
+        ? 'PMS_OBJECTIVE_MANAGER_ASSIGNMENT_VALUES_SAVED'
+        : 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_VALUES_SAVED',
+      'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+      assignment._id.toString(),
+      previousValue,
+      nextValue,
+    );
     return nextValue;
   }
 
@@ -2695,35 +2813,97 @@ export class ObjectiveService extends BaseService {
     const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
-    const selectedTerm = this.resolveObjectiveEmployeeAssignmentInputTerm(assignment, input.term);
-    await this.assertObjectiveEmployeeAssignmentEditable(assignment, selectedTerm, period);
-    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
-    assignment.values = this.mergeObjectiveEmployeeAssignmentTermValues(
-      assignment.values ?? {},
-      input.values ?? assignment.values ?? {},
+    this.syncObjectiveManagerAssignmentTerms(assignment, period);
+    const entryActor = this.resolveObjectiveAssignmentEntryActor(assignment);
+    const selectedTerm = this.resolveObjectiveAssignmentInputTerm(assignment, input.term, entryActor);
+    await this.assertObjectiveAssignmentEditable(assignment, selectedTerm, entryActor, period);
+    this.assertObjectiveAssignmentInputValuesAllowed(
+      assignment,
       selectedTerm,
+      entryActor,
+      input.values ?? {},
     );
-    this.validateObjectiveEmployeeAssignmentTermSubmission(assignment, selectedTerm);
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
     const submittedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
     const submittedAt = this.getCurrentDate();
-    const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, selectedTerm);
-    termState.submissionMode = this.isObjectiveEmployeeAssignmentEntryOverrideActive(termState, submittedAt)
-      ? ObjectiveTermSubmissionMode.BACKFILL
-      : ObjectiveTermSubmissionMode.SCHEDULED;
-    termState.status = ObjectiveEmployeeAssignmentStatus.SUBMITTED;
-    termState.submittedAt = submittedAt;
-    termState.submittedBy = submittedBy;
-    termState.readOnlyReason = 'Submitted objective term is read-only';
-    this.syncObjectiveEmployeeAssignmentStatusFromTerms(assignment);
-    if (assignment.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED) {
-      assignment.submittedAt = submittedAt;
-      assignment.submittedBy = submittedBy;
+    let createdFinalRecord: IObjectiveAssignmentFinalRecordSnapshot | undefined;
+    if (entryActor === 'MANAGER') {
+      assignment.managerValues = this.mergeObjectiveEmployeeAssignmentTermValues(
+        assignment.managerValues ?? {},
+        input.values ?? assignment.managerValues ?? {},
+        selectedTerm,
+      );
+      this.validateObjectiveAssignmentTermSubmission(assignment, selectedTerm, 'MANAGER');
+      const managerTermState = this.findObjectiveManagerAssignmentTermState(assignment, selectedTerm);
+      managerTermState.status = ObjectiveEmployeeAssignmentStatus.SUBMITTED;
+      managerTermState.submittedAt = submittedAt;
+      managerTermState.submittedBy = submittedBy;
+      managerTermState.readOnlyReason = 'Manager entry for this term is submitted and read-only';
+      if (this.managerAssignmentTermsComplete(assignment)) {
+        assignment.managerSubmittedAt = submittedAt;
+        assignment.managerSubmittedBy = submittedBy;
+      }
+    } else {
+      assignment.values = this.mergeObjectiveEmployeeAssignmentTermValues(
+        assignment.values ?? {},
+        input.values ?? assignment.values ?? {},
+        selectedTerm,
+      );
+      this.validateObjectiveAssignmentTermSubmission(assignment, selectedTerm, 'EMPLOYEE');
+      const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, selectedTerm);
+      termState.submissionMode = this.isObjectiveEmployeeAssignmentEntryOverrideActive(termState, submittedAt)
+        ? ObjectiveTermSubmissionMode.BACKFILL
+        : ObjectiveTermSubmissionMode.SCHEDULED;
+      termState.status = ObjectiveEmployeeAssignmentStatus.SUBMITTED;
+      termState.submittedAt = submittedAt;
+      termState.submittedBy = submittedBy;
+      termState.readOnlyReason = 'Submitted objective term is read-only';
+      this.syncObjectiveEmployeeAssignmentStatusFromTerms(assignment);
+      this.syncObjectiveManagerAssignmentTerms(assignment, period);
+      if (assignment.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED) {
+        assignment.submittedAt = submittedAt;
+        assignment.submittedBy = submittedBy;
+      }
+      const readiness = this.resolveObjectiveFinalRecordReadiness(
+        assignment,
+        this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period),
+      );
+      if (readiness.availability === 'AVAILABLE' && !assignment.finalRecord) {
+        createdFinalRecord = await this.buildObjectiveFinalRecordSnapshot(
+          assignment,
+          period,
+          readiness,
+          'SUBMISSION',
+        );
+        assignment.finalRecord = createdFinalRecord;
+        assignment.markModified('finalRecord');
+      }
     }
     assignment.updatedBy = submittedBy;
     assignment.version += 1;
     await assignment.save();
     const nextValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
-    await this.audit('PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SUBMITTED', 'OBJECTIVE_EMPLOYEE_ASSIGNMENT', assignment._id.toString(), previousValue, nextValue);
+    await this.audit(
+      entryActor === 'MANAGER'
+        ? 'PMS_OBJECTIVE_MANAGER_ASSIGNMENT_SUBMITTED'
+        : 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SUBMITTED',
+      'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+      assignment._id.toString(),
+      previousValue,
+      nextValue,
+    );
+    if (createdFinalRecord) {
+      await this.audit(
+        'PMS_OBJECTIVE_FINAL_RECORD_CREATED',
+        'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+        assignment._id.toString(),
+        undefined,
+        {
+          contentHash: createdFinalRecord.contentHash,
+          completedAt: createdFinalRecord.completedAt,
+        },
+      );
+    }
     return nextValue;
   }
 
@@ -2740,7 +2920,7 @@ export class ObjectiveService extends BaseService {
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     await this.syncObjectiveEmployeeAssignmentTerms(assignment, period);
     this.assertObjectiveEmployeeAssignmentVersion(assignment, input.expectedVersion);
-    const selectedTerm = this.resolveObjectiveEmployeeAssignmentInputTerm(assignment, term);
+    const selectedTerm = this.resolveObjectiveAssignmentInputTerm(assignment, term, 'EMPLOYEE');
     const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, selectedTerm);
     const now = this.getCurrentDate();
     const opensAt = input.opensAt ? this.parseObjectiveEmployeeAssignmentDate(input.opensAt, 'opensAt') : now;
@@ -2798,7 +2978,7 @@ export class ObjectiveService extends BaseService {
     const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     this.assertObjectiveEmployeeAssignmentVersion(assignment, input.expectedVersion);
-    const selectedTerm = this.resolveObjectiveEmployeeAssignmentInputTerm(assignment, term);
+    const selectedTerm = this.resolveObjectiveAssignmentInputTerm(assignment, term, 'EMPLOYEE');
     const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, selectedTerm);
     const reason = String(input.reason ?? '').trim();
     if (!reason) {
@@ -2875,6 +3055,17 @@ export class ObjectiveService extends BaseService {
               revocationReason: 'Objective assignment is closed',
             }
           : existingEntryOverride,
+      };
+    });
+    assignment.managerTermStates = this.normalizeObjectiveManagerAssignmentTermStates(assignment, period).map((state: any) => {
+      const existingState = state?.toObject?.() ?? state ?? {};
+      if (existingState.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED) return existingState;
+      return {
+        ...existingState,
+        status: ObjectiveEmployeeAssignmentStatus.CLOSED,
+        closedAt,
+        closedBy: actorId,
+        readOnlyReason: 'Objective assignment is closed',
       };
     });
     assignment.version += 1;
@@ -3100,6 +3291,60 @@ export class ObjectiveService extends BaseService {
     return assignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
   }
 
+  async getObjectiveEmployeeAssignmentFinalRecord(
+    assignmentId: string,
+  ): Promise<ObjectiveFinalRecordResponse> {
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    const viewAs = this.resolveObjectiveFinalRecordViewActor(assignment);
+    const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
+    const termStates = this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
+    const readiness = this.resolveObjectiveFinalRecordReadiness(assignment, termStates);
+    if (readiness.availability !== 'AVAILABLE') {
+      return { availability: 'PENDING', readiness };
+    }
+
+    let finalRecord = assignment.finalRecord as IObjectiveAssignmentFinalRecordSnapshot | undefined;
+    if (!finalRecord) {
+      const candidate = await this.buildObjectiveFinalRecordSnapshot(
+        assignment,
+        period,
+        readiness,
+        'BACKFILL',
+      );
+      const updateResult = await ObjectiveEmployeeAssignment.updateOne(
+        {
+          _id: assignment._id,
+          $or: [{ finalRecord: { $exists: false } }, { finalRecord: null }],
+        },
+        { $set: { finalRecord: candidate } },
+      );
+      if (updateResult.modifiedCount > 0) {
+        finalRecord = candidate;
+        await this.audit(
+          'PMS_OBJECTIVE_FINAL_RECORD_BACKFILLED',
+          'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+          assignment._id.toString(),
+          undefined,
+          { contentHash: candidate.contentHash, completedAt: candidate.completedAt },
+        );
+      } else {
+        const existing = await ObjectiveEmployeeAssignment.findById(assignment._id)
+          .select('finalRecord')
+          .lean();
+        finalRecord = existing?.finalRecord as IObjectiveAssignmentFinalRecordSnapshot | undefined;
+      }
+    }
+    if (!finalRecord) {
+      throw new Error('Final objective record could not be prepared');
+    }
+
+    return {
+      availability: 'AVAILABLE',
+      readiness,
+      record: this.mapObjectiveFinalRecordForView(finalRecord, viewAs),
+    };
+  }
+
   async syncObjectiveEmployeeAssignmentTermStates(
     input: ObjectiveEmployeeAssignmentTermStateSyncInput = {},
   ): Promise<ObjectiveEmployeeAssignmentTermStateSyncResult> {
@@ -3139,11 +3384,14 @@ export class ObjectiveService extends BaseService {
       const previousState = JSON.stringify({
         status: assignment.status,
         termStates: assignment.termStates ?? [],
+        managerTermStates: assignment.managerTermStates ?? [],
       });
       await this.syncObjectiveEmployeeAssignmentTerms(assignment, period);
+      this.syncObjectiveManagerAssignmentTerms(assignment, period);
       const nextState = JSON.stringify({
         status: assignment.status,
         termStates: assignment.termStates ?? [],
+        managerTermStates: assignment.managerTermStates ?? [],
       });
       if (previousState !== nextState) {
         assignment.updatedBy = this.toObjectId(this.requireActor().actorId, 'actorId');
@@ -10038,7 +10286,94 @@ export class ObjectiveService extends BaseService {
       : ObjectiveEmployeeAssignmentStatus.ASSIGNED;
   }
 
-  private resolveObjectiveEmployeeAssignmentInputTerm(assignment: any, requestedTerm?: string): string {
+  private resolveObjectiveManagerAssignmentTermStates(
+    assignment: any,
+    period?: any,
+  ): ObjectiveEmployeeAssignmentTermStateRecord[] {
+    return this.normalizeObjectiveManagerAssignmentTermStates(assignment, period).map((state: any) => ({
+      term: state.term,
+      status: state.status,
+      fillStartDate: this.toObjectiveEmployeeAssignmentIsoDate(state.fillStartDate),
+      fillEndDate: this.toObjectiveEmployeeAssignmentIsoDate(state.fillEndDate),
+      submittedAt: this.toObjectiveEmployeeAssignmentIsoDate(state.submittedAt),
+      submittedBy: state.submittedBy?.toString?.(),
+      closedAt: this.toObjectiveEmployeeAssignmentIsoDate(state.closedAt),
+      closedBy: state.closedBy?.toString?.(),
+      readOnlyReason: state.readOnlyReason,
+    }));
+  }
+
+  private normalizeObjectiveManagerAssignmentTermStates(assignment: any, period?: any): any[] {
+    const terms = assignment.selectedTerms?.length ? assignment.selectedTerms : period?.terms ?? [];
+    const existingByTerm = new Map(
+      (assignment.managerTermStates ?? []).map((state: any) => [String(state.term), state]),
+    );
+    const employeeByTerm = new Map(
+      this.normalizeObjectiveEmployeeAssignmentTermStates(assignment, period, true).map((state: any) => [String(state.term), state]),
+    );
+    const windowsByTerm = new Map(
+      (period?.termFillWindows ?? []).map((window: any) => [String(window.term), window]),
+    );
+
+    return terms.map((term: string) => {
+      const existing: any = existingByTerm.get(String(term));
+      const employeeState: any = employeeByTerm.get(String(term));
+      const window: any = windowsByTerm.get(String(term));
+      const existingState = existing?.toObject?.() ?? existing ?? {};
+      const fillStartDate = window?.fillStartDate ?? employeeState?.fillStartDate ?? period?.fillStartDate;
+      const fillEndDate = window?.fillEndDate ?? employeeState?.fillEndDate ?? period?.fillEndDate;
+      let status = 'LOCKED';
+      let readOnlyReason: string | undefined;
+
+      if (existing?.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED) {
+        status = ObjectiveEmployeeAssignmentStatus.SUBMITTED;
+        readOnlyReason = existing.readOnlyReason ?? 'Manager entry for this term is submitted and read-only';
+      } else if (assignment.status === ObjectiveEmployeeAssignmentStatus.CLOSED) {
+        status = ObjectiveEmployeeAssignmentStatus.CLOSED;
+        readOnlyReason = 'Objective assignment is closed';
+      } else if (!period) {
+        readOnlyReason = 'Assignment period details are not available';
+      } else if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+        readOnlyReason = 'Objective Assignment Period is not active';
+      } else if (!this.getObjectiveAssignmentFillableColumns(assignment, term, 'MANAGER').length) {
+        readOnlyReason = `${term} has no fields configured for manager entry`;
+      } else if (employeeState?.status !== ObjectiveEmployeeAssignmentStatus.SUBMITTED) {
+        readOnlyReason = 'Available after the employee submits this term';
+      } else {
+        status = 'OPEN';
+      }
+
+      return {
+        ...existingState,
+        term,
+        status,
+        fillStartDate,
+        fillEndDate,
+        submittedAt: existing?.submittedAt,
+        submittedBy: existing?.submittedBy,
+        closedAt: existing?.closedAt,
+        closedBy: existing?.closedBy,
+        readOnlyReason,
+      };
+    });
+  }
+
+  private syncObjectiveManagerAssignmentTerms(assignment: any, period?: any): void {
+    assignment.managerTermStates = this.normalizeObjectiveManagerAssignmentTermStates(assignment, period);
+  }
+
+  private resolveObjectiveAssignmentEntryActor(assignment: any): ObjectiveAssignmentEntryActor {
+    const actor = this.requireActor();
+    if (assignment.employeeId?.toString?.() === actor.actorId) return 'EMPLOYEE';
+    if (assignment.managerId?.toString?.() === actor.actorId) return 'MANAGER';
+    throw new Error('Only the assigned employee or manager can enter objective values');
+  }
+
+  private resolveObjectiveAssignmentInputTerm(
+    assignment: any,
+    requestedTerm: string | undefined,
+    actor: ObjectiveAssignmentEntryActor,
+  ): string {
     const selectedTerms = assignment.selectedTerms ?? [];
     if (requestedTerm) {
       if (!selectedTerms.includes(requestedTerm)) {
@@ -10046,7 +10381,8 @@ export class ObjectiveService extends BaseService {
       }
       return requestedTerm;
     }
-    const openTerms = (assignment.termStates ?? [])
+    const states = actor === 'MANAGER' ? assignment.managerTermStates ?? [] : assignment.termStates ?? [];
+    const openTerms = states
       .filter((state: any) => state.status === 'OPEN')
       .map((state: any) => state.term);
     if (openTerms.length === 1) return openTerms[0];
@@ -10060,6 +10396,23 @@ export class ObjectiveService extends BaseService {
       throw new Error('Objective assignment term is not available');
     }
     return state;
+  }
+
+  private findObjectiveManagerAssignmentTermState(assignment: any, term: string): any {
+    const state = (assignment.managerTermStates ?? []).find((item: any) => item.term === term);
+    if (!state) {
+      throw new Error('Manager objective assignment term is not available');
+    }
+    return state;
+  }
+
+  private managerAssignmentTermsComplete(assignment: any): boolean {
+    const applicableStates = (assignment.managerTermStates ?? []).filter((state: any) =>
+      this.getObjectiveAssignmentFillableColumns(assignment, state.term, 'MANAGER').length > 0,
+    );
+    return applicableStates.length > 0 && applicableStates.every(
+      (state: any) => state.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED,
+    );
   }
 
   private mergeObjectiveEmployeeAssignmentTermValues(
@@ -10082,17 +10435,47 @@ export class ObjectiveService extends BaseService {
     return nextValues;
   }
 
-  private validateObjectiveEmployeeAssignmentTermSubmission(assignment: any, term: string): void {
+  private assertObjectiveAssignmentInputValuesAllowed(
+    assignment: any,
+    term: string,
+    actor: ObjectiveAssignmentEntryActor,
+    incomingValues: Record<string, unknown>,
+  ): void {
+    const layout = assignment.frozenObjectiveSnapshot?.sheetLayout ?? {};
+    const rows = Array.isArray(layout.rows) && layout.rows.length
+      ? layout.rows
+      : [{ id: 'objective' }];
+    const allowedColumnIds = new Set(
+      this.getObjectiveAssignmentFillableColumns(assignment, term, actor).map((column: any) => String(column.id)),
+    );
+    const allowedKeys = new Set(
+      rows.flatMap((row: any) =>
+        Array.from(allowedColumnIds).map((columnId) => `${term}:${row.id}:${columnId}`),
+      ),
+    );
+    const invalidKeys = Object.keys(incomingValues).filter(
+      (key) => key.startsWith(`${term}:`) && !allowedKeys.has(key),
+    );
+    if (invalidKeys.length) {
+      throw new Error(`${actor.toLowerCase()} cannot enter one or more fields for ${term}`);
+    }
+  }
+
+  private validateObjectiveAssignmentTermSubmission(
+    assignment: any,
+    term: string,
+    actor: ObjectiveAssignmentEntryActor,
+  ): void {
     const layout = assignment.frozenObjectiveSnapshot?.sheetLayout ?? {};
     const rows = Array.isArray(layout.rows) && layout.rows.length
       ? layout.rows
       : [{ id: 'objective', label: String(assignment.frozenObjectiveSnapshot?.title || 'Objective') }];
-    const fillableColumns = this.getObjectiveEmployeeAssignmentFillableColumns(assignment, term);
+    const fillableColumns = this.getObjectiveAssignmentFillableColumns(assignment, term, actor);
     if (!fillableColumns.length) {
-      throw new Error(`${term} has no fields available for employee input.`);
+      throw new Error(`${term} has no fields available for ${actor.toLowerCase()} input.`);
     }
 
-    const values = assignment.values ?? {};
+    const values = actor === 'MANAGER' ? assignment.managerValues ?? {} : assignment.values ?? {};
     const requiredMissing: string[] = [];
     let hasAnyValue = false;
     rows.forEach((row: any) => {
@@ -10101,7 +10484,7 @@ export class ObjectiveService extends BaseService {
         const value = values[key];
         const hasValue = value !== undefined && value !== null && String(value).trim() !== '';
         hasAnyValue = hasAnyValue || hasValue;
-        const permission = this.objectiveAssignmentFillPermissionForActor(layout, column, 'EMPLOYEE');
+        const permission = this.objectiveAssignmentFillPermissionForActor(layout, column, actor);
         if (permission?.required === true && !hasValue) {
           requiredMissing.push(`${row.label || row.id} - ${column.label || column.id}`);
         }
@@ -10117,13 +10500,17 @@ export class ObjectiveService extends BaseService {
     }
   }
 
-  private getObjectiveEmployeeAssignmentFillableColumns(assignment: any, term: string): any[] {
+  private getObjectiveAssignmentFillableColumns(
+    assignment: any,
+    term: string,
+    actor: ObjectiveAssignmentEntryActor,
+  ): any[] {
     const layout = assignment.frozenObjectiveSnapshot?.sheetLayout ?? {};
     const columns = Array.isArray(layout.columns)
       ? layout.columns.filter((column: any) => column?.type !== 'FORMULA')
       : [];
     return columns.filter((column: any) =>
-      this.objectiveAssignmentColumnAccessForActor(layout, column, 'EMPLOYEE') === 'FILL' &&
+      this.objectiveAssignmentColumnAccessForActor(layout, column, actor) === 'FILL' &&
       this.objectiveAssignmentColumnAvailableForTerm(layout, column, term),
     );
   }
@@ -10135,9 +10522,6 @@ export class ObjectiveService extends BaseService {
   }
 
   private objectiveAssignmentColumnAccessForActor(layout: any, column: any, actor: string): string {
-    if (actor === 'EMPLOYEE' && ['objective', 'uom'].includes(String(column?.id ?? '').toLowerCase())) {
-      return 'VIEW';
-    }
     const permission = this.objectiveAssignmentFillPermissionForActor(layout, column, actor);
     if (permission?.access) return permission.access;
     if (column.type === 'FORMULA') return actor === 'SYSTEM' ? 'FILL' : 'VIEW';
@@ -10163,6 +10547,586 @@ export class ObjectiveService extends BaseService {
     return matchedTerms.length ? matchedTerms : allTerms;
   }
 
+  private resolveObjectiveFinalRecordReadiness(
+    assignment: any,
+    resolvedTermStates?: ObjectiveEmployeeAssignmentTermStateRecord[],
+  ): ObjectiveFinalRecordReadinessRecord {
+    const selectedTerms = Array.from(
+      new Set(
+        (assignment.selectedTerms ?? [])
+          .map((term: unknown) => String(term ?? '').trim())
+          .filter(Boolean),
+      ),
+    ) as string[];
+    if (!selectedTerms.length) {
+      return {
+        availability: 'PENDING',
+        reason: 'NO_SELECTED_TERMS',
+        completionBasis: 'EMPLOYEE_SELECTED_TERMS',
+        selectedTerms: [],
+        submittedTerms: [],
+        pendingTerms: [],
+        message: 'No employee terms are selected for this objective assignment.',
+      };
+    }
+
+    const termStates = resolvedTermStates ?? this.resolveObjectiveEmployeeAssignmentTermStates(assignment);
+    const statesByTerm = new Map(termStates.map((state) => [String(state.term), state]));
+    const assignmentWasFullySubmitted =
+      assignment.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED ||
+      Boolean(assignment.submittedAt);
+    const submittedTerms = selectedTerms.filter((term) => {
+      if (assignmentWasFullySubmitted) return true;
+      const state = statesByTerm.get(term);
+      if (!state) return false;
+      if (state.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED) return true;
+      return state.status === ObjectiveEmployeeAssignmentStatus.CLOSED && Boolean(state.submittedAt);
+    });
+    const submittedTermSet = new Set(submittedTerms);
+    const pendingTerms = selectedTerms.filter((term) => !submittedTermSet.has(term));
+
+    if (pendingTerms.length) {
+      return {
+        availability: 'PENDING',
+        reason: 'EMPLOYEE_TERMS_PENDING',
+        completionBasis: 'EMPLOYEE_SELECTED_TERMS',
+        selectedTerms,
+        submittedTerms,
+        pendingTerms,
+        message: `Employee submission pending for ${pendingTerms.join(', ')}.`,
+      };
+    }
+
+    const completedAt = this.resolveObjectiveFinalRecordCompletedAt(assignment, selectedTerms, statesByTerm);
+    return {
+      availability: 'AVAILABLE',
+      reason: 'READY',
+      completionBasis: 'EMPLOYEE_SELECTED_TERMS',
+      selectedTerms,
+      submittedTerms,
+      pendingTerms: [],
+      completedAt,
+      message: 'All selected employee terms are submitted.',
+    };
+  }
+
+  private resolveObjectiveFinalRecordCompletedAt(
+    assignment: any,
+    selectedTerms: string[],
+    statesByTerm: Map<string, ObjectiveEmployeeAssignmentTermStateRecord>,
+  ): string | undefined {
+    const assignmentSubmittedAt = this.toObjectiveEmployeeAssignmentIsoDate(assignment.submittedAt);
+    if (assignmentSubmittedAt) return assignmentSubmittedAt;
+
+    const submittedTimes = selectedTerms
+      .map((term) => statesByTerm.get(term)?.submittedAt)
+      .filter((value): value is string => Boolean(value))
+      .map((value) => new Date(value))
+      .filter((value) => !Number.isNaN(value.getTime()));
+    if (!submittedTimes.length) return undefined;
+    return new Date(Math.max(...submittedTimes.map((value) => value.getTime()))).toISOString();
+  }
+
+  private async buildObjectiveFinalRecordSnapshot(
+    assignment: any,
+    period: any,
+    readiness: ObjectiveFinalRecordReadinessRecord,
+    generationMode: 'SUBMISSION' | 'BACKFILL',
+  ): Promise<IObjectiveAssignmentFinalRecordSnapshot> {
+    if (readiness.availability !== 'AVAILABLE') {
+      throw new Error('Final objective record cannot be generated before all selected employee terms are submitted');
+    }
+    const [employeeSnapshot, managerSnapshot] = await Promise.all([
+      this.resolveObjectiveFinalRecordParticipantSnapshot(assignment.employeeId),
+      assignment.managerId
+        ? this.resolveObjectiveFinalRecordParticipantSnapshot(assignment.managerId)
+        : Promise.resolve(undefined),
+    ]);
+    const frozenObjectiveSnapshot = this.objectiveFinalRecordPlainValue(
+      assignment.frozenObjectiveSnapshot ?? {},
+    );
+    const employeeValues = this.filterObjectiveFinalRecordEmployeeValues(
+      assignment.values ?? {},
+      readiness.selectedTerms,
+    );
+    const calculatedValues = this.calculateObjectiveFinalRecordValues(
+      frozenObjectiveSnapshot,
+      employeeValues,
+      readiness.selectedTerms,
+    );
+    const termStates = this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
+    const statesByTerm = new Map(termStates.map((state) => [state.term, state]));
+    const payload: Omit<IObjectiveAssignmentFinalRecordSnapshot, 'contentHash'> = {
+      schemaVersion: 1,
+      generatedAt: this.getCurrentDate().toISOString(),
+      generatedBy: this.requireActor().actorId,
+      generationMode,
+      completedAt: readiness.completedAt,
+      completionBasis: 'EMPLOYEE_SELECTED_TERMS',
+      objectiveAssignmentId: assignment._id?.toString?.() ?? '',
+      objectiveAssignmentPeriodId: assignment.objectiveAssignmentPeriodId?.toString?.() ?? '',
+      objectiveMasterId: assignment.objectiveMasterId?.toString?.() ?? '',
+      objectiveVersionId: assignment.objectiveVersionId?.toString?.() ?? '',
+      selectedTerms: readiness.selectedTerms as AssessmentTermCodeType[],
+      termSubmissions: readiness.selectedTerms.map((term) => {
+        const state = statesByTerm.get(term);
+        return {
+          term: term as AssessmentTermCodeType,
+          submittedAt: state?.submittedAt,
+          submittedBy: state?.submittedBy,
+          submissionMode: state?.submissionMode as any,
+        };
+      }),
+      assignmentPeriodSnapshot: {
+        id: period?._id?.toString?.() ?? assignment.objectiveAssignmentPeriodId?.toString?.() ?? '',
+        name: period?.name,
+        statusAtCompletion: period?.status,
+        fillStartDate: this.toObjectiveEmployeeAssignmentIsoDate(period?.fillStartDate),
+        fillEndDate: this.toObjectiveEmployeeAssignmentIsoDate(period?.fillEndDate),
+        termFillWindows: this.objectiveFinalRecordPlainValue(period?.termFillWindows ?? []),
+      },
+      employeeSnapshot,
+      managerSnapshot,
+      frozenObjectiveSnapshot,
+      employeeValues,
+      calculatedValues,
+      consolidatedNotes: this.buildObjectiveFinalRecordConsolidatedNotes(
+        frozenObjectiveSnapshot,
+        employeeValues,
+        readiness.selectedTerms,
+      ),
+    };
+    return {
+      ...payload,
+      contentHash: this.hashObjectiveFinalRecordPayload(payload),
+    };
+  }
+
+  private async resolveObjectiveFinalRecordParticipantSnapshot(
+    participant: any,
+  ): Promise<IObjectiveFinalRecordParticipantSnapshot> {
+    const participantId = participant?._id ?? participant;
+    const id = participantId?.toString?.() ?? '';
+    const embedded = participant?._id ? participant?.toObject?.() ?? participant : undefined;
+    const user = embedded ?? (id && Types.ObjectId.isValid(id)
+      ? await User.findById(id)
+          .select('name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
+          .lean()
+      : undefined);
+    return {
+      id,
+      name: user?.name || user?.employeeName || user?.fullName || user?.email,
+      employeeCode: user?.employeeCode,
+      department: this.objectiveFinalRecordOptionalString(
+        user?.departmentName || user?.department || user?.departmentId,
+      ),
+      role: this.objectiveFinalRecordOptionalString(
+        user?.specificRole || user?.designation || user?.role,
+      ),
+    };
+  }
+
+  private objectiveFinalRecordOptionalString(value: unknown): string | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'string') return value;
+    if (typeof (value as any)?.toString === 'function') {
+      const normalized = (value as any).toString();
+      return normalized === '[object Object]' ? undefined : normalized;
+    }
+    return undefined;
+  }
+
+  private filterObjectiveFinalRecordEmployeeValues(
+    values: Record<string, unknown>,
+    selectedTerms: string[],
+  ): Record<string, unknown> {
+    const selectedPrefixes = selectedTerms.map((term) => `${term}:`);
+    return Object.fromEntries(
+      Object.entries(this.objectiveFinalRecordPlainValue(values ?? {})).filter(([key]) =>
+        selectedPrefixes.some((prefix) => key.startsWith(prefix)),
+      ),
+    );
+  }
+
+  private calculateObjectiveFinalRecordValues(
+    frozenObjectiveSnapshot: Record<string, any>,
+    employeeValues: Record<string, unknown>,
+    selectedTerms: string[],
+  ): Record<string, number> {
+    const layout = frozenObjectiveSnapshot?.sheetLayout ?? {};
+    const columns: any[] = Array.isArray(layout.columns) ? layout.columns : [];
+    const rows: any[] = Array.isArray(layout.rows) && layout.rows.length
+      ? layout.rows
+      : [{ id: 'objective' }];
+    const formulas: any[] = Array.isArray(layout.formulas) ? layout.formulas : [];
+    const formulaByTarget = new Map(formulas.map((formula: any) => [String(formula.targetColumnId), formula]));
+    const columnById = new Map(columns.map((column: any) => [String(column.id), column]));
+    const configuredValues = layout.cellValues ?? {};
+    const calculatedValues: Record<string, number> = {};
+
+    rows.forEach((row: any) => {
+      const cache = new Map<string, number | undefined>();
+      const resolveColumnValue = (columnId: string, visited = new Set<string>()): number | undefined => {
+        if (cache.has(columnId)) return cache.get(columnId);
+        if (visited.has(columnId)) return undefined;
+        visited.add(columnId);
+        const formula: any = formulaByTarget.get(columnId);
+        let value: number | undefined;
+        if (formula) {
+          const mode = String(formula.mode ?? '').toUpperCase();
+          if (mode === 'CUSTOM') {
+            value = this.evaluateObjectiveFinalRecordCustomFormula(
+              String(formula.customExpression ?? ''),
+              columns,
+              (sourceColumnId) => resolveColumnValue(sourceColumnId, new Set(visited)),
+            );
+          } else if (String(formula.kind ?? '').toUpperCase() === 'ACTUAL') {
+            const sourceValues = (formula.sourceColumnIds ?? []).flatMap((sourceColumnId: string) => {
+              const directTermValues = selectedTerms.flatMap((term) => {
+                const parsed = this.objectiveFinalRecordNumber(
+                  employeeValues[`${term}:${row.id}:${sourceColumnId}`],
+                );
+                return parsed === undefined ? [] : [parsed];
+              });
+              if (directTermValues.length) return directTermValues;
+              const resolved = resolveColumnValue(String(sourceColumnId), new Set(visited));
+              return resolved === undefined ? [] : [resolved];
+            });
+            if (sourceValues.length) {
+              if (mode === 'AVERAGE_TERMS') {
+                value = sourceValues.reduce((total: number, item: number) => total + item, 0) / sourceValues.length;
+              } else if (mode === 'LATEST_FILLED_TERM') {
+                value = sourceValues[sourceValues.length - 1];
+              } else {
+                value = sourceValues.reduce((total: number, item: number) => total + item, 0);
+              }
+            }
+          } else {
+            const left = resolveColumnValue(String(formula.leftColumnId ?? ''), new Set(visited));
+            const right = resolveColumnValue(String(formula.rightColumnId ?? ''), new Set(visited));
+            if (left !== undefined && right !== undefined) {
+              value = mode === 'ABSOLUTE_DIFFERENCE' ? Math.abs(left - right) : left - right;
+            }
+          }
+        } else {
+          const termValues = selectedTerms.flatMap((term) => {
+            const parsed = this.objectiveFinalRecordNumber(employeeValues[`${term}:${row.id}:${columnId}`]);
+            return parsed === undefined ? [] : [parsed];
+          });
+          value = termValues.length
+            ? termValues[termValues.length - 1]
+            : this.objectiveFinalRecordNumber(
+                configuredValues[`${row.id}:${columnId}`] ??
+                configuredValues[columnId] ??
+                (columnById.get(columnId) as any)?.defaultValue,
+              );
+        }
+        cache.set(columnId, value);
+        return value;
+      };
+
+      formulas.forEach((formula: any) => {
+        const targetColumnId = String(formula.targetColumnId ?? '');
+        const value = resolveColumnValue(targetColumnId);
+        if (targetColumnId && value !== undefined && Number.isFinite(value)) {
+          calculatedValues[`${row.id}:${targetColumnId}`] = value;
+        }
+      });
+    });
+
+    return calculatedValues;
+  }
+
+  private objectiveFinalRecordNumber(value: unknown): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const parsed = typeof value === 'number' ? value : Number(String(value).trim());
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private evaluateObjectiveFinalRecordCustomFormula(
+    expression: string,
+    columns: any[],
+    resolveColumnValue: (columnId: string) => number | undefined,
+  ): number | undefined {
+    const candidates = columns
+      .map((column: any) => ({
+        id: String(column.id ?? ''),
+        label: String(column.label ?? ''),
+      }))
+      .filter((column) => column.id || column.label)
+      .sort((left, right) => Math.max(right.id.length, right.label.length) - Math.max(left.id.length, left.label.length));
+    const tokens: Array<number | '+' | '-' | '*' | '/' | '(' | ')'> = [];
+    const lowerExpression = expression.toLowerCase();
+    let index = 0;
+    while (index < expression.length) {
+      if (/\s/.test(expression[index])) {
+        index += 1;
+        continue;
+      }
+      const symbol = expression[index];
+      if (['+', '-', '*', '/', '(', ')'].includes(symbol)) {
+        tokens.push(symbol as '+' | '-' | '*' | '/' | '(' | ')');
+        index += 1;
+        continue;
+      }
+      const numberMatch = expression.slice(index).match(/^\d+(\.\d+)?/);
+      if (numberMatch) {
+        tokens.push(Number(numberMatch[0]));
+        index += numberMatch[0].length;
+        continue;
+      }
+      const matched = candidates.find((candidate) => {
+        const references = [candidate.label, candidate.id].filter(Boolean);
+        return references.some((reference) => {
+          const normalized = reference.toLowerCase();
+          if (!lowerExpression.startsWith(normalized, index)) return false;
+          const nextCharacter = lowerExpression[index + normalized.length] ?? '';
+          return !/[a-z0-9_]/i.test(nextCharacter);
+        });
+      });
+      if (!matched) return undefined;
+      const matchedReference = [matched.label, matched.id]
+        .filter(Boolean)
+        .find((reference) => lowerExpression.startsWith(reference.toLowerCase(), index));
+      const value = resolveColumnValue(matched.id);
+      if (!matchedReference || value === undefined) return undefined;
+      tokens.push(value);
+      index += matchedReference.length;
+    }
+
+    const values: number[] = [];
+    const operators: Array<'+' | '-' | '*' | '/' | '('> = [];
+    const precedence = (operator: string) => operator === '+' || operator === '-' ? 1 : 2;
+    const applyOperator = (): boolean => {
+      const operator = operators.pop();
+      const right = values.pop();
+      const left = values.pop();
+      if (!operator || operator === '(' || left === undefined || right === undefined) return false;
+      if (operator === '/' && right === 0) return false;
+      const result = operator === '+' ? left + right
+        : operator === '-' ? left - right
+        : operator === '*' ? left * right
+        : left / right;
+      if (!Number.isFinite(result)) return false;
+      values.push(result);
+      return true;
+    };
+
+    for (const token of tokens) {
+      if (typeof token === 'number') {
+        values.push(token);
+      } else if (token === '(') {
+        operators.push(token);
+      } else if (token === ')') {
+        while (operators.length && operators[operators.length - 1] !== '(') {
+          if (!applyOperator()) return undefined;
+        }
+        if (operators.pop() !== '(') return undefined;
+      } else {
+        while (
+          operators.length &&
+          operators[operators.length - 1] !== '(' &&
+          precedence(operators[operators.length - 1]) >= precedence(token)
+        ) {
+          if (!applyOperator()) return undefined;
+        }
+        operators.push(token);
+      }
+    }
+    while (operators.length) {
+      if (!applyOperator()) return undefined;
+    }
+    return values.length === 1 ? values[0] : undefined;
+  }
+
+  private buildObjectiveFinalRecordConsolidatedNotes(
+    frozenObjectiveSnapshot: Record<string, any>,
+    employeeValues: Record<string, unknown>,
+    selectedTerms: string[],
+  ): IObjectiveAssignmentFinalRecordSnapshot['consolidatedNotes'] {
+    const layout = frozenObjectiveSnapshot?.sheetLayout ?? {};
+    const columns = Array.isArray(layout.columns) ? layout.columns : [];
+    const rows = Array.isArray(layout.rows) && layout.rows.length
+      ? layout.rows
+      : [{ id: 'objective' }];
+    const noteColumns = columns.filter((column: any) => {
+      const identifiers = [column?.id, column?.label]
+        .map((value) => String(value ?? '').trim().toLowerCase());
+      return identifiers.some((value) => ['notes', 'remarks'].includes(value));
+    });
+
+    return rows.flatMap((row: any) => noteColumns.flatMap((column: any) => {
+      const entries = selectedTerms.flatMap((term) => {
+        const rawValue = employeeValues[`${term}:${row.id}:${column.id}`];
+        const value = this.objectiveFinalRecordDisplayValue(rawValue);
+        return value ? [{ term: term as AssessmentTermCodeType, value }] : [];
+      });
+      if (!entries.length) return [];
+      return [{
+        rowId: String(row.id),
+        columnId: String(column.id),
+        entries,
+        value: entries.map((entry) => `${entry.term}: ${entry.value}`).join(', '),
+      }];
+    }));
+  }
+
+  private objectiveFinalRecordDisplayValue(value: unknown): string {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  private resolveObjectiveFinalRecordViewActor(assignment: any): ObjectiveFinalRecordViewActor {
+    const actor = this.requireActor();
+    if (assignment.employeeId?.toString?.() === actor.actorId) return 'EMPLOYEE';
+    if (assignment.managerId?.toString?.() === actor.actorId) return 'MANAGER';
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    if (mappedRole === PmsRole.ADMIN || mappedRole === PmsRole.MANAGEMENT) return 'ADMIN';
+    if (mappedRole === PmsRole.DIRECTOR) return 'REVIEWER';
+    throw new Error('You do not have access to this final objective record');
+  }
+
+  private mapObjectiveFinalRecordForView(
+    sourceRecord: IObjectiveAssignmentFinalRecordSnapshot,
+    viewAs: ObjectiveFinalRecordViewActor,
+  ): ObjectiveFinalRecordViewRecord {
+    const finalRecord = this.objectiveFinalRecordPlainValue(sourceRecord);
+    const frozenObjectiveSnapshot = this.objectiveFinalRecordPlainValue(
+      finalRecord.frozenObjectiveSnapshot ?? {},
+    ) as Record<string, any>;
+    const layout: any = frozenObjectiveSnapshot.sheetLayout ?? {};
+    const originalColumns: any[] = Array.isArray(layout.columns) ? layout.columns : [];
+    const visibleColumns: any[] = originalColumns.filter((column: any) =>
+      this.objectiveAssignmentColumnAccessForActor(layout, column, viewAs) !== 'HIDDEN',
+    );
+    const visibleColumnIds = new Set<string>(visibleColumns.map((column: any) => String(column.id)));
+    const filteredLayout = originalColumns.length
+      ? {
+          ...layout,
+          columns: visibleColumns,
+          headerGroups: this.filterObjectiveFinalRecordHeaderGroups(
+            layout.headerGroups ?? [],
+            originalColumns,
+            visibleColumnIds,
+          ),
+          formulas: (layout.formulas ?? [])
+            .filter((formula: any) => visibleColumnIds.has(String(formula.targetColumnId)))
+            .map((formula: any) => ({
+              id: formula.id,
+              kind: formula.kind,
+              label: formula.label,
+              targetColumnId: formula.targetColumnId,
+              mode: formula.mode,
+            })),
+          fillPermissions: (layout.fillPermissions ?? []).filter((permission: any) =>
+            permission.actor === viewAs && visibleColumnIds.has(String(permission.columnId)),
+          ),
+          termAvailability: (layout.termAvailability ?? []).filter((availability: any) =>
+            visibleColumnIds.has(String(availability.columnId)),
+          ),
+          cellValues: this.filterObjectiveFinalRecordValuesByColumns(
+            layout.cellValues ?? {},
+            visibleColumnIds,
+          ),
+        }
+      : layout;
+    frozenObjectiveSnapshot.sheetLayout = filteredLayout;
+    const employeeValues = originalColumns.length
+      ? this.filterObjectiveFinalRecordValuesByColumns(finalRecord.employeeValues ?? {}, visibleColumnIds)
+      : finalRecord.employeeValues ?? {};
+    const calculatedValues = originalColumns.length
+      ? this.filterObjectiveFinalRecordValuesByColumns(finalRecord.calculatedValues ?? {}, visibleColumnIds) as Record<string, number>
+      : finalRecord.calculatedValues ?? {};
+    const consolidatedNotes = (finalRecord.consolidatedNotes ?? []).filter((note: any) =>
+      !originalColumns.length || visibleColumnIds.has(String(note.columnId)),
+    );
+    const { contentHash, generatedBy: _generatedBy, ...recordWithoutPrivateFields } = finalRecord;
+
+    return {
+      ...recordWithoutPrivateFields,
+      frozenObjectiveSnapshot,
+      employeeValues,
+      calculatedValues,
+      consolidatedNotes,
+      contentHash,
+      integrityVerified: this.verifyObjectiveFinalRecordIntegrity(finalRecord),
+      viewAs,
+    } as unknown as ObjectiveFinalRecordViewRecord;
+  }
+
+  private filterObjectiveFinalRecordHeaderGroups(
+    headerGroups: any[],
+    originalColumns: any[],
+    visibleColumnIds: Set<string>,
+  ): any[] {
+    return headerGroups.flatMap((group: any) => {
+      const startIndex = originalColumns.findIndex((column: any) => column.id === group.startColumnId);
+      const endIndex = originalColumns.findIndex((column: any) => column.id === group.endColumnId);
+      if (startIndex < 0 || endIndex < startIndex) return [];
+      const visibleIds = originalColumns
+        .slice(startIndex, endIndex + 1)
+        .map((column: any) => String(column.id))
+        .filter((columnId: string) => visibleColumnIds.has(columnId));
+      if (!visibleIds.length) return [];
+      return [{ ...group, startColumnId: visibleIds[0], endColumnId: visibleIds[visibleIds.length - 1] }];
+    });
+  }
+
+  private filterObjectiveFinalRecordValuesByColumns(
+    values: Record<string, unknown>,
+    visibleColumnIds: Set<string>,
+  ): Record<string, unknown> {
+    return Object.fromEntries(
+      Object.entries(values ?? {}).filter(([key]) =>
+        Array.from(visibleColumnIds).some((columnId) => key === columnId || key.endsWith(`:${columnId}`)),
+      ),
+    );
+  }
+
+  private verifyObjectiveFinalRecordIntegrity(record: IObjectiveAssignmentFinalRecordSnapshot): boolean {
+    const plainRecord = this.objectiveFinalRecordPlainValue(record);
+    const { contentHash, ...payload } = plainRecord;
+    return Boolean(contentHash) && contentHash === this.hashObjectiveFinalRecordPayload(payload);
+  }
+
+  private hashObjectiveFinalRecordPayload(payload: unknown): string {
+    return createHash('sha256')
+      .update(this.objectiveFinalRecordStableStringify(payload))
+      .digest('hex');
+  }
+
+  private objectiveFinalRecordStableStringify(value: unknown): string {
+    if (value === null || value === undefined) return JSON.stringify(value ?? null);
+    if (value instanceof Date) return JSON.stringify(value.toISOString());
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.objectiveFinalRecordStableStringify(item)).join(',')}]`;
+    }
+    if (typeof value === 'object') {
+      if (typeof (value as any)?.toHexString === 'function') {
+        return JSON.stringify((value as any).toHexString());
+      }
+      const plainValue = (value as any)?.toObject?.() ?? value as Record<string, unknown>;
+      const entries = Object.keys(plainValue)
+        .filter((key) => plainValue[key] !== undefined)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${this.objectiveFinalRecordStableStringify(plainValue[key])}`);
+      return `{${entries.join(',')}}`;
+    }
+    return JSON.stringify(value);
+  }
+
+  private objectiveFinalRecordPlainValue<T>(value: T): T {
+    const plainValue = (value as any)?.toObject?.() ?? value;
+    const serialized = JSON.stringify(plainValue);
+    return (serialized === undefined ? plainValue : JSON.parse(serialized)) as T;
+  }
+
   private mapObjectiveEmployeeAssignmentRecord(
     assignment: any,
     periodOverride?: any,
@@ -10176,6 +11140,9 @@ export class ObjectiveService extends BaseService {
     const managerId = manager?._id || assignment.managerId;
     const periodId = period?._id || assignment.objectiveAssignmentPeriodId;
     const editState = this.resolveObjectiveEmployeeAssignmentEditState(assignment, period);
+    const managerEditState = this.resolveObjectiveManagerAssignmentEditState(assignment, period);
+    const termStates = this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
+    const finalRecordReadiness = this.resolveObjectiveFinalRecordReadiness(assignment, termStates);
     return {
       id: assignment._id?.toString?.() ?? '',
       objectiveAssignmentPeriodId: periodId?.toString?.() ?? '',
@@ -10193,12 +11160,16 @@ export class ObjectiveService extends BaseService {
       managerId: managerId?.toString?.(),
       managerName: manager?.name || manager?.employeeName || manager?.fullName || manager?.email,
       selectedTerms: assignment.selectedTerms ?? [],
-      termStates: this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period),
+      termStates,
+      managerTermStates: this.resolveObjectiveManagerAssignmentTermStates(assignment, period),
       frozenObjectiveSnapshot: assignment.frozenObjectiveSnapshot ?? {},
       values: assignment.values ?? {},
+      managerValues: assignment.managerValues ?? {},
       status: assignment.status,
       submittedAt: assignment.submittedAt?.toISOString?.(),
       submittedBy: assignment.submittedBy?.toString?.(),
+      managerSubmittedAt: assignment.managerSubmittedAt?.toISOString?.(),
+      managerSubmittedBy: assignment.managerSubmittedBy?.toString?.(),
       closedAt: assignment.closedAt?.toISOString?.(),
       closedBy: assignment.closedBy?.toString?.(),
       createdAt: assignment.createdAt?.toISOString?.(),
@@ -10206,6 +11177,11 @@ export class ObjectiveService extends BaseService {
       version: assignment.version ?? 1,
       canEdit: editState.canEdit,
       readOnlyReason: editState.readOnlyReason,
+      managerCanEdit: managerEditState.canEdit,
+      managerReadOnlyReason: managerEditState.readOnlyReason,
+      finalRecordReadiness,
+      hasFinalRecord: Boolean(assignment.finalRecord),
+      finalRecordGeneratedAt: this.toObjectiveEmployeeAssignmentIsoDate(assignment.finalRecord?.generatedAt),
     };
   }
 
@@ -10229,6 +11205,26 @@ export class ObjectiveService extends BaseService {
     }
     const firstReason = termStates.find((state: any) => state.readOnlyReason)?.readOnlyReason;
     return { canEdit: false, readOnlyReason: firstReason ?? 'No objective term is currently open for fill' };
+  }
+
+  private resolveObjectiveManagerAssignmentEditState(
+    assignment: any,
+    period?: any,
+  ): { canEdit: boolean; readOnlyReason?: string } {
+    if (assignment.status === ObjectiveEmployeeAssignmentStatus.CLOSED) {
+      return { canEdit: false, readOnlyReason: 'Objective assignment is closed' };
+    }
+    if (!period) {
+      return { canEdit: false, readOnlyReason: 'Assignment period details are not available' };
+    }
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+      return { canEdit: false, readOnlyReason: 'Objective Assignment Period is not active' };
+    }
+    const termStates = this.normalizeObjectiveManagerAssignmentTermStates(assignment, period);
+    const openState = termStates.find((state: any) => state.status === 'OPEN');
+    if (openState) return { canEdit: true };
+    const firstReason = termStates.find((state: any) => state.readOnlyReason)?.readOnlyReason;
+    return { canEdit: false, readOnlyReason: firstReason ?? 'No objective term is open for manager entry' };
   }
 
   private async buildObjectiveAssignmentPeriodPreview(
@@ -10358,27 +11354,34 @@ export class ObjectiveService extends BaseService {
     };
   }
 
-  private async assertObjectiveEmployeeAssignmentEditable(
+  private async assertObjectiveAssignmentEditable(
     assignment: any,
     term: string,
+    entryActor: ObjectiveAssignmentEntryActor,
     period?: any,
   ): Promise<void> {
     const actor = this.requireActor();
-    if (assignment.employeeId.toString() !== actor.actorId) {
-      throw new Error('Only the assigned employee can fill this objective');
+    const expectedActorId = entryActor === 'MANAGER' ? assignment.managerId : assignment.employeeId;
+    if (expectedActorId?.toString?.() !== actor.actorId) {
+      throw new Error(`Only the assigned ${entryActor.toLowerCase()} can fill this objective`);
     }
-    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
-      throw new Error('Submitted or closed objective assignments are read-only');
+    if (assignment.status === ObjectiveEmployeeAssignmentStatus.CLOSED) {
+      throw new Error('Closed objective assignments are read-only');
+    }
+    if (entryActor === 'EMPLOYEE' && assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
+      throw new Error('Submitted objective assignments are read-only for the employee');
     }
     period = period ?? await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
       throw new Error('Objective Assignment Period is not active');
     }
-    const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, term);
+    const termState = entryActor === 'MANAGER'
+      ? this.findObjectiveManagerAssignmentTermState(assignment, term)
+      : this.findObjectiveEmployeeAssignmentTermState(assignment, term);
     if (termState.status !== 'OPEN') {
-      throw new Error(termState.readOnlyReason || 'Objective term fill period is not open');
+      throw new Error(termState.readOnlyReason || `${entryActor.toLowerCase()} objective term entry is not open`);
     }
-    if (this.isObjectiveEmployeeAssignmentEntryOverrideActive(termState, this.getCurrentDate())) {
+    if (entryActor === 'EMPLOYEE' && this.isObjectiveEmployeeAssignmentEntryOverrideActive(termState, this.getCurrentDate())) {
       const employeeIsActive = await User.exists({
         _id: assignment.employeeId,
         active: { $ne: false },
@@ -10434,7 +11437,7 @@ export class ObjectiveService extends BaseService {
     if (reason.length > 500) {
       throw new Error('Past-term employee entry reason cannot exceed 500 characters');
     }
-    if (!this.getObjectiveEmployeeAssignmentFillableColumns(assignment, termState.term).length) {
+    if (!this.getObjectiveAssignmentFillableColumns(assignment, termState.term, 'EMPLOYEE').length) {
       throw new Error(`${termState.term} has no fields available for employee input.`);
     }
     const employeeIsActive = await User.exists({

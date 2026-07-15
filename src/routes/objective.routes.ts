@@ -554,6 +554,22 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/employee-assignments/:assignmentId/final-record',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const finalRecord = await request.container!.objectiveService.getObjectiveEmployeeAssignmentFinalRecord(
+          assignmentId,
+        );
+        return reply.send(successResponse('Final objective record fetched successfully', finalRecord));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.put(
     '/employee-assignments/:assignmentId/values',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },

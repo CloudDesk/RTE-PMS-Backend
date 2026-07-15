@@ -41,6 +41,51 @@ const objectiveTermEntryOverrideSchema = new Schema(
   { _id: false },
 );
 
+export interface IObjectiveFinalRecordParticipantSnapshot {
+  id: string;
+  name?: string;
+  employeeCode?: string;
+  department?: string;
+  role?: string;
+}
+
+export interface IObjectiveFinalRecordTermSubmission {
+  term: AssessmentTermCodeType;
+  submittedAt?: string;
+  submittedBy?: string;
+  submissionMode?: ObjectiveTermSubmissionModeType;
+}
+
+export interface IObjectiveFinalRecordConsolidatedNote {
+  rowId: string;
+  columnId: string;
+  entries: Array<{ term: AssessmentTermCodeType; value: string }>;
+  value: string;
+}
+
+export interface IObjectiveAssignmentFinalRecordSnapshot {
+  schemaVersion: 1;
+  generatedAt: string;
+  generatedBy: string;
+  generationMode: 'SUBMISSION' | 'BACKFILL';
+  completedAt?: string;
+  completionBasis: 'EMPLOYEE_SELECTED_TERMS';
+  objectiveAssignmentId: string;
+  objectiveAssignmentPeriodId: string;
+  objectiveMasterId: string;
+  objectiveVersionId: string;
+  selectedTerms: AssessmentTermCodeType[];
+  termSubmissions: IObjectiveFinalRecordTermSubmission[];
+  assignmentPeriodSnapshot: Record<string, unknown>;
+  employeeSnapshot: IObjectiveFinalRecordParticipantSnapshot;
+  managerSnapshot?: IObjectiveFinalRecordParticipantSnapshot;
+  frozenObjectiveSnapshot: IObjectiveBusinessSnapshot;
+  employeeValues: Record<string, unknown>;
+  calculatedValues: Record<string, number>;
+  consolidatedNotes: IObjectiveFinalRecordConsolidatedNote[];
+  contentHash: string;
+}
+
 export interface IObjectiveEmployeeAssignment extends Document {
   objectiveAssignmentPeriodId: Types.ObjectId;
   objectiveMasterId: Types.ObjectId;
@@ -74,6 +119,21 @@ export interface IObjectiveEmployeeAssignment extends Document {
   }>;
   frozenObjectiveSnapshot: IObjectiveBusinessSnapshot;
   values?: Record<string, unknown>;
+  managerValues?: Record<string, unknown>;
+  managerTermStates?: Array<{
+    term: AssessmentTermCodeType;
+    status: 'LOCKED' | 'OPEN' | 'SUBMITTED' | 'CLOSED';
+    fillStartDate?: Date;
+    fillEndDate?: Date;
+    submittedAt?: Date;
+    submittedBy?: Types.ObjectId;
+    closedAt?: Date;
+    closedBy?: Types.ObjectId;
+    readOnlyReason?: string;
+  }>;
+  managerSubmittedAt?: Date;
+  managerSubmittedBy?: Types.ObjectId;
+  finalRecord?: IObjectiveAssignmentFinalRecordSnapshot;
   status: ObjectiveEmployeeAssignmentStatusType;
   submittedAt?: Date;
   submittedBy?: Types.ObjectId;
@@ -173,6 +233,43 @@ const objectiveEmployeeAssignmentSchema = new Schema<IObjectiveEmployeeAssignmen
       type: Schema.Types.Mixed,
       default: {},
     },
+    managerValues: {
+      type: Schema.Types.Mixed,
+      default: {},
+    },
+    managerTermStates: {
+      type: [
+        {
+          term: {
+            type: String,
+            required: true,
+            enum: Object.values(AssessmentTermCode),
+          },
+          status: {
+            type: String,
+            required: true,
+            enum: ['LOCKED', 'OPEN', 'SUBMITTED', 'CLOSED'],
+            default: 'LOCKED',
+            index: true,
+          },
+          fillStartDate: Date,
+          fillEndDate: Date,
+          submittedAt: Date,
+          submittedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+          closedAt: Date,
+          closedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+          readOnlyReason: { type: String, trim: true },
+        },
+      ],
+      default: [],
+    },
+    managerSubmittedAt: Date,
+    managerSubmittedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    finalRecord: {
+      type: Schema.Types.Mixed,
+      required: false,
+      default: undefined,
+    },
     status: {
       type: String,
       required: true,
@@ -215,6 +312,7 @@ objectiveEmployeeAssignmentSchema.index({
 objectiveEmployeeAssignmentSchema.index({ managerId: 1, status: 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({ selectedTerms: 1, status: 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({ 'termStates.term': 1, 'termStates.status': 1, isDeleted: 1 });
+objectiveEmployeeAssignmentSchema.index({ 'managerTermStates.term': 1, 'managerTermStates.status': 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({
   'termStates.entryOverride.status': 1,
   'termStates.entryOverride.closesAt': 1,
