@@ -143,6 +143,60 @@ describe('ObjectiveService - role-based assignment column access', () => {
       .not.toThrow();
   });
 
+  it('enforces a required fillable column when the stored role permission is not marked required', () => {
+    const record = assignment();
+    record.frozenObjectiveSnapshot = {
+      sheetLayout: {
+        ...layout,
+        columns: layout.columns.map((column) =>
+          column.id === 'q1_actual'
+            ? { ...column, required: true }
+            : column,
+        ),
+        fillPermissions: layout.fillPermissions.map((permission) =>
+          permission.columnId === 'q1_actual' && permission.actor === 'EMPLOYEE'
+            ? { ...permission, required: false }
+            : permission,
+        ),
+      },
+    };
+    record.values = {
+      'Q1:row_1:objective': 'Objective line 1',
+      'Q1:row_1:remarks': 'Progress noted',
+    };
+
+    expect(() => service.validateObjectiveAssignmentTermSubmission(record, 'Q1', 'EMPLOYEE'))
+      .toThrow('Complete required fields before submitting: Objective line 1 - Q1 Actual');
+
+    record.values = {
+      ...record.values,
+      'Q1:row_1:q1_actual': '80',
+    };
+    expect(() => service.validateObjectiveAssignmentTermSubmission(record, 'Q1', 'EMPLOYEE'))
+      .not.toThrow();
+  });
+
+  it('does not require a required column when the actor has View-only access', () => {
+    const record = assignment();
+    record.frozenObjectiveSnapshot = {
+      sheetLayout: {
+        ...layout,
+        columns: layout.columns.map((column) =>
+          column.id === 'target'
+            ? { ...column, required: true }
+            : column,
+        ),
+      },
+    };
+    record.values = {
+      'Q1:row_1:objective': 'Objective line 1',
+      'Q1:row_1:q1_actual': '80',
+    };
+
+    expect(() => service.validateObjectiveAssignmentTermSubmission(record, 'Q1', 'EMPLOYEE'))
+      .not.toThrow();
+  });
+
   it.each(['Q1', 'H1', 'Y1'])('uses the same access evaluation for %s assignments', (term) => {
     const record = assignment(ObjectiveEmployeeAssignmentStatus.SUBMITTED);
     record.selectedTerms = [term];

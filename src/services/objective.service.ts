@@ -7904,7 +7904,9 @@ export class ObjectiveService extends BaseService {
         columnId: column.id,
         actor,
         access,
-        required: access === 'FILL' ? permission?.required === true : false,
+        required: access === 'FILL'
+          ? permission?.required === true || column.required === true
+          : false,
         lockRule: access === 'FILL' ? lockRule : 'NONE',
       });
     });
@@ -10631,7 +10633,8 @@ export class ObjectiveService extends BaseService {
         const hasValue = value !== undefined && value !== null && String(value).trim() !== '';
         hasAnyValue = hasAnyValue || hasValue;
         const permission = this.objectiveAssignmentFillPermissionForActor(layout, column, actor);
-        if (permission?.required === true && !hasValue) {
+        const required = column.required === true || permission?.required === true;
+        if (required && !hasValue) {
           requiredMissing.push(`${row.label || row.id} - ${column.label || column.id}`);
         }
       });
