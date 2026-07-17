@@ -127,6 +127,7 @@ export interface ITemplateField {
   editabilityRules?: Record<string, unknown>;
   optionConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   defaultValue?: unknown;
   colSpan?: 1 | 2 | 3 | 4;
   options?: ITemplateOption[];
@@ -366,6 +367,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
     editabilityRules: Schema.Types.Mixed,
     optionConfig: Schema.Types.Mixed,
     scoringConfig: Schema.Types.Mixed,
+    metadata: Schema.Types.Mixed,
     defaultValue: Schema.Types.Mixed,
     colSpan: { type: Number, enum: [1, 2, 3, 4], default: 4 },
     behaviors: {
