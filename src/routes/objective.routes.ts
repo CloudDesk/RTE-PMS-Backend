@@ -25,14 +25,17 @@ import type {
   ObjectiveEmployeeAssignmentListQuery,
   ObjectiveReportingQuery,
   CorrectObjectiveInput,
+  ChangeObjectiveEmployeeAssignmentShareInput,
   EnableObjectiveEmployeeAssignmentPastTermEntryInput,
   ManagerObjectiveLibraryDraftInput,
   ObjectiveMasterListQuery,
   ReturnObjectiveInput,
   RevokeObjectiveEmployeeAssignmentPastTermEntryInput,
+  RevokeObjectiveEmployeeAssignmentShareInput,
   SaveAssignmentTemplateValuesInput,
   SaveObjectiveEmployeeAssignmentValuesInput,
   SaveManagerObjectiveLibraryInput,
+  ShareObjectiveEmployeeAssignmentInput,
   UpdateObjectiveAssignmentRuleInput,
   UpdateObjectiveAssignmentPeriodInput,
   UpdateObjectiveMasterVersionInput,
@@ -570,6 +573,22 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/employee-assignments/:assignmentId/activity',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const activity = await request.container!.objectiveService.getObjectiveEmployeeAssignmentActivity(
+          assignmentId,
+        );
+        return reply.send(successResponse('Objective assignment activity fetched successfully', activity));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.put(
     '/employee-assignments/:assignmentId/values',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
@@ -598,6 +617,57 @@ export const objectiveRoutes: RouteHandler = async (
           (request.body ?? {}) as SaveObjectiveEmployeeAssignmentValuesInput,
         );
         return reply.send(successResponse('Objective assignment submitted successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/share',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.shareObjectiveEmployeeAssignment(
+          assignmentId,
+          request.body as ShareObjectiveEmployeeAssignmentInput,
+        );
+        return reply.send(successResponse('Objective assignment shared successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/share/revoke',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.revokeObjectiveEmployeeAssignmentShare(
+          assignmentId,
+          request.body as RevokeObjectiveEmployeeAssignmentShareInput,
+        );
+        return reply.send(successResponse('Objective assignment shared access revoked successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/employee-assignments/:assignmentId/share',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.changeObjectiveEmployeeAssignmentShare(
+          assignmentId,
+          request.body as ChangeObjectiveEmployeeAssignmentShareInput,
+        );
+        return reply.send(successResponse('Objective assignment sharing changed successfully', assignment));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

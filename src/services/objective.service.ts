@@ -317,6 +317,9 @@ export interface ObjectiveAssignmentPeriodReportRecord {
   submittedCount: number;
   closedCount: number;
   overdueCount: number;
+  activeSharedAssignmentCount: number;
+  activeSharedTermCount: number;
+  sharedSubmittedTermCount: number;
   completionRate: number;
   latestAuditAction?: string;
   latestAuditAt?: string;
@@ -332,6 +335,9 @@ export interface ObjectiveAssignmentPeriodReportSummary {
   submittedCount: number;
   closedCount: number;
   overdueCount: number;
+  activeSharedAssignmentCount: number;
+  activeSharedTermCount: number;
+  sharedSubmittedTermCount: number;
 }
 
 export interface ObjectiveAssignmentPeriodReportResult {
@@ -905,6 +911,12 @@ export interface ObjectiveEmployeeAssignmentRecord {
   selectedTerms: string[];
   termStates?: ObjectiveEmployeeAssignmentTermStateRecord[];
   managerTermStates?: ObjectiveEmployeeAssignmentTermStateRecord[];
+  sharedAccess?: ObjectiveEmployeeAssignmentSharedAccessRecord[];
+  sharedAccessForMe?: ObjectiveEmployeeAssignmentSharedAccessRecord[];
+  sharedWithMe?: boolean;
+  sharedTermsWithMe?: string[];
+  isOriginalAssignee?: boolean;
+  employeeEditableTerms?: string[];
   frozenObjectiveSnapshot: Record<string, unknown>;
   values: Record<string, unknown>;
   managerValues: Record<string, unknown>;
@@ -925,6 +937,23 @@ export interface ObjectiveEmployeeAssignmentRecord {
   finalRecordReadiness: ObjectiveFinalRecordReadinessRecord;
   hasFinalRecord: boolean;
   finalRecordGeneratedAt?: string;
+}
+
+export interface ObjectiveEmployeeAssignmentActivityRecord {
+  id: string;
+  action: string;
+  actorId?: string;
+  actorName?: string;
+  actorRole?: string;
+  occurredAt: string;
+  reason?: string;
+  terms: string[];
+  sharedWithEmployeeId?: string;
+  sharedWithEmployeeName?: string;
+  previousSharedWithEmployeeId?: string;
+  previousSharedWithEmployeeName?: string;
+  onBehalfOfEmployeeId?: string;
+  onBehalfOfEmployeeName?: string;
 }
 
 export type ObjectiveFinalRecordAvailability = 'AVAILABLE' | 'PENDING';
@@ -962,7 +991,15 @@ export interface ObjectiveFinalRecordViewRecord {
     term: string;
     submittedAt?: string;
     submittedBy?: string;
+    submittedByName?: string;
+    onBehalfOf?: string;
+    onBehalfOfName?: string;
     submissionMode?: string;
+  }>;
+  contributors: Array<{
+    employee: IObjectiveFinalRecordParticipantSnapshot;
+    terms: string[];
+    onBehalfOf: IObjectiveFinalRecordParticipantSnapshot;
   }>;
   assignmentPeriodSnapshot: Record<string, unknown>;
   employeeSnapshot: IObjectiveFinalRecordParticipantSnapshot;
@@ -1010,6 +1047,7 @@ export interface ObjectiveEmployeeAssignmentTermStateRecord {
   fillEndDate?: string;
   submittedAt?: string;
   submittedBy?: string;
+  submittedByName?: string;
   closedAt?: string;
   closedBy?: string;
   readOnlyReason?: string;
@@ -1030,6 +1068,21 @@ export interface ObjectiveEmployeeAssignmentTermEntryOverrideRecord {
   revocationReason?: string;
 }
 
+export interface ObjectiveEmployeeAssignmentSharedAccessRecord {
+  id?: string;
+  sharedWithEmployeeId: string;
+  sharedWithEmployeeName?: string;
+  sharedWithEmployeeCode?: string;
+  terms: string[];
+  status: 'ACTIVE' | 'REVOKED';
+  note?: string;
+  sharedBy: string;
+  sharedAt?: string;
+  revokedBy?: string;
+  revokedAt?: string;
+  revocationReason?: string;
+}
+
 export interface EnableObjectiveEmployeeAssignmentPastTermEntryInput {
   opensAt?: Date | string;
   closesAt: Date | string;
@@ -1039,6 +1092,28 @@ export interface EnableObjectiveEmployeeAssignmentPastTermEntryInput {
 
 export interface RevokeObjectiveEmployeeAssignmentPastTermEntryInput {
   reason: string;
+  expectedVersion: number;
+}
+
+export interface ShareObjectiveEmployeeAssignmentInput {
+  sharedWithEmployeeId: string;
+  terms: string[];
+  note?: string;
+  expectedVersion: number;
+}
+
+export interface RevokeObjectiveEmployeeAssignmentShareInput {
+  sharedWithEmployeeId: string;
+  terms?: string[];
+  reason?: string;
+  expectedVersion: number;
+}
+
+export interface ChangeObjectiveEmployeeAssignmentShareInput {
+  sharedAccessId: string;
+  sharedWithEmployeeId: string;
+  terms: string[];
+  note?: string;
   expectedVersion: number;
 }
 
@@ -2465,7 +2540,57 @@ export class ObjectiveService extends BaseService {
     const periodIds = periods.map((period) => period._id);
     const now = this.getCurrentDate();
 
-    const [assignmentGroups, latestAuditLogs] = await Promise.all([
+    const [sharingGroups, assignmentGroups, latestAuditLogs] = await Promise.all([
+      ObjectiveEmployeeAssignment.aggregate([
+        {
+          $match: {
+            objectiveAssignmentPeriodId: { $in: periodIds },
+            isDeleted: false,
+          },
+        },
+        {
+          $project: {
+            objectiveAssignmentPeriodId: 1,
+            employeeId: 1,
+            activeSharedTerms: {
+              $reduce: {
+                input: {
+                  $filter: {
+                    input: { $ifNull: ['$sharedAccess', []] },
+                    as: 'access',
+                    cond: { $eq: ['$$access.status', 'ACTIVE'] },
+                  },
+                },
+                initialValue: [],
+                in: { $setUnion: ['$$value', { $ifNull: ['$$this.terms', []] }] },
+              },
+            },
+            sharedSubmittedTerms: {
+              $filter: {
+                input: { $ifNull: ['$termStates', []] },
+                as: 'state',
+                cond: {
+                  $and: [
+                    { $in: ['$$state.status', [ObjectiveEmployeeAssignmentStatus.SUBMITTED, ObjectiveEmployeeAssignmentStatus.CLOSED]] },
+                    { $ne: [{ $ifNull: ['$$state.submittedBy', null] }, null] },
+                    { $ne: ['$$state.submittedBy', '$employeeId'] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: '$objectiveAssignmentPeriodId',
+            activeSharedAssignmentCount: {
+              $sum: { $cond: [{ $gt: [{ $size: '$activeSharedTerms' }, 0] }, 1, 0] },
+            },
+            activeSharedTermCount: { $sum: { $size: '$activeSharedTerms' } },
+            sharedSubmittedTermCount: { $sum: { $size: '$sharedSubmittedTerms' } },
+          },
+        },
+      ]),
       ObjectiveEmployeeAssignment.aggregate([
         {
           $match: {
@@ -2517,6 +2642,14 @@ export class ObjectiveService extends BaseService {
         timestamp: log.timestamp,
       });
     });
+    const sharingCountsByPeriod = new Map(sharingGroups.map((group: any) => [
+      group._id.toString(),
+      {
+        activeSharedAssignmentCount: Number(group.activeSharedAssignmentCount) || 0,
+        activeSharedTermCount: Number(group.activeSharedTermCount) || 0,
+        sharedSubmittedTermCount: Number(group.sharedSubmittedTermCount) || 0,
+      },
+    ]));
 
     const records = periods.map((period) => {
       const periodId = period._id.toString();
@@ -2530,6 +2663,11 @@ export class ObjectiveService extends BaseService {
           ? assignedCount
           : 0;
       const latestAudit = latestAuditByPeriod.get(periodId);
+      const sharingCounts = sharingCountsByPeriod.get(periodId) ?? {
+        activeSharedAssignmentCount: 0,
+        activeSharedTermCount: 0,
+        sharedSubmittedTermCount: 0,
+      };
 
       return {
         periodId,
@@ -2548,6 +2686,7 @@ export class ObjectiveService extends BaseService {
         submittedCount,
         closedCount,
         overdueCount,
+        ...sharingCounts,
         completionRate: totalAssignments > 0 ? Math.round((submittedCount / totalAssignments) * 100) : 0,
         latestAuditAction: latestAudit?.action,
         latestAuditAt: latestAudit?.timestamp?.toISOString?.(),
@@ -2565,6 +2704,9 @@ export class ObjectiveService extends BaseService {
         acc.submittedCount += period.submittedCount;
         acc.closedCount += period.closedCount;
         acc.overdueCount += period.overdueCount;
+        acc.activeSharedAssignmentCount += period.activeSharedAssignmentCount;
+        acc.activeSharedTermCount += period.activeSharedTermCount;
+        acc.sharedSubmittedTermCount += period.sharedSubmittedTermCount;
         return acc;
       },
       {
@@ -2577,6 +2719,9 @@ export class ObjectiveService extends BaseService {
         submittedCount: 0,
         closedCount: 0,
         overdueCount: 0,
+        activeSharedAssignmentCount: 0,
+        activeSharedTermCount: 0,
+        sharedSubmittedTermCount: 0,
       },
     );
 
@@ -2798,14 +2943,29 @@ export class ObjectiveService extends BaseService {
     assignment.version += 1;
     await assignment.save();
     const nextValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
+    const sharedEmployeeEntry =
+      entryActor === 'EMPLOYEE' &&
+      assignment.employeeId?.toString?.() !== this.requireActor().actorId;
+    const sharedAccess = sharedEmployeeEntry
+      ? this.objectiveAssignmentActiveSharedAccessForTerm(assignment, selectedTerm)
+      : undefined;
     await this.audit(
       entryActor === 'MANAGER'
         ? 'PMS_OBJECTIVE_MANAGER_ASSIGNMENT_VALUES_SAVED'
-        : 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_VALUES_SAVED',
+        : sharedEmployeeEntry
+          ? 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARED_VALUES_SAVED'
+          : 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_VALUES_SAVED',
       'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
       assignment._id.toString(),
       previousValue,
       nextValue,
+      undefined,
+      sharedEmployeeEntry ? {
+        terms: [selectedTerm],
+        sharedWithEmployeeId: this.requireActor().actorId,
+        onBehalfOfEmployeeId: assignment.employeeId?.toString?.(),
+        sharedAccessId: sharedAccess?._id?.toString?.(),
+      } : undefined,
     );
     return nextValue;
   }
@@ -2887,14 +3047,28 @@ export class ObjectiveService extends BaseService {
     assignment.version += 1;
     await assignment.save();
     const nextValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
+    const sharedEmployeeSubmission =
+      entryActor === 'EMPLOYEE' && assignment.employeeId?.toString?.() !== submittedBy.toString();
+    const submissionSharedAccess = sharedEmployeeSubmission
+      ? this.objectiveAssignmentActiveSharedAccessForTerm(assignment, selectedTerm)
+      : undefined;
     await this.audit(
       entryActor === 'MANAGER'
         ? 'PMS_OBJECTIVE_MANAGER_ASSIGNMENT_SUBMITTED'
-        : 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SUBMITTED',
+        : sharedEmployeeSubmission
+          ? 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARED_SUBMITTED'
+          : 'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SUBMITTED',
       'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
       assignment._id.toString(),
       previousValue,
       nextValue,
+      undefined,
+      sharedEmployeeSubmission ? {
+        terms: [selectedTerm],
+        sharedWithEmployeeId: submittedBy.toString(),
+        onBehalfOfEmployeeId: assignment.employeeId?.toString?.(),
+        sharedAccessId: submissionSharedAccess?._id?.toString?.(),
+      } : undefined,
     );
     if (createdFinalRecord) {
       await this.audit(
@@ -2906,6 +3080,8 @@ export class ObjectiveService extends BaseService {
           contentHash: createdFinalRecord.contentHash,
           completedAt: createdFinalRecord.completedAt,
         },
+        undefined,
+        { terms: createdFinalRecord.selectedTerms },
       );
     }
     return nextValue;
@@ -3024,6 +3200,352 @@ export class ObjectiveService extends BaseService {
       previousValue,
       nextValue,
       reason,
+    );
+    return nextValue;
+  }
+
+  async shareObjectiveEmployeeAssignment(
+    assignmentId: string,
+    input: ShareObjectiveEmployeeAssignmentInput,
+  ): Promise<ObjectiveEmployeeAssignmentRecord> {
+    const actor = this.requireActor();
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
+    await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
+    this.assertObjectiveEmployeeAssignmentVersion(assignment, input.expectedVersion);
+    this.assertObjectiveEmployeeAssignmentCanShare(assignment, period, input);
+
+    const sharedWithEmployee = await User.findOne({
+      _id: this.toObjectId(input.sharedWithEmployeeId, 'sharedWithEmployeeId'),
+      active: { $ne: false },
+    }).lean();
+    if (!sharedWithEmployee) {
+      throw new Error('Selected employee is not active or does not exist');
+    }
+
+    const terms = this.normalizeObjectiveEmployeeAssignmentShareTerms(input.terms);
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const sharedWithEmployeeId = this.toObjectId(input.sharedWithEmployeeId, 'sharedWithEmployeeId');
+    const updatedAssignment = await ObjectiveEmployeeAssignment.findOneAndUpdate(
+      {
+        _id: assignment._id,
+        isDeleted: false,
+        employeeId: actorId,
+        status: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
+        version: input.expectedVersion,
+        __v: assignment.__v ?? 0,
+        sharedAccess: {
+          $not: {
+            $elemMatch: {
+              status: 'ACTIVE',
+              terms: { $in: terms },
+            },
+          },
+        },
+        termStates: {
+          $not: {
+            $elemMatch: {
+              term: { $in: terms },
+              status: {
+                $in: [
+                  ObjectiveEmployeeAssignmentStatus.SUBMITTED,
+                  ObjectiveEmployeeAssignmentStatus.CLOSED,
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $push: {
+          sharedAccess: {
+            sharedWithEmployeeId,
+            terms,
+            status: 'ACTIVE',
+            note: input.note?.trim() || undefined,
+            sharedBy: actorId,
+            sharedAt: this.getCurrentDate(),
+          },
+        },
+        $set: { updatedBy: actorId },
+        $inc: { version: 1, __v: 1 },
+      },
+      { new: true, runValidators: true },
+    )
+      .populate('employeeId', 'name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
+      .populate('managerId', 'name employeeName fullName email employeeCode')
+      .populate('sharedAccess.sharedWithEmployeeId', 'name employeeName fullName email employeeCode');
+    if (!updatedAssignment) {
+      const latestAssignment = await this.loadObjectiveEmployeeAssignment(assignment._id.toString());
+      this.assertObjectiveEmployeeAssignmentVersion(latestAssignment, input.expectedVersion);
+      this.assertObjectiveEmployeeAssignmentCanShare(latestAssignment, period, input);
+      throw new Error('Objective assignment changed while sharing. Refresh and try again');
+    }
+    const nextValue = this.mapObjectiveEmployeeAssignmentRecord(updatedAssignment, period);
+    await this.audit(
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARED',
+      'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+      assignment._id.toString(),
+      previousValue,
+      nextValue,
+      input.note?.trim() || undefined,
+      {
+        terms,
+        sharedWithEmployeeId: input.sharedWithEmployeeId,
+        onBehalfOfEmployeeId: actor.actorId,
+      },
+    );
+    return nextValue;
+  }
+
+  async revokeObjectiveEmployeeAssignmentShare(
+    assignmentId: string,
+    input: RevokeObjectiveEmployeeAssignmentShareInput,
+  ): Promise<ObjectiveEmployeeAssignmentRecord> {
+    const actor = this.requireActor();
+    if (!input?.sharedWithEmployeeId) throw new Error('Shared employee is required');
+    const sharedWithEmployeeId = this.toObjectId(
+      input.sharedWithEmployeeId,
+      'sharedWithEmployeeId',
+    ).toString();
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
+    await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
+    this.assertObjectiveEmployeeAssignmentVersion(assignment, input.expectedVersion);
+
+    if (assignment.employeeId?.toString?.() !== actor.actorId) {
+      throw new Error('Only the original assignee can revoke shared access');
+    }
+    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
+      throw new Error('Submitted or closed objective assignments cannot revoke shared access');
+    }
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+      throw new Error('Objective Assignment Period must be active to revoke shared access');
+    }
+    const reason = input.reason?.trim();
+    if (!reason) throw new Error('Revocation reason is required');
+    if (reason.length > 500) throw new Error('Revocation reason cannot exceed 500 characters');
+    const requestedTerms = input.terms?.length
+      ? this.normalizeObjectiveEmployeeAssignmentShareTerms(input.terms)
+      : undefined;
+    const activeAccess = (assignment.sharedAccess ?? []).filter((access: any) =>
+      access?.status === 'ACTIVE' &&
+      access?.sharedWithEmployeeId?.toString?.() === sharedWithEmployeeId,
+    );
+    if (!activeAccess.length) {
+      throw new Error('No active shared access found for this employee');
+    }
+
+    const revocableTerms = new Set<string>();
+    activeAccess.forEach((access: any) => {
+      (access.terms ?? []).forEach((term: string) => {
+        if (!requestedTerms || requestedTerms.includes(term as AssessmentTermCodeType)) {
+          const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, term);
+          if (
+            termState.status !== ObjectiveEmployeeAssignmentStatus.SUBMITTED &&
+            termState.status !== ObjectiveEmployeeAssignmentStatus.CLOSED
+          ) {
+            revocableTerms.add(term);
+          }
+        }
+      });
+    });
+    if (!revocableTerms.size) {
+      throw new Error('No selected shared terms are available to revoke');
+    }
+
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
+    const now = this.getCurrentDate();
+    assignment.sharedAccess = (assignment.sharedAccess ?? []).flatMap((access: any) => {
+      if (
+        access?.status !== 'ACTIVE' ||
+        access?.sharedWithEmployeeId?.toString?.() !== sharedWithEmployeeId
+      ) {
+        return [access];
+      }
+      const terms = access.terms ?? [];
+      const remainingTerms = terms.filter((term: string) => !revocableTerms.has(term));
+      const revokedTerms = terms.filter((term: string) => revocableTerms.has(term));
+      const nextAccessRecords: any[] = [];
+      if (remainingTerms.length) {
+        nextAccessRecords.push({ ...(access.toObject?.() ?? access), terms: remainingTerms });
+      }
+      if (revokedTerms.length) {
+        const revokedAccess = { ...(access.toObject?.() ?? access) };
+        if (remainingTerms.length) delete revokedAccess._id;
+        nextAccessRecords.push({
+          ...revokedAccess,
+          terms: revokedTerms,
+          status: 'REVOKED',
+          revokedBy: this.toObjectId(actor.actorId, 'actorId'),
+          revokedAt: now,
+          revocationReason: reason,
+        });
+      }
+      return nextAccessRecords;
+    });
+    assignment.markModified('sharedAccess');
+    assignment.updatedBy = this.toObjectId(actor.actorId, 'actorId');
+    assignment.version += 1;
+    await this.saveObjectiveEmployeeAssignmentSharingChange(assignment);
+
+    const updatedAssignment = await this.loadObjectiveEmployeeAssignmentForResponse(assignment._id.toString());
+    const nextValue = this.mapObjectiveEmployeeAssignmentRecord(updatedAssignment, period);
+    await this.audit(
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARE_REVOKED',
+      'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+      assignment._id.toString(),
+      previousValue,
+      nextValue,
+      reason,
+      {
+        terms: Array.from(revocableTerms),
+        sharedWithEmployeeId,
+        onBehalfOfEmployeeId: actor.actorId,
+      },
+    );
+    return nextValue;
+  }
+
+  async changeObjectiveEmployeeAssignmentShare(
+    assignmentId: string,
+    input: ChangeObjectiveEmployeeAssignmentShareInput,
+  ): Promise<ObjectiveEmployeeAssignmentRecord> {
+    const actor = this.requireActor();
+    if (!input?.sharedAccessId) throw new Error('Shared access is required');
+    if (!input?.sharedWithEmployeeId) throw new Error('Select an employee to share with');
+    const accessId = this.toObjectId(input.sharedAccessId, 'sharedAccessId').toString();
+    const sharedWithEmployeeId = this.toObjectId(
+      input.sharedWithEmployeeId,
+      'sharedWithEmployeeId',
+    ).toString();
+
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
+    await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
+    this.assertObjectiveEmployeeAssignmentVersion(assignment, input.expectedVersion);
+    if (assignment.employeeId?.toString?.() !== actor.actorId) {
+      throw new Error('Only the original assignee can change shared access');
+    }
+    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
+      throw new Error('Submitted or closed objective assignments cannot change shared access');
+    }
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+      throw new Error('Objective Assignment Period must be active to change shared access');
+    }
+    if (sharedWithEmployeeId === actor.actorId) {
+      throw new Error('Objective cannot be shared with yourself');
+    }
+
+    const activeAccess = (assignment.sharedAccess ?? []).find(
+      (access: any) => access?.status === 'ACTIVE' && access?._id?.toString?.() === accessId,
+    );
+    if (!activeAccess) throw new Error('Active shared access was not found');
+
+    const terms = this.normalizeObjectiveEmployeeAssignmentShareTerms(input.terms);
+    const selectedTerms = assignment.selectedTerms?.length ? assignment.selectedTerms : period.terms ?? [];
+    terms.forEach((term) => {
+      if (!selectedTerms.includes(term)) {
+        throw new Error(`${term} is not part of this objective assignment`);
+      }
+      const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, term);
+      if (
+        termState.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED ||
+        termState.status === ObjectiveEmployeeAssignmentStatus.CLOSED
+      ) {
+        throw new Error(`${term} is submitted or closed and cannot be reassigned`);
+      }
+      const conflictingAccess = (assignment.sharedAccess ?? []).find(
+        (access: any) =>
+          access?.status === 'ACTIVE' &&
+          access?._id?.toString?.() !== accessId &&
+          Array.isArray(access.terms) &&
+          access.terms.includes(term),
+      );
+      if (conflictingAccess) throw new Error(`${term} is already shared with another employee`);
+    });
+
+    const currentRevocableTerms = (activeAccess.terms ?? []).filter((term: string) => {
+      const state = this.findObjectiveEmployeeAssignmentTermState(assignment, term);
+      return (
+        state.status !== ObjectiveEmployeeAssignmentStatus.SUBMITTED &&
+        state.status !== ObjectiveEmployeeAssignmentStatus.CLOSED
+      );
+    });
+    if (!currentRevocableTerms.length) {
+      throw new Error('This shared access has no open terms available to change');
+    }
+    const currentRevocableTermSet = new Set<string>(currentRevocableTerms);
+
+    const sharedWithEmployee = await User.findOne({
+      _id: this.toObjectId(sharedWithEmployeeId, 'sharedWithEmployeeId'),
+      active: { $ne: false },
+    }).lean();
+    if (!sharedWithEmployee) throw new Error('Selected employee is not active or does not exist');
+
+    const note = input.note?.trim() || undefined;
+    if (note && note.length > 500) throw new Error('Share note cannot exceed 500 characters');
+    const currentEmployeeId = activeAccess.sharedWithEmployeeId?.toString?.() ?? '';
+    const currentNote = activeAccess.note?.trim?.() || undefined;
+    const sameTerms = [...terms].sort().join('|') === [...currentRevocableTerms].sort().join('|');
+    if (currentEmployeeId === sharedWithEmployeeId && currentNote === note && sameTerms) {
+      throw new Error('No sharing changes were made');
+    }
+    const previousValue = this.mapObjectiveEmployeeAssignmentRecord(assignment, period);
+    const now = this.getCurrentDate();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    assignment.sharedAccess = (assignment.sharedAccess ?? []).flatMap((access: any) => {
+      if (access?._id?.toString?.() !== accessId) return [access];
+      const source = { ...(access.toObject?.() ?? access) };
+      const protectedTerms = (access.terms ?? []).filter(
+        (term: string) => !currentRevocableTermSet.has(term),
+      );
+      const records: any[] = [];
+      if (protectedTerms.length) records.push({ ...source, terms: protectedTerms });
+      if (currentRevocableTerms.length) {
+        const revokedSource = { ...source };
+        if (protectedTerms.length) delete revokedSource._id;
+        records.push({
+          ...revokedSource,
+          terms: currentRevocableTerms,
+          status: 'REVOKED',
+          revokedBy: actorId,
+          revokedAt: now,
+          revocationReason: 'Sharing changed by original assignee',
+        });
+      }
+      return records;
+    });
+    assignment.sharedAccess.push({
+      sharedWithEmployeeId: this.toObjectId(sharedWithEmployeeId, 'sharedWithEmployeeId'),
+      terms,
+      status: 'ACTIVE',
+      note,
+      sharedBy: actorId,
+      sharedAt: now,
+    });
+    assignment.markModified('sharedAccess');
+    assignment.updatedBy = actorId;
+    assignment.version += 1;
+    await this.saveObjectiveEmployeeAssignmentSharingChange(assignment);
+
+    const updatedAssignment = await this.loadObjectiveEmployeeAssignmentForResponse(assignment._id.toString());
+    const nextValue = this.mapObjectiveEmployeeAssignmentRecord(updatedAssignment, period);
+    await this.audit(
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARE_CHANGED',
+      'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+      assignment._id.toString(),
+      previousValue,
+      nextValue,
+      note,
+      {
+        terms,
+        previousTerms: currentRevocableTerms,
+        sharedWithEmployeeId,
+        previousSharedWithEmployeeId: activeAccess.sharedWithEmployeeId?.toString?.(),
+        onBehalfOfEmployeeId: actor.actorId,
+      },
     );
     return nextValue;
   }
@@ -3282,6 +3804,8 @@ export class ObjectiveService extends BaseService {
       .populate('objectiveAssignmentPeriodId', 'name status terms fillStartDate fillEndDate termFillWindows')
       .populate('employeeId', 'name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
       .populate('managerId', 'name employeeName fullName email employeeCode')
+      .populate('sharedAccess.sharedWithEmployeeId', 'name employeeName fullName email employeeCode')
+      .populate('termStates.submittedBy', 'name employeeName fullName email employeeCode')
       .lean();
 
     return assignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
@@ -3311,8 +3835,19 @@ export class ObjectiveService extends BaseService {
 
     const actorId = this.toObjectId(actor.actorId, 'actorId');
     if (scope === 'SELF') {
-      filter.employeeId = actorId;
+      delete filter.employeeId;
       delete filter.managerId;
+      filter.$or = [
+        { employeeId: actorId },
+        {
+          sharedAccess: {
+            $elemMatch: {
+              sharedWithEmployeeId: actorId,
+              status: 'ACTIVE',
+            },
+          },
+        },
+      ];
       return;
     }
 
@@ -3374,6 +3909,8 @@ export class ObjectiveService extends BaseService {
           assignment._id.toString(),
           undefined,
           { contentHash: candidate.contentHash, completedAt: candidate.completedAt },
+          undefined,
+          { terms: candidate.selectedTerms ?? readiness.selectedTerms },
         );
       } else {
         const existing = await ObjectiveEmployeeAssignment.findById(assignment._id)
@@ -3405,6 +3942,74 @@ export class ObjectiveService extends BaseService {
         managerDisplay,
       ),
     };
+  }
+
+  async getObjectiveEmployeeAssignmentActivity(
+    assignmentId: string,
+  ): Promise<ObjectiveEmployeeAssignmentActivityRecord[]> {
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    this.resolveObjectiveFinalRecordViewActor(assignment);
+
+    const sharingActions = new Set([
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARED',
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARE_CHANGED',
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARE_REVOKED',
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARED_VALUES_SAVED',
+      'PMS_OBJECTIVE_EMPLOYEE_ASSIGNMENT_SHARED_SUBMITTED',
+      'PMS_OBJECTIVE_FINAL_RECORD_CREATED',
+      'PMS_OBJECTIVE_FINAL_RECORD_BACKFILLED',
+    ]);
+    const logs = (await auditService.getEntityHistory(
+      'OBJECTIVE_EMPLOYEE_ASSIGNMENT',
+      assignment._id.toString(),
+    )).filter((log) => sharingActions.has(log.action));
+
+    const referencedEmployeeIds = Array.from(new Set(logs.flatMap((log) => {
+      const metadata = log.metadata ?? {};
+      return [
+        metadata.sharedWithEmployeeId,
+        metadata.previousSharedWithEmployeeId,
+        metadata.onBehalfOfEmployeeId,
+      ].map((value) => String(value ?? '')).filter((value) => Types.ObjectId.isValid(value));
+    })));
+    const referencedEmployees = referencedEmployeeIds.length
+      ? await User.find({ _id: { $in: referencedEmployeeIds } })
+        .select('name employeeName fullName employeeCode')
+        .lean()
+      : [];
+    const employeeNames = new Map(referencedEmployees.map((employee: any) => [
+      employee._id.toString(),
+      employee.name || employee.employeeName || employee.fullName || employee.employeeCode,
+    ]));
+
+    return logs.map((log) => {
+      const metadata = log.metadata ?? {};
+      const sharedWithEmployeeId = String(metadata.sharedWithEmployeeId ?? '') || undefined;
+      const previousSharedWithEmployeeId = String(metadata.previousSharedWithEmployeeId ?? '') || undefined;
+      const onBehalfOfEmployeeId = String(metadata.onBehalfOfEmployeeId ?? '') || undefined;
+      return {
+        id: log._id.toString(),
+        action: log.action,
+        actorId: log.actorId?.toString?.(),
+        actorName: log.actorName,
+        actorRole: log.actorRole,
+        occurredAt: new Date(log.timestamp ?? log.createdAt).toISOString(),
+        reason: log.reason,
+        terms: Array.isArray(metadata.terms) ? metadata.terms.map(String) : [],
+        sharedWithEmployeeId,
+        sharedWithEmployeeName: sharedWithEmployeeId
+          ? employeeNames.get(sharedWithEmployeeId)
+          : undefined,
+        previousSharedWithEmployeeId,
+        previousSharedWithEmployeeName: previousSharedWithEmployeeId
+          ? employeeNames.get(previousSharedWithEmployeeId)
+          : undefined,
+        onBehalfOfEmployeeId,
+        onBehalfOfEmployeeName: onBehalfOfEmployeeId
+          ? employeeNames.get(onBehalfOfEmployeeId)
+          : undefined,
+      };
+    });
   }
 
   async syncObjectiveEmployeeAssignmentTermStates(
@@ -10137,6 +10742,81 @@ export class ObjectiveService extends BaseService {
     return assignment;
   }
 
+  private async loadObjectiveEmployeeAssignmentForResponse(assignmentId: string) {
+    const assignment = await ObjectiveEmployeeAssignment.findOne({
+      _id: this.toObjectId(assignmentId, 'assignmentId'),
+      isDeleted: false,
+    })
+      .populate('employeeId', 'name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
+      .populate('managerId', 'name employeeName fullName email employeeCode')
+      .populate('sharedAccess.sharedWithEmployeeId', 'name employeeName fullName email employeeCode');
+    if (!assignment) {
+      throw new Error('Objective Employee Assignment not found');
+    }
+    return assignment;
+  }
+
+  private normalizeObjectiveEmployeeAssignmentShareTerms(terms?: string[]): AssessmentTermCodeType[] {
+    const normalizedTerms = Array.from(
+      new Set(
+        (terms ?? [])
+          .map((term) => String(term ?? '').trim())
+          .filter(Boolean),
+      ),
+    );
+    if (!normalizedTerms.length) {
+      throw new Error('Select at least one term to share');
+    }
+    return normalizedTerms as AssessmentTermCodeType[];
+  }
+
+  private assertObjectiveEmployeeAssignmentCanShare(
+    assignment: any,
+    period: any,
+    input: ShareObjectiveEmployeeAssignmentInput,
+  ): void {
+    const actor = this.requireActor();
+    if (!input?.sharedWithEmployeeId) {
+      throw new Error('Select an employee to share with');
+    }
+    const note = input.note?.trim();
+    if (note && note.length > 500) {
+      throw new Error('Share note cannot exceed 500 characters');
+    }
+    if (assignment.employeeId?.toString?.() !== actor.actorId) {
+      throw new Error('Only the original assignee can share this objective');
+    }
+    if (input.sharedWithEmployeeId === actor.actorId) {
+      throw new Error('Objective cannot be shared with yourself');
+    }
+    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
+      throw new Error('Submitted or closed objective assignments cannot be shared');
+    }
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
+      throw new Error('Objective Assignment Period must be active to share');
+    }
+    const selectedTerms = assignment.selectedTerms?.length
+      ? assignment.selectedTerms
+      : period?.terms ?? [];
+    const terms = this.normalizeObjectiveEmployeeAssignmentShareTerms(input.terms);
+    terms.forEach((term) => {
+      if (!selectedTerms.includes(term)) {
+        throw new Error(`${term} is not part of this objective assignment`);
+      }
+      const termState = this.findObjectiveEmployeeAssignmentTermState(assignment, term);
+      if (
+        termState.status === ObjectiveEmployeeAssignmentStatus.SUBMITTED ||
+        termState.status === ObjectiveEmployeeAssignmentStatus.CLOSED
+      ) {
+        throw new Error(`${term} is already submitted or closed and cannot be shared`);
+      }
+      const activeSharedAccess = this.objectiveAssignmentActiveSharedAccessForTerm(assignment, term);
+      if (activeSharedAccess) {
+        throw new Error(`${term} is already shared with another employee`);
+      }
+    });
+  }
+
   private buildObjectiveAssignmentFrozenSnapshot(version: any) {
     return {
       objectiveType: version.objectiveType,
@@ -10228,13 +10908,24 @@ export class ObjectiveService extends BaseService {
   }
 
   private resolveObjectiveEmployeeAssignmentTermStates(assignment: any, period?: any): ObjectiveEmployeeAssignmentTermStateRecord[] {
-    return this.normalizeObjectiveEmployeeAssignmentTermStates(assignment, period, true).map((state: any) => ({
+    return this.normalizeObjectiveEmployeeAssignmentTermStates(assignment, period, true).map((state: any) => {
+      const submitter = state.submittedBy && typeof state.submittedBy === 'object' && !state.submittedBy.toHexString
+        ? state.submittedBy
+        : undefined;
+      const submittedBy = submitter?._id ?? state.submittedBy;
+      return {
       term: state.term,
       status: state.status,
       fillStartDate: this.toObjectiveEmployeeAssignmentIsoDate(state.fillStartDate),
       fillEndDate: this.toObjectiveEmployeeAssignmentIsoDate(state.fillEndDate),
       submittedAt: this.toObjectiveEmployeeAssignmentIsoDate(state.submittedAt),
-      submittedBy: state.submittedBy?.toString?.(),
+      submittedBy: submittedBy?.toString?.(),
+      submittedByName:
+        submitter?.name ||
+        submitter?.employeeName ||
+        submitter?.fullName ||
+        submitter?.email ||
+        submitter?.employeeCode,
       closedAt: this.toObjectiveEmployeeAssignmentIsoDate(state.closedAt),
       closedBy: state.closedBy?.toString?.(),
       readOnlyReason: state.readOnlyReason,
@@ -10253,7 +10944,8 @@ export class ObjectiveService extends BaseService {
             revocationReason: state.entryOverride.revocationReason,
           }
         : undefined,
-    }));
+      };
+    });
   }
 
   private normalizeObjectiveEmployeeAssignmentTermStates(
@@ -10510,10 +11202,57 @@ export class ObjectiveService extends BaseService {
     assignment.managerTermStates = this.normalizeObjectiveManagerAssignmentTermStates(assignment, period);
   }
 
+  private objectiveAssignmentSharedTermsForActor(assignment: any, actorId: string): string[] {
+    const terms = (assignment.sharedAccess ?? [])
+      .filter((access: any) =>
+        access?.status === 'ACTIVE' &&
+        access?.sharedWithEmployeeId?.toString?.() === actorId,
+      )
+      .flatMap((access: any) => Array.isArray(access.terms) ? access.terms : [])
+      .map((term: unknown) => String(term ?? '').trim())
+      .filter(Boolean);
+    return Array.from(new Set(terms));
+  }
+
+  private objectiveAssignmentActiveSharedAccessForTerm(assignment: any, term: string): any | undefined {
+    const matches = (assignment.sharedAccess ?? []).filter((access: any) =>
+      access?.status === 'ACTIVE' &&
+      Array.isArray(access.terms) &&
+      access.terms.includes(term),
+    );
+    if (matches.length > 1) {
+      return { _sharingConflict: true, terms: [term], status: 'ACTIVE' };
+    }
+    return matches[0];
+  }
+
+  private canActorEditObjectiveEmployeeAssignmentTerm(assignment: any, term: string): boolean {
+    const actor = this.requireActor();
+    const actorId = actor.actorId;
+    const activeSharedAccess = this.objectiveAssignmentActiveSharedAccessForTerm(assignment, term);
+    if (activeSharedAccess) {
+      if (activeSharedAccess._sharingConflict) return false;
+      return activeSharedAccess.sharedWithEmployeeId?.toString?.() === actorId;
+    }
+    return assignment.employeeId?.toString?.() === actorId;
+  }
+
+  private resolveObjectiveEmployeeAssignmentEditableTermsForActor(assignment: any, period?: any): string[] {
+    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED || !period) return [];
+    if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) return [];
+    return this.normalizeObjectiveEmployeeAssignmentTermStates(assignment, period, true)
+      .filter((state: any) =>
+        state.status === 'OPEN' &&
+        this.canActorEditObjectiveEmployeeAssignmentTerm(assignment, state.term),
+      )
+      .map((state: any) => state.term);
+  }
+
   private resolveObjectiveAssignmentEntryActor(assignment: any): ObjectiveAssignmentEntryActor {
     const actor = this.requireActor();
     if (assignment.employeeId?.toString?.() === actor.actorId) return 'EMPLOYEE';
     if (assignment.managerId?.toString?.() === actor.actorId) return 'MANAGER';
+    if (this.objectiveAssignmentSharedTermsForActor(assignment, actor.actorId).length) return 'EMPLOYEE';
     throw new Error('Only the assigned employee or manager can edit objective values');
   }
 
@@ -10530,7 +11269,10 @@ export class ObjectiveService extends BaseService {
       return requestedTerm;
     }
     const states = actor === 'MANAGER' ? assignment.managerTermStates ?? [] : assignment.termStates ?? [];
-    const openTerms = states
+    const candidateTerms = actor === 'EMPLOYEE'
+      ? states.filter((state: any) => this.canActorEditObjectiveEmployeeAssignmentTerm(assignment, state.term))
+      : states;
+    const openTerms = candidateTerms
       .filter((state: any) => state.status === 'OPEN')
       .map((state: any) => state.term);
     if (openTerms.length === 1) return openTerms[0];
@@ -10805,6 +11547,47 @@ export class ObjectiveService extends BaseService {
     );
     const termStates = this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
     const statesByTerm = new Map(termStates.map((state) => [state.term, state]));
+    const submitterIds = Array.from(
+      new Set(
+        readiness.selectedTerms
+          .map((term) => statesByTerm.get(term)?.submittedBy)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const submitterSnapshots = await Promise.all(
+      submitterIds.map(async (submitterId) => [
+        submitterId,
+        await this.resolveObjectiveFinalRecordParticipantSnapshot(submitterId),
+      ] as const),
+    );
+    const submittersById = new Map(submitterSnapshots);
+    const ownerId = employeeSnapshot.id;
+    const termSubmissions = readiness.selectedTerms.map((term) => {
+      const state = statesByTerm.get(term);
+      const submittedBy = state?.submittedBy;
+      return {
+        term: term as AssessmentTermCodeType,
+        submittedAt: state?.submittedAt,
+        submittedBy,
+        submittedByName: submittedBy ? submittersById.get(submittedBy)?.name : undefined,
+        onBehalfOf: submittedBy && submittedBy !== ownerId ? ownerId : undefined,
+        onBehalfOfName: submittedBy && submittedBy !== ownerId ? employeeSnapshot.name : undefined,
+        submissionMode: state?.submissionMode as any,
+      };
+    });
+    const contributorTerms = new Map<string, AssessmentTermCodeType[]>();
+    termSubmissions.forEach((submission) => {
+      if (!submission.submittedBy || !submission.onBehalfOf) return;
+      contributorTerms.set(submission.submittedBy, [
+        ...(contributorTerms.get(submission.submittedBy) ?? []),
+        submission.term,
+      ]);
+    });
+    const contributors = Array.from(contributorTerms.entries()).map(([submitterId, terms]) => ({
+      employee: submittersById.get(submitterId) ?? { id: submitterId },
+      terms,
+      onBehalfOf: employeeSnapshot,
+    }));
     const payload: Omit<IObjectiveAssignmentFinalRecordSnapshot, 'contentHash'> = {
       schemaVersion: 1,
       generatedAt: this.getCurrentDate().toISOString(),
@@ -10817,15 +11600,8 @@ export class ObjectiveService extends BaseService {
       objectiveMasterId: assignment.objectiveMasterId?.toString?.() ?? '',
       objectiveVersionId: assignment.objectiveVersionId?.toString?.() ?? '',
       selectedTerms: readiness.selectedTerms as AssessmentTermCodeType[],
-      termSubmissions: readiness.selectedTerms.map((term) => {
-        const state = statesByTerm.get(term);
-        return {
-          term: term as AssessmentTermCodeType,
-          submittedAt: state?.submittedAt,
-          submittedBy: state?.submittedBy,
-          submissionMode: state?.submissionMode as any,
-        };
-      }),
+      termSubmissions,
+      contributors,
       assignmentPeriodSnapshot: {
         id: period?._id?.toString?.() ?? assignment.objectiveAssignmentPeriodId?.toString?.() ?? '',
         name: period?.name,
@@ -11138,6 +11914,7 @@ export class ObjectiveService extends BaseService {
   private resolveObjectiveFinalRecordViewActor(assignment: any): ObjectiveFinalRecordViewActor {
     const actor = this.requireActor();
     if (assignment.employeeId?.toString?.() === actor.actorId) return 'EMPLOYEE';
+    if (this.objectiveAssignmentSharedTermsForActor(assignment, actor.actorId).length) return 'EMPLOYEE';
     if (assignment.managerId?.toString?.() === actor.actorId) return 'MANAGER';
     const mappedRole = accessService.mapRole(actor.actorRole);
     if (mappedRole === PmsRole.ADMIN || mappedRole === PmsRole.MANAGEMENT) return 'ADMIN';
@@ -11319,6 +12096,22 @@ export class ObjectiveService extends BaseService {
     const managerEditState = this.resolveObjectiveManagerAssignmentEditState(assignment, period);
     const termStates = this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
     const finalRecordReadiness = this.resolveObjectiveFinalRecordReadiness(assignment, termStates);
+    const actor = this.requireActor();
+    const selectedTerms = assignment.selectedTerms?.length
+      ? assignment.selectedTerms
+      : period?.terms ?? [];
+    const mappedSharedAccess = this.mapObjectiveEmployeeAssignmentSharedAccess(assignment);
+    const sharedAccessForMe = mappedSharedAccess.filter(
+      (access) =>
+        access.status === 'ACTIVE' && access.sharedWithEmployeeId === actor.actorId,
+    );
+    const sharedTermsWithMe = this.objectiveAssignmentSharedTermsForActor(assignment, actor.actorId);
+    const isOriginalAssignee = employeeId?.toString?.() === actor.actorId;
+    const canViewAllSharedAccess = this.canActorViewAllObjectiveAssignmentSharedAccess(
+      assignment,
+      isOriginalAssignee,
+    );
+    const employeeEditableTerms = this.resolveObjectiveEmployeeAssignmentEditableTermsForActor(assignment, period);
     return {
       id: assignment._id?.toString?.() ?? '',
       objectiveAssignmentPeriodId: periodId?.toString?.() ?? '',
@@ -11335,9 +12128,15 @@ export class ObjectiveService extends BaseService {
       employeeRole: employee?.specificRole || employee?.designation || employee?.role,
       managerId: managerId?.toString?.(),
       managerName: manager?.name || manager?.employeeName || manager?.fullName || manager?.email,
-      selectedTerms: assignment.selectedTerms ?? [],
+      selectedTerms,
       termStates,
       managerTermStates: this.resolveObjectiveManagerAssignmentTermStates(assignment, period),
+      sharedAccess: canViewAllSharedAccess ? mappedSharedAccess : sharedAccessForMe,
+      sharedAccessForMe,
+      sharedWithMe: sharedTermsWithMe.length > 0,
+      sharedTermsWithMe,
+      isOriginalAssignee,
+      employeeEditableTerms,
       frozenObjectiveSnapshot: assignment.frozenObjectiveSnapshot ?? {},
       values: assignment.values ?? {},
       managerValues: assignment.managerValues ?? {},
@@ -11361,6 +12160,46 @@ export class ObjectiveService extends BaseService {
     };
   }
 
+  private mapObjectiveEmployeeAssignmentSharedAccess(
+    assignment: any,
+  ): ObjectiveEmployeeAssignmentSharedAccessRecord[] {
+    return (assignment.sharedAccess ?? []).map((access: any) => {
+      const sharedEmployee = access.sharedWithEmployeeId && typeof access.sharedWithEmployeeId === 'object'
+        ? access.sharedWithEmployeeId
+        : undefined;
+      const sharedWithEmployeeId = sharedEmployee?._id || access.sharedWithEmployeeId;
+      return {
+        id: access._id?.toString?.(),
+        sharedWithEmployeeId: sharedWithEmployeeId?.toString?.() ?? '',
+        sharedWithEmployeeName:
+          sharedEmployee?.name ||
+          sharedEmployee?.employeeName ||
+          sharedEmployee?.fullName ||
+          sharedEmployee?.email,
+        sharedWithEmployeeCode: sharedEmployee?.employeeCode,
+        terms: Array.isArray(access.terms) ? access.terms : [],
+        status: access.status,
+        note: access.note,
+        sharedBy: access.sharedBy?.toString?.() ?? '',
+        sharedAt: this.toObjectiveEmployeeAssignmentIsoDate(access.sharedAt),
+        revokedBy: access.revokedBy?.toString?.(),
+        revokedAt: this.toObjectiveEmployeeAssignmentIsoDate(access.revokedAt),
+        revocationReason: access.revocationReason,
+      };
+    });
+  }
+
+  private canActorViewAllObjectiveAssignmentSharedAccess(
+    assignment: any,
+    isOriginalAssignee: boolean,
+  ): boolean {
+    if (isOriginalAssignee) return true;
+    const actor = this.requireActor();
+    if (assignment.managerId?.toString?.() === actor.actorId) return true;
+    const mappedRole = accessService.mapRole(actor.actorRole);
+    return [PmsRole.ADMIN, PmsRole.MANAGEMENT, PmsRole.DIRECTOR].includes(mappedRole as any);
+  }
+
   private resolveObjectiveEmployeeAssignmentEditState(
     assignment: any,
     period?: any,
@@ -11374,11 +12213,11 @@ export class ObjectiveService extends BaseService {
     if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
       return { canEdit: false, readOnlyReason: 'Objective Assignment Period is not active' };
     }
-    const termStates = this.normalizeObjectiveEmployeeAssignmentTermStates(assignment, period, true);
-    const openState = termStates.find((state: any) => state.status === 'OPEN');
-    if (openState) {
+    const editableTerms = this.resolveObjectiveEmployeeAssignmentEditableTermsForActor(assignment, period);
+    if (editableTerms.length) {
       return { canEdit: true };
     }
+    const termStates = this.normalizeObjectiveEmployeeAssignmentTermStates(assignment, period, true);
     const firstReason = termStates.find((state: any) => state.readOnlyReason)?.readOnlyReason;
     return { canEdit: false, readOnlyReason: firstReason ?? 'No objective term is currently open for fill' };
   }
@@ -11538,8 +12377,24 @@ export class ObjectiveService extends BaseService {
   ): Promise<void> {
     const actor = this.requireActor();
     const expectedActorId = entryActor === 'MANAGER' ? assignment.managerId : assignment.employeeId;
-    if (expectedActorId?.toString?.() !== actor.actorId) {
+    if (
+      entryActor === 'MANAGER' &&
+      expectedActorId?.toString?.() !== actor.actorId
+    ) {
       throw new Error(`Only the assigned ${entryActor.toLowerCase()} can edit this objective`);
+    }
+    if (
+      entryActor === 'EMPLOYEE' &&
+      !this.canActorEditObjectiveEmployeeAssignmentTerm(assignment, term)
+    ) {
+      const activeSharedAccess = this.objectiveAssignmentActiveSharedAccessForTerm(assignment, term);
+      if (activeSharedAccess) {
+        if (activeSharedAccess._sharingConflict) {
+          throw new Error(`${term} has conflicting shared access. Ask an administrator to review it.`);
+        }
+        throw new Error(`${term} is shared with another employee and is read-only for the original assignee`);
+      }
+      throw new Error(`Only the assigned employee or active shared employee can edit ${term}`);
     }
     if (assignment.status === ObjectiveEmployeeAssignmentStatus.CLOSED) {
       throw new Error('Closed objective assignments are read-only');
@@ -11556,6 +12411,18 @@ export class ObjectiveService extends BaseService {
       : this.findObjectiveEmployeeAssignmentTermState(assignment, term);
     if (termState.status !== 'OPEN') {
       throw new Error(termState.readOnlyReason || `${entryActor.toLowerCase()} objective term entry is not open`);
+    }
+    if (
+      entryActor === 'EMPLOYEE' &&
+      assignment.employeeId?.toString?.() !== actor.actorId
+    ) {
+      const sharedEmployeeIsActive = await User.exists({
+        _id: this.toObjectId(actor.actorId, 'actorId'),
+        active: { $ne: false },
+      });
+      if (!sharedEmployeeIsActive) {
+        throw new Error('Shared objective entry is not available for an inactive employee');
+      }
     }
     if (entryActor === 'EMPLOYEE' && this.isObjectiveEmployeeAssignmentEntryOverrideActive(termState, this.getCurrentDate())) {
       const employeeIsActive = await User.exists({
@@ -11634,6 +12501,17 @@ export class ObjectiveService extends BaseService {
     }
   }
 
+  private async saveObjectiveEmployeeAssignmentSharingChange(assignment: any): Promise<void> {
+    try {
+      await assignment.save();
+    } catch (error: any) {
+      if (error?.name === 'VersionError') {
+        throw new Error('Objective assignment was updated by another request. Refresh and try again.');
+      }
+      throw error;
+    }
+  }
+
   private parseObjectiveEmployeeAssignmentDate(value: Date | string, fieldName: string): Date {
     const date = value instanceof Date ? new Date(value) : new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -11691,10 +12569,13 @@ export class ObjectiveService extends BaseService {
     previousValue?: unknown,
     newValue?: unknown,
     reason?: string,
+    eventMetadata?: Record<string, unknown>,
   ): Promise<void> {
     const actor = this.requireActor();
     const assignmentId = await this.resolveAuditAssignmentId(entityType, entityId);
-    let metadata: Record<string, unknown> | undefined = undefined;
+    let metadata: Record<string, unknown> | undefined = eventMetadata
+      ? { ...eventMetadata }
+      : undefined;
 
     if (entityType === 'OBJECTIVE') {
       const objective = await Objective.findById(entityId).select('assignedManagerId cycleId annualAssignmentId').lean();
@@ -11706,7 +12587,10 @@ export class ObjectiveService extends BaseService {
           objective.annualAssignmentId?.toString(),
         );
         if (delegation) {
-          metadata = { actedAsDelegateFor: objective.assignedManagerId.toString() };
+          metadata = {
+            ...metadata,
+            actedAsDelegateFor: objective.assignedManagerId.toString(),
+          };
         }
       }
     }

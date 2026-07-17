@@ -201,6 +201,7 @@ describe('ObjectiveService - final objective record completion contract', () => 
     const versionId = new Types.ObjectId();
     const employeeId = new Types.ObjectId();
     const managerId = new Types.ObjectId();
+    const sharedContributorId = new Types.ObjectId();
     const assignment = {
       _id: assignmentId,
       objectiveAssignmentPeriodId: periodId,
@@ -218,8 +219,8 @@ describe('ObjectiveService - final objective record completion contract', () => 
       selectedTerms: ['Q1', 'Q2'],
       submittedAt: new Date('2026-09-30T10:00:00.000Z'),
       termStates: [
-        termState('Q1', 'SUBMITTED', '2026-06-30T10:00:00.000Z'),
-        termState('Q2', 'SUBMITTED', '2026-09-30T10:00:00.000Z'),
+        { ...termState('Q1', 'SUBMITTED', '2026-06-30T10:00:00.000Z'), submittedBy: employeeId },
+        { ...termState('Q2', 'SUBMITTED', '2026-09-30T10:00:00.000Z'), submittedBy: sharedContributorId },
       ],
       frozenObjectiveSnapshot: {
         title: 'Annual Objective',
@@ -261,6 +262,13 @@ describe('ObjectiveService - final objective record completion contract', () => 
       termFillWindows: [],
     };
     const finalReadiness = readiness(assignment);
+    jest.spyOn(service, 'resolveObjectiveFinalRecordParticipantSnapshot')
+      .mockImplementation(async (participant: any) => {
+        const id = (participant?._id ?? participant)?.toString?.() ?? '';
+        if (id === sharedContributorId.toString()) return { id, name: 'Priya Raman', employeeCode: 'E002' };
+        if (id === managerId.toString()) return { id, name: 'Manager One' };
+        return { id: employeeId.toString(), name: 'Employee One', employeeCode: 'E001' };
+      });
 
     const snapshot = await service.buildObjectiveFinalRecordSnapshot(
       assignment,
@@ -290,6 +298,18 @@ describe('ObjectiveService - final objective record completion contract', () => 
       name: 'Employee One',
       employeeCode: 'E001',
     });
+    expect(snapshot.termSubmissions[1]).toMatchObject({
+      term: 'Q2',
+      submittedBy: sharedContributorId.toString(),
+      submittedByName: 'Priya Raman',
+      onBehalfOf: employeeId.toString(),
+      onBehalfOfName: 'Employee One',
+    });
+    expect(snapshot.contributors).toEqual([{
+      employee: expect.objectContaining({ id: sharedContributorId.toString(), name: 'Priya Raman' }),
+      terms: ['Q2'],
+      onBehalfOf: expect.objectContaining({ id: employeeId.toString(), name: 'Employee One' }),
+    }]);
     expect(snapshot.contentHash).toMatch(/^[a-f0-9]{64}$/);
     expect(service.verifyObjectiveFinalRecordIntegrity(snapshot)).toBe(true);
 
@@ -581,6 +601,8 @@ describe('ObjectiveService - final objective record completion contract', () => 
       assignment._id.toString(),
       undefined,
       expect.objectContaining({ contentHash: candidate.contentHash }),
+      undefined,
+      { terms: ['Y1'] },
     );
   });
 

@@ -219,6 +219,14 @@ Employee Assignment status = ASSIGNED
 User is the assigned employee
 ```
 
+Objective assignment sharing is covered separately in:
+
+```text
+Server/Document Repository/v3/Implementation/Objective_Assignment_Sharing_Phase_1_Foundation_And_Rules.md
+```
+
+That sharing plan keeps terms dynamic from the employee assignment's selected terms, requires at least one shared term, and keeps non-shared terms with the original assignee.
+
 Otherwise the sheet is read-only.
 
 Manager/Admin/Director view rule:
