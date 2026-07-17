@@ -3626,10 +3626,10 @@ export class ObjectiveService extends BaseService {
     const annualById = new Map(annualAssignments.map((assignment) => [assignment._id.toString(), assignment]));
     const [achievementSubmissions, termReviews, termAssignments] = await Promise.all([
       EmployeeAchievementSubmission.find({
-        termAssignmentId: { $in: termAssignmentIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
+        annualAssignmentId: { $in: annualAssignmentIds.map((id) => this.toObjectId(id, 'annualAssignmentId')) },
         isDeleted: false,
       })
-        .select('termAssignmentId achievementItems achievementValues status submittedAt lockedAt updatedAt')
+        .select('annualAssignmentId achievementItems achievementValues status submittedAt lockedAt updatedAt')
         .sort({ lockedAt: -1, submittedAt: -1, updatedAt: -1 })
         .lean(),
       TermReview.find({
@@ -3642,19 +3642,21 @@ export class ObjectiveService extends BaseService {
       TermAssignment.find({
         _id: { $in: termAssignmentIds.map((id) => this.toObjectId(id, 'termAssignmentId')) },
         isDeleted: false,
-      }).select('termState').lean(),
+      }).select('annualAssignmentId termState').lean(),
     ]);
-    const achievementByTerm = this.firstByStringKey(achievementSubmissions, 'termAssignmentId');
+    const achievementByAnnual = this.firstByStringKey(achievementSubmissions, 'annualAssignmentId');
     const reviewByTerm = this.firstByStringKey(termReviews, 'termAssignmentId');
     const termById = new Map(termAssignments.map((termAssignment) => [termAssignment._id.toString(), termAssignment]));
     const reportingSnapshotByObjectiveId = new Map(
       objectiveIds.map((objectiveId) => {
         const objective = objectives.find((item) => item._id.toString() === objectiveId);
         const termAssignmentId = objective?.termAssignmentId.toString() ?? '';
+        const annualAssignmentId = objective?.annualAssignmentId?.toString() ??
+          termById.get(termAssignmentId)?.annualAssignmentId?.toString() ?? '';
         return [
           objectiveId,
           {
-            actualValue: this.resolveReportingActualValue(objectiveId, achievementByTerm.get(termAssignmentId)),
+            actualValue: this.resolveReportingActualValue(objectiveId, achievementByAnnual.get(annualAssignmentId)),
             scoring: this.resolveReportingScoreSnapshot(objectiveId, reviewByTerm.get(termAssignmentId)),
             finalizedStatus: isTermFinalized(termById.get(termAssignmentId)?.termState),
           },

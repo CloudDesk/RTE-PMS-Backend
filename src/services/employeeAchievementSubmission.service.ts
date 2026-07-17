@@ -7,6 +7,7 @@ import {
   AssessmentTermCode,
   AssessmentTermType,
   getAssessmentTerms,
+  ManagerReviewPeriodState,
   normalizePmsRole,
   ObjectiveActualAggregationMode,
   ObjectiveSource,
@@ -26,6 +27,7 @@ import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
+import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
 import {
   AchievementItemType,
@@ -117,6 +119,7 @@ type AchievementTemplateConfig = {
 
 type AchievementObjectiveRecord = {
   id: string;
+  assessmentTermCode?: AssessmentTermCodeType;
   objectiveNo?: number;
   title: string;
   description?: string;
@@ -210,6 +213,14 @@ type AchievementSubmissionDetail = {
   objectives: AchievementObjectiveRecord[];
   submission: AchievementSubmissionRecord | null;
   canEdit: boolean;
+  editDeadline?: string;
+  readOnlyReason?: string;
+};
+
+type CommonAchievementEditPolicy = {
+  canEdit: boolean;
+  deadline?: Date;
+  reason?: string;
 };
 
 type ActualColumnMetadata = {
@@ -306,11 +317,15 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     termAssignment = await this.ensureAchievementStageOpen(termAssignment, config);
 
     const submission = await EmployeeAchievementSubmission.findOne({
-      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     }).lean();
     const actor = this.requireActor();
-    const objectives = await this.getApprovedObjectives(termAssignment._id);
+    const [objectives, objectiveSettingStarted, editPolicy] = await Promise.all([
+      this.getEligibleObjectives(termAssignment.annualAssignmentId),
+      this.hasAnnualObjectiveSettingStarted(termAssignment, annualAssignment),
+      this.resolveCommonAchievementEditPolicy(termAssignment, annualAssignment),
+    ]);
     const actualColumnMetadata = await this.resolveActualColumnMetadata(
       termAssignment,
       section,
@@ -340,8 +355,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       submission: submission ? this.mapSubmissionRecord(submission) : null,
       canEdit:
         actor.actorId === termAssignment.employeeId.toString() &&
-        termAssignment.termState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
+        objectiveSettingStarted &&
+        editPolicy.canEdit &&
         (!submission || submission.status !== EmployeeAchievementSubmissionStatus.LOCKED),
+      editDeadline: editPolicy.deadline?.toISOString(),
+      readOnlyReason: !objectiveSettingStarted
+        ? 'Employee Achievement opens when Objective Setting starts for the first assessment term.'
+        : editPolicy.reason,
     };
   }
 
@@ -365,7 +385,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     });
 
@@ -374,7 +394,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Submitted employee achievement is locked and cannot be edited');
     }
 
-    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
+    const approvedObjectives = await this.getEligibleObjectives(
+      termAssignment.annualAssignmentId,
+    );
     const normalizedItems = this.normalizeAchievementItems(
       input.achievementItems ?? [],
       false,
@@ -491,7 +513,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     });
 
@@ -500,9 +522,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Achievement submission is already locked.');
     }
 
-    await this.assertSubmitWindowOpen(termAssignment, existingSubmission);
-
-    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
+    const approvedObjectives = await this.getEligibleObjectives(
+      termAssignment.annualAssignmentId,
+    );
     const submitItems = this.normalizeAchievementItems(
       input.achievementItems ?? existingSubmission?.achievementItems ?? [],
       true,
@@ -615,7 +637,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     });
 
@@ -624,7 +646,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Submitted employee achievement is locked and cannot be edited');
     }
 
-    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
+    const approvedObjectives = await this.getEligibleObjectives(
+      termAssignment.annualAssignmentId,
+    );
     const [normalizedItem] = this.normalizeAchievementItems(
       [input.achievementItem],
       false,
@@ -728,7 +752,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     });
 
@@ -737,9 +761,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Achievement submission is already locked.');
     }
 
-    await this.assertSubmitWindowOpen(termAssignment, existingSubmission);
-
-    const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
+    const approvedObjectives = await this.getEligibleObjectives(
+      termAssignment.annualAssignmentId,
+    );
     const [normalizedItem] = this.normalizeAchievementItems(
       [input.achievementItem],
       true,
@@ -885,7 +909,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
-      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     });
 
@@ -1829,27 +1853,53 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     };
   }
 
-  private async getApprovedObjectives(
-    termAssignmentId: Types.ObjectId,
+  private async getEligibleObjectives(
+    annualAssignmentId: Types.ObjectId,
   ): Promise<AchievementObjectiveRecord[]> {
+    const termAssignments = await TermAssignment.find({
+      annualAssignmentId,
+      isDeleted: false,
+    })
+      .select('_id assessmentTermCode')
+      .lean();
+    const termCodeByAssignmentId = new Map(
+      termAssignments.map((assignment) => [
+        assignment._id.toString(),
+        assignment.assessmentTermCode as AssessmentTermCodeType,
+      ]),
+    );
+    const termRank = new Map(
+      (Object.values(AssessmentTermCode) as AssessmentTermCodeType[])
+        .map((term, index) => [term, index]),
+    );
     const objectives = await Objective.find({
-      termAssignmentId,
+      termAssignmentId: { $in: termAssignments.map((assignment) => assignment._id) },
       status: ObjectiveStatus.OBJECTIVE_APPROVED,
       isDeleted: false,
     })
       .select(
-        'objectiveNo title description expectedOutcome targetMetric targetValue targetDate weightage source isPredefined objectiveSnapshot',
+        'termAssignmentId assessmentTermCode objectiveNo title description expectedOutcome targetMetric targetValue targetDate weightage source isPredefined objectiveSnapshot',
       )
-      .sort({ objectiveNo: 1, createdAt: 1 })
       .lean();
 
-    return objectives.map((objective: Record<string, any>) => {
+    return objectives
+      .sort((left: Record<string, any>, right: Record<string, any>) => {
+        const leftTerm = left.assessmentTermCode ?? termCodeByAssignmentId.get(left.termAssignmentId.toString());
+        const rightTerm = right.assessmentTermCode ?? termCodeByAssignmentId.get(right.termAssignmentId.toString());
+        const termDifference = (termRank.get(leftTerm) ?? 0) - (termRank.get(rightTerm) ?? 0);
+        if (termDifference !== 0) return termDifference;
+        return Number(left.objectiveNo ?? 0) - Number(right.objectiveNo ?? 0);
+      })
+      .map((objective: Record<string, any>) => {
       const weightage = objective.weightage === undefined || objective.weightage === null
         ? undefined
         : Number(objective.weightage);
 
       return {
         id: objective._id.toString(),
+        assessmentTermCode:
+          objective.assessmentTermCode ??
+          termCodeByAssignmentId.get(objective.termAssignmentId.toString()),
         objectiveNo: objective.objectiveNo,
         title: String(objective.title ?? ''),
         description: objective.description,
@@ -1879,6 +1929,54 @@ export class EmployeeAchievementSubmissionService extends BaseService {
           objective.isPredefined === true,
       };
     });
+  }
+
+  private async hasAnnualObjectiveSettingStarted(
+    termAssignment: any,
+    annualAssignment: any,
+  ): Promise<boolean> {
+    const assessmentTermType = await this.resolveAssessmentTermType(termAssignment);
+    const assessmentTerms = getAssessmentTerms(assessmentTermType) as AssessmentTermCodeType[];
+    const configuredTerms = new Set<AssessmentTermCodeType>(
+      (annualAssignment.applicableTerms ?? []) as AssessmentTermCodeType[],
+    );
+    const firstTermCode = assessmentTerms.find(
+      (term) => configuredTerms.size === 0 || configuredTerms.has(term),
+    ) ?? assessmentTerms[0];
+    const firstTermAssignment = await TermAssignment.findOne({
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      assessmentTermCode: firstTermCode,
+      isDeleted: false,
+    }).lean();
+    const firstTermContext = firstTermAssignment ?? {
+      assessmentTermCode: firstTermCode,
+    };
+    const termCycle = firstTermAssignment?.cycleTermId
+      ? await TermCycle.findById(firstTermAssignment.cycleTermId).lean()
+      : await TermCycle.findOne({
+        cycleId: termAssignment.cycleId,
+        assessmentTermCode: firstTermCode,
+        isDeleted: false,
+      }).lean();
+    const startDate = resolveEffectiveTermWindows(
+      firstTermContext,
+      termCycle,
+      annualAssignment,
+    ).objectiveSettingWindow?.startDate;
+
+    if (startDate) {
+      return this.toDateOnlyValue(this.getCurrentDate()) >= this.toDateOnlyValue(startDate);
+    }
+
+    // Legacy cycles may not contain a window snapshot. Preserve their previous
+    // state-based access behavior instead of making existing data inaccessible.
+    const startedAssignment = await TermAssignment.exists({
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      termState: { $ne: TermWorkflowState.NOT_STARTED },
+      isDeleted: false,
+    });
+
+    return Boolean(startedAssignment);
   }
 
   private buildObjectiveSnapshot(objective: AchievementObjectiveRecord) {
@@ -2003,7 +2101,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       annualAssignment.templateVersionId.toString(),
       {
         role: PmsRole.EMPLOYEE,
-        workflowState: termAssignment.termState,
+        workflowState: TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
         hierarchyScope: 'self',
         quarter: termAssignment.assessmentTermCode,
         annualAssignmentId: termAssignment.annualAssignmentId.toString(),
@@ -2115,8 +2213,19 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Employee can edit only own achievement submission');
     }
 
-    if (termAssignment.termState !== TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
-      throw new Error('Employee Achievement Submission can be edited only during the Employee Achievement Submission stage.');
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    if (!await this.hasAnnualObjectiveSettingStarted(termAssignment, annualAssignment)) {
+      throw new Error('Employee Achievement opens when Objective Setting starts for the first assessment term.');
+    }
+
+    const editPolicy = await this.resolveCommonAchievementEditPolicy(
+      termAssignment,
+      annualAssignment,
+    );
+    if (!editPolicy.canEdit) {
+      throw new Error(editPolicy.reason || 'Employee Achievement is read-only.');
     }
   }
 
@@ -2148,69 +2257,104 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }
   }
 
-  private async assertSubmitWindowOpen(
+  private async resolveCommonAchievementEditPolicy(
     termAssignment: any,
-    submission?: IEmployeeAchievementSubmission | null,
-  ): Promise<void> {
-    if (!termAssignment.cycleTermId) {
-      return;
+    annualAssignment: any,
+  ): Promise<CommonAchievementEditPolicy> {
+    const closedAnnualStates = new Set<string>([
+      AnnualWorkflowState.ALL_TERMS_FINALIZED,
+      AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+      AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+      AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+      AnnualWorkflowState.ANNUAL_FINALIZED,
+      AnnualWorkflowState.VISIBILITY_ENABLED,
+      AnnualWorkflowState.COMMUNICATION_READY,
+      AnnualWorkflowState.COMMUNICATION_SENT,
+      AnnualWorkflowState.CLOSED,
+      AnnualWorkflowState.ARCHIVED,
+      AnnualWorkflowState.CANCELLED,
+    ]);
+    if (closedAnnualStates.has(String(annualAssignment.annualState))) {
+      return {
+        canEdit: false,
+        reason: 'The performance term is finalized, so Employee Achievement is read-only.',
+      };
     }
 
-    const [termCycle, annualAssignment] = await Promise.all([
-      TermCycle.findById(termAssignment.cycleTermId)
-        .select('achievementSubmissionWindow')
-        .lean(),
-      AnnualAssignment.findById(termAssignment.annualAssignmentId)
-        .select('assignmentWindowSnapshot')
+    const assessmentTermType = await this.resolveAssessmentTermType(termAssignment);
+    const assessmentTerms = getAssessmentTerms(assessmentTermType) as AssessmentTermCodeType[];
+    const configuredTerms = new Set<AssessmentTermCodeType>(
+      (annualAssignment.applicableTerms ?? []) as AssessmentTermCodeType[],
+    );
+    const finalTermCode = [...assessmentTerms]
+      .reverse()
+      .find((term) => configuredTerms.size === 0 || configuredTerms.has(term))
+      ?? assessmentTerms[assessmentTerms.length - 1];
+
+    const [finalTermAssignment, finalReviewPeriod] = await Promise.all([
+      TermAssignment.findOne({
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        assessmentTermCode: finalTermCode,
+        isDeleted: false,
+      }).lean(),
+      ManagerReviewPeriodAssignment.findOne({
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        includedTerms: finalTermCode,
+        isDeleted: false,
+      })
+        .select('anchorTermAssignmentId reviewState')
         .lean(),
     ]);
 
-    const window = resolveEffectiveTermWindows(
-      termAssignment,
+    const finalTermClosed = finalTermAssignment && (
+      finalTermAssignment.termState === TermWorkflowState.TERM_FINALIZED ||
+      finalTermAssignment.termState === TermWorkflowState.CLOSED_BY_ADMIN
+    );
+    const finalGroupClosed = finalReviewPeriod && (
+      finalReviewPeriod.reviewState === ManagerReviewPeriodState.FINALIZED ||
+      finalReviewPeriod.reviewState === ManagerReviewPeriodState.CLOSED_BY_ADMIN
+    );
+    if (finalTermClosed || finalGroupClosed) {
+      return {
+        canEdit: false,
+        reason: 'The final review term is finalized, so Employee Achievement is read-only.',
+      };
+    }
+
+    const deadlineTermAssignment = finalReviewPeriod?.anchorTermAssignmentId
+      ? await TermAssignment.findById(finalReviewPeriod.anchorTermAssignmentId).lean()
+      : finalTermAssignment;
+    const deadlineTermContext = deadlineTermAssignment ?? {
+      assessmentTermCode: finalTermCode,
+    };
+    const termCycle = deadlineTermAssignment?.cycleTermId
+      ? await TermCycle.findById(deadlineTermAssignment.cycleTermId).lean()
+      : await TermCycle.findOne({
+        cycleId: termAssignment.cycleId,
+        assessmentTermCode: finalTermCode,
+        isDeleted: false,
+      }).lean();
+    const deadline = resolveEffectiveTermWindows(
+      deadlineTermContext,
       termCycle,
       annualAssignment,
-    ).achievementSubmissionWindow;
-    if (!window || window.enabled !== true) {
-      return;
+    ).managerReviewWindow?.endDate;
+
+    if (
+      deadline &&
+      this.toDateOnlyValue(this.getCurrentDate()) > this.toDateOnlyValue(deadline)
+    ) {
+      return {
+        canEdit: false,
+        deadline: new Date(deadline),
+        reason: 'The final Manager Review end date has passed, so Employee Achievement is read-only.',
+      };
     }
 
-    const now = this.getCurrentDate();
-    const currentDateOnly = this.toDateOnlyValue(now);
-    const startDateOnly = window.startDate
-      ? this.toDateOnlyValue(window.startDate)
-      : undefined;
-    const baseEndDateOnly = window.endDate
-      ? this.toDateOnlyValue(window.endDate)
-      : window.dueDate
-        ? this.toDateOnlyValue(window.dueDate)
-        : undefined;
-    const allowedEndDateOnly = baseEndDateOnly
-      ? this.addDaysToDateOnly(baseEndDateOnly, window.graceDays ?? 0)
-      : undefined;
-
-    if (startDateOnly && currentDateOnly < startDateOnly) {
-      await this.auditTermAssignmentBlockedAttempt(
-        termAssignment,
-        submission,
-        'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_BEFORE_WINDOW',
-        { startDate: startDateOnly, currentDate: currentDateOnly },
-      );
-      throw new Error('Achievement submission window has not opened yet.');
-    }
-
-    if (allowedEndDateOnly && currentDateOnly > allowedEndDateOnly) {
-      await this.auditTermAssignmentBlockedAttempt(
-        termAssignment,
-        submission,
-        'PMS_EMPLOYEE_ACHIEVEMENT_SUBMIT_BLOCKED_AFTER_WINDOW',
-        {
-          endDate: allowedEndDateOnly,
-          currentDate: currentDateOnly,
-          graceDays: window.graceDays,
-        },
-      );
-      throw new Error('Achievement submission window is closed.');
-    }
+    return {
+      canEdit: true,
+      deadline: deadline ? new Date(deadline) : undefined,
+    };
   }
 
   private async prepareAchievementMutation(termAssignmentId: string) {
@@ -2368,13 +2512,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     ].join('-');
   }
 
-  private addDaysToDateOnly(dateOnly: string, days = 0): string {
-    const [year, month, day] = dateOnly.split('-').map(Number);
-    const date = new Date(Date.UTC(year, month - 1, day + days));
-
-    return this.toDateOnlyValue(date);
-  }
-
   private toObjectId(value: string, fieldName: string): Types.ObjectId {
     if (!Types.ObjectId.isValid(value)) {
       throw new Error(`Invalid ${fieldName}`);
@@ -2394,29 +2531,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       undefined,
       { status: submission.status },
     );
-  }
-
-  private async auditTermAssignmentBlockedAttempt(
-    termAssignment: any,
-    submission: IEmployeeAchievementSubmission | null | undefined,
-    action: string,
-    details: Record<string, unknown>,
-  ): Promise<void> {
-    const actor = this.requireActor();
-
-    await auditService.createAuditLog({
-      actorId: actor.actorId,
-      actorRole: actor.actorRole,
-      action,
-      entityType: submission ? 'EMPLOYEE_ACHIEVEMENT_SUBMISSION' : 'TERM_ASSIGNMENT',
-      entityId: submission ? submission._id.toString() : termAssignment._id.toString(),
-      assignmentId: termAssignment.annualAssignmentId.toString(),
-      newValue: {
-        termAssignmentId: termAssignment._id.toString(),
-        status: submission?.status,
-        ...details,
-      },
-    });
   }
 
   private async audit(

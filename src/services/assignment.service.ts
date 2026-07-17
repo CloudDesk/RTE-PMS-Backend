@@ -1533,14 +1533,6 @@ export class AssignmentService extends BaseService {
     customFlowMode?: PmsAssignmentTermWindowSnapshot['customFlowMode'],
   ): TermWorkflowState[] {
     if (customFlowMode === 'CONTINUE_FROM_ACHIEVEMENT') {
-      if (this.isWindowActive(windows.achievementSubmissionWindow)) {
-        return [
-          TermWorkflowState.OBJECTIVE_SETTING_OPEN,
-          TermWorkflowState.OBJECTIVE_APPROVED,
-          TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-        ];
-      }
-
       if (this.isWindowActive(windows.managerReviewWindow)) {
         return [
           TermWorkflowState.OBJECTIVE_SETTING_OPEN,

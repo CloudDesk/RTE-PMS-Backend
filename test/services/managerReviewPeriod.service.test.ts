@@ -6,6 +6,11 @@ import { ManagerReviewPeriodAssignment } from '../../src/models/pms-manager-revi
 import { TermAssignment } from '../../src/models/pms-term-assignment.model';
 import { TermCycle } from '../../src/models/pms-term-cycle.model';
 import { ManagerReviewPeriodService } from '../../src/services/managerReviewPeriod.service';
+import { transitionTermAssignmentState } from '../../src/services/term-assignment-workflow.service';
+
+jest.mock('../../src/services/term-assignment-workflow.service', () => ({
+  transitionTermAssignmentState: jest.fn(),
+}));
 
 jest.mock('../../src/models/pms-annual-assignment.model', () => ({
   AnnualAssignment: {
@@ -210,7 +215,7 @@ describe('ManagerReviewPeriodService grouped review eligibility', () => {
     await expect(isEligible()).resolves.toBe(false);
   });
 
-  it('resets a stale grouped review and keeps it closed while an included term is still in achievement', async () => {
+  it('promotes a legacy achievement term and keeps the grouped review open', async () => {
     const staleReview = {
       _id: new Types.ObjectId(),
       cycleId: new Types.ObjectId(),
@@ -222,7 +227,7 @@ describe('ManagerReviewPeriodService grouped review eligibility', () => {
     };
     (ManagerReviewPeriodAssignment.find as jest.Mock).mockResolvedValue([staleReview]);
     (service as unknown as { audit: jest.Mock }).audit = jest.fn();
-    mockTermAssignments([
+    const assignments = [
       {
         _id: termAssignmentId1,
         cycleTermId: termCycleId1,
@@ -233,7 +238,15 @@ describe('ManagerReviewPeriodService grouped review eligibility', () => {
         cycleTermId: termCycleId2,
         termState: TermWorkflowState.MANAGER_REVIEW_OPEN,
       },
-    ]);
+    ];
+    mockTermAssignments(assignments);
+    (transitionTermAssignmentState as jest.Mock).mockImplementation(async (id: string) => {
+      const assignment = assignments.find((item) => item._id.toString() === id);
+      if (assignment) {
+        assignment.termState = TermWorkflowState.MANAGER_REVIEW_OPEN;
+      }
+      return assignment;
+    });
     mockTermCycles([
       { _id: termCycleId1, achievementEnabled: true },
       { _id: termCycleId2, achievementEnabled: true },
@@ -241,17 +254,17 @@ describe('ManagerReviewPeriodService grouped review eligibility', () => {
 
     const result = await service.openEligiblePeriodsForCycle(staleReview.cycleId.toString());
 
-    expect(result.opened).toBe(0);
-    expect(result.notReady).toBe(1);
-    expect(staleReview.reviewState).toBe('NOT_STARTED');
-    expect(staleReview.save).toHaveBeenCalledTimes(1);
-    expect((service as unknown as { audit: jest.Mock }).audit).toHaveBeenCalledWith(
-      'PMS_GROUPED_MANAGER_REVIEW_RESET_NOT_READY',
-      'MANAGER_REVIEW_PERIOD',
-      staleReview._id.toString(),
-      { reviewState: 'MANAGER_REVIEW_OPEN' },
-      { reviewState: 'NOT_STARTED' },
+    expect(result.opened).toBe(1);
+    expect(result.notReady).toBe(0);
+    expect(staleReview.reviewState).toBe('MANAGER_REVIEW_OPEN');
+    expect(staleReview.save).toHaveBeenCalledTimes(2);
+    expect(transitionTermAssignmentState).toHaveBeenCalledWith(
+      termAssignmentId1.toString(),
+      TermWorkflowState.MANAGER_REVIEW_OPEN,
+      expect.objectContaining({ actorRole: 'ADMIN' }),
       expect.any(String),
+      'PMS_GROUPED_MANAGER_REVIEW_TERM_OPENED',
+      expect.objectContaining({ managerReviewPeriodId: staleReview._id.toString() }),
     );
   });
 

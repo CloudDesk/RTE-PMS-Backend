@@ -22,7 +22,6 @@ import {
   isGroupedManagerReviewConfig,
   normalizeReviewCadenceConfig,
 } from '../utilis/pmsReviewCadence';
-import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 import type { RequestContext } from '../types/context';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
@@ -615,7 +614,7 @@ export class ManagerReviewPeriodService extends BaseService {
 
   private async getGroupedReviewTermReadiness(
     review: IManagerReviewPeriodAssignment,
-    ignoreWindowDates: boolean,
+    _ignoreWindowDates: boolean,
   ): Promise<{
     pendingPromotion: ITermAssignment[];
   } | null> {
@@ -628,22 +627,6 @@ export class ManagerReviewPeriodService extends BaseService {
       return null;
     }
 
-    const termCycleIds = termAssignments
-      .map((term) => term.cycleTermId)
-      .filter((id): id is Types.ObjectId => Boolean(id));
-    const termCycles = termCycleIds.length > 0
-      ? await TermCycle.find({ _id: { $in: termCycleIds } })
-          .select(
-            'objectiveSettingWindow objectiveApprovalWindow achievementSubmissionWindow managerReviewWindow termFinalizationWindow',
-          )
-          .lean()
-      : [];
-    const termCycleById = new Map(
-      termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]),
-    );
-    const annualAssignment = await AnnualAssignment.findById(review.annualAssignmentId)
-      .select('assignmentWindowSnapshot')
-      .lean();
     const pendingPromotion: ITermAssignment[] = [];
 
     for (const term of termAssignments) {
@@ -660,23 +643,6 @@ export class ManagerReviewPeriodService extends BaseService {
         state !== TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
         state !== TermWorkflowState.OBJECTIVE_APPROVED
       ) {
-        return null;
-      }
-
-      const termCycle = term.cycleTermId
-        ? termCycleById.get(term.cycleTermId.toString())
-        : undefined;
-      const effectiveWindows = resolveEffectiveTermWindows(
-        term,
-        termCycle,
-        annualAssignment,
-      );
-      const achievementWindow = effectiveWindows.achievementSubmissionWindow;
-      const achievementClosed =
-        achievementWindow?.enabled !== true ||
-        (ignoreWindowDates || this.isDateWindowClosed(achievementWindow));
-
-      if (!achievementClosed) {
         return null;
       }
 
@@ -701,7 +667,7 @@ export class ManagerReviewPeriodService extends BaseService {
         termAssignment._id.toString(),
         TermWorkflowState.MANAGER_REVIEW_OPEN,
         actor,
-        'All included employee achievement windows are closed; grouped manager review is ready.',
+        'All included terms are objective-approved; grouped manager review is ready.',
         'PMS_GROUPED_MANAGER_REVIEW_TERM_OPENED',
         {
           managerReviewPeriodId: review._id.toString(),
@@ -709,15 +675,6 @@ export class ManagerReviewPeriodService extends BaseService {
         },
       );
     }
-  }
-
-  private isDateWindowClosed(window?: { endDate?: Date; dueDate?: Date }): boolean {
-    const endDate = window?.endDate ?? window?.dueDate;
-    if (!endDate) return false;
-
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-    return this.getCurrentDate() > end;
   }
 
   private isWindowActive(
@@ -808,7 +765,7 @@ export class ManagerReviewPeriodService extends BaseService {
       status: 'OBJECTIVE_APPROVED',
     }).lean();
     const achievementSubmissions = await EmployeeAchievementSubmission.find({
-      termAssignmentId: { $in: termAssignmentIds },
+      annualAssignmentId: { $in: reviews.map((review) => review.annualAssignmentId) },
       isDeleted: false,
     }).lean();
     const objectivesByTermId = new Map<string, typeof objectives>();
@@ -818,9 +775,9 @@ export class ManagerReviewPeriodService extends BaseService {
       bucket.push(objective);
       objectivesByTermId.set(key, bucket);
     }
-    const achievementSubmissionsByTermId = new Map(
+    const achievementSubmissionsByAnnualId = new Map(
       achievementSubmissions.map((submission) => [
-        submission.termAssignmentId.toString(),
+        submission.annualAssignmentId.toString(),
         submission,
       ]),
     );
@@ -894,12 +851,12 @@ export class ManagerReviewPeriodService extends BaseService {
           weightage: objective.weightage,
         })),
       );
-      const includedAchievementSubmissions = review.includedTermAssignmentIds
-        .map((termAssignmentId) =>
-          achievementSubmissionsByTermId.get(termAssignmentId.toString()))
-        .filter((submission): submission is NonNullable<typeof submission> =>
-          Boolean(submission))
-        .map((submission) => this.mapAchievementSubmissionRecord(submission));
+      const annualAchievementSubmission = achievementSubmissionsByAnnualId.get(
+        review.annualAssignmentId.toString(),
+      );
+      const includedAchievementSubmissions = annualAchievementSubmission
+        ? [this.mapAchievementSubmissionRecord(annualAchievementSubmission)]
+        : [];
 
       return {
         id: review._id.toString(),

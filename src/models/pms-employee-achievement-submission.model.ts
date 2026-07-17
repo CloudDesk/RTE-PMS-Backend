@@ -207,7 +207,6 @@ const employeeAchievementSubmissionSchema = new Schema<IEmployeeAchievementSubmi
       type: Schema.Types.ObjectId,
       required: true,
       ref: 'AnnualAssignment',
-      index: true,
     },
     termAssignmentId: {
       type: Schema.Types.ObjectId,
@@ -272,10 +271,13 @@ const employeeAchievementSubmissionSchema = new Schema<IEmployeeAchievementSubmi
 );
 
 employeeAchievementSubmissionSchema.index(
-  { termAssignmentId: 1 },
-  { unique: true, name: 'idx_employee_achievement_submission_term_assignment' },
+  { annualAssignmentId: 1 },
+  {
+    unique: true,
+    name: 'idx_employee_achievement_submission_annual_assignment',
+    partialFilterExpression: { isDeleted: false },
+  },
 );
-employeeAchievementSubmissionSchema.index({ annualAssignmentId: 1, assessmentTermCode: 1 });
 employeeAchievementSubmissionSchema.index({ employeeId: 1, cycleId: 1, assessmentTermCode: 1 });
 employeeAchievementSubmissionSchema.index({ 'achievementItems.objectiveId': 1 });
 

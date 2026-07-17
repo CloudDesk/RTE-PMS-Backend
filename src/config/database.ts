@@ -98,31 +98,106 @@ async function migrateTemplateStatusesIfNeeded(): Promise<void> {
   }
 }
 
-/**
- * One-time migration: PMS achievement submissions moved from legacy
- * quarterAssignmentId to termAssignmentId. Drop the old unique index because
- * new term-based documents do not set quarterAssignmentId, causing duplicate
- * key errors on { quarterAssignmentId: null }.
- */
+/** Consolidate legacy per-term achievement documents into one active annual document. */
 async function migrateEmployeeAchievementSubmissionIndexesIfNeeded(): Promise<void> {
   try {
     const coll = mongoose.connection.collection('employee_achievement_submissions');
+    await coll.updateMany(
+      { isDeleted: { $exists: false } },
+      { $set: { isDeleted: false } },
+    );
+
+    const duplicateAnnualAssignments = await coll.aggregate<{
+      _id: mongoose.Types.ObjectId;
+      ids: mongoose.Types.ObjectId[];
+    }>([
+      { $match: { isDeleted: false } },
+      {
+        $group: {
+          _id: '$annualAssignmentId',
+          ids: { $push: '$_id' },
+          count: { $sum: 1 },
+        },
+      },
+      { $match: { count: { $gt: 1 } } },
+    ]).toArray();
+
+    for (const duplicate of duplicateAnnualAssignments) {
+      const documents = await coll.find({ _id: { $in: duplicate.ids } })
+        .sort({ createdAt: 1, _id: 1 })
+        .toArray();
+      const keeper = documents[0];
+      const latest = documents[documents.length - 1];
+      if (!keeper || !latest) continue;
+
+      const itemByIdentity = new Map<string, Record<string, unknown>>();
+      const valueByIdentity = new Map<string, Record<string, unknown>>();
+      for (const document of documents) {
+        for (const item of document.achievementItems ?? []) {
+          const objectiveId = item.objectiveId?.toString?.();
+          const identity = objectiveId
+            ? `OBJECTIVE:${objectiveId}`
+            : `ADDITIONAL:${JSON.stringify(item)}`;
+          itemByIdentity.set(identity, item);
+        }
+        for (const value of document.achievementValues ?? []) {
+          valueByIdentity.set(`${value.sectionKey ?? ''}:${value.fieldKey ?? ''}`, value);
+        }
+      }
+      const mergedAchievementItems = Array.from(itemByIdentity.values());
+      const mergedAchievementValues = Array.from(valueByIdentity.values()).map((value) =>
+        value.fieldKey === 'achievement_items'
+          ? { ...value, valueJson: mergedAchievementItems }
+          : value,
+      );
+
+      await coll.updateOne(
+        { _id: keeper._id },
+        {
+          $set: {
+            achievementItems: mergedAchievementItems,
+            achievementValues: mergedAchievementValues,
+            status: latest.status,
+            draftSavedAt: latest.draftSavedAt,
+            submittedBy: latest.submittedBy,
+            submittedAt: latest.submittedAt,
+            lockedAt: latest.lockedAt,
+            auditMetadata: latest.auditMetadata,
+            updatedBy: latest.updatedBy,
+            updatedAt: latest.updatedAt,
+          },
+        },
+      );
+      await coll.updateMany(
+        { _id: { $in: documents.slice(1).map((document) => document._id) } },
+        { $set: { isDeleted: true, updatedAt: new Date() } },
+      );
+    }
+
     const indexes = await coll.indexes();
-    const legacyIndex = (
+    const obsoleteIndexes = (
       indexes as Array<{ name: string; key?: Record<string, number>; unique?: boolean }>
-    ).find((index) => (
+    ).filter((index) => (
       index.name === 'idx_employee_achievement_submission_quarter_assignment' ||
-      (index.unique === true &&
-        Object.keys(index.key ?? {}).length === 1 &&
-        index.key?.quarterAssignmentId === 1)
+      index.name === 'idx_employee_achievement_submission_term_assignment' ||
+      index.name === 'annualAssignmentId_1' ||
+      (index.unique === true && Object.keys(index.key ?? {}).length === 1 &&
+        (index.key?.quarterAssignmentId === 1 || index.key?.termAssignmentId === 1))
     ));
 
-    if (!legacyIndex) return;
+    for (const index of obsoleteIndexes) {
+      await coll.dropIndex(index.name);
+    }
 
-    await coll.dropIndex(legacyIndex.name);
-    console.log(
-      `[DB] Dropped old employee achievement quarterAssignmentId index "${legacyIndex.name}"; app uses termAssignmentId now. No data removed.`,
+    await coll.createIndex(
+      { annualAssignmentId: 1 },
+      {
+        unique: true,
+        name: 'idx_employee_achievement_submission_annual_assignment',
+        partialFilterExpression: { isDeleted: false },
+      },
     );
+    console.log('[DB] Employee achievements now use one active submission per annual assignment.');
   } catch (err: any) {
     if (err.codeName === 'IndexNotFound' || err.message?.includes('index not found')) return;
     console.warn('[DB] migrateEmployeeAchievementSubmissionIndexesIfNeeded failed:', err.message);

@@ -324,7 +324,7 @@ export class PmsCommunicationService extends BaseService {
           contentKey,
           subjectTemplate: 'Your Annual Appraisal Outcome',
           bodyTemplate:
-            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nFinal grade: {{finalGrade}}\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\n\nRegards,\nHR Team',
         };
       case 'MERIT_ONLY':
         return {
@@ -332,7 +332,7 @@ export class PmsCommunicationService extends BaseService {
           contentKey,
           subjectTemplate: 'Your Annual Appraisal Outcome',
           bodyTemplate:
-            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nMerit percentage: {{meritPercentage}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\n\nRegards,\nHR Team',
         };
       case 'GRADE_ONLY':
         return {
@@ -340,7 +340,7 @@ export class PmsCommunicationService extends BaseService {
           contentKey,
           subjectTemplate: 'Your Annual Appraisal Outcome',
           bodyTemplate:
-            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nFinal grade: {{finalGrade}}\nFinal rating: {{finalRating}}\nManagement remarks: {{managementRemarks}}\n\nRegards,\nHR Team',
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\n\nRegards,\nHR Team',
         };
       case 'NIL':
       default:
@@ -349,7 +349,7 @@ export class PmsCommunicationService extends BaseService {
           contentKey: contentKey || 'NIL',
           subjectTemplate: 'Your Annual Appraisal Outcome',
           bodyTemplate:
-            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nOutcome: {{appraisalOutcomeType}}\n{{#if nilReason}}Reason: {{nilReason}}\n{{/if}}{{#if managementRemarks}}Management remarks: {{managementRemarks}}\n{{/if}}\nRegards,\nHR Team',
+            'Dear {{employeeName}},\n\nYour annual appraisal has been finalized.\nOutcome: {{appraisalOutcomeType}}\n{{#if nilReason}}Reason: {{nilReason}}\n{{/if}}\nRegards,\nHR Team',
         };
     }
   }
