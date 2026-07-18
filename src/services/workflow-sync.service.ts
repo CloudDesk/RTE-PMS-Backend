@@ -919,8 +919,8 @@ export class WorkflowSyncService extends BaseService {
 
     if (objectives.length === 0) {
       return {
-        canClose: false,
-        reason: 'Objective setting is still open and no active objectives were found.',
+        canClose: true,
+        reason: 'No active objectives were found.',
       };
     }
 
