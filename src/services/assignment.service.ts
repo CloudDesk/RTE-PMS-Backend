@@ -40,6 +40,11 @@ import { ManagerReviewPeriodService } from './managerReviewPeriod.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
+import {
+  predefinedObjectiveSeedEntry,
+  upsertObjectiveRowSeedEntries,
+  type ObjectiveRowSeedEntry,
+} from './objective-assignment-seeding.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import { AssessmentTermCode } from '../constants/pms.enums';
 import type {
@@ -1325,7 +1330,10 @@ export class AssignmentService extends BaseService {
     }
 
     const actorId = this.actorIdObject();
-    const objectivePayloads: Array<Record<string, unknown>> = [];
+    if (!actorId) {
+      throw new Error('Actor is required to seed predefined objective rows');
+    }
+    const objectivePayloads: ObjectiveRowSeedEntry[] = [];
     const seededTermAssignmentIds = new Set<string>();
     const existingObjectives = await Objective.find({
       termAssignmentId: { $in: termAssignments.map((termAssignment) => termAssignment._id) },
@@ -1383,9 +1391,7 @@ export class AssignmentService extends BaseService {
         if (!templateObjectiveKey || !predefinedObjective.title?.trim()) {
           continue;
         }
-        if (existingKeys.has(templateObjectiveKey)) {
-          continue;
-        }
+        const alreadyExists = existingKeys.has(templateObjectiveKey);
         const predefinedDueDate = predefinedObjective.dueDate
           ? new Date(predefinedObjective.dueDate)
           : undefined;
@@ -1394,7 +1400,36 @@ export class AssignmentService extends BaseService {
             ? predefinedDueDate
             : defaultDueDate;
 
-        objectivePayloads.push({
+        const coverage = termAssignments
+          .filter((candidate) => {
+            const candidateConfig = this.resolveTemplateObjectiveConfig(
+              templateVersion.sections ?? [],
+              candidate.assessmentTermCode,
+            );
+            return candidateConfig?.predefinedObjectives.some(
+              (candidateObjective) =>
+                candidateObjective.key === templateObjectiveKey &&
+                candidateObjective.isActive !== false &&
+                this.matchesPredefinedObjectiveTerm(
+                  candidate.assessmentTermCode,
+                  candidateObjective.applicableTerms,
+                ),
+            ) === true;
+          })
+          .map((candidate) => candidate.assessmentTermCode);
+        objectivePayloads.push(predefinedObjectiveSeedEntry({
+          sectionKey: config.sectionKey,
+          objectiveKey: templateObjectiveKey,
+          annualAssignmentId: termAssignment.annualAssignmentId,
+          termAssignmentId: termAssignment._id,
+          assessmentTermCode: termAssignment.assessmentTermCode,
+          coverage,
+          rowGroupKey: predefinedObjective.rowGroupKey,
+          rowOrder: predefinedObjective.rowOrder,
+          columnValues: predefinedObjective.columnValues,
+          columnBindingKeyById: config.columnBindingKeyById,
+          columnTypeById: config.columnTypeById,
+          payload: {
           termAssignmentId: termAssignment._id,
           annualAssignmentId: termAssignment.annualAssignmentId,
           cycleId: termAssignment.cycleId,
@@ -1420,10 +1455,11 @@ export class AssignmentService extends BaseService {
           createdBy: actorId,
           approvedAt: defaultDueDate ?? new Date(),
           approvedBy: actorId,
-        });
+          },
+        }));
 
         existingKeys.add(templateObjectiveKey);
-        nextObjectiveNo += 1;
+        if (!alreadyExists) nextObjectiveNo += 1;
         seededTermAssignmentIds.add(termAssignmentId);
       }
 
@@ -1432,7 +1468,7 @@ export class AssignmentService extends BaseService {
     }
 
     if (objectivePayloads.length > 0) {
-      await Objective.insertMany(objectivePayloads);
+      await upsertObjectiveRowSeedEntries(objectivePayloads, actorId);
     }
 
     return seededTermAssignmentIds;
@@ -1672,9 +1708,27 @@ export class AssignmentService extends BaseService {
     }
 
     return {
+      sectionKey: objectiveSection.sectionKey,
+      columnBindingKeyById: Object.fromEntries(
+        (objectiveSection.objectiveConfig.tableLayout?.columns ?? []).map((column) => [
+          column.columnId,
+          column.bindingKey,
+        ]),
+      ),
+      columnTypeById: Object.fromEntries(
+        (objectiveSection.objectiveConfig.tableLayout?.columns ?? []).map((column) => [
+          column.columnId,
+          column.type,
+        ]),
+      ),
       predefinedObjectives: (objectiveSection.objectiveConfig.predefinedObjectives ?? []).map(
-        (objective: ITemplatePredefinedObjective, index: number) => ({
-          key: this.buildDeterministicTemplateObjectiveKey(objectiveSection.sectionKey, objective, index),
+        (objective: ITemplatePredefinedObjective, index: number) => {
+          const key = this.buildDeterministicTemplateObjectiveKey(objectiveSection.sectionKey, objective, index);
+          const rowAssignment = objectiveSection.objectiveConfig?.tableLayout?.rowAssignments?.find(
+            (assignment) => assignment.objectiveKey === key,
+          );
+          return ({
+          key,
           title: objective.title?.trim(),
           description: objective.description,
           kpi: objective.kpi,
@@ -1689,7 +1743,11 @@ export class AssignmentService extends BaseService {
           applicableTerms: this.normalizeScopedTerms(
             objective.termScope ?? objective.applicableTerms ?? objective.repeatFor,
           ),
-        }),
+          columnValues: objective.columnValues,
+          rowGroupKey: objective.rowGroupKey ?? rowAssignment?.rowGroupKey,
+          rowOrder: objective.rowOrder ?? rowAssignment?.displayOrder ?? index,
+        });
+        },
       ),
     };
   }

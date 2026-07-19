@@ -59,6 +59,32 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
+import {
+  ObjectiveMatrixService,
+  validateObjectiveMatrixRowForSubmit,
+} from './objective-matrix.service';
+import { ObjectiveMatrixWriteService } from './objective-matrix-write.service';
+import { PmsObjectiveMatrixPdfService } from './pms-objective-matrix-pdf.service';
+import type {
+  ObjectiveMatrixPdfQuery,
+  ObjectiveMatrixPdfResult,
+} from '../types/pms-objective-matrix-report';
+import type {
+  AnnualObjectiveMatrixResponse,
+  ObjectiveMatrixCellSaveInput,
+  ObjectiveMatrixCreateRowInput,
+  ObjectiveMatrixCreateRowResult,
+  ObjectiveMatrixDeleteRowInput,
+  ObjectiveMatrixDeleteRowResult,
+  ObjectiveMatrixReadQuery,
+  ObjectiveMatrixWriteResult,
+} from '../types/pms-objective-matrix';
+import {
+  predefinedObjectiveSeedEntry,
+  deterministicDynamicObjectiveRowKey,
+  upsertObjectiveRowSeedEntries,
+  type ObjectiveRowSeedEntry,
+} from './objective-assignment-seeding.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   mapEffectiveTermWindowsForResponse,
@@ -71,6 +97,7 @@ import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type {
   IObjectiveBucket,
   ITemplatePredefinedObjective,
+  ITemplateObjectiveTableLayout,
   ITemplateSection,
 } from '../models/pms-template-version.model';
 import type {
@@ -1131,6 +1158,11 @@ type ObjectiveAssignmentEntryActor = 'EMPLOYEE' | 'MANAGER';
 type AssignmentMode = 'employee' | 'manager';
 
 type ObjectiveConfig = {
+  sectionKey: string;
+  columnBindingKeyById: Record<string, string>;
+  columnTypeById: Record<string, string>;
+  dynamicRowGroupBySource: Partial<Record<'EMPLOYEE_CREATED' | 'MANAGER_CREATED', string>>;
+  tableLayout?: ITemplateObjectiveTableLayout;
   mode: 'PREDEFINED' | 'DYNAMIC' | 'HYBRID';
   allowEmployeeCreated: boolean;
   allowManagerCreated: boolean;
@@ -1167,6 +1199,9 @@ type ObjectiveConfig = {
     editable?: boolean;
     isActive?: boolean;
     applicableTerms?: AssessmentTermCodeValue[];
+    columnValues?: Record<string, unknown>;
+    rowGroupKey?: string;
+    rowOrder?: number;
   }>;
   objectiveBuckets: IObjectiveBucket[];
 };
@@ -1194,6 +1229,11 @@ type ObjectiveRecord = {
   managerName: string;
   source: string;
   templateObjectiveKey?: string;
+  objectiveRowKey?: string;
+  rowOriginTermCode?: AssessmentTermCodeValue;
+  rowCoverage?: AssessmentTermCodeValue[];
+  rowGroupKey?: string;
+  rowOrder?: number;
   isPredefined: boolean;
   title: string;
   description: string;
@@ -1332,6 +1372,46 @@ const DELEGATED_OBJECTIVE_ASSIGNMENT_STATES = [
 export class ObjectiveService extends BaseService {
   constructor(context: RequestContext) {
     super(context);
+  }
+
+  async getAnnualObjectiveMatrix(
+    annualAssignmentId: string,
+    query: ObjectiveMatrixReadQuery = {},
+  ): Promise<AnnualObjectiveMatrixResponse> {
+    return new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, query);
+  }
+
+  async generateAnnualObjectiveMatrixPdf(
+    annualAssignmentId: string,
+    query: ObjectiveMatrixPdfQuery = {},
+  ): Promise<ObjectiveMatrixPdfResult> {
+    return new PmsObjectiveMatrixPdfService(this.context).generate(annualAssignmentId, query);
+  }
+
+  async saveAnnualObjectiveMatrixCells(
+    annualAssignmentId: string,
+    input: ObjectiveMatrixCellSaveInput,
+  ): Promise<ObjectiveMatrixWriteResult> {
+    return new ObjectiveMatrixWriteService(this.context).saveCells(annualAssignmentId, input);
+  }
+
+  async createAnnualObjectiveMatrixRow(
+    annualAssignmentId: string,
+    input: ObjectiveMatrixCreateRowInput,
+  ): Promise<ObjectiveMatrixCreateRowResult> {
+    return new ObjectiveMatrixWriteService(this.context).createRow(annualAssignmentId, input);
+  }
+
+  async deleteAnnualObjectiveMatrixRow(
+    annualAssignmentId: string,
+    objectiveRowKey: string,
+    input: ObjectiveMatrixDeleteRowInput,
+  ): Promise<ObjectiveMatrixDeleteRowResult> {
+    return new ObjectiveMatrixWriteService(this.context).deleteRow(
+      annualAssignmentId,
+      objectiveRowKey,
+      input,
+    );
   }
 
   async listObjectiveMasters(
@@ -4657,7 +4737,9 @@ export class ObjectiveService extends BaseService {
       }
     }
 
+    const objectiveId = new Types.ObjectId();
     const objective = await Objective.create({
+      _id: objectiveId,
       termAssignmentId: termAssignment._id,
       annualAssignmentId: termAssignment.annualAssignmentId,
       cycleId: termAssignment.cycleId,
@@ -4666,6 +4748,15 @@ export class ObjectiveService extends BaseService {
       assignedManagerId: termAssignment.assignedManagerId,
       objectiveNo: await this.getNextObjectiveNo(termAssignment._id),
       source,
+      objectiveRowKey: deterministicDynamicObjectiveRowKey(
+        termAssignment.annualAssignmentId,
+        objectiveId.toString(),
+      ),
+      rowOriginTermCode: termAssignment.assessmentTermCode,
+      rowCoverage: [termAssignment.assessmentTermCode],
+      rowGroupKey: source === ObjectiveSource.EMPLOYEE_CREATED
+        ? objectiveConfig.dynamicRowGroupBySource.EMPLOYEE_CREATED
+        : objectiveConfig.dynamicRowGroupBySource.MANAGER_CREATED,
       title: input.title.trim(),
       description: input.description?.trim(),
       priority: this.normalizeObjectivePriority(input.priority),
@@ -4811,7 +4902,9 @@ export class ObjectiveService extends BaseService {
               );
             }
 
+            const objectiveId = new Types.ObjectId();
             const objective = await Objective.create({
+              _id: objectiveId,
               termAssignmentId: termAssignment._id,
               annualAssignmentId: termAssignment.annualAssignmentId,
               cycleId: termAssignment.cycleId,
@@ -4820,6 +4913,13 @@ export class ObjectiveService extends BaseService {
               assignedManagerId: termAssignment.assignedManagerId,
               objectiveNo: await this.getNextObjectiveNo(termAssignment._id),
               source,
+              objectiveRowKey: deterministicDynamicObjectiveRowKey(
+                termAssignment.annualAssignmentId,
+                objectiveId.toString(),
+              ),
+              rowOriginTermCode: termAssignment.assessmentTermCode,
+              rowCoverage: [termAssignment.assessmentTermCode],
+              rowGroupKey: objectiveConfig.dynamicRowGroupBySource.MANAGER_CREATED,
               title: objectiveInput.title.trim(),
               description: objectiveInput.description?.trim(),
               priority: this.normalizeObjectivePriority(objectiveInput.priority),
@@ -5305,9 +5405,21 @@ export class ObjectiveService extends BaseService {
       throw new Error('Only draft or revision-required objectives can be submitted');
     }
 
-    this.validateObjectiveForSubmit(objective);
     const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const objectiveConfig = await this.getObjectiveConfigForAssignment(annualAssignment, termAssignment);
+    if (objectiveConfig.tableLayout?.enabled === true) {
+      const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(
+        annualAssignment._id.toString(),
+        { mode: 'employee', employeeId: annualAssignment.employeeId.toString() },
+      );
+      validateObjectiveMatrixRowForSubmit(matrix, {
+        objectiveId: objective._id.toString(),
+        objectiveRowKey: objective.objectiveRowKey,
+        termCode: termAssignment.assessmentTermCode,
+      });
+    } else {
+      this.validateObjectiveForSubmit(objective);
+    }
     if (objective.source === ObjectiveSource.PREDEFINED) {
       await this.validateQuarterObjectiveRules(
         termAssignment,
@@ -5761,7 +5873,7 @@ export class ObjectiveService extends BaseService {
 
     const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
     const now = new Date();
-    const objectivePayloads: Array<Record<string, unknown>> = [];
+    const objectivePayloads: ObjectiveRowSeedEntry[] = [];
 
     for (const termAssignment of termAssignments) {
       const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
@@ -5805,14 +5917,46 @@ export class ObjectiveService extends BaseService {
           continue;
         }
 
-        if (existingKeys.has(predefinedObjective.key)) {
-          continue;
-        }
-
-        nextObjectiveNo += 1;
+        const alreadyExists = existingKeys.has(predefinedObjective.key);
+        if (!alreadyExists) nextObjectiveNo += 1;
         existingKeys.add(predefinedObjective.key);
 
-        objectivePayloads.push({
+        const coverage = termAssignments
+          .filter((candidate) => {
+            if (candidate.annualAssignmentId.toString() !== termAssignment.annualAssignmentId.toString()) {
+              return false;
+            }
+            const candidateConfig = templateVersion
+              ? this.resolveTemplateObjectiveConfig(
+                  templateVersion.sections ?? [],
+                  candidate.assessmentTermCode,
+                )
+              : undefined;
+            return candidateConfig?.predefinedObjectives.some(
+              (candidateObjective) =>
+                candidateObjective.key === predefinedObjective.key &&
+                candidateObjective.isActive !== false &&
+                this.matchesPredefinedObjectiveTerm(
+                  candidate.assessmentTermCode,
+                  candidateObjective.applicableTerms,
+                ),
+            ) === true;
+          })
+          .map((candidate) => candidate.assessmentTermCode);
+
+        objectivePayloads.push(predefinedObjectiveSeedEntry({
+          sectionKey: objectiveConfig.sectionKey,
+          objectiveKey: predefinedObjective.key,
+          annualAssignmentId: termAssignment.annualAssignmentId,
+          termAssignmentId: termAssignment._id,
+          assessmentTermCode: termAssignment.assessmentTermCode,
+          coverage,
+          rowGroupKey: predefinedObjective.rowGroupKey,
+          rowOrder: predefinedObjective.rowOrder,
+          columnValues: predefinedObjective.columnValues,
+          columnBindingKeyById: objectiveConfig.columnBindingKeyById,
+          columnTypeById: objectiveConfig.columnTypeById,
+          payload: {
           termAssignmentId: termAssignment._id,
           annualAssignmentId: termAssignment.annualAssignmentId,
           cycleId: termAssignment.cycleId,
@@ -5838,7 +5982,8 @@ export class ObjectiveService extends BaseService {
           createdBy: actorId,
           approvedAt: now,
           approvedBy: actorId,
-        });
+          },
+        }));
       }
 
       maxObjectiveNoByTermAssignment.set(termAssignmentId, nextObjectiveNo);
@@ -5846,7 +5991,7 @@ export class ObjectiveService extends BaseService {
     }
 
     if (objectivePayloads.length > 0) {
-      await Objective.insertMany(objectivePayloads);
+      await upsertObjectiveRowSeedEntries(objectivePayloads, actorId);
     }
   }
 
@@ -5969,6 +6114,10 @@ export class ObjectiveService extends BaseService {
 
   private defaultObjectiveConfig(): ObjectiveConfig {
     return {
+      sectionKey: 'objectives',
+      columnBindingKeyById: {},
+      columnTypeById: {},
+      dynamicRowGroupBySource: {},
       mode: 'DYNAMIC',
       allowEmployeeCreated: true,
       allowManagerCreated: true,
@@ -6059,6 +6208,28 @@ export class ObjectiveService extends BaseService {
     }
 
     return {
+      sectionKey: objectiveSection.sectionKey,
+      columnBindingKeyById: Object.fromEntries(
+        (objectiveSection.objectiveConfig.tableLayout?.columns ?? []).map((column) => [
+          column.columnId,
+          column.bindingKey,
+        ]),
+      ),
+      columnTypeById: Object.fromEntries(
+        (objectiveSection.objectiveConfig.tableLayout?.columns ?? []).map((column) => [
+          column.columnId,
+          column.type,
+        ]),
+      ),
+      dynamicRowGroupBySource: {
+        EMPLOYEE_CREATED: objectiveSection.objectiveConfig.tableLayout?.rowGroups?.find(
+          (group) => group.source === 'EMPLOYEE_CREATED',
+        )?.rowGroupKey,
+        MANAGER_CREATED: objectiveSection.objectiveConfig.tableLayout?.rowGroups?.find(
+          (group) => group.source === 'MANAGER_CREATED',
+        )?.rowGroupKey,
+      },
+      tableLayout: objectiveSection.objectiveConfig.tableLayout,
       mode: objectiveSection.objectiveConfig.mode ?? 'DYNAMIC',
       allowEmployeeCreated: objectiveSection.objectiveConfig.allowEmployeeCreated !== false,
       allowManagerCreated: objectiveSection.objectiveConfig.allowManagerCreated !== false,
@@ -6124,12 +6295,17 @@ export class ObjectiveService extends BaseService {
         ? objectiveSection.objectiveBuckets
         : this.defaultObjectiveBuckets(),
       predefinedObjectives: (objectiveSection.objectiveConfig.predefinedObjectives ?? []).map(
-        (objective: ITemplatePredefinedObjective, index: number) => ({
-          key: this.buildDeterministicTemplateObjectiveKey(
+        (objective: ITemplatePredefinedObjective, index: number) => {
+          const key = this.buildDeterministicTemplateObjectiveKey(
             objectiveSection.sectionKey,
             objective,
             index,
-          ),
+          );
+          const rowAssignment = objectiveSection.objectiveConfig?.tableLayout?.rowAssignments?.find(
+            (assignment) => assignment.objectiveKey === key,
+          );
+          return ({
+          key,
           title: objective.title?.trim(),
           description: objective.description,
           kpi: objective.kpi,
@@ -6144,7 +6320,11 @@ export class ObjectiveService extends BaseService {
           applicableTerms: this.normalizeScopedTerms(
             objective.termScope ?? objective.applicableTerms ?? objective.repeatFor,
           ),
-        }),
+          columnValues: objective.columnValues,
+          rowGroupKey: objective.rowGroupKey ?? rowAssignment?.rowGroupKey,
+          rowOrder: objective.rowOrder ?? rowAssignment?.displayOrder ?? index,
+        });
+        },
       ),
     };
   }
@@ -6243,6 +6423,11 @@ export class ObjectiveService extends BaseService {
       managerName: this.getManagerName(annualAssignment, managerId),
       source: objective.source,
       templateObjectiveKey: objective.templateObjectiveKey,
+      objectiveRowKey: objective.objectiveRowKey,
+      rowOriginTermCode: objective.rowOriginTermCode,
+      rowCoverage: objective.rowCoverage,
+      rowGroupKey: objective.rowGroupKey,
+      rowOrder: objective.rowOrder,
       isPredefined: objective.source === ObjectiveSource.PREDEFINED,
       title: objective.title ?? '',
       description: objective.description ?? '',

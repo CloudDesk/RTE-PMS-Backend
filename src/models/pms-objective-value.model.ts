@@ -93,6 +93,29 @@ objectiveValueSchema.index({
 objectiveValueSchema.index({ termAssignmentId: 1, sectionKey: 1 });
 objectiveValueSchema.index({ cycleId: 1, employeeId: 1 });
 objectiveValueSchema.index({ fieldKey: 1, roleCode: 1 });
+objectiveValueSchema.index(
+  {
+    objectiveId: 1,
+    fieldKey: 1,
+    roleCode: 1,
+    actorUserId: 1,
+    workflowStage: 1,
+    isDeleted: 1,
+  },
+  { name: 'idx_objective_value_matrix_identity' },
+);
+objectiveValueSchema.index(
+  { annualAssignmentId: 1, termAssignmentId: 1, fieldKey: 1, isDeleted: 1 },
+  { name: 'idx_objective_value_matrix_assignment' },
+);
+objectiveValueSchema.index(
+  { objectiveId: 1, fieldKey: 1, roleCode: 1, isDeleted: 1 },
+  {
+    name: 'uq_objective_value_template_seed_active',
+    unique: true,
+    partialFilterExpression: { isDeleted: false, roleCode: 'SYSTEM' },
+  },
+);
 
 export const ObjectiveValue = mongoose.model<IObjectiveValue>(
   'ObjectiveValue',

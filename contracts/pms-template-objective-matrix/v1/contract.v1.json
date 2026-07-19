@@ -1,0 +1,131 @@
+{
+  "contractVersion": 1,
+  "featureKey": "PMS_TEMPLATE_OBJECTIVE_MATRIX",
+  "scope": "TEMPLATE_LINKED_OBJECTIVES_ONLY",
+  "identity": {
+    "logicalRowKey": "objectiveRowKey",
+    "logicalRowKeyImmutable": true,
+    "titleIsIdentity": false,
+    "siblingUniqueness": [
+      "annualAssignmentId",
+      "objectiveRowKey",
+      "assessmentTermCode",
+      "isDeleted=false"
+    ],
+    "cellIdentity": [
+      "objectiveId",
+      "termAssignmentId",
+      "columnId",
+      "fieldKey"
+    ]
+  },
+  "cadences": {
+    "QUARTERLY": ["Q1", "Q2", "Q3", "Q4"],
+    "HALF_YEARLY": ["H1", "H2"],
+    "YEARLY": ["Y1"]
+  },
+  "columnTypes": [
+    "SHORT_TEXT",
+    "LONG_TEXT",
+    "NUMERIC_INPUT",
+    "PERCENTAGE",
+    "CURRENCY",
+    "DATE",
+    "DROPDOWN",
+    "BOOLEAN",
+    "RATING_SCALE",
+    "ATTACHMENT",
+    "FORMULA",
+    "SYSTEM_DISPLAY"
+  ],
+  "columnTermPolicies": [
+    "EVERY_REVIEW_PERIOD",
+    "CURRENT_PERIOD",
+    "SELECTED_PERIODS",
+    "SHARED_ANNUAL"
+  ],
+  "dynamicRowPolicy": {
+    "employeeDefaultScope": "CURRENT_TERM",
+    "managerDefaultScope": "CURRENT_TERM",
+    "allowedCreatorSelectionsWhenEnabled": [
+      "CURRENT_TERM",
+      "CURRENT_AND_REMAINING_TERMS",
+      "SELECTED_TERMS",
+      "WHOLE_REVIEW_YEAR"
+    ],
+    "sameAnnualAssignmentOnly": true,
+    "closedPastTermsRequireReopen": true,
+    "futureSiblingsRemainLockedUntilOpen": true
+  },
+  "rowSources": ["PREDEFINED", "EMPLOYEE_CREATED", "MANAGER_CREATED"],
+  "roles": ["EMPLOYEE", "MANAGER", "DIRECTOR", "ADMIN", "MANAGEMENT"],
+  "formula": {
+    "representation": "ALLOWLISTED_AST",
+    "scopes": ["ROW", "ROW_ACROSS_TERMS", "GROUP", "TABLE"],
+    "operators": ["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE"],
+    "functions": [
+      "ABS",
+      "ROUND",
+      "MIN",
+      "MAX",
+      "SUM_TERMS",
+      "AVERAGE_TERMS",
+      "LATEST_FILLED_TERM",
+      "MIN_TERMS",
+      "MAX_TERMS",
+      "SUM_GROUP",
+      "AVERAGE_GROUP",
+      "MIN_GROUP",
+      "MAX_GROUP",
+      "COUNT_GROUP",
+      "SUM_TABLE",
+      "AVERAGE_TABLE",
+      "MIN_TABLE",
+      "MAX_TABLE",
+      "COUNT_TABLE"
+    ],
+    "emptyPolicies": ["IGNORE", "ZERO", "ERROR"],
+    "divideByZeroPolicies": ["NULL", "ZERO", "ERROR"],
+    "targetsReadOnly": true,
+    "serverAuthoritative": true,
+    "prohibited": ["EVAL", "USER_CODE", "MACRO", "EXTERNAL_API", "DATABASE_EXPRESSION"]
+  },
+  "writeSemantics": {
+    "validateWholeBatchBeforeWrite": true,
+    "transactional": true,
+    "optimisticConcurrency": true,
+    "formulaTargetsRejected": true,
+    "matrixSaveNeverSubmitsObjective": true,
+    "auditSourceChanges": true,
+    "auditBatchSummary": true
+  },
+  "calculatedRows": {
+    "createObjectiveRecords": false,
+    "haveObjectiveStatus": false,
+    "submittable": false,
+    "approvable": false,
+    "includedInSnapshotAndPdf": true,
+    "affectScoringByDefault": false
+  },
+  "annualDecision": {
+    "termScoringRemainsAuthoritative": true,
+    "formulaResultsAreContextByDefault": true,
+    "freezeRequiresIntegrityCheck": true,
+    "freezeCapturesMatrixSnapshot": true,
+    "freezeCapturesContentHash": true,
+    "reopenCapturesPreReopenSnapshot": true
+  },
+  "compatibility": {
+    "legacyTemplateWithoutTableLayoutUsesExistingCards": true,
+    "existingSingleTermApisRemainAvailable": true,
+    "existingWorkflowEnumsChange": false,
+    "standaloneObjectiveSubsystemChanged": false,
+    "excludedRoutes": [
+      "/my/objectives",
+      "/manager/team-objectives",
+      "/admin/pms/objective-assignments",
+      "/management/pms/objective-assignments",
+      "/admin/pms/objective-library"
+    ]
+  }
+}

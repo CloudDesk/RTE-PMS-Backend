@@ -21,6 +21,11 @@
     "db:verify": "node scripts/verify-database.js",
     "db:migrate": "node scripts/migrate-to-production-db.js",
     "db:migrate:dry-run": "node scripts/migrate-to-production-db.js --dry-run",
+<<<<<<< Updated upstream
+=======
+    "normalize:pms-template-permissions": "ts-node src/scripts/normalize-pms-template-permissions.ts",
+    "migrate:pms-objective-row-identity": "ts-node src/scripts/migrate-objective-row-identity.ts",
+>>>>>>> Stashed changes
     "db:clone": "ts-node scripts/simpleCloneDatabase.ts",
     "db:clone:advanced": "ts-node scripts/cloneDatabase.ts",
     "set-project": "gcloud config set project zuno-hr-2025",

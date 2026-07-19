@@ -4,6 +4,8 @@ import {
 } from '../../src/constants/pms.enums';
 import {
   AnnualDecisionService,
+  assertObjectiveMatrixFreezeIntegrity,
+  maskStoredObjectiveMatrixSnapshot,
   type SaveDecisionDraftInput,
 } from '../../src/services/annualDecision.service';
 
@@ -104,5 +106,44 @@ describe('AnnualDecisionService numeric validation', () => {
       meritDetails: undefined,
       nilReason: undefined,
     })).toThrow('Please provide a reason when neither grade nor merit is applied.');
+  });
+
+  it('requires stable matrix identity before annual decision freeze', () => {
+    const matrix = {
+      contentHash: 'a'.repeat(64),
+      layoutVersion: 3,
+      contentVersion: 8,
+    } as any;
+    expect(() => assertObjectiveMatrixFreezeIntegrity(matrix)).not.toThrow();
+    expect(() => assertObjectiveMatrixFreezeIntegrity(null)).not.toThrow();
+    expect(() => assertObjectiveMatrixFreezeIntegrity({
+      ...matrix,
+      contentHash: 'stale',
+    })).toThrow('Objective matrix content hash is invalid');
+    expect(() => assertObjectiveMatrixFreezeIntegrity({
+      ...matrix,
+      contentVersion: 0,
+    })).toThrow('Objective matrix content version is invalid');
+  });
+
+  it('keeps the frozen admin matrix only in admin history responses', () => {
+    const snapshot = {
+      snapshotKind: 'ANNUAL_DECISION_FREEZE',
+      objectiveMatrix: { columns: [{ columnKey: 'admin-only' }] },
+      objectiveMatricesByView: {
+        admin: { columns: [{ columnKey: 'admin-only' }] },
+        employee: { columns: [{ columnKey: 'employee-visible' }] },
+      },
+      objectiveMatrixContentHash: 'a'.repeat(64),
+      decision: { finalRating: 'Exceeds' },
+    };
+
+    expect(maskStoredObjectiveMatrixSnapshot(snapshot, false)).toEqual({
+      snapshotKind: 'ANNUAL_DECISION_FREEZE',
+      objectiveMatrixContentHash: 'a'.repeat(64),
+      decision: { finalRating: 'Exceeds' },
+    });
+    expect(maskStoredObjectiveMatrixSnapshot(snapshot, true)).toBe(snapshot);
+    expect(snapshot).toHaveProperty('objectiveMatrix');
   });
 });

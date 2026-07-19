@@ -1,0 +1,22 @@
+{
+  "fixtureId": "yearly-leadership-objectives-v1",
+  "contractVersion": 1,
+  "cadence": "YEARLY",
+  "termOrder": ["Y1"],
+  "annualAssignmentId": "annual-assignment-yearly-001",
+  "logicalRow": {
+    "objectiveRowKey": "row-leadership-development",
+    "source": "PREDEFINED",
+    "rowCoverage": ["Y1"],
+    "siblings": [
+      {"termCode": "Y1", "termAssignmentId": "term-y1-001", "objectiveId": "objective-y1-001", "status": "OBJECTIVE_APPROVED", "version": 1}
+    ]
+  },
+  "sharedAnnualColumn": {
+    "columnId": "col-annual-summary",
+    "label": "Annual Leadership Summary",
+    "termPolicy": "SHARED_ANNUAL",
+    "storageOwner": "ANNUAL_ASSIGNMENT",
+    "expandedCells": ["Y1"]
+  }
+}

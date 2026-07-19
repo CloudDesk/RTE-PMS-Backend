@@ -35,6 +35,15 @@ import type {
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import type { AuditHistoryEntry } from './audit.service';
+<<<<<<< Updated upstream
+=======
+import { permissionPolicyValidationErrors } from './pms-template-permission-policy';
+import {
+  normalizeObjectiveTableLayout,
+  objectiveTableLayoutAuditSummary,
+  objectiveTableLayoutValidationErrors,
+} from './pms-template-objective-table-layout';
+>>>>>>> Stashed changes
 
 export type TemplateSection = IPmsTemplateVersion['sections'][number];
 export type TemplateField = TemplateSection['fields'][number];
@@ -667,6 +676,13 @@ export class PmsTemplateService extends BaseService {
   ): Promise<IPmsTemplateVersion> {
     await this.assertAdmin('templateVersion.configureSections');
     const version = await this.getEditableOrExistingVersion(versionId, true);
+    const previousSectionCount = version.sections.length;
+    const previousObjectiveTableLayouts = (version.sections ?? [])
+      .filter((section) => section.sectionType === PmsTemplateSectionType.OBJECTIVES)
+      .map((section) => ({
+        sectionKey: section.sectionKey,
+        tableLayout: objectiveTableLayoutAuditSummary(section.objectiveConfig?.tableLayout),
+      }));
     const normalizedSections = this.normalizeSections(sections);
     this.validateSections(normalizedSections);
 
@@ -692,7 +708,25 @@ export class PmsTemplateService extends BaseService {
     version.updatedBy = this.actorIdObject();
     await version.save();
 
-    await this.audit('PMS_TEMPLATE_SECTIONS_CONFIGURED', 'PMS_TEMPLATE_VERSION', versionId, undefined, { sectionCount: normalizedSections.length });
+    const nextObjectiveTableLayouts = normalizedSections
+      .filter((section) => section.sectionType === PmsTemplateSectionType.OBJECTIVES)
+      .map((section) => ({
+        sectionKey: section.sectionKey,
+        tableLayout: objectiveTableLayoutAuditSummary(section.objectiveConfig?.tableLayout),
+      }));
+    await this.audit(
+      'PMS_TEMPLATE_SECTIONS_CONFIGURED',
+      'PMS_TEMPLATE_VERSION',
+      versionId,
+      {
+        sectionCount: previousSectionCount,
+        objectiveTableLayouts: previousObjectiveTableLayouts,
+      },
+      {
+        sectionCount: normalizedSections.length,
+        objectiveTableLayouts: nextObjectiveTableLayouts,
+      },
+    );
     return version;
   }
 
@@ -1216,6 +1250,17 @@ export class PmsTemplateService extends BaseService {
             Object.values(AssessmentTermCode).includes(quarter as AssessmentTermCode),
           )
           : undefined,
+        columnValues:
+          objective.columnValues && typeof objective.columnValues === 'object'
+            ? JSON.parse(JSON.stringify(objective.columnValues))
+            : {},
+        rowGroupKey: objective.rowGroupKey
+          ? String(objective.rowGroupKey).trim()
+          : undefined,
+        rowOrder:
+          objective.rowOrder === undefined || objective.rowOrder === ''
+            ? undefined
+            : Number(objective.rowOrder),
       }))
       : [];
     const hasActivePredefinedObjectives = predefinedObjectives.some(
@@ -1278,6 +1323,7 @@ export class PmsTemplateService extends BaseService {
           config.objectiveScoringPolicy?.actualAggregationMode ?? ObjectiveActualAggregationMode.LATEST_VALUE,
       },
       predefinedObjectives,
+      tableLayout: normalizeObjectiveTableLayout(config.tableLayout),
     };
   }
 
@@ -2401,6 +2447,21 @@ export class PmsTemplateService extends BaseService {
             }
           }
         }
+        errors.push(
+          ...objectiveTableLayoutValidationErrors(
+            section.objectiveConfig?.tableLayout,
+            {
+              activationReady: true,
+              predefinedObjectives: section.objectiveConfig?.predefinedObjectives ?? [],
+              templateFieldKeys: (section.fields ?? []).map((field) => field.fieldKey),
+              allowEmployeeCreated: section.objectiveConfig?.allowEmployeeCreated,
+              allowManagerCreated: section.objectiveConfig?.allowManagerCreated,
+            },
+          ).map(
+            (message) =>
+              `${message} in section "${section.sectionLabel || section.sectionKey}"`,
+          ),
+        );
       }
 
       for (const field of section.fields ?? []) {
@@ -2706,6 +2767,20 @@ export class PmsTemplateService extends BaseService {
       ) {
         throw new Error(`Predefined objective ${objective.objectiveKey} weightage must be between 0 and 100`);
       }
+    }
+
+    const tableLayoutErrors = objectiveTableLayoutValidationErrors(
+      config.tableLayout,
+      {
+        activationReady: false,
+        predefinedObjectives,
+        templateFieldKeys: (section.fields ?? []).map((field) => field.fieldKey),
+        allowEmployeeCreated: config.allowEmployeeCreated,
+        allowManagerCreated: config.allowManagerCreated,
+      },
+    );
+    if (tableLayoutErrors.length > 0) {
+      throw new Error(`${tableLayoutErrors[0]} in section ${section.sectionKey}`);
     }
   }
 

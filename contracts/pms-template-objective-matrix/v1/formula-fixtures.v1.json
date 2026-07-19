@@ -1,0 +1,62 @@
+{
+  "contractVersion": 1,
+  "numericTolerance": 0.000001,
+  "validCases": [
+    {
+      "id": "achievement-percent-current-term",
+      "scope": "ROW",
+      "ast": {"type": "FUNCTION", "name": "ROUND", "arguments": [{"type": "OPERATOR", "operator": "MULTIPLY", "left": {"type": "OPERATOR", "operator": "DIVIDE", "left": {"type": "COLUMN", "columnId": "col-actual"}, "right": {"type": "COLUMN", "columnId": "col-target"}}, "right": {"type": "LITERAL", "value": 100}}, {"type": "LITERAL", "value": 2}]},
+      "input": {"col-target": 98, "col-actual": 96},
+      "policies": {"empty": "IGNORE", "divideByZero": "NULL"},
+      "expected": 97.96
+    },
+    {
+      "id": "sum-across-terms",
+      "scope": "ROW_ACROSS_TERMS",
+      "ast": {"type": "FUNCTION", "name": "SUM_TERMS", "arguments": [{"type": "COLUMN", "columnId": "col-actual"}]},
+      "input": {"Q1": 20, "Q2": 30, "Q3": null, "Q4": 25},
+      "policies": {"empty": "IGNORE", "divideByZero": "NULL"},
+      "expected": 75
+    },
+    {
+      "id": "average-across-terms-ignore-empty",
+      "scope": "ROW_ACROSS_TERMS",
+      "ast": {"type": "FUNCTION", "name": "AVERAGE_TERMS", "arguments": [{"type": "COLUMN", "columnId": "col-manager-rating"}]},
+      "input": {"Q1": 4, "Q2": 5, "Q3": null, "Q4": null},
+      "policies": {"empty": "IGNORE", "divideByZero": "NULL"},
+      "expected": 4.5
+    },
+    {
+      "id": "latest-filled-term",
+      "scope": "ROW_ACROSS_TERMS",
+      "ast": {"type": "FUNCTION", "name": "LATEST_FILLED_TERM", "arguments": [{"type": "COLUMN", "columnId": "col-actual"}]},
+      "input": {"termOrder": ["Q1", "Q2", "Q3", "Q4"], "values": {"Q1": 80, "Q2": 85, "Q3": null, "Q4": null}},
+      "policies": {"empty": "IGNORE", "divideByZero": "NULL"},
+      "expected": 85
+    },
+    {
+      "id": "group-sum",
+      "scope": "GROUP",
+      "ast": {"type": "FUNCTION", "name": "SUM_GROUP", "arguments": [{"type": "COLUMN", "columnId": "col-weightage"}, {"type": "ROW_GROUP", "rowGroupKey": "production"}]},
+      "input": [20, 30, 10],
+      "policies": {"empty": "IGNORE", "divideByZero": "NULL"},
+      "expected": 60
+    },
+    {
+      "id": "divide-by-zero-null",
+      "scope": "ROW",
+      "ast": {"type": "OPERATOR", "operator": "DIVIDE", "left": {"type": "COLUMN", "columnId": "col-actual"}, "right": {"type": "COLUMN", "columnId": "col-target"}},
+      "input": {"col-target": 0, "col-actual": 10},
+      "policies": {"empty": "IGNORE", "divideByZero": "NULL"},
+      "expected": null
+    }
+  ],
+  "invalidCases": [
+    {"id": "self-reference", "reasonCode": "FORMULA_SELF_REFERENCE", "ast": {"type": "COLUMN", "columnId": "col-formula-target"}, "targetColumnId": "col-formula-target"},
+    {"id": "indirect-cycle", "reasonCode": "FORMULA_CYCLE", "dependencies": {"formula-a": ["formula-b"], "formula-b": ["formula-a"]}},
+    {"id": "unknown-column", "reasonCode": "FORMULA_REFERENCE_NOT_FOUND", "ast": {"type": "COLUMN", "columnId": "col-does-not-exist"}},
+    {"id": "term-function-on-shared-annual", "reasonCode": "FORMULA_SCOPE_MISMATCH", "ast": {"type": "FUNCTION", "name": "SUM_TERMS", "arguments": [{"type": "COLUMN", "columnId": "col-shared-annual"}]}},
+    {"id": "unsupported-function", "reasonCode": "FORMULA_OPERATION_NOT_ALLOWED", "ast": {"type": "FUNCTION", "name": "HTTP_GET", "arguments": [{"type": "LITERAL", "value": "https://example.com"}]}},
+    {"id": "user-code", "reasonCode": "FORMULA_NODE_NOT_ALLOWED", "ast": {"type": "JAVASCRIPT", "source": "process.exit(1)"}}
+  ]
+}

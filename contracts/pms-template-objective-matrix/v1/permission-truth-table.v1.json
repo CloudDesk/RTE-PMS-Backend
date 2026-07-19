@@ -1,0 +1,76 @@
+{
+  "contractVersion": 1,
+  "resolutionRule": "MOST_RESTRICTIVE_WINS",
+  "dimensions": [
+    "role",
+    "workflowState",
+    "termPosition",
+    "windowOpen",
+    "columnFillOwner",
+    "columnRequired",
+    "columnType",
+    "explicitVisibility"
+  ],
+  "cases": [
+    {
+      "id": "employee-current-objective-open",
+      "input": {"role": "EMPLOYEE", "workflowState": "OBJECTIVE_SETTING_OPEN", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "EMPLOYEE", "columnRequired": true, "columnType": "SHORT_TEXT", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": true, "required": true, "denialReason": null}
+    },
+    {
+      "id": "employee-current-window-closed",
+      "input": {"role": "EMPLOYEE", "workflowState": "OBJECTIVE_SETTING_OPEN", "termPosition": "CURRENT", "windowOpen": false, "columnFillOwner": "EMPLOYEE", "columnRequired": true, "columnType": "SHORT_TEXT", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "WINDOW_CLOSED"}
+    },
+    {
+      "id": "employee-past-finalized",
+      "input": {"role": "EMPLOYEE", "workflowState": "TERM_FINALIZED", "termPosition": "PAST", "windowOpen": false, "columnFillOwner": "EMPLOYEE", "columnRequired": true, "columnType": "NUMERIC_INPUT", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "TERM_FINALIZED"}
+    },
+    {
+      "id": "employee-future-not-started",
+      "input": {"role": "EMPLOYEE", "workflowState": "NOT_STARTED", "termPosition": "FUTURE", "windowOpen": false, "columnFillOwner": "EMPLOYEE", "columnRequired": true, "columnType": "NUMERIC_INPUT", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "TERM_NOT_OPEN"}
+    },
+    {
+      "id": "employee-achievement-current",
+      "input": {"role": "EMPLOYEE", "workflowState": "EMPLOYEE_ACHIEVEMENT_OPEN", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "EMPLOYEE", "columnRequired": true, "columnType": "NUMERIC_INPUT", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": true, "required": true, "denialReason": null}
+    },
+    {
+      "id": "manager-review-current",
+      "input": {"role": "MANAGER", "workflowState": "MANAGER_REVIEW_OPEN", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "MANAGER", "columnRequired": true, "columnType": "RATING_SCALE", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": true, "required": true, "denialReason": null}
+    },
+    {
+      "id": "manager-cannot-edit-employee-column",
+      "input": {"role": "MANAGER", "workflowState": "MANAGER_REVIEW_OPEN", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "EMPLOYEE", "columnRequired": true, "columnType": "NUMERIC_INPUT", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "COLUMN_OWNER_MISMATCH"}
+    },
+    {
+      "id": "director-default-read-only",
+      "input": {"role": "DIRECTOR", "workflowState": "MANAGER_REVIEW_SUBMITTED", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "MANAGER", "columnRequired": false, "columnType": "LONG_TEXT", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "ROLE_READ_ONLY"}
+    },
+    {
+      "id": "admin-not-implicitly-editable",
+      "input": {"role": "ADMIN", "workflowState": "MANAGER_REVIEW_SUBMITTED", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "MANAGER", "columnRequired": false, "columnType": "RATING_SCALE", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "CORRECTION_FLOW_REQUIRED"}
+    },
+    {
+      "id": "management-final-read-only-matrix",
+      "input": {"role": "MANAGEMENT", "workflowState": "TERM_FINALIZED", "termPosition": "PAST", "windowOpen": false, "columnFillOwner": "MANAGER", "columnRequired": false, "columnType": "RATING_SCALE", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "TERM_FINALIZED"}
+    },
+    {
+      "id": "formula-always-read-only",
+      "input": {"role": "MANAGER", "workflowState": "MANAGER_REVIEW_OPEN", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "SYSTEM", "columnRequired": false, "columnType": "FORMULA", "explicitVisibility": "VISIBLE"},
+      "expected": {"visible": true, "editable": false, "required": false, "denialReason": "SYSTEM_CALCULATED"}
+    },
+    {
+      "id": "hidden-overrides-edit-permission",
+      "input": {"role": "EMPLOYEE", "workflowState": "EMPLOYEE_ACHIEVEMENT_OPEN", "termPosition": "CURRENT", "windowOpen": true, "columnFillOwner": "EMPLOYEE", "columnRequired": true, "columnType": "NUMERIC_INPUT", "explicitVisibility": "HIDDEN"},
+      "expected": {"visible": false, "editable": false, "required": false, "denialReason": "COLUMN_HIDDEN"}
+    }
+  ]
+}
