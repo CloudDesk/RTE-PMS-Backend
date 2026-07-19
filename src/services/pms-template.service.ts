@@ -35,15 +35,12 @@ import type {
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import type { AuditHistoryEntry } from './audit.service';
-<<<<<<< Updated upstream
-=======
-import { permissionPolicyValidationErrors } from './pms-template-permission-policy';
+// import { permissionPolicyValidationErrors } from './pms-template-permission-policy';
 import {
   normalizeObjectiveTableLayout,
   objectiveTableLayoutAuditSummary,
   objectiveTableLayoutValidationErrors,
 } from './pms-template-objective-table-layout';
->>>>>>> Stashed changes
 
 export type TemplateSection = IPmsTemplateVersion['sections'][number];
 export type TemplateField = TemplateSection['fields'][number];
