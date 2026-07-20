@@ -389,6 +389,49 @@ describe('Automatic workflow sync flow', () => {
     expect(result.results[0].message).toBe('Manager review window is eligible.');
   });
 
+  it('does not require objective coverage for employee-authored submissions', async () => {
+    const templateVersionId = new Types.ObjectId();
+    mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN, {
+      _id: annualAssignmentId,
+      templateVersionId,
+    });
+    (EmployeeAchievementSubmission.findOne as jest.Mock).mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        status: 'SUBMITTED',
+        achievementItems: [{
+          itemId: 'authored-1',
+          type: 'EMPLOYEE_AUTHORED',
+          subject: 'Preventive maintenance rollout',
+          description: 'Reduced unplanned downtime.',
+          itemStatus: 'SUBMITTED',
+        }],
+      }),
+    });
+    const { PmsTemplateVersion } = jest.requireMock('../../src/models/pms-template-version.model');
+    (PmsTemplateVersion.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          metadata: {
+            employeeAchievementConfig: {
+              achievementEntryMode: 'EMPLOYEE_AUTHORED',
+              achievementSubmissionRequired: true,
+            },
+          },
+        }),
+      }),
+    });
+    const { Objective } = jest.requireMock('../../src/models/pms-objective.model');
+    const service = createService('2026-09-16T00:00:00.000Z');
+
+    const result = await service.syncWorkflowStates(cycleId.toString(), {
+      reason: 'Automatic daily PMS workflow sync',
+      source: 'AUTOMATIC_DAILY_SYNC',
+    });
+
+    expect(result.results[0].warning).toBeUndefined();
+    expect(Objective.find).not.toHaveBeenCalled();
+  });
+
   it('does not open per-term manager review when grouped manager review is configured', async () => {
     mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
     mockGroupedAnnualCycle();

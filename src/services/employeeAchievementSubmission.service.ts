@@ -1,4 +1,5 @@
 import { MultipartFile } from '@fastify/multipart';
+import { randomUUID } from 'crypto';
 import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import { RequestContext } from '../types/context';
@@ -30,6 +31,7 @@ import { TermCycle } from '../models/pms-term-cycle.model';
 import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
 import {
+  AchievementEntryMode,
   AchievementItemType,
   EmployeeAchievementSubmission,
   EmployeeAchievementSubmissionStatus,
@@ -52,9 +54,12 @@ interface AchievementAttachmentInput {
 }
 
 interface AchievementItemInput {
-  type?: 'OBJECTIVE' | 'ADDITIONAL';
+  itemId?: string;
+  type?: AchievementItemType;
   objectiveId?: string | Types.ObjectId;
   objectiveSnapshot?: AchievementObjectiveSnapshotInput;
+  relatedObjectiveId?: string | Types.ObjectId;
+  relatedObjectiveSnapshot?: AchievementObjectiveSnapshotInput;
   subject?: string;
   description?: string;
   employeeSelfRating?: number | string;
@@ -78,6 +83,8 @@ interface AchievementObjectiveSnapshotInput {
   targetDate?: Date | string;
   weightage?: number;
   source?: string;
+  assessmentTermCode?: AssessmentTermCodeType;
+  objectiveNo?: number;
 }
 
 interface AchievementValueInput {
@@ -111,6 +118,10 @@ type AchievementTemplateConfig = {
   reviewFlowMode: 'MANAGER_ONLY' | 'ACHIEVEMENT_THEN_MANAGER';
   employeeAchievementEnabled: boolean;
   achievementSubmissionRequired: boolean;
+  achievementEntryMode: AchievementEntryMode;
+  objectiveRelationshipEnabled: boolean;
+  objectiveRelationshipRequired: boolean;
+  allowMultipleAchievementsPerObjective: boolean;
   objectiveLinkedAchievementRequired: boolean;
   additionalContributionsEnabled: boolean;
   allowManagerReviewWithoutAchievement: boolean;
@@ -148,9 +159,12 @@ type AchievementSubmissionRecord = {
   assessmentTermCode: AssessmentTermCodeType;
   status: string;
   achievementItems: Array<{
-    type: 'OBJECTIVE' | 'ADDITIONAL';
+    itemId?: string;
+    type: AchievementItemType;
     objectiveId?: string;
     objectiveSnapshot?: AchievementObjectiveSnapshotInput;
+    relatedObjectiveId?: string;
+    relatedObjectiveSnapshot?: AchievementObjectiveSnapshotInput;
     subject: string;
     description: string;
     employeeSelfRating?: number;
@@ -403,6 +417,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       approvedObjectives,
       config,
     );
+    this.assertSubmittedItemsPreserved(
+      existingSubmission?.achievementItems ?? [],
+      normalizedItems,
+    );
     const normalizedValues = this.normalizeAchievementValues(
       input.achievementValues ?? [],
       normalizedItems,
@@ -441,6 +459,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       itemStatus: item.itemStatus || EmployeeAchievementSubmissionStatus.DRAFT,
       draftSavedAt: item.draftSavedAt || now,
     }));
+    const mutationAuditMetadata = this.buildAchievementMutationAuditMetadata(
+      config,
+      existingSubmission?.achievementItems ?? [],
+      stampedItems,
+    );
 
     const submission = existingSubmission
       ? await EmployeeAchievementSubmission.findByIdAndUpdate(
@@ -453,6 +476,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
             updatedBy: actorObjectId,
             auditMetadata: {
               todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
+              ...mutationAuditMetadata,
             },
           },
           $inc: { version: 1 },
@@ -473,6 +497,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         draftSavedAt: now,
         auditMetadata: {
           todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
+          ...mutationAuditMetadata,
         },
         createdBy: actorObjectId,
         updatedBy: actorObjectId,
@@ -531,6 +556,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       approvedObjectives,
       config,
     );
+    this.assertSubmittedItemsPreserved(
+      existingSubmission?.achievementItems ?? [],
+      submitItems,
+    );
     const submitValues = this.normalizeAchievementValues(
       input.achievementValues ?? [],
       submitItems,
@@ -570,6 +599,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       submittedBy: actorObjectId,
       submittedAt: now,
     }));
+    const mutationAuditMetadata = this.buildAchievementMutationAuditMetadata(
+      config,
+      existingSubmission?.achievementItems ?? [],
+      stampedSubmitItems,
+    );
 
     const submission = existingSubmission
       ? await EmployeeAchievementSubmission.findByIdAndUpdate(
@@ -585,6 +619,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
             updatedBy: actorObjectId,
             auditMetadata: {
               todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
+              ...mutationAuditMetadata,
             },
           },
           $inc: { version: 1 },
@@ -608,6 +643,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         lockedAt: undefined,
         auditMetadata: {
           todo: 'Strict achievement window enforcement will be implemented in a later PMS v3.1 runtime change.',
+          ...mutationAuditMetadata,
         },
         createdBy: actorObjectId,
         updatedBy: actorObjectId,
@@ -658,9 +694,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!normalizedItem) {
       throw new Error('Achievement details are required to save this item draft.');
     }
-    if (normalizedItem.type === AchievementItemType.ADDITIONAL && !normalizedItem.subject) {
+    if (normalizedItem.type !== AchievementItemType.OBJECTIVE && !normalizedItem.subject) {
       throw new Error('Achievement Subject is required to save this item draft.');
     }
+    this.assertItemCanBeEdited(existingSubmission?.achievementItems ?? [], normalizedItem);
 
     const now = new Date();
     const nextItems = this.mergeAchievementItem(
@@ -697,6 +734,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
     const actorObjectId = this.actorIdObject();
     const previousValue = existingSubmission?.toObject();
+    const mutationAuditMetadata = this.buildAchievementMutationAuditMetadata(
+      config,
+      existingSubmission?.achievementItems ?? [],
+      nextItems,
+    );
     const submission = existingSubmission
       ? await EmployeeAchievementSubmission.findByIdAndUpdate(
         existingSubmission._id,
@@ -707,6 +749,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
             status: EmployeeAchievementSubmissionStatus.DRAFT,
             draftSavedAt: now,
             updatedBy: actorObjectId,
+            auditMetadata: mutationAuditMetadata,
           },
           $inc: { version: 1 },
         },
@@ -724,6 +767,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         achievementValues,
         status: EmployeeAchievementSubmissionStatus.DRAFT,
         draftSavedAt: now,
+        auditMetadata: mutationAuditMetadata,
         createdBy: actorObjectId,
         updatedBy: actorObjectId,
       });
@@ -773,6 +817,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!normalizedItem) {
       throw new Error('Achievement details are required to submit this item.');
     }
+    this.assertItemCanBeEdited(existingSubmission?.achievementItems ?? [], normalizedItem);
 
     const actorObjectId = this.actorIdObject();
     const now = new Date();
@@ -838,6 +883,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       : achievementValues;
 
     const previousValue = existingSubmission?.toObject();
+    const mutationAuditMetadata = this.buildAchievementMutationAuditMetadata(
+      config,
+      existingSubmission?.achievementItems ?? [],
+      nextItems,
+    );
     const submission = existingSubmission
       ? await EmployeeAchievementSubmission.findByIdAndUpdate(
         existingSubmission._id,
@@ -850,6 +900,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
             submittedAt: nextSubmittedAt,
             lockedAt: undefined,
             updatedBy: actorObjectId,
+            auditMetadata: mutationAuditMetadata,
           },
           $inc: { version: 1 },
         },
@@ -870,6 +921,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         submittedBy: nextSubmittedBy,
         submittedAt: nextSubmittedAt,
         lockedAt: undefined,
+        auditMetadata: mutationAuditMetadata,
         createdBy: actorObjectId,
         updatedBy: actorObjectId,
       });
@@ -960,9 +1012,12 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       assessmentTermCode: submission.assessmentTermCode,
       status: submission.status,
       achievementItems: (submission.achievementItems ?? []).map((item: Record<string, any>) => ({
-        type: item.type === AchievementItemType.OBJECTIVE
-          ? AchievementItemType.OBJECTIVE
-          : AchievementItemType.ADDITIONAL,
+        itemId: item.itemId,
+        type: Object.values(AchievementItemType).includes(item.type)
+          ? item.type
+          : item.objectiveId
+            ? AchievementItemType.OBJECTIVE
+            : AchievementItemType.ADDITIONAL,
         objectiveId: item.objectiveId?.toString?.(),
         objectiveSnapshot: item.objectiveSnapshot
           ? {
@@ -978,6 +1033,27 @@ export class EmployeeAchievementSubmissionService extends BaseService {
               : undefined,
             weightage: item.objectiveSnapshot.weightage,
             source: item.objectiveSnapshot.source,
+            assessmentTermCode: item.objectiveSnapshot.assessmentTermCode,
+            objectiveNo: item.objectiveSnapshot.objectiveNo,
+          }
+          : undefined,
+        relatedObjectiveId: item.relatedObjectiveId?.toString?.(),
+        relatedObjectiveSnapshot: item.relatedObjectiveSnapshot
+          ? {
+            title: item.relatedObjectiveSnapshot.title,
+            description: item.relatedObjectiveSnapshot.description,
+            expectedOutcome: item.relatedObjectiveSnapshot.expectedOutcome,
+            targetMetric: item.relatedObjectiveSnapshot.targetMetric,
+            targetValue: item.relatedObjectiveSnapshot.targetValue,
+            targetDirection: item.relatedObjectiveSnapshot.targetDirection,
+            actualAggregationMode: item.relatedObjectiveSnapshot.actualAggregationMode,
+            targetDate: item.relatedObjectiveSnapshot.targetDate
+              ? new Date(item.relatedObjectiveSnapshot.targetDate).toISOString()
+              : undefined,
+            weightage: item.relatedObjectiveSnapshot.weightage,
+            source: item.relatedObjectiveSnapshot.source,
+            assessmentTermCode: item.relatedObjectiveSnapshot.assessmentTermCode,
+            objectiveNo: item.relatedObjectiveSnapshot.objectiveNo,
           }
           : undefined,
         subject: String(item.subject ?? ''),
@@ -1028,12 +1104,25 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     config?: AchievementTemplateConfig,
   ) {
     const objectiveById = new Map(approvedObjectives.map((objective) => [objective.id, objective]));
+    const employeeAuthoredMode =
+      config?.achievementEntryMode === AchievementEntryMode.EMPLOYEE_AUTHORED;
     const normalized = items.map((item, index) => {
-      const itemType = item.type === AchievementItemType.OBJECTIVE || item.objectiveId
-        ? AchievementItemType.OBJECTIVE
-        : AchievementItemType.ADDITIONAL;
-      const objectiveId = item.objectiveId ? String(item.objectiveId).trim() : undefined;
+      const itemId = this.normalizeAchievementItemId(item.itemId) ?? randomUUID();
+      const itemType = employeeAuthoredMode
+        ? AchievementItemType.EMPLOYEE_AUTHORED
+        : item.type === AchievementItemType.OBJECTIVE || item.objectiveId
+          ? AchievementItemType.OBJECTIVE
+          : AchievementItemType.ADDITIONAL;
+      const objectiveId = !employeeAuthoredMode && item.objectiveId
+        ? String(item.objectiveId).trim()
+        : undefined;
       const objective = objectiveId ? objectiveById.get(objectiveId) : undefined;
+      const relatedObjectiveId = employeeAuthoredMode && item.relatedObjectiveId
+        ? String(item.relatedObjectiveId).trim()
+        : undefined;
+      const relatedObjective = relatedObjectiveId
+        ? objectiveById.get(relatedObjectiveId)
+        : undefined;
       const subject = itemType === AchievementItemType.OBJECTIVE
         ? String(objective?.title ?? item.subject ?? '').trim()
         : String(item.subject ?? '').trim();
@@ -1055,8 +1144,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
       }));
 
-      const isEmptyAdditional =
-        itemType === AchievementItemType.ADDITIONAL &&
+      const isEmptyAuthored =
+        itemType !== AchievementItemType.OBJECTIVE &&
         !subject &&
         !description &&
         !outcome &&
@@ -1069,7 +1158,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         !outcome &&
         attachments.every((attachment) => !attachment.fileName && !attachment.fileUrl && !attachment.documentId);
 
-      if (!isSubmit && (isEmptyAdditional || isEmptyObjective)) {
+      if (!isSubmit && (isEmptyAuthored || isEmptyObjective)) {
         return null;
       }
 
@@ -1083,6 +1172,18 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         throw new Error('Additional achievements are not enabled for this template');
       }
 
+      if (employeeAuthoredMode) {
+        if (relatedObjectiveId && config?.objectiveRelationshipEnabled === false) {
+          throw new Error(`Related Objective is not enabled for achievement row ${index + 1}`);
+        }
+        if (relatedObjectiveId && !relatedObjective) {
+          throw new Error(`Related Objective must be an approved objective for achievement row ${index + 1}`);
+        }
+        if (isSubmit && config?.objectiveRelationshipRequired && !relatedObjectiveId) {
+          throw new Error(`Related Objective is required for achievement row ${index + 1}`);
+        }
+      }
+
       if (isSubmit && !subject) {
         throw new Error(`Achievement Subject is required for row ${index + 1}`);
       }
@@ -1091,12 +1192,19 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       }
 
       return {
+        itemId,
         type: itemType,
         objectiveId: itemType === AchievementItemType.OBJECTIVE && objectiveId
           ? new Types.ObjectId(objectiveId)
           : undefined,
         objectiveSnapshot: itemType === AchievementItemType.OBJECTIVE && objective
           ? this.buildObjectiveSnapshot(objective)
+          : undefined,
+        relatedObjectiveId: employeeAuthoredMode && relatedObjectiveId
+          ? new Types.ObjectId(relatedObjectiveId)
+          : undefined,
+        relatedObjectiveSnapshot: employeeAuthoredMode && relatedObjective
+          ? this.buildObjectiveSnapshot(relatedObjective)
           : undefined,
         subject,
         description,
@@ -1113,8 +1221,37 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         submittedAt: item.submittedAt ? new Date(item.submittedAt) : undefined,
       };
     });
+    const meaningfulItems = normalized.filter((item): item is Exclude<typeof item, null> => Boolean(item));
+    const itemIds = new Set<string>();
+    for (const item of meaningfulItems) {
+      if (itemIds.has(item.itemId)) {
+        throw new Error(`Duplicate achievement itemId: ${item.itemId}`);
+      }
+      itemIds.add(item.itemId);
+    }
 
-    return normalized.filter((item): item is Exclude<typeof item, null> => Boolean(item));
+    if (employeeAuthoredMode && config?.allowMultipleAchievementsPerObjective === false) {
+      const relatedObjectiveIds = new Set<string>();
+      for (const item of meaningfulItems) {
+        const relatedId = item.relatedObjectiveId?.toString();
+        if (!relatedId) continue;
+        if (relatedObjectiveIds.has(relatedId)) {
+          throw new Error('Only one achievement may be related to each objective for this template');
+        }
+        relatedObjectiveIds.add(relatedId);
+      }
+    }
+
+    return meaningfulItems;
+  }
+
+  private normalizeAchievementItemId(value?: string): string | undefined {
+    const itemId = String(value ?? '').trim();
+    if (!itemId) return undefined;
+    if (itemId.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(itemId)) {
+      throw new Error('Achievement itemId is invalid');
+    }
+    return itemId;
   }
 
   private normalizeAchievementValues(
@@ -1148,7 +1285,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       roleCode: value.roleCode?.trim() || 'EMPLOYEE',
       actorUserId,
       workflowStage: value.workflowStage?.trim() || (isSubmit ? 'ACHIEVEMENT_SUBMITTED' : 'ACHIEVEMENT_DRAFT'),
-      valueJson: value.valueJson ?? achievementItems,
+      valueJson: value.fieldKey === field.fieldKey
+        ? achievementItems
+        : value.valueJson,
       valueText: value.valueText?.trim(),
       valueNumber: value.valueNumber === undefined || value.valueNumber === null
         ? undefined
@@ -1198,7 +1337,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('At least one achievement item is required before submission');
     }
 
-    if (isSubmit && config.objectiveLinkedAchievementRequired) {
+    if (
+      isSubmit &&
+      config.achievementEntryMode !== AchievementEntryMode.EMPLOYEE_AUTHORED &&
+      config.objectiveLinkedAchievementRequired
+    ) {
       const submittedObjectiveIds = new Set(
         items
           .filter((item) => item.type === AchievementItemType.OBJECTIVE && item.objectiveId && item.description)
@@ -1213,7 +1356,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       }
     }
 
-    this.validateObjectiveActualValues(items, values, isSubmit, approvedObjectives);
+    if (config.achievementEntryMode !== AchievementEntryMode.EMPLOYEE_AUTHORED) {
+      this.validateObjectiveActualValues(items, values, isSubmit, approvedObjectives);
+    }
 
     const gridColumns = Array.isArray(field.gridConfig?.columns) ? field.gridConfig.columns : [];
     const subjectColumn = gridColumns.find((column) =>
@@ -1752,7 +1897,23 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       return false;
     }
 
-    if (config.objectiveLinkedAchievementRequired) {
+    if (config.achievementEntryMode === AchievementEntryMode.EMPLOYEE_AUTHORED) {
+      const validSubmittedItem = items.some((item) =>
+        item.type === AchievementItemType.EMPLOYEE_AUTHORED &&
+        String(item.subject ?? '').trim().length > 0 &&
+        String(item.description ?? '').trim().length > 0 &&
+        this.isAchievementItemSubmittedOrLocked(item) &&
+        (!config.objectiveRelationshipRequired || Boolean(item.relatedObjectiveId))
+      );
+      if (config.achievementSubmissionRequired && !validSubmittedItem) {
+        return false;
+      }
+    }
+
+    if (
+      config.achievementEntryMode !== AchievementEntryMode.EMPLOYEE_AUTHORED &&
+      config.objectiveLinkedAchievementRequired
+    ) {
       const submittedObjectiveIds = new Set(
         items
           .filter((item) =>
@@ -1823,6 +1984,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const metadata = (templateVersion?.metadata ?? {}) as Record<string, any>;
     const sectionExists = Boolean(section);
     const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    const achievementEntryMode =
+      employeeAchievementConfig.achievementEntryMode === AchievementEntryMode.EMPLOYEE_AUTHORED
+        ? AchievementEntryMode.EMPLOYEE_AUTHORED
+        : AchievementEntryMode.OBJECTIVE_ROWS;
     const reviewFlowMode = metadata.reviewFlowMode === 'ACHIEVEMENT_THEN_MANAGER' || sectionExists
       ? 'ACHIEVEMENT_THEN_MANAGER'
       : 'MANAGER_ONLY';
@@ -1837,6 +2002,19 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         employeeAchievementConfig.achievementSubmissionRequired !== undefined
           ? Boolean(employeeAchievementConfig.achievementSubmissionRequired)
           : sectionExists,
+      achievementEntryMode,
+      objectiveRelationshipEnabled:
+        employeeAchievementConfig.objectiveRelationshipEnabled !== undefined
+          ? Boolean(employeeAchievementConfig.objectiveRelationshipEnabled)
+          : true,
+      objectiveRelationshipRequired:
+        employeeAchievementConfig.objectiveRelationshipRequired !== undefined
+          ? Boolean(employeeAchievementConfig.objectiveRelationshipRequired)
+          : false,
+      allowMultipleAchievementsPerObjective:
+        employeeAchievementConfig.allowMultipleAchievementsPerObjective !== undefined
+          ? Boolean(employeeAchievementConfig.allowMultipleAchievementsPerObjective)
+          : true,
       allowManagerReviewWithoutAchievement:
         employeeAchievementConfig.allowManagerReviewWithoutAchievement !== undefined
           ? Boolean(employeeAchievementConfig.allowManagerReviewWithoutAchievement)
@@ -1845,7 +2023,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       objectiveLinkedAchievementRequired:
         employeeAchievementConfig.objectiveLinkedAchievementRequired !== undefined
           ? Boolean(employeeAchievementConfig.objectiveLinkedAchievementRequired)
-          : true,
+          : achievementEntryMode === AchievementEntryMode.OBJECTIVE_ROWS,
       additionalContributionsEnabled:
         employeeAchievementConfig.additionalContributionsEnabled !== undefined
           ? Boolean(employeeAchievementConfig.additionalContributionsEnabled)
@@ -1981,6 +2159,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
   private buildObjectiveSnapshot(objective: AchievementObjectiveRecord) {
     return {
+      assessmentTermCode: objective.assessmentTermCode,
+      objectiveNo: objective.objectiveNo,
       title: objective.title,
       description: objective.description,
       expectedOutcome: objective.expectedOutcome,
@@ -2382,6 +2562,12 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   private achievementItemIdentity(item: Partial<AchievementItemInput> | Record<string, any>) {
+    const itemId = String(item.itemId ?? '').trim();
+    if (itemId) return `ITEM:${itemId}`;
+    return this.legacyAchievementItemIdentity(item);
+  }
+
+  private legacyAchievementItemIdentity(item: Partial<AchievementItemInput> | Record<string, any>) {
     const objectiveId = item.objectiveId?.toString?.() || (item.objectiveId ? String(item.objectiveId) : '');
     if (objectiveId) return `OBJECTIVE:${objectiveId}`;
     const subject = String(item.subject ?? '').trim().toLowerCase();
@@ -2406,7 +2592,16 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const nextItems = items.map((item) =>
       typeof item?.toObject === 'function' ? item.toObject() : { ...item },
     );
-    const existingIndex = nextItems.findIndex((item) => this.achievementItemIdentity(item) === nextKey);
+    let existingIndex = nextItems.findIndex((item) => this.achievementItemIdentity(item) === nextKey);
+    if (
+      existingIndex < 0 &&
+      nextItem.type !== AchievementItemType.EMPLOYEE_AUTHORED
+    ) {
+      const legacyKey = this.legacyAchievementItemIdentity(nextItem);
+      existingIndex = nextItems.findIndex((item) =>
+        !item.itemId && this.legacyAchievementItemIdentity(item) === legacyKey,
+      );
+    }
 
     if (existingIndex >= 0) {
       const mergedItem = {
@@ -2423,6 +2618,76 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }
 
     return [...nextItems, nextItem];
+  }
+
+  private assertItemCanBeEdited(
+    items: Array<Record<string, any>>,
+    nextItem: Record<string, any>,
+  ): void {
+    const nextKey = this.achievementItemIdentity(nextItem);
+    const existingItem = items.find((item) => this.achievementItemIdentity(item) === nextKey) ?? (
+      nextItem.type !== AchievementItemType.EMPLOYEE_AUTHORED
+        ? items.find((item) =>
+          !item.itemId &&
+          this.legacyAchievementItemIdentity(item) === this.legacyAchievementItemIdentity(nextItem),
+        )
+        : undefined
+    );
+    if (!existingItem) return;
+    if (
+      existingItem.itemStatus === EmployeeAchievementSubmissionStatus.SUBMITTED ||
+      existingItem.itemStatus === EmployeeAchievementSubmissionStatus.LOCKED
+    ) {
+      throw new Error('Submitted achievement item is read-only and cannot be edited');
+    }
+  }
+
+  private assertSubmittedItemsPreserved(
+    existingItems: Array<Record<string, any>>,
+    nextItems: Array<Record<string, any>>,
+  ): void {
+    for (const rawExistingItem of existingItems) {
+      const existingItem = typeof rawExistingItem?.toObject === 'function'
+        ? rawExistingItem.toObject()
+        : rawExistingItem;
+      if (
+        existingItem.itemStatus !== EmployeeAchievementSubmissionStatus.SUBMITTED &&
+        existingItem.itemStatus !== EmployeeAchievementSubmissionStatus.LOCKED
+      ) {
+        continue;
+      }
+
+      const nextItem = nextItems.find((item) =>
+        this.achievementItemIdentity(item) === this.achievementItemIdentity(existingItem) ||
+        (!existingItem.itemId &&
+          item.type !== AchievementItemType.EMPLOYEE_AUTHORED &&
+          this.legacyAchievementItemIdentity(item) === this.legacyAchievementItemIdentity(existingItem))
+      );
+      if (!nextItem || this.achievementItemEditableFingerprint(nextItem) !== this.achievementItemEditableFingerprint(existingItem)) {
+        throw new Error('Submitted achievement items must remain unchanged');
+      }
+    }
+  }
+
+  private achievementItemEditableFingerprint(item: Record<string, any>): string {
+    const attachments = (item.attachments ?? []).map((attachment: Record<string, any>) => ({
+      fileName: attachment.fileName,
+      fileUrl: attachment.fileUrl,
+      fileType: attachment.fileType,
+      fileSize: attachment.fileSize,
+      documentId: attachment.documentId,
+    }));
+    return JSON.stringify({
+      type: item.type,
+      objectiveId: item.objectiveId?.toString?.(),
+      relatedObjectiveId: item.relatedObjectiveId?.toString?.(),
+      subject: String(item.subject ?? '').trim(),
+      description: String(item.description ?? '').trim(),
+      employeeSelfRating: item.employeeSelfRating === undefined ? undefined : Number(item.employeeSelfRating),
+      employeeSelfRatingComments: String(item.employeeSelfRatingComments ?? '').trim(),
+      outcome: String(item.outcome ?? '').trim(),
+      attachments,
+    });
   }
 
   private async getTermAssignment(termAssignmentId: string) {
@@ -2531,6 +2796,54 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       undefined,
       { status: submission.status },
     );
+  }
+
+  private buildAchievementMutationAuditMetadata(
+    config: AchievementTemplateConfig,
+    previousItems: Array<Record<string, any>>,
+    nextItems: Array<Record<string, any>>,
+  ): Record<string, unknown> {
+    const previousByItemId = new Map(
+      previousItems
+        .map((item) => typeof item?.toObject === 'function' ? item.toObject() : item)
+        .filter((item) => item?.itemId)
+        .map((item) => [String(item.itemId), item]),
+    );
+    const nextItemIds = new Set(
+      nextItems.map((item) => String(item.itemId ?? '')).filter(Boolean),
+    );
+    const relationshipChanges = nextItems
+      .map((item) => typeof item?.toObject === 'function' ? item.toObject() : item)
+      .filter((item) => item?.itemId)
+      .map((item) => {
+        const previous = previousByItemId.get(String(item.itemId));
+        const previousRelatedObjectiveId = previous?.relatedObjectiveId?.toString?.();
+        const relatedObjectiveId = item.relatedObjectiveId?.toString?.();
+        if (previous && previousRelatedObjectiveId === relatedObjectiveId) return null;
+        if (!previous && !relatedObjectiveId) return null;
+        return {
+          itemId: String(item.itemId),
+          previousRelatedObjectiveId,
+          relatedObjectiveId,
+          relatedObjectiveSnapshot: item.relatedObjectiveSnapshot,
+        };
+      })
+      .filter(Boolean) as Array<Record<string, unknown>>;
+    for (const [itemId, previous] of previousByItemId) {
+      if (nextItemIds.has(itemId) || !previous.relatedObjectiveId) continue;
+      relationshipChanges.push({
+        itemId,
+        previousRelatedObjectiveId: previous.relatedObjectiveId.toString(),
+        relatedObjectiveId: undefined,
+        relatedObjectiveSnapshot: undefined,
+      });
+    }
+
+    return {
+      achievementEntryMode: config.achievementEntryMode,
+      itemIds: [...nextItemIds],
+      relationshipChanges,
+    };
   }
 
   private async audit(

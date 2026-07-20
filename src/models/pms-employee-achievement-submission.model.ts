@@ -22,10 +22,19 @@ export type EmployeeAchievementSubmissionStatus =
 export const AchievementItemType = {
   OBJECTIVE: 'OBJECTIVE',
   ADDITIONAL: 'ADDITIONAL',
+  EMPLOYEE_AUTHORED: 'EMPLOYEE_AUTHORED',
 } as const;
 
 export type AchievementItemType =
   (typeof AchievementItemType)[keyof typeof AchievementItemType];
+
+export const AchievementEntryMode = {
+  OBJECTIVE_ROWS: 'OBJECTIVE_ROWS',
+  EMPLOYEE_AUTHORED: 'EMPLOYEE_AUTHORED',
+} as const;
+
+export type AchievementEntryMode =
+  (typeof AchievementEntryMode)[keyof typeof AchievementEntryMode];
 
 export interface IAchievementAttachmentMetadata {
   fileName?: string;
@@ -47,12 +56,17 @@ export interface IAchievementObjectiveSnapshot {
   targetDate?: Date;
   weightage?: number;
   source?: string;
+  assessmentTermCode?: AssessmentTermCodeType;
+  objectiveNo?: number;
 }
 
 export interface IAchievementItem {
+  itemId?: string;
   type?: AchievementItemType;
   objectiveId?: Types.ObjectId;
   objectiveSnapshot?: IAchievementObjectiveSnapshot;
+  relatedObjectiveId?: Types.ObjectId;
+  relatedObjectiveSnapshot?: IAchievementObjectiveSnapshot;
   subject: string;
   description: string;
   employeeSelfRating?: number;
@@ -135,12 +149,22 @@ const achievementObjectiveSnapshotSchema = new Schema<IAchievementObjectiveSnaps
     targetDate: Date,
     weightage: Number,
     source: String,
+    assessmentTermCode: {
+      type: String,
+      enum: Object.values(AssessmentTermCode),
+    },
+    objectiveNo: Number,
   },
   { _id: false },
 );
 
 const achievementItemSchema = new Schema<IAchievementItem>(
   {
+    itemId: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     type: {
       type: String,
       enum: Object.values(AchievementItemType),
@@ -153,6 +177,15 @@ const achievementItemSchema = new Schema<IAchievementItem>(
       index: true,
     },
     objectiveSnapshot: {
+      type: achievementObjectiveSnapshotSchema,
+      default: undefined,
+    },
+    relatedObjectiveId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Objective',
+      index: true,
+    },
+    relatedObjectiveSnapshot: {
       type: achievementObjectiveSnapshotSchema,
       default: undefined,
     },
@@ -279,7 +312,9 @@ employeeAchievementSubmissionSchema.index(
   },
 );
 employeeAchievementSubmissionSchema.index({ employeeId: 1, cycleId: 1, assessmentTermCode: 1 });
+employeeAchievementSubmissionSchema.index({ 'achievementItems.itemId': 1 });
 employeeAchievementSubmissionSchema.index({ 'achievementItems.objectiveId': 1 });
+employeeAchievementSubmissionSchema.index({ 'achievementItems.relatedObjectiveId': 1 });
 
 export const EmployeeAchievementSubmission = mongoose.model<IEmployeeAchievementSubmission>(
   'EmployeeAchievementSubmission',
