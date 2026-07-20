@@ -323,6 +323,22 @@ describe('PMS template objective table layout Phase 1', () => {
     ).toEqual([]);
   });
 
+  it('accepts activation-ready flat layouts without dynamic row groups', () => {
+    const flat = validLayout();
+    flat.rowGroups = [];
+    flat.rowAssignments = [];
+
+    expect(
+      objectiveTableLayoutValidationErrors(flat, {
+        activationReady: true,
+        predefinedObjectives: objectiveSection(flat).objectiveConfig!.predefinedObjectives,
+        templateFieldKeys: ['objective_notes'],
+        allowEmployeeCreated: true,
+        allowManagerCreated: true,
+      }),
+    ).toEqual([]);
+  });
+
   it('requires at least one template row before activation', () => {
     expect(
       objectiveTableLayoutValidationErrors(validLayout(), {

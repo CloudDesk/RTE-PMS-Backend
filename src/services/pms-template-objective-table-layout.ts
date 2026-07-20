@@ -469,11 +469,12 @@ export function objectiveTableLayoutValidationErrors(
   for (const duplicate of duplicateValues((layout.rowGroups ?? []).map((group) => group.source))) {
     errors.push(`${prefix} has more than one destination row group for source "${duplicate}"`);
   }
-  if (options.activationReady && options.allowEmployeeCreated !== false &&
+  const rowGroupingEnabled = (layout.rowGroups ?? []).length > 0;
+  if (rowGroupingEnabled && options.activationReady && options.allowEmployeeCreated !== false &&
       !(layout.rowGroups ?? []).some((group) => group.source === 'EMPLOYEE_CREATED')) {
     errors.push(`${prefix} requires an EMPLOYEE_CREATED destination row group`);
   }
-  if (options.activationReady && options.allowManagerCreated !== false &&
+  if (rowGroupingEnabled && options.activationReady && options.allowManagerCreated !== false &&
       !(layout.rowGroups ?? []).some((group) => group.source === 'MANAGER_CREATED')) {
     errors.push(`${prefix} requires a MANAGER_CREATED destination row group`);
   }
@@ -492,7 +493,7 @@ export function objectiveTableLayoutValidationErrors(
     }
   }
   for (const objective of options.predefinedObjectives ?? []) {
-    if (objective.rowGroupKey && !rowGroupKeys.has(objective.rowGroupKey)) {
+    if (rowGroupingEnabled && objective.rowGroupKey && !rowGroupKeys.has(objective.rowGroupKey)) {
       errors.push(`${prefix} objective "${objective.objectiveKey}" references missing row group "${objective.rowGroupKey}"`);
     }
     for (const valueKey of Object.keys(objective.columnValues ?? {})) {
