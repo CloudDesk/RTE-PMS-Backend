@@ -644,7 +644,20 @@ export class ObjectiveMatrixService {
       explicitEditable: access.editable,
       rowSource: input.objective.source,
     });
-    const permission = resolvedPermission;
+    const lockApprovedEmployeeObjectiveSetting =
+      input.viewRole === PmsRole.EMPLOYEE &&
+      input.objective.source === ObjectiveSource.EMPLOYEE_CREATED &&
+      input.column.workflowStage === 'OBJECTIVE_SETTING' &&
+      input.objective.status !== ObjectiveStatus.OBJECTIVE_DRAFT &&
+      input.objective.status !== ObjectiveStatus.OBJECTIVE_REVISION_REQUIRED;
+    const permission: ObjectiveMatrixCellPermission = lockApprovedEmployeeObjectiveSetting
+      ? {
+          ...resolvedPermission,
+          editable: false,
+          required: false,
+          denialReason: 'COLUMN_READ_ONLY',
+        }
+      : resolvedPermission;
     return {
       cellKey: `${input.rowKey}:${input.termCode}:${input.column.columnId}`,
       columnId: input.column.columnId,

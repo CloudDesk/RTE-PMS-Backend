@@ -209,7 +209,7 @@ function defaultRoleAccessForPurpose(
       return {
         EMPLOYEE: 'view',
         MANAGER: 'edit',
-        ADMIN: 'edit',
+        ADMIN: 'view',
         DIRECTOR: 'view',
       };
     case 'MANAGEMENT_DECISION':
@@ -287,7 +287,8 @@ function workflowStatesForPurposeRoleAccess(
       return [];
 
     case 'VISIBILITY_COMMUNICATION':
-      if (role === 'ADMIN') return ['COMMUNICATION_READY'];
+      if (role === 'EMPLOYEE') return ['COMMUNICATION_READY'];
+      if (role === 'ADMIN') return ['MANAGEMENT_DECISION_DRAFT'];
       if (role === 'MANAGEMENT' || role === 'DIRECTOR') {
         return ['COMMUNICATION_READY'];
       }

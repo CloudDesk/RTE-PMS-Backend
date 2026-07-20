@@ -339,6 +339,28 @@ describe('PMS template objective table layout Phase 1', () => {
     ).toEqual([]);
   });
 
+  it('ignores stale row assignments when row grouping is disabled', () => {
+    const flat = validLayout();
+    flat.rowGroups = [];
+    flat.rowAssignments = [
+      {
+        objectiveKey: 'delivery',
+        rowGroupKey: 'predefined-objectives',
+        displayOrder: 1,
+      },
+    ];
+
+    expect(
+      objectiveTableLayoutValidationErrors(flat, {
+        activationReady: true,
+        predefinedObjectives: objectiveSection(flat).objectiveConfig!.predefinedObjectives,
+        templateFieldKeys: ['objective_notes'],
+        allowEmployeeCreated: true,
+        allowManagerCreated: true,
+      }),
+    ).toEqual([]);
+  });
+
   it('requires at least one template row before activation', () => {
     expect(
       objectiveTableLayoutValidationErrors(validLayout(), {

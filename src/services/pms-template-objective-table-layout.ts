@@ -479,17 +479,19 @@ export function objectiveTableLayoutValidationErrors(
     errors.push(`${prefix} requires a MANAGER_CREATED destination row group`);
   }
 
-  for (const duplicate of duplicateValues((layout.rowAssignments ?? []).map((item) => item.objectiveKey))) {
-    errors.push(`${prefix} has duplicate row assignment for objective "${duplicate}"`);
-  }
-  for (const assignment of layout.rowAssignments ?? []) {
-    if (!predefinedKeys.has(assignment.objectiveKey)) errors.push(`${prefix} row assignment references missing objective "${assignment.objectiveKey}"`);
-    if (!rowGroupKeys.has(assignment.rowGroupKey)) errors.push(`${prefix} row assignment for "${assignment.objectiveKey}" references missing row group "${assignment.rowGroupKey}"`);
-    const targetGroup = (layout.rowGroups ?? []).find(
-      (group) => group.rowGroupKey === assignment.rowGroupKey,
-    );
-    if (targetGroup && targetGroup.source !== 'PREDEFINED') {
-      errors.push(`${prefix} row assignment for "${assignment.objectiveKey}" must target a PREDEFINED row group`);
+  if (rowGroupingEnabled) {
+    for (const duplicate of duplicateValues((layout.rowAssignments ?? []).map((item) => item.objectiveKey))) {
+      errors.push(`${prefix} has duplicate row assignment for objective "${duplicate}"`);
+    }
+    for (const assignment of layout.rowAssignments ?? []) {
+      if (!predefinedKeys.has(assignment.objectiveKey)) errors.push(`${prefix} row assignment references missing objective "${assignment.objectiveKey}"`);
+      if (!rowGroupKeys.has(assignment.rowGroupKey)) errors.push(`${prefix} row assignment for "${assignment.objectiveKey}" references missing row group "${assignment.rowGroupKey}"`);
+      const targetGroup = (layout.rowGroups ?? []).find(
+        (group) => group.rowGroupKey === assignment.rowGroupKey,
+      );
+      if (targetGroup && targetGroup.source !== 'PREDEFINED') {
+        errors.push(`${prefix} row assignment for "${assignment.objectiveKey}" must target a PREDEFINED row group`);
+      }
     }
   }
   for (const objective of options.predefinedObjectives ?? []) {
