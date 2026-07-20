@@ -143,6 +143,18 @@ function typedValuePayload(column: ITemplateObjectiveTableColumn, value: unknown
   return { valueJson: value };
 }
 
+export function defaultObjectiveRowCoverage(
+  role: string,
+  currentTermCode: AssessmentTermCodeType,
+  termOrder: AssessmentTermCodeType[],
+): AssessmentTermCodeType[] {
+  const currentTermIndex = termOrder.indexOf(currentTermCode);
+  if (currentTermIndex < 0) return [];
+  return role === PmsRole.EMPLOYEE
+    ? termOrder.slice(currentTermIndex)
+    : [currentTermCode];
+}
+
 export class ObjectiveMatrixWriteService {
   constructor(private readonly context: RequestContext) {}
 
@@ -153,7 +165,10 @@ export class ObjectiveMatrixWriteService {
     const changes = input?.changes ?? [];
     if (!changes.length) throw new Error('At least one matrix cell change is required');
     if (changes.length > 100) throw new Error('A maximum of 100 matrix cells can be saved at once');
-    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId);
+    const selectedTermAssignmentId = changes[0]?.termAssignmentId;
+    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
+      termAssignmentId: selectedTermAssignmentId,
+    });
     const resources = await this.loadTemplateResources(annualAssignmentId);
     if (resources.annual.templateVersionId!.toString() !== matrix.templateVersionId) {
       throw new Error('The assigned objective template changed; reload the matrix');
@@ -334,7 +349,9 @@ export class ObjectiveMatrixWriteService {
     } finally {
       await session.endSession();
     }
-    const refreshed = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId);
+    const refreshed = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
+      termAssignmentId: selectedTermAssignmentId,
+    });
     const changedCellPrefixes = prepared.map((item) =>
       `${item.change.objectiveRowKey}:${item.change.termCode}:${item.change.columnId}`,
     );
@@ -352,7 +369,9 @@ export class ObjectiveMatrixWriteService {
     annualAssignmentId: string,
     input: ObjectiveMatrixCreateRowInput,
   ): Promise<ObjectiveMatrixCreateRowResult> {
-    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId);
+    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
+      currentTermCode: input.currentTermCode,
+    });
     const actor = this.requireActor();
     const role = normalizePmsRole(actor.actorRole);
     const expectedSource = role === PmsRole.EMPLOYEE
@@ -368,21 +387,25 @@ export class ObjectiveMatrixWriteService {
     }
     const correlationId = input.correlationId?.trim();
     if (!correlationId) throw new Error('A client correlation id is required');
+    const currentTermIndex = matrix.termOrder.indexOf(input.currentTermCode);
+    const defaultCoverage = defaultObjectiveRowCoverage(role!, input.currentTermCode, matrix.termOrder);
     const coverage = normalizeObjectiveRowCoverage(
-      input.selectedTermCoverage?.length ? input.selectedTermCoverage : [input.currentTermCode],
+      input.selectedTermCoverage?.length ? input.selectedTermCoverage : defaultCoverage,
     );
     if (!coverage.includes(input.currentTermCode) || coverage.some((term) => !matrix.termOrder.includes(term))) {
       throw new Error('Selected row coverage must contain only assigned terms and include the current term');
     }
-    const currentTermIndex = matrix.termOrder.indexOf(input.currentTermCode);
     if (coverage.some((term) => matrix.termOrder.indexOf(term) < currentTermIndex)) {
       throw new Error('A new objective row cannot be added to a past term');
     }
     const canChoose = role === PmsRole.EMPLOYEE
       ? matrix.dynamicRowPolicy.allowEmployeeTermChoice
       : matrix.dynamicRowPolicy.allowManagerTermChoice;
-    if (!canChoose && (coverage.length !== 1 || coverage[0] !== input.currentTermCode)) {
-      throw new Error('This template allows new objective rows only in the current term');
+    if (!canChoose && (
+      coverage.length !== defaultCoverage.length ||
+      coverage.some((term, index) => term !== defaultCoverage[index])
+    )) {
+      throw new Error('This template uses the default objective term coverage');
     }
     if (!input.coreValues?.title?.trim()) throw new Error('Objective title is required');
 
@@ -688,7 +711,9 @@ export class ObjectiveMatrixWriteService {
       objectiveRowKey,
       objectiveIds,
       coverage,
-      matrix: await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId),
+      matrix: await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
+        currentTermCode: input.currentTermCode,
+      }),
     };
   }
 
@@ -698,7 +723,9 @@ export class ObjectiveMatrixWriteService {
     input: ObjectiveMatrixDeleteRowInput,
   ): Promise<ObjectiveMatrixDeleteRowResult> {
     if (!objectiveRowKey?.trim()) throw new Error('objectiveRowKey is required');
-    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId);
+    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
+      currentTermCode: input.currentTermCode,
+    });
     if (input.currentTermCode !== matrix.currentTermCode) {
       throw new Error('Row deletion must be requested from the current term');
     }
@@ -816,7 +843,9 @@ export class ObjectiveMatrixWriteService {
       objectiveRowKey,
       deletedObjectiveIds: targets.map((target) => target.objectiveId),
       deletedTerms: targets.map((target) => target.termCode),
-      matrix: await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId),
+      matrix: await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
+        currentTermCode: input.currentTermCode,
+      }),
     };
   }
 

@@ -66,6 +66,15 @@ export function normalizeObjectiveRowCoverage(
   return allowed.filter((term) => unique.has(term));
 }
 
+export function futureCoveredObjectiveTerms(
+  coverage: AssessmentTermCodeType[],
+  currentTermCode: AssessmentTermCodeType,
+): AssessmentTermCodeType[] {
+  const normalized = normalizeObjectiveRowCoverage(coverage);
+  const currentIndex = normalized.indexOf(currentTermCode);
+  return currentIndex < 0 ? [] : normalized.slice(currentIndex + 1);
+}
+
 function customColumnValues(
   values?: Record<string, unknown>,
   columnBindingKeyById?: Record<string, string>,

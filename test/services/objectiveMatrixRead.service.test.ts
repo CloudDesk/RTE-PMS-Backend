@@ -231,7 +231,7 @@ describe('Objective matrix read model Phase 5', () => {
       {
         _id: q2AssignmentId, annualAssignmentId, employeeId, assignedManagerId: managerId,
         assessmentTermCode: AssessmentTermCode.Q2, assessmentTermType: AssessmentTermType.QUARTERLY,
-        termState: TermWorkflowState.NOT_STARTED, version: 1,
+        termState: TermWorkflowState.MANAGER_REVIEW_OPEN, version: 1,
       },
     ];
     const objectives = [
@@ -310,5 +310,19 @@ describe('Objective matrix read model Phase 5', () => {
     expect(matrix.contentHash).toMatch(/^[a-f0-9]{64}$/);
     const repeated = await service.getAnnualMatrix(annualAssignmentId.toString(), { mode: 'manager' });
     expect(repeated.contentHash).toBe(matrix.contentHash);
+
+    const q2Matrix = await service.getAnnualMatrix(annualAssignmentId.toString(), {
+      mode: 'manager',
+      termAssignmentId: q2AssignmentId.toString(),
+    });
+    expect(q2Matrix.currentTermCode).toBe(AssessmentTermCode.Q2);
+    expect(q2Matrix.rows[0].termCells.Q2?.find((cell) => cell.columnId === 'q2')).toMatchObject({
+      value: 30, editable: true,
+    });
+
+    await expect(service.getAnnualMatrix(annualAssignmentId.toString(), {
+      mode: 'manager',
+      termAssignmentId: new Types.ObjectId().toString(),
+    })).rejects.toThrow('Selected term does not belong to the annual assignment');
   });
 });

@@ -316,7 +316,15 @@ export class ObjectiveMatrixService {
     const assignmentByTerm = new Map(termAssignments.map((term) => [term.assessmentTermCode, term]));
     const termOrder = configuredOrder.filter((term) => assignmentByTerm.has(term));
     const sortedAssignments = termOrder.map((term) => assignmentByTerm.get(term)!);
-    const currentTermCode = this.currentTerm(sortedAssignments);
+    const selectedTermAssignment = query.termAssignmentId
+      ? sortedAssignments.find((term) => term._id.toString() === query.termAssignmentId)
+      : query.currentTermCode
+        ? assignmentByTerm.get(query.currentTermCode)
+        : undefined;
+    if ((query.termAssignmentId || query.currentTermCode) && !selectedTermAssignment) {
+      throw new Error('Selected term does not belong to the annual assignment');
+    }
+    const currentTermCode = selectedTermAssignment?.assessmentTermCode ?? this.currentTerm(sortedAssignments);
     const termCycles = await TermCycle.find({
       _id: { $in: sortedAssignments.map((term) => term.cycleTermId).filter(Boolean) },
       isDeleted: false,

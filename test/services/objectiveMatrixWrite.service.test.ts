@@ -17,6 +17,7 @@ import { TermCycle } from '../../src/models/pms-term-cycle.model';
 import { auditService } from '../../src/services/audit.service';
 import { ObjectiveMatrixService } from '../../src/services/objective-matrix.service';
 import {
+  defaultObjectiveRowCoverage,
   normalizeObjectiveMatrixValue,
   ObjectiveMatrixWriteService,
   validateObjectiveMatrixCreateRequiredValues,
@@ -39,6 +40,26 @@ describe('Objective matrix write model Phase 6', () => {
       .toThrow('must be a finite number');
     expect(() => normalizeObjectiveMatrixValue({ ...base, type: 'FORMULA' }, 42))
       .toThrow('is calculated and cannot be changed');
+  });
+
+  it('carries employee-created objectives through remaining terms only', () => {
+    const terms = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ];
+    expect(defaultObjectiveRowCoverage(PmsRole.EMPLOYEE, AssessmentTermCode.Q1, terms)).toEqual(terms);
+    expect(defaultObjectiveRowCoverage(PmsRole.EMPLOYEE, AssessmentTermCode.Q3, terms)).toEqual([
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ]);
+    expect(defaultObjectiveRowCoverage(PmsRole.EMPLOYEE, AssessmentTermCode.Q4, terms)).toEqual([
+      AssessmentTermCode.Q4,
+    ]);
+    expect(defaultObjectiveRowCoverage(PmsRole.MANAGER, AssessmentTermCode.Q2, terms)).toEqual([
+      AssessmentTermCode.Q2,
+    ]);
   });
 
   it('validates only fields configured as required when adding a dynamic row', () => {

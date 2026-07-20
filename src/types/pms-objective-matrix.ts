@@ -19,6 +19,8 @@ export type ObjectiveMatrixMode = 'employee' | 'manager' | 'reviewer' | 'admin';
 export interface ObjectiveMatrixReadQuery {
   mode?: ObjectiveMatrixMode;
   employeeId?: string;
+  termAssignmentId?: string;
+  currentTermCode?: AssessmentTermCode;
   includeAudit?: boolean | string;
 }
 

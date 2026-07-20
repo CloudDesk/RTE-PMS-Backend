@@ -82,6 +82,7 @@ import type {
 import {
   predefinedObjectiveSeedEntry,
   deterministicDynamicObjectiveRowKey,
+  futureCoveredObjectiveTerms,
   upsertObjectiveRowSeedEntries,
   type ObjectiveRowSeedEntry,
 } from './objective-assignment-seeding.service';
@@ -5410,7 +5411,11 @@ export class ObjectiveService extends BaseService {
     if (objectiveConfig.tableLayout?.enabled === true) {
       const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(
         annualAssignment._id.toString(),
-        { mode: 'employee', employeeId: annualAssignment.employeeId.toString() },
+        {
+          mode: 'employee',
+          employeeId: annualAssignment.employeeId.toString(),
+          termAssignmentId: termAssignment._id.toString(),
+        },
       );
       validateObjectiveMatrixRowForSubmit(matrix, {
         objectiveId: objective._id.toString(),
@@ -5533,6 +5538,54 @@ export class ObjectiveService extends BaseService {
     }
     objective.version += 1;
     await objective.save();
+
+    if (
+      objective.source === ObjectiveSource.EMPLOYEE_CREATED &&
+      objective.annualAssignmentId &&
+      objective.objectiveRowKey &&
+      objective.assessmentTermCode
+    ) {
+      const futureTerms = futureCoveredObjectiveTerms(
+        objective.rowCoverage ?? [],
+        objective.assessmentTermCode,
+      );
+      if (futureTerms.length > 0) {
+        const linkedDrafts = await Objective.find({
+          _id: { $ne: objective._id },
+          annualAssignmentId: objective.annualAssignmentId,
+          objectiveRowKey: objective.objectiveRowKey,
+          assessmentTermCode: { $in: futureTerms },
+          source: ObjectiveSource.EMPLOYEE_CREATED,
+          status: ObjectiveStatus.OBJECTIVE_DRAFT,
+          isDeleted: false,
+        });
+        for (const linked of linkedDrafts) {
+          const linkedPreviousState = linked.status;
+          linked.status = ObjectiveStatus.OBJECTIVE_APPROVED;
+          if (input.weightage !== undefined) linked.weightage = input.weightage;
+          linked.approvedAt = objective.approvedAt;
+          linked.approvedBy = actorObjectId;
+          linked.updatedBy = actorObjectId;
+          if (actingDelegateUserId) {
+            linked.actingDelegateUserId = actingDelegateUserId;
+            linked.originalOwnerUserId = originalOwnerUserId;
+          }
+          linked.version += 1;
+          await linked.save();
+          await this.audit(
+            'PMS_OBJECTIVE_LINKED_TERM_APPROVED',
+            'OBJECTIVE',
+            linked._id.toString(),
+            { status: linkedPreviousState },
+            {
+              status: linked.status,
+              approvedWithObjectiveId: objective._id.toString(),
+              originTerm: objective.assessmentTermCode,
+            },
+          );
+        }
+      }
+    }
 
     await this.updateTermStateAfterApproval(objective.termAssignmentId.toString());
 

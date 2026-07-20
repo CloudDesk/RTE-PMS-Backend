@@ -5,6 +5,7 @@ import { ObjectiveValue } from '../../src/models/pms-objective-value.model';
 import {
   deterministicDynamicObjectiveRowKey,
   deterministicPredefinedObjectiveRowKey,
+  futureCoveredObjectiveTerms,
   normalizeObjectiveRowCoverage,
   predefinedObjectiveSeedEntry,
   upsertObjectiveRowSeedEntries,
@@ -54,6 +55,24 @@ describe('Objective assignment row seeding Phase 4', () => {
       .toBe(deterministicDynamicObjectiveRowKey(annualAssignmentId, 'request-42'));
     expect(deterministicDynamicObjectiveRowKey(annualAssignmentId, 'request-43'))
       .not.toBe(deterministicDynamicObjectiveRowKey(annualAssignmentId, 'request-42'));
+  });
+
+  it('returns only future covered terms after the approved origin term', () => {
+    const coverage = [
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ];
+    expect(futureCoveredObjectiveTerms(coverage, AssessmentTermCode.Q1)).toEqual([
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ]);
+    expect(futureCoveredObjectiveTerms(coverage, AssessmentTermCode.Q3)).toEqual([
+      AssessmentTermCode.Q4,
+    ]);
+    expect(futureCoveredObjectiveTerms([AssessmentTermCode.Q4], AssessmentTermCode.Q4)).toEqual([]);
   });
 
   it('uses idempotent objective/value upserts and maps custom cells by binding key', async () => {
