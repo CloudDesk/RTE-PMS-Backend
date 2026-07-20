@@ -56,6 +56,7 @@ jest.mock('../../src/models/pms-annual-assignment.model', () => ({
 jest.mock('../../src/models/pms-term-assignment.model', () => ({
   TermAssignment: {
     find: jest.fn(),
+    findById: jest.fn(),
   },
 }));
 
@@ -329,7 +330,7 @@ describe('Term assignment workflow state ownership', () => {
     expect(result.objectiveSettingCloseSource).toBe('ADMIN');
   });
 
-  it('manual sync skips OBJECTIVE_SETTING_OPEN records', async () => {
+  it('manual sync auto-closes OBJECTIVE_SETTING_OPEN records with no objectives', async () => {
     const service = createWorkflowSyncService();
     (AnnualCycle.findOne as jest.Mock).mockReturnValue({
       lean: jest.fn().mockResolvedValue({ _id: cycleId, isDeleted: false }),
@@ -350,13 +351,31 @@ describe('Term assignment workflow state ownership', () => {
         },
       },
     ]);
+    (Objective.find as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    });
+    (TermAssignment.findById as jest.Mock).mockResolvedValue(null);
+    (transitionTermAssignmentState as jest.Mock).mockResolvedValue(
+      mockTermAssignment(TermWorkflowState.OBJECTIVE_APPROVED),
+    );
 
     const result = await service.syncWorkflowStates(cycleId.toString());
 
     expect(result.totalChecked).toBe(1);
-    expect(result.totalUpdated).toBe(0);
-    expect(result.skippedObjectiveSettingOpen).toBe(1);
-    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
+    expect(result.totalUpdated).toBe(1);
+    expect(result.skippedObjectiveSettingOpen).toBe(0);
+    expect(transitionTermAssignmentState).toHaveBeenCalledWith(
+      termAssignmentId.toString(),
+      TermWorkflowState.OBJECTIVE_APPROVED,
+      { actorId: actorId.toString(), actorRole: 'ADMIN' },
+      'No active objectives were found.',
+      'ADMIN_WORKFLOW_SYNC_AUTO_CLOSE',
+      expect.objectContaining({
+        autoClosedObjectiveSetting: true,
+      }),
+    );
   });
 
   it('manual sync moves OBJECTIVE_APPROVED forward after objective setting is closed', async () => {

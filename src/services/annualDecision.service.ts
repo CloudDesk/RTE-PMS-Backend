@@ -2191,14 +2191,17 @@ export class AnnualDecisionService extends BaseService {
       if (this.normalizeAnnualFieldKey(section.sectionKey) !== requestedSectionKey) {
         continue;
       }
-      if (!this.isAnnualDecisionTemplateSection(section)) {
+      if (!this.isAnnualDecisionTemplateSection(section) && !this.isAnnualDecisionCommunicationSection(section)) {
         continue;
       }
 
       const field = (section.fields ?? []).find((item) =>
         requestedFieldKeys.includes(this.normalizeAnnualFieldKey(item.fieldKey)),
       );
-      if (!field || !this.isRawAnnualDecisionFieldEditable(field, section, role, workflowState)) {
+      const fieldWorkflowState = this.isAnnualDecisionCommunicationSection(section)
+        ? AnnualWorkflowState.COMMUNICATION_READY
+        : workflowState;
+      if (!field || !this.isRawAnnualDecisionFieldEditable(field, section, role, fieldWorkflowState)) {
         return null;
       }
 
@@ -2223,6 +2226,20 @@ export class AnnualDecisionService extends BaseService {
     ]);
 
     return module === 'Annual Appraisal Decision Management' || annualDecisionSectionTypes.has(sectionType);
+  }
+
+  private isAnnualDecisionCommunicationSection(section: ITemplateSection): boolean {
+    const sectionRecord = section as ITemplateSection & Record<string, unknown>;
+    const metadata = this.asRecord(section.metadata);
+    const module = String(sectionRecord.module ?? metadata?.module ?? '').trim();
+    const sectionType = String(section.sectionType ?? '').trim();
+    const purpose = String(metadata?.permissionPurpose ?? metadata?.customSectionPurpose ?? '').trim();
+
+    return (
+      module === 'Visibility Governance' ||
+      sectionType === PmsTemplateSectionType.VISIBILITY_GOVERNANCE ||
+      purpose === 'VISIBILITY_COMMUNICATION'
+    );
   }
 
   private resolveAnnualDecisionTemplateWorkflowState(

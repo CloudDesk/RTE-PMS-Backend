@@ -41,6 +41,7 @@ import {
   objectiveTableLayoutAuditSummary,
   objectiveTableLayoutValidationErrors,
 } from './pms-template-objective-table-layout';
+import { permissionPolicyValidationErrors } from './pms-template-permission-policy';
 
 export type TemplateSection = IPmsTemplateVersion['sections'][number];
 export type TemplateField = TemplateSection['fields'][number];
@@ -841,6 +842,8 @@ export class PmsTemplateService extends BaseService {
           role,
           workflowState,
         });
+        const policyManagedSection =
+          section.metadata?.permissionPolicyVersion === 'PERMISSION_POLICY_V1';
         const allowEmployeeAssignedCustomObjectiveSetting =
           role === PmsRole.EMPLOYEE &&
           workflowState === TermWorkflowState.OBJECTIVE_SETTING_OPEN &&
@@ -854,6 +857,7 @@ export class PmsTemplateService extends BaseService {
           values,
           allowEmployeeAssignedCustomObjectiveSetting,
           sectionGrantsVisibility: sectionFieldAccess.visible,
+          policyManagedSection,
         });
         const fields = (section.fields ?? [])
           .filter((field) => visibleFieldKeys.has(field.fieldKey))
@@ -865,6 +869,7 @@ export class PmsTemplateService extends BaseService {
               visibilityFlags,
               allowEmployeeAssignedCustomObjectiveSetting,
               sectionGrantsEditability: sectionFieldAccess.editable,
+              policyManagedSection,
             }),
           );
 
@@ -1108,6 +1113,7 @@ export class PmsTemplateService extends BaseService {
       editabilityRules: field.editabilityRules ?? rulePatch.editabilityRules ?? {},
       optionConfig: field.optionConfig ?? {},
       scoringConfig,
+      metadata: field.metadata ?? {},
       defaultValue: field.defaultValue,
       colSpan: [1, 2, 3, 4].includes(Number(field.colSpan))
         ? (Number(field.colSpan) as 1 | 2 | 3 | 4)
@@ -1705,6 +1711,7 @@ export class PmsTemplateService extends BaseService {
       values: Record<string, unknown>;
       allowEmployeeAssignedCustomObjectiveSetting?: boolean;
       sectionGrantsVisibility?: boolean;
+      policyManagedSection?: boolean;
     },
   ): boolean {
     const behavior = this.findBehavior(field, context.role, context.workflowState);
@@ -1712,6 +1719,10 @@ export class PmsTemplateService extends BaseService {
 
     if (this.isExplicitlyHiddenFromRole(field.visibilityRules, context.role)) {
       return false;
+    }
+
+    if (context.policyManagedSection && (field.behaviors ?? []).length > 0) {
+      return behavior?.visibility === 'VISIBLE';
     }
 
     if (behavior && behavior.visibility !== 'VISIBLE') return false;
@@ -1741,6 +1752,7 @@ export class PmsTemplateService extends BaseService {
       visibilityFlags: Set<string>;
       allowEmployeeAssignedCustomObjectiveSetting?: boolean;
       sectionGrantsEditability?: boolean;
+      policyManagedSection?: boolean;
     },
   ): ResolvedTemplateField {
     const behavior = this.findBehavior(field, context.role, context.workflowState);
@@ -1759,6 +1771,7 @@ export class PmsTemplateService extends BaseService {
         behavior,
         context.allowEmployeeAssignedCustomObjectiveSetting,
         context.sectionGrantsEditability,
+        context.policyManagedSection,
       ),
       placeholder: field.placeholder,
       helpText: field.helpText,
@@ -1786,6 +1799,7 @@ export class PmsTemplateService extends BaseService {
       values: Record<string, unknown>;
       allowEmployeeAssignedCustomObjectiveSetting?: boolean;
       sectionGrantsVisibility?: boolean;
+      policyManagedSection?: boolean;
     },
   ): Set<string> {
     const fieldByKey = new Map(fields.map((field) => [field.fieldKey, field]));
@@ -1897,8 +1911,10 @@ export class PmsTemplateService extends BaseService {
     behavior?: NonNullable<ITemplateField['behaviors']>[number],
     allowEmployeeAssignedCustomObjectiveSetting = false,
     sectionGrantsEditability = false,
+    policyManagedSection = false,
   ): boolean {
     if (behavior) return behavior.editability === 'EDITABLE';
+    if (policyManagedSection && (field.behaviors ?? []).length > 0) return false;
 
     const editableBy = this.stringArrayFromRule(field.editabilityRules, 'editableBy').map((item) =>
       this.normalizeRoleCode(item),
@@ -2327,6 +2343,11 @@ export class PmsTemplateService extends BaseService {
     }
 
     this.assertNoConditionalCycles(conditionalDependencies);
+
+    const permissionPolicyErrors = permissionPolicyValidationErrors(sections);
+    if (permissionPolicyErrors.length > 0) {
+      throw new Error(permissionPolicyErrors[0]);
+    }
   }
 
   private async validateTemplateVersionForActivation(version: IPmsTemplateVersion): Promise<void> {
