@@ -1,0 +1,111 @@
+{
+  "fixtureId": "quarterly-production-objectives-v1",
+  "contractVersion": 1,
+  "cadence": "QUARTERLY",
+  "termOrder": ["Q1", "Q2", "Q3", "Q4"],
+  "templateVersionId": "template-version-quarterly-001",
+  "annualAssignmentId": "annual-assignment-quarterly-001",
+  "layout": {
+    "layoutVersion": 1,
+    "columns": [
+      {
+        "columnId": "col-objective",
+        "bindingKey": "objective.title",
+        "label": "Objective",
+        "type": "SHORT_TEXT",
+        "termPolicy": "SHARED_ANNUAL",
+        "fillOwner": "ROW_CREATOR",
+        "workflowStage": "OBJECTIVE_SETTING"
+      },
+      {
+        "columnId": "col-target",
+        "bindingKey": "objective.targetValue",
+        "label": "Target",
+        "type": "NUMERIC_INPUT",
+        "termPolicy": "EVERY_REVIEW_PERIOD",
+        "fillOwner": "ROW_CREATOR",
+        "workflowStage": "OBJECTIVE_SETTING"
+      },
+      {
+        "columnId": "col-actual",
+        "bindingKey": "custom.actual",
+        "label": "Actual",
+        "type": "NUMERIC_INPUT",
+        "termPolicy": "EVERY_REVIEW_PERIOD",
+        "fillOwner": "EMPLOYEE",
+        "workflowStage": "EMPLOYEE_ACHIEVEMENT"
+      },
+      {
+        "columnId": "col-manager-rating",
+        "bindingKey": "custom.managerRating",
+        "label": "Manager Rating",
+        "type": "RATING_SCALE",
+        "termPolicy": "EVERY_REVIEW_PERIOD",
+        "fillOwner": "MANAGER",
+        "workflowStage": "MANAGER_REVIEW"
+      },
+      {
+        "columnId": "col-achievement-percent",
+        "bindingKey": "formula.achievementPercent",
+        "label": "Achievement %",
+        "type": "FORMULA",
+        "termPolicy": "EVERY_REVIEW_PERIOD",
+        "fillOwner": "SYSTEM",
+        "workflowStage": "CALCULATED"
+      }
+    ],
+    "columnGroups": [
+      {
+        "groupId": "group-performance",
+        "label": "Performance",
+        "columnIds": ["col-target", "col-actual", "col-achievement-percent"]
+      }
+    ],
+    "rowGroups": [
+      {"rowGroupKey": "production", "label": "Production", "source": "PREDEFINED"},
+      {"rowGroupKey": "employee-added", "label": "Employee Objectives", "source": "EMPLOYEE_CREATED"},
+      {"rowGroupKey": "manager-added", "label": "Manager Objectives", "source": "MANAGER_CREATED"}
+    ],
+    "dynamicRowPolicy": {
+      "employeeDefaultScope": "CURRENT_TERM",
+      "managerDefaultScope": "CURRENT_TERM",
+      "allowEmployeeTermChoice": false,
+      "allowManagerTermChoice": true
+    }
+  },
+  "logicalRows": [
+    {
+      "objectiveRowKey": "row-on-time-delivery",
+      "source": "PREDEFINED",
+      "rowGroupKey": "production",
+      "rowCoverage": ["Q1", "Q2", "Q3", "Q4"],
+      "sharedValues": {"col-objective": "On-Time Delivery"},
+      "siblings": [
+        {"termCode": "Q1", "termAssignmentId": "term-q1-001", "objectiveId": "objective-q1-001", "status": "OBJECTIVE_APPROVED", "version": 3},
+        {"termCode": "Q2", "termAssignmentId": "term-q2-001", "objectiveId": "objective-q2-001", "status": "OBJECTIVE_APPROVED", "version": 2},
+        {"termCode": "Q3", "termAssignmentId": "term-q3-001", "objectiveId": "objective-q3-001", "status": "OBJECTIVE_DRAFT", "version": 1},
+        {"termCode": "Q4", "termAssignmentId": "term-q4-001", "objectiveId": "objective-q4-001", "status": "OBJECTIVE_DRAFT", "version": 1}
+      ],
+      "termValues": {
+        "Q1": {"col-target": 98, "col-actual": 96, "col-manager-rating": 4, "col-achievement-percent": 97.96},
+        "Q2": {"col-target": 98, "col-actual": 99, "col-manager-rating": 5, "col-achievement-percent": 101.02},
+        "Q3": {"col-target": 98, "col-actual": null, "col-manager-rating": null, "col-achievement-percent": null},
+        "Q4": {"col-target": 98, "col-actual": null, "col-manager-rating": null, "col-achievement-percent": null}
+      }
+    },
+    {
+      "objectiveRowKey": "row-employee-quality-q3",
+      "source": "EMPLOYEE_CREATED",
+      "rowGroupKey": "employee-added",
+      "rowOriginTermCode": "Q3",
+      "rowCoverage": ["Q3"],
+      "sharedValues": {"col-objective": "Improve Release Checklist"},
+      "siblings": [
+        {"termCode": "Q3", "termAssignmentId": "term-q3-001", "objectiveId": "objective-q3-employee-002", "status": "OBJECTIVE_DRAFT", "version": 1}
+      ],
+      "termValues": {
+        "Q3": {"col-target": 100, "col-actual": null, "col-manager-rating": null, "col-achievement-percent": null}
+      }
+    }
+  ]
+}

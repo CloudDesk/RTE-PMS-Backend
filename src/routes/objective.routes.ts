@@ -25,19 +25,29 @@ import type {
   ObjectiveEmployeeAssignmentListQuery,
   ObjectiveReportingQuery,
   CorrectObjectiveInput,
+  ChangeObjectiveEmployeeAssignmentShareInput,
   EnableObjectiveEmployeeAssignmentPastTermEntryInput,
   ManagerObjectiveLibraryDraftInput,
   ObjectiveMasterListQuery,
   ReturnObjectiveInput,
   RevokeObjectiveEmployeeAssignmentPastTermEntryInput,
+  RevokeObjectiveEmployeeAssignmentShareInput,
   SaveAssignmentTemplateValuesInput,
   SaveObjectiveEmployeeAssignmentValuesInput,
   SaveManagerObjectiveLibraryInput,
+  ShareObjectiveEmployeeAssignmentInput,
   UpdateObjectiveAssignmentRuleInput,
   UpdateObjectiveAssignmentPeriodInput,
   UpdateObjectiveMasterVersionInput,
   UpdateObjectiveInput,
 } from '../services/objective.service';
+import type {
+  ObjectiveMatrixCellSaveInput,
+  ObjectiveMatrixCreateRowInput,
+  ObjectiveMatrixDeleteRowInput,
+  ObjectiveMatrixReadQuery,
+} from '../types/pms-objective-matrix';
+import type { ObjectiveMatrixPdfQuery } from '../types/pms-objective-matrix-report';
 
 const MAX_OBJECTIVE_ATTACHMENT_BYTES = 1024 * 1024;
 
@@ -103,6 +113,61 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.put(
+    '/annual-assignments/:annualAssignmentId/matrix/cells',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Matrix'] } },
+    async (request, reply) => {
+      try {
+        const { annualAssignmentId } = request.params as { annualAssignmentId: string };
+        const result = await request.container!.objectiveService.saveAnnualObjectiveMatrixCells(
+          annualAssignmentId,
+          request.body as ObjectiveMatrixCellSaveInput,
+        );
+        return reply.send(successResponse('Objective matrix cells saved successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/annual-assignments/:annualAssignmentId/matrix/rows',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Matrix'] } },
+    async (request, reply) => {
+      try {
+        const { annualAssignmentId } = request.params as { annualAssignmentId: string };
+        const result = await request.container!.objectiveService.createAnnualObjectiveMatrixRow(
+          annualAssignmentId,
+          request.body as ObjectiveMatrixCreateRowInput,
+        );
+        return reply.status(201).send(successResponse('Objective matrix row created successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.delete(
+    '/annual-assignments/:annualAssignmentId/matrix/rows/:objectiveRowKey',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Matrix'] } },
+    async (request, reply) => {
+      try {
+        const { annualAssignmentId, objectiveRowKey } = request.params as {
+          annualAssignmentId: string;
+          objectiveRowKey: string;
+        };
+        const result = await request.container!.objectiveService.deleteAnnualObjectiveMatrixRow(
+          annualAssignmentId,
+          objectiveRowKey,
+          request.body as ObjectiveMatrixDeleteRowInput,
+        );
+        return reply.send(successResponse('Objective matrix row deleted successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/manager-library/items',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
@@ -140,6 +205,48 @@ export const objectiveRoutes: RouteHandler = async (
         const { mode = 'employee' } = request.query as { mode?: 'employee' | 'manager' };
         const assignments = await request.container!.objectiveService.listAssignments(mode);
         return reply.send(successResponse('Objective assignments fetched successfully', assignments));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/annual-assignments/:annualAssignmentId/matrix',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Matrix'] } },
+    async (request, reply) => {
+      try {
+        const { annualAssignmentId } = request.params as { annualAssignmentId: string };
+        const matrix = await request.container!.objectiveService.getAnnualObjectiveMatrix(
+          annualAssignmentId,
+          request.query as ObjectiveMatrixReadQuery,
+        );
+        return reply.send(successResponse('Annual objective matrix fetched successfully', matrix));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/annual-assignments/:annualAssignmentId/matrix/pdf',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Matrix'] } },
+    async (request, reply) => {
+      try {
+        const { annualAssignmentId } = request.params as { annualAssignmentId: string };
+        const result = await request.container!.objectiveService.generateAnnualObjectiveMatrixPdf(
+          annualAssignmentId,
+          request.query as ObjectiveMatrixPdfQuery,
+        );
+        return reply
+          .header('Content-Type', 'application/pdf')
+          .header('Content-Disposition', `attachment; filename="${result.fileName}"`)
+          .header('Cache-Control', 'private, no-store')
+          .header('X-PMS-Snapshot-Mode', result.snapshotMode.toUpperCase())
+          .header('X-PMS-Content-Hash', result.contentHash)
+          .header('X-PMS-Matrix-Content-Hash', result.matrixContentHash)
+          .header('X-PMS-Snapshot-Created-At', result.snapshotCreatedAt ?? '')
+          .send(result.buffer);
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
@@ -570,6 +677,22 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/employee-assignments/:assignmentId/activity',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const activity = await request.container!.objectiveService.getObjectiveEmployeeAssignmentActivity(
+          assignmentId,
+        );
+        return reply.send(successResponse('Objective assignment activity fetched successfully', activity));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.put(
     '/employee-assignments/:assignmentId/values',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
@@ -598,6 +721,57 @@ export const objectiveRoutes: RouteHandler = async (
           (request.body ?? {}) as SaveObjectiveEmployeeAssignmentValuesInput,
         );
         return reply.send(successResponse('Objective assignment submitted successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/share',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.shareObjectiveEmployeeAssignment(
+          assignmentId,
+          request.body as ShareObjectiveEmployeeAssignmentInput,
+        );
+        return reply.send(successResponse('Objective assignment shared successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/employee-assignments/:assignmentId/share/revoke',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.revokeObjectiveEmployeeAssignmentShare(
+          assignmentId,
+          request.body as RevokeObjectiveEmployeeAssignmentShareInput,
+        );
+        return reply.send(successResponse('Objective assignment shared access revoked successfully', assignment));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/employee-assignments/:assignmentId/share',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const assignment = await request.container!.objectiveService.changeObjectiveEmployeeAssignmentShare(
+          assignmentId,
+          request.body as ChangeObjectiveEmployeeAssignmentShareInput,
+        );
+        return reply.send(successResponse('Objective assignment sharing changed successfully', assignment));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

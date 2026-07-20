@@ -53,7 +53,16 @@ export interface IObjectiveFinalRecordTermSubmission {
   term: AssessmentTermCodeType;
   submittedAt?: string;
   submittedBy?: string;
+  submittedByName?: string;
+  onBehalfOf?: string;
+  onBehalfOfName?: string;
   submissionMode?: ObjectiveTermSubmissionModeType;
+}
+
+export interface IObjectiveFinalRecordContributor {
+  employee: IObjectiveFinalRecordParticipantSnapshot;
+  terms: AssessmentTermCodeType[];
+  onBehalfOf: IObjectiveFinalRecordParticipantSnapshot;
 }
 
 export interface IObjectiveFinalRecordConsolidatedNote {
@@ -76,6 +85,7 @@ export interface IObjectiveAssignmentFinalRecordSnapshot {
   objectiveVersionId: string;
   selectedTerms: AssessmentTermCodeType[];
   termSubmissions: IObjectiveFinalRecordTermSubmission[];
+  contributors: IObjectiveFinalRecordContributor[];
   assignmentPeriodSnapshot: Record<string, unknown>;
   employeeSnapshot: IObjectiveFinalRecordParticipantSnapshot;
   managerSnapshot?: IObjectiveFinalRecordParticipantSnapshot;
@@ -84,6 +94,19 @@ export interface IObjectiveAssignmentFinalRecordSnapshot {
   calculatedValues: Record<string, number>;
   consolidatedNotes: IObjectiveFinalRecordConsolidatedNote[];
   contentHash: string;
+}
+
+export interface IObjectiveEmployeeAssignmentSharedAccess {
+  _id?: Types.ObjectId;
+  sharedWithEmployeeId: Types.ObjectId;
+  terms: AssessmentTermCodeType[];
+  status: 'ACTIVE' | 'REVOKED';
+  note?: string;
+  sharedBy: Types.ObjectId;
+  sharedAt: Date;
+  revokedBy?: Types.ObjectId;
+  revokedAt?: Date;
+  revocationReason?: string;
 }
 
 export interface IObjectiveEmployeeAssignment extends Document {
@@ -119,6 +142,7 @@ export interface IObjectiveEmployeeAssignment extends Document {
   }>;
   frozenObjectiveSnapshot: IObjectiveBusinessSnapshot;
   values?: Record<string, unknown>;
+  sharedAccess?: IObjectiveEmployeeAssignmentSharedAccess[];
   managerValues?: Record<string, unknown>;
   managerTermStates?: Array<{
     term: AssessmentTermCodeType;
@@ -233,6 +257,45 @@ const objectiveEmployeeAssignmentSchema = new Schema<IObjectiveEmployeeAssignmen
       type: Schema.Types.Mixed,
       default: {},
     },
+    sharedAccess: {
+      type: [
+        {
+          sharedWithEmployeeId: {
+            type: Schema.Types.ObjectId,
+            ref: 'User',
+            required: true,
+            index: true,
+          },
+          terms: {
+            type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
+            required: true,
+            default: [],
+          },
+          status: {
+            type: String,
+            enum: ['ACTIVE', 'REVOKED'],
+            required: true,
+            default: 'ACTIVE',
+            index: true,
+          },
+          note: { type: String, trim: true, maxlength: 500 },
+          sharedBy: {
+            type: Schema.Types.ObjectId,
+            ref: 'User',
+            required: true,
+          },
+          sharedAt: {
+            type: Date,
+            required: true,
+            default: Date.now,
+          },
+          revokedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+          revokedAt: Date,
+          revocationReason: { type: String, trim: true, maxlength: 500 },
+        },
+      ],
+      default: [],
+    },
     managerValues: {
       type: Schema.Types.Mixed,
       default: {},
@@ -294,6 +357,7 @@ const objectiveEmployeeAssignmentSchema = new Schema<IObjectiveEmployeeAssignmen
   {
     collection: 'pms_objective_employee_assignments',
     timestamps: true,
+    optimisticConcurrency: true,
   },
 );
 
@@ -311,6 +375,16 @@ objectiveEmployeeAssignmentSchema.index({
 });
 objectiveEmployeeAssignmentSchema.index({ managerId: 1, status: 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({ selectedTerms: 1, status: 1, isDeleted: 1 });
+objectiveEmployeeAssignmentSchema.index({
+  'sharedAccess.sharedWithEmployeeId': 1,
+  'sharedAccess.status': 1,
+  isDeleted: 1,
+});
+objectiveEmployeeAssignmentSchema.index({
+  'sharedAccess.terms': 1,
+  'sharedAccess.status': 1,
+  isDeleted: 1,
+});
 objectiveEmployeeAssignmentSchema.index({ 'termStates.term': 1, 'termStates.status': 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({ 'managerTermStates.term': 1, 'managerTermStates.status': 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({

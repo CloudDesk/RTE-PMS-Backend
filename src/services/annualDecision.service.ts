@@ -37,6 +37,11 @@ import {
   type ResolvedTemplateVersion,
 } from './pms-template.service';
 import { PmsScoringService } from './pms-scoring.service';
+import { ObjectiveMatrixService } from './objective-matrix.service';
+import type {
+  AnnualObjectiveMatrixResponse,
+  ObjectiveMatrixMode,
+} from '../types/pms-objective-matrix';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { IAnnualCycle } from '../models/pms-annual-cycle.model';
 import type { IAnnualDecision } from '../models/pms-annual-decision.model';
@@ -45,6 +50,7 @@ import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type { AppraisalOutcomeType as AppraisalOutcomeTypeType } from '../constants/pms.enums';
 import type { IAnnualDecisionValue } from '../models/pms-annual-decision-value.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
+import { PmsTemplate } from '../models/pms-template.model';
 
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
@@ -98,6 +104,47 @@ export interface AnnualSummaryResult {
   annualDecision: Record<string, unknown> | null;
   correctionHistory: Array<Record<string, unknown>>;
   preReopenSnapshots: Array<Record<string, unknown>>;
+  objectiveMatrix: AnnualObjectiveMatrixResponse | null;
+  objectiveMatrixIntegrity: {
+    source: 'LIVE_ROLE_MASKED';
+    liveContentHash?: string;
+    frozenContentHash?: string;
+    matchesFrozen?: boolean;
+  };
+}
+
+export function assertObjectiveMatrixFreezeIntegrity(
+  matrix: AnnualObjectiveMatrixResponse | null,
+): void {
+  if (!matrix) return;
+  if (!/^[a-f0-9]{64}$/.test(matrix.contentHash || '')) {
+    throw new Error('Objective matrix content hash is invalid; reload before freezing');
+  }
+  if (!Number.isInteger(matrix.layoutVersion) || matrix.layoutVersion < 1) {
+    throw new Error('Objective matrix layout version is invalid; reload before freezing');
+  }
+  if (!Number.isInteger(matrix.contentVersion) || matrix.contentVersion < 1) {
+    throw new Error('Objective matrix content version is invalid; reload before freezing');
+  }
+}
+
+export function maskStoredObjectiveMatrixSnapshot(
+  value: unknown,
+  canSeeStoredAdminObjectiveMatrix: boolean,
+): unknown {
+  if (
+    canSeeStoredAdminObjectiveMatrix ||
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value)
+  ) {
+    return value;
+  }
+
+  const masked = { ...(value as Record<string, unknown>) };
+  delete masked.objectiveMatrix;
+  delete masked.objectiveMatricesByView;
+  return masked;
 }
 
 export interface AnnualDecisionListQuery {
@@ -488,6 +535,22 @@ export class AnnualDecisionService extends BaseService {
           visibilityConfiguration ?? annualAssignment.visibility,
         )
       : null;
+    const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(annualAssignment);
+    const frozenMatrixSnapshot = preReopenSnapshots.find((snapshot) => {
+      const finalSnapshot = snapshot.finalDecisionSnapshot as Record<string, unknown> | undefined;
+      return finalSnapshot?.snapshotKind === 'ANNUAL_DECISION_FREEZE';
+    });
+    const frozenFinalSnapshot = frozenMatrixSnapshot?.finalDecisionSnapshot as
+      | Record<string, unknown>
+      | undefined;
+    const activeOfficialFreeze = [
+      AnnualDecisionStatus.FROZEN,
+      AnnualDecisionStatus.VISIBILITY_ENABLED,
+    ].includes(finalDecisionStatus as any);
+    const frozenContentHash = activeOfficialFreeze && typeof frozenFinalSnapshot?.objectiveMatrixContentHash === 'string'
+      ? frozenFinalSnapshot.objectiveMatrixContentHash
+      : undefined;
+    const actorMatrixMode = this.objectiveMatrixModeForActor();
 
     return {
       annualAssignment: {
@@ -607,6 +670,15 @@ export class AnnualDecisionService extends BaseService {
         : null,
       correctionHistory: maskedCorrectionHistory,
       preReopenSnapshots: maskedPreReopenSnapshots,
+      objectiveMatrix,
+      objectiveMatrixIntegrity: {
+        source: 'LIVE_ROLE_MASKED',
+        liveContentHash: objectiveMatrix?.contentHash,
+        frozenContentHash,
+        ...(frozenContentHash && objectiveMatrix && actorMatrixMode === 'admin'
+          ? { matchesFrozen: frozenContentHash === objectiveMatrix.contentHash }
+          : {}),
+      },
     };
   }
 
@@ -792,6 +864,37 @@ export class AnnualDecisionService extends BaseService {
       'FREEZE',
       decision.decisionStatus,
     );
+    if (!annualAssignment.templateVersionId) {
+      throw new Error('Locked template version is required before freezing annual decision');
+    }
+    const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(annualAssignment, 'admin');
+    assertObjectiveMatrixFreezeIntegrity(objectiveMatrix);
+    const matrixService = new ObjectiveMatrixService(this.context);
+    const [employeeMatrix, managerMatrix, reviewerMatrix, termAssignments, cycle, templateVersion] =
+      await Promise.all([
+        objectiveMatrix
+          ? matrixService.getAnnualMatrix(annualAssignmentId, { mode: 'employee' })
+          : Promise.resolve(null),
+        objectiveMatrix
+          ? matrixService.getAnnualMatrix(annualAssignmentId, { mode: 'manager' })
+          : Promise.resolve(null),
+        objectiveMatrix
+          ? matrixService.getAnnualMatrix(annualAssignmentId, { mode: 'reviewer' })
+          : Promise.resolve(null),
+        TermAssignment.find({
+          annualAssignmentId: annualAssignment._id,
+          assessmentTermCode: { $in: annualAssignment.applicableTerms },
+          isDeleted: false,
+        }).sort({ assessmentTermCode: 1 }).lean(),
+        AnnualCycle.findById(annualAssignment.cycleId).lean(),
+        PmsTemplateVersion.findById(annualAssignment.templateVersionId).lean(),
+      ]);
+    [employeeMatrix, managerMatrix, reviewerMatrix].forEach((matrix) =>
+      assertObjectiveMatrixFreezeIntegrity(matrix),
+    );
+    const template = templateVersion?.templateId
+      ? await PmsTemplate.findById(templateVersion.templateId).lean()
+      : null;
 
     const previousValue = decision.toObject();
     decision.decisionStatus = AnnualDecisionStatus.FROZEN;
@@ -811,6 +914,66 @@ export class AnnualDecisionService extends BaseService {
     annualAssignment.appraisalOutcomeType = decision.appraisalOutcomeType;
     annualAssignment.version += 1;
     await annualAssignment.save();
+
+    const freezeSnapshotPayload = {
+      annualSnapshot: annualAssignment.toObject(),
+      termSnapshots: Object.fromEntries(
+        termAssignments.map((termAssignment) => [
+          termAssignment.assessmentTermCode,
+          { termAssignment },
+        ]),
+      ),
+      finalDecisionSnapshot: {
+        snapshotKind: 'ANNUAL_DECISION_FREEZE',
+        decision: decision.toObject(),
+        objectiveMatrix,
+        objectiveMatricesByView: {
+          employee: employeeMatrix,
+          manager: managerMatrix,
+          reviewer: reviewerMatrix,
+          admin: objectiveMatrix,
+        },
+        objectiveMatrixContentHash: objectiveMatrix?.contentHash,
+        objectiveMatrixLayoutVersion: objectiveMatrix?.layoutVersion,
+        objectiveMatrixContentVersion: objectiveMatrix?.contentVersion,
+        reportMetadata: {
+          cycle: cycle ? {
+            _id: cycle._id,
+            name: cycle.name,
+            code: cycle.code,
+            appraisalYear: cycle.appraisalYear,
+            assessmentTermType: cycle.assessmentTermType,
+            startDate: cycle.startDate,
+            endDate: cycle.endDate,
+          } : null,
+          template: template ? {
+            _id: template._id,
+            name: template.name,
+            code: template.code,
+          } : null,
+          templateVersion: templateVersion ? {
+            _id: templateVersion._id,
+            versionNo: templateVersion.versionNo,
+            version: templateVersion.version,
+          } : null,
+        },
+      },
+      visibilitySnapshot: {
+        annualAssignmentVisibility: annualAssignment.visibility,
+      },
+    };
+    await PerformanceHistorySnapshot.create({
+      annualAssignmentId: annualAssignment._id,
+      cycleId: annualAssignment.cycleId,
+      employeeId: annualAssignment.employeeId,
+      templateVersionId: annualAssignment.templateVersionId,
+      ...freezeSnapshotPayload,
+      snapshotHash: createHash('sha256')
+        .update(JSON.stringify(freezeSnapshotPayload))
+        .digest('hex'),
+      createdBy: this.actorIdObject(),
+      updatedBy: this.actorIdObject(),
+    });
 
     await this.audit(
       'PMS_ANNUAL_DECISION_FROZEN',
@@ -854,7 +1017,7 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Locked template version is required before reopening annual decision');
     }
 
-    const [termAssignments, termReviews, visibilityConfiguration] = await Promise.all([
+    const [termAssignments, termReviews, visibilityConfiguration, objectiveMatrix] = await Promise.all([
       TermAssignment.find({
         annualAssignmentId: annualAssignment._id,
         assessmentTermCode: { $in: annualAssignment.applicableTerms },
@@ -870,6 +1033,7 @@ export class AnnualDecisionService extends BaseService {
         annualAssignmentId: annualAssignment._id,
         isDeleted: false,
       }),
+      this.loadObjectiveMatrixIfEnabled(annualAssignment, 'admin'),
     ]);
 
     const termReviewMap = new Map(
@@ -888,8 +1052,13 @@ export class AnnualDecisionService extends BaseService {
         ]),
       ),
       finalDecisionSnapshot: {
+        snapshotKind: 'PRE_REOPEN',
         reopenReason: reason,
         decision: decision.toObject(),
+        objectiveMatrix,
+        objectiveMatrixContentHash: objectiveMatrix?.contentHash,
+        objectiveMatrixLayoutVersion: objectiveMatrix?.layoutVersion,
+        objectiveMatrixContentVersion: objectiveMatrix?.contentVersion,
       },
       visibilitySnapshot: {
         visibilityConfiguration: visibilityConfiguration?.toObject() ?? null,
@@ -1210,6 +1379,36 @@ export class AnnualDecisionService extends BaseService {
     );
 
     return annualAssignment;
+  }
+
+  private objectiveMatrixModeForActor(): ObjectiveMatrixMode {
+    const actorRole = normalizePmsRole(this.requireActor().actorRole);
+    if (actorRole === PmsRole.ADMIN) return 'admin';
+    if (actorRole === PmsRole.MANAGER) return 'manager';
+    if (actorRole === PmsRole.EMPLOYEE) return 'employee';
+    return 'reviewer';
+  }
+
+  private async loadObjectiveMatrixIfEnabled(
+    annualAssignment: IAnnualAssignment,
+    mode: ObjectiveMatrixMode = this.objectiveMatrixModeForActor(),
+  ): Promise<AnnualObjectiveMatrixResponse | null> {
+    if (!annualAssignment.templateVersionId) return null;
+    const templateVersion = await PmsTemplateVersion.findById(annualAssignment.templateVersionId)
+      .select('sections')
+      .lean();
+    const enabled = templateVersion?.sections?.some((section) =>
+      section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
+      section.objectiveConfig?.tableLayout?.enabled === true,
+    );
+    if (!enabled) return null;
+    return new ObjectiveMatrixService(this.context).getAnnualMatrix(
+      annualAssignment._id.toString(),
+      {
+        mode,
+        employeeId: annualAssignment.employeeId.toString(),
+      },
+    );
   }
 
   private deriveOutcome(
@@ -1992,14 +2191,17 @@ export class AnnualDecisionService extends BaseService {
       if (this.normalizeAnnualFieldKey(section.sectionKey) !== requestedSectionKey) {
         continue;
       }
-      if (!this.isAnnualDecisionTemplateSection(section)) {
+      if (!this.isAnnualDecisionTemplateSection(section) && !this.isAnnualDecisionCommunicationSection(section)) {
         continue;
       }
 
       const field = (section.fields ?? []).find((item) =>
         requestedFieldKeys.includes(this.normalizeAnnualFieldKey(item.fieldKey)),
       );
-      if (!field || !this.isRawAnnualDecisionFieldEditable(field, section, role, workflowState)) {
+      const fieldWorkflowState = this.isAnnualDecisionCommunicationSection(section)
+        ? AnnualWorkflowState.COMMUNICATION_READY
+        : workflowState;
+      if (!field || !this.isRawAnnualDecisionFieldEditable(field, section, role, fieldWorkflowState)) {
         return null;
       }
 
@@ -2024,6 +2226,20 @@ export class AnnualDecisionService extends BaseService {
     ]);
 
     return module === 'Annual Appraisal Decision Management' || annualDecisionSectionTypes.has(sectionType);
+  }
+
+  private isAnnualDecisionCommunicationSection(section: ITemplateSection): boolean {
+    const sectionRecord = section as ITemplateSection & Record<string, unknown>;
+    const metadata = this.asRecord(section.metadata);
+    const module = String(sectionRecord.module ?? metadata?.module ?? '').trim();
+    const sectionType = String(section.sectionType ?? '').trim();
+    const purpose = String(metadata?.permissionPurpose ?? metadata?.customSectionPurpose ?? '').trim();
+
+    return (
+      module === 'Visibility Governance' ||
+      sectionType === PmsTemplateSectionType.VISIBILITY_GOVERNANCE ||
+      purpose === 'VISIBILITY_COMMUNICATION'
+    );
   }
 
   private resolveAnnualDecisionTemplateWorkflowState(
@@ -2968,15 +3184,36 @@ export class AnnualDecisionService extends BaseService {
     },
   ): Array<Record<string, unknown>> {
     const permissions = this.getHistoryVisibilityPermissions(visibility);
+    const actorRole = normalizePmsRole(this.requireActor().actorRole);
+    const canSeeStoredAdminObjectiveMatrix = actorRole === PmsRole.ADMIN;
 
-    return snapshots.map((snapshot) => ({
-      ...snapshot,
-      annualSnapshot: this.maskHistoryValue(snapshot.annualSnapshot, permissions),
-      termSnapshots: this.maskHistoryValue(snapshot.termSnapshots, permissions),
-      finalDecisionSnapshot: this.maskHistoryValue(snapshot.finalDecisionSnapshot, permissions),
-      visibilitySnapshot: this.maskHistoryValue(snapshot.visibilitySnapshot, permissions),
-      communicationSnapshot: this.maskHistoryValue(snapshot.communicationSnapshot, permissions),
-    }));
+    return snapshots.map((snapshot) => {
+      const maskedFinalDecisionSnapshot = this.maskHistoryValue(
+        snapshot.finalDecisionSnapshot,
+        permissions,
+      );
+      const maskedByRole =
+        maskedFinalDecisionSnapshot && typeof maskedFinalDecisionSnapshot === 'object'
+          ? { ...(maskedFinalDecisionSnapshot as Record<string, unknown>) }
+          : maskedFinalDecisionSnapshot;
+
+      // Freeze history intentionally stores the complete admin matrix. Never return that
+      // embedded copy to a non-admin actor; their separately loaded objectiveMatrix is
+      // server-masked for the current role and remains the only matrix they can inspect.
+      const finalDecisionSnapshot = maskStoredObjectiveMatrixSnapshot(
+        maskedByRole,
+        canSeeStoredAdminObjectiveMatrix,
+      );
+
+      return {
+        ...snapshot,
+        annualSnapshot: this.maskHistoryValue(snapshot.annualSnapshot, permissions),
+        termSnapshots: this.maskHistoryValue(snapshot.termSnapshots, permissions),
+        finalDecisionSnapshot,
+        visibilitySnapshot: this.maskHistoryValue(snapshot.visibilitySnapshot, permissions),
+        communicationSnapshot: this.maskHistoryValue(snapshot.communicationSnapshot, permissions),
+      };
+    });
   }
 
   private getHistoryVisibilityPermissions(visibility: {

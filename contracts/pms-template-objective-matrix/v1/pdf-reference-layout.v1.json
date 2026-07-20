@@ -1,0 +1,59 @@
+{
+  "contractVersion": 1,
+  "documentKey": "PMS_TEMPLATE_OBJECTIVE_MATRIX_REPORT",
+  "official": {
+    "snapshotMode": "FROZEN",
+    "serverGenerated": true,
+    "watermark": null,
+    "requiredMetadata": [
+      "employeeName",
+      "employeeCode",
+      "cycleName",
+      "cadence",
+      "templateName",
+      "templateVersion",
+      "annualAssignmentId",
+      "finalDecisionReference",
+      "generatedAt",
+      "contentHash"
+    ],
+    "requiredSections": [
+      "employeeAndAssignmentHeader",
+      "objectiveMatrix",
+      "formulaResults",
+      "calculatedRows",
+      "termStateLegend",
+      "finalDecisionReference",
+      "generationIntegrityFooter"
+    ],
+    "matrixRequirements": {
+      "preserveConfiguredColumnOrder": true,
+      "preserveHeaderGroups": true,
+      "preserveRowGroups": true,
+      "showTermOrderFromCadence": true,
+      "showObjectiveSource": true,
+      "showTermStates": true,
+      "showFormulaErrorsSafely": true,
+      "showInternalFormulaExpression": false,
+      "repeatTableHeaderOnPageBreak": true
+    }
+  },
+  "livePreview": {
+    "snapshotMode": "LIVE",
+    "serverGenerated": true,
+    "watermark": "DRAFT - LIVE DATA",
+    "officialRecord": false
+  },
+  "roleMasking": [
+    {"view": "employee", "applyBeforeRendering": true, "includeConfidentialManagerColumns": false, "includeAudit": false},
+    {"view": "manager", "applyBeforeRendering": true, "includeConfidentialManagerColumns": true, "includeAudit": false},
+    {"view": "reviewer", "applyBeforeRendering": true, "includeConfidentialManagerColumns": "ONLY_IF_EXPLICITLY_GRANTED", "includeAudit": false},
+    {"view": "admin", "applyBeforeRendering": true, "includeConfidentialManagerColumns": "ONLY_IF_EXPLICITLY_GRANTED", "includeAudit": "AUTHORIZED_DETAIL_ONLY"}
+  ],
+  "integrity": {
+    "hashAlgorithm": "SHA-256",
+    "hashInput": "CANONICAL_ROLE_MASKED_FROZEN_SNAPSHOT",
+    "hashPrinted": true,
+    "generationTimestampPrinted": true
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "fixtureId": "half-yearly-sales-objectives-v1",
+  "contractVersion": 1,
+  "cadence": "HALF_YEARLY",
+  "termOrder": ["H1", "H2"],
+  "annualAssignmentId": "annual-assignment-half-yearly-001",
+  "logicalRow": {
+    "objectiveRowKey": "row-new-revenue",
+    "source": "MANAGER_CREATED",
+    "rowOriginTermCode": "H1",
+    "rowCoverage": ["H1", "H2"],
+    "siblings": [
+      {"termCode": "H1", "termAssignmentId": "term-h1-001", "objectiveId": "objective-h1-001", "status": "OBJECTIVE_APPROVED", "version": 2},
+      {"termCode": "H2", "termAssignmentId": "term-h2-001", "objectiveId": "objective-h2-001", "status": "OBJECTIVE_DRAFT", "version": 1}
+    ]
+  },
+  "repeatingColumnExpansion": {
+    "columnId": "col-revenue-actual",
+    "label": "Revenue Actual",
+    "termPolicy": "EVERY_REVIEW_PERIOD",
+    "expandedCells": ["H1", "H2"]
+  }
+}

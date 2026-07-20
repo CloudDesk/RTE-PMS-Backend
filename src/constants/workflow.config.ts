@@ -37,7 +37,6 @@ const termTransitionsBase = {
     TermWorkflowState.OBJECTIVE_SUBMITTED,
   ],
   [TermWorkflowState.OBJECTIVE_APPROVED]: [
-    TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
     TermWorkflowState.MANAGER_REVIEW_OPEN,
   ],
   [TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN]: [

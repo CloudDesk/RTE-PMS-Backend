@@ -36,8 +36,26 @@ describe('ObjectiveService - employee assignment list scope', () => {
   it('returns a manager own assignment for SELF scope', () => {
     const filter = scopedFilter('MANAGER', { scope: 'SELF', employeeId: otherEmployeeId.toString() });
 
-    expect(filter.employeeId.toString()).toBe(actorId.toString());
+    expect(filter.employeeId).toBeUndefined();
     expect(filter.managerId).toBeUndefined();
+    expect(filter.$or[0].employeeId.toString()).toBe(actorId.toString());
+    expect(filter.$or[1].sharedAccess.$elemMatch.sharedWithEmployeeId.toString()).toBe(actorId.toString());
+    expect(filter.$or[1].sharedAccess.$elemMatch.status).toBe('ACTIVE');
+  });
+
+  it('includes active assignments shared with an employee in SELF scope', () => {
+    const filter = scopedFilter('STAFF', { scope: 'SELF' });
+
+    expect(filter.$or).toHaveLength(2);
+    expect(filter.$or[0].employeeId.toString()).toBe(actorId.toString());
+    expect(filter.$or[1]).toEqual({
+      sharedAccess: {
+        $elemMatch: {
+          sharedWithEmployeeId: actorId,
+          status: 'ACTIVE',
+        },
+      },
+    });
   });
 
   it('returns direct-report assignments for manager TEAM scope', () => {

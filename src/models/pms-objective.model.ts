@@ -76,6 +76,12 @@ export interface IObjective extends Document {
   objectiveNo?: number;
   source: ObjectiveSourceType;
   templateObjectiveKey?: string;
+  objectiveRowKey?: string;
+  rowOriginTermCode?: AssessmentTermCodeType;
+  rowCoverage?: AssessmentTermCodeType[];
+  rowGroupKey?: string;
+  rowOrder?: number;
+  rowCreationCorrelationId?: string;
   isPredefined?: boolean;
   title: string;
   description?: string;
@@ -259,6 +265,31 @@ const objectiveSchema = new Schema<IObjective>(
       trim: true,
       index: true,
     },
+    objectiveRowKey: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    rowOriginTermCode: {
+      type: String,
+      enum: Object.values(AssessmentTermCode),
+      index: true,
+    },
+    rowCoverage: {
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
+      default: [],
+    },
+    rowGroupKey: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    rowOrder: { type: Number, min: 0 },
+    rowCreationCorrelationId: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     isPredefined: {
       type: Boolean,
       default: false,
@@ -341,5 +372,45 @@ objectiveSchema.index({ objectiveMasterId: 1, employeeId: 1, assessmentTerm: 1, 
 objectiveSchema.index({ objectiveVersionId: 1, isDeleted: 1 });
 objectiveSchema.index({ assignmentRuleRefs: 1 });
 objectiveSchema.index({ applicabilityStatus: 1, isDeleted: 1 });
+objectiveSchema.index(
+  { annualAssignmentId: 1, objectiveRowKey: 1, assessmentTermCode: 1, isDeleted: 1 },
+  {
+    name: 'uq_objective_annual_row_term_active',
+    unique: true,
+    partialFilterExpression: {
+      isDeleted: false,
+      objectiveRowKey: { $type: 'string' },
+      annualAssignmentId: { $type: 'objectId' },
+      assessmentTermCode: { $type: 'string' },
+    },
+  },
+);
+objectiveSchema.index(
+  { termAssignmentId: 1, objectiveRowKey: 1, isDeleted: 1 },
+  {
+    name: 'uq_objective_term_row_active',
+    unique: true,
+    partialFilterExpression: {
+      isDeleted: false,
+      objectiveRowKey: { $type: 'string' },
+    },
+  },
+);
+objectiveSchema.index(
+  { annualAssignmentId: 1, rowGroupKey: 1, isDeleted: 1 },
+  { name: 'idx_objective_annual_row_group_active' },
+);
+objectiveSchema.index(
+  { annualAssignmentId: 1, rowCreationCorrelationId: 1, assessmentTermCode: 1, isDeleted: 1 },
+  {
+    name: 'uq_objective_dynamic_correlation_active',
+    unique: true,
+    partialFilterExpression: {
+      isDeleted: false,
+      rowCreationCorrelationId: { $type: 'string' },
+      annualAssignmentId: { $type: 'objectId' },
+    },
+  },
+);
 
 export const Objective = mongoose.model<IObjective>('Objective', objectiveSchema);

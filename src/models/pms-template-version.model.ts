@@ -47,6 +47,123 @@ export interface ITemplatePredefinedObjective {
   termScope?: AssessmentTermCodeType[];
   applicableTerms?: AssessmentTermCodeType[];
   repeatFor?: AssessmentTermCodeType[];
+  columnValues?: Record<string, unknown>;
+  rowGroupKey?: string;
+  rowOrder?: number;
+}
+
+export type TemplateObjectiveColumnType =
+  | 'SHORT_TEXT'
+  | 'LONG_TEXT'
+  | 'NUMERIC_INPUT'
+  | 'PERCENTAGE'
+  | 'CURRENCY'
+  | 'DATE'
+  | 'DROPDOWN'
+  | 'BOOLEAN'
+  | 'RATING_SCALE'
+  | 'ATTACHMENT'
+  | 'FORMULA'
+  | 'SYSTEM_DISPLAY';
+export type TemplateObjectiveColumnTermMode =
+  | 'EVERY_REVIEW_PERIOD'
+  | 'CURRENT_PERIOD'
+  | 'SELECTED_PERIODS'
+  | 'SHARED_ANNUAL';
+export type TemplateObjectiveFormulaScope =
+  | 'ROW'
+  | 'ROW_ACROSS_TERMS'
+  | 'GROUP'
+  | 'TABLE';
+
+export interface ITemplateObjectiveTableColumnAccess {
+  role: string;
+  visible: boolean;
+  editable: boolean;
+  required?: boolean;
+}
+
+export interface ITemplateObjectiveTableColumn {
+  columnId: string;
+  bindingKey: string;
+  label: string;
+  type: TemplateObjectiveColumnType;
+  displayOrder: number;
+  width?: number;
+  helpText?: string;
+  required?: boolean;
+  fillOwner: 'ROW_CREATOR' | 'EMPLOYEE' | 'MANAGER' | 'ADMIN' | 'SYSTEM';
+  workflowStage:
+  | 'OBJECTIVE_SETTING'
+  | 'EMPLOYEE_ACHIEVEMENT'
+  | 'MANAGER_REVIEW'
+  | 'ANNUAL_DECISION'
+  | 'CALCULATED';
+  options?: ITemplateOption[];
+  access?: ITemplateObjectiveTableColumnAccess[];
+}
+
+export interface ITemplateObjectiveColumnGroup {
+  groupId: string;
+  label: string;
+  columnIds: string[];
+  displayOrder: number;
+}
+
+export interface ITemplateObjectiveRowGroup {
+  rowGroupKey: string;
+  label: string;
+  source: 'PREDEFINED' | 'EMPLOYEE_CREATED' | 'MANAGER_CREATED';
+  displayOrder: number;
+}
+
+export interface ITemplateObjectiveRowAssignment {
+  objectiveKey: string;
+  rowGroupKey: string;
+  displayOrder: number;
+}
+
+export interface ITemplateObjectiveColumnTermPolicy {
+  columnId: string;
+  mode: TemplateObjectiveColumnTermMode;
+  selectedTerms?: AssessmentTermCodeType[];
+}
+
+export interface ITemplateObjectiveFormula {
+  formulaId: string;
+  targetColumnId: string;
+  scope: TemplateObjectiveFormulaScope;
+  ast: Record<string, unknown>;
+  emptyPolicy: 'IGNORE' | 'ZERO' | 'ERROR';
+  divideByZeroPolicy: 'NULL' | 'ZERO' | 'ERROR';
+  decimalPrecision?: number;
+}
+
+export interface ITemplateObjectiveCalculatedRow {
+  calculatedRowId: string;
+  label: string;
+  scope: 'GROUP' | 'TABLE';
+  formulaId: string;
+  rowGroupKey?: string;
+  displayOrder: number;
+}
+
+export interface ITemplateObjectiveTableLayout {
+  enabled: boolean;
+  layoutVersion: number;
+  columns: ITemplateObjectiveTableColumn[];
+  columnGroups: ITemplateObjectiveColumnGroup[];
+  rowGroups: ITemplateObjectiveRowGroup[];
+  rowAssignments: ITemplateObjectiveRowAssignment[];
+  termPolicies: ITemplateObjectiveColumnTermPolicy[];
+  formulas: ITemplateObjectiveFormula[];
+  calculatedRows: ITemplateObjectiveCalculatedRow[];
+  dynamicRowPolicy: {
+    employeeDefaultScope: 'CURRENT_TERM';
+    managerDefaultScope: 'CURRENT_TERM';
+    allowEmployeeTermChoice: boolean;
+    allowManagerTermChoice: boolean;
+  };
 }
 
 export interface ITemplateObjectiveConfig {
@@ -74,6 +191,7 @@ export interface ITemplateObjectiveConfig {
     actualAggregationMode?: ObjectiveActualAggregationModeType;
   };
   predefinedObjectives?: ITemplatePredefinedObjective[];
+  tableLayout?: ITemplateObjectiveTableLayout;
 }
 
 export interface IObjectiveBucket {
@@ -127,6 +245,7 @@ export interface ITemplateField {
   editabilityRules?: Record<string, unknown>;
   optionConfig?: Record<string, unknown>;
   scoringConfig?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   defaultValue?: unknown;
   colSpan?: 1 | 2 | 3 | 4;
   options?: ITemplateOption[];
@@ -237,6 +356,212 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
       type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
       default: [],
     },
+    columnValues: { type: Schema.Types.Mixed, default: {} },
+    rowGroupKey: { type: String, trim: true },
+    rowOrder: { type: Number, min: 0 },
+  },
+  { _id: false },
+);
+
+const objectiveTableColumnAccessSchema = new Schema<ITemplateObjectiveTableColumnAccess>(
+  {
+    role: { type: String, required: true, trim: true },
+    visible: { type: Boolean, required: true, default: true },
+    editable: { type: Boolean, required: true, default: false },
+    required: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+const objectiveTableColumnSchema = new Schema<ITemplateObjectiveTableColumn>(
+  {
+    columnId: { type: String, required: true, trim: true },
+    bindingKey: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    type: {
+      type: String,
+      required: true,
+      enum: [
+        PmsTemplateFieldType.SHORT_TEXT,
+        PmsTemplateFieldType.LONG_TEXT,
+        PmsTemplateFieldType.NUMERIC_INPUT,
+        PmsTemplateFieldType.PERCENTAGE,
+        PmsTemplateFieldType.CURRENCY,
+        PmsTemplateFieldType.DATE,
+        PmsTemplateFieldType.DROPDOWN,
+        PmsTemplateFieldType.BOOLEAN,
+        PmsTemplateFieldType.RATING_SCALE,
+        PmsTemplateFieldType.ATTACHMENT,
+        PmsTemplateFieldType.FORMULA,
+        'SYSTEM_DISPLAY',
+      ],
+    },
+    displayOrder: { type: Number, required: true, min: 0 },
+    width: { type: Number, min: 60, max: 1200 },
+    helpText: { type: String, trim: true },
+    required: { type: Boolean, default: false },
+    fillOwner: {
+      type: String,
+      required: true,
+      enum: ['ROW_CREATOR', 'EMPLOYEE', 'MANAGER', 'ADMIN', 'SYSTEM'],
+    },
+    workflowStage: {
+      type: String,
+      required: true,
+      enum: [
+        'OBJECTIVE_SETTING',
+        'EMPLOYEE_ACHIEVEMENT',
+        'MANAGER_REVIEW',
+        'ANNUAL_DECISION',
+        'CALCULATED',
+      ],
+    },
+    options: {
+      type: [
+        {
+          label: { type: String, required: true },
+          value: { type: String, required: true },
+          score: { type: Number },
+          weight: { type: Number },
+          _id: false,
+        },
+      ],
+      default: undefined,
+    },
+    access: { type: [objectiveTableColumnAccessSchema], default: [] },
+  },
+  { _id: false },
+);
+
+const objectiveColumnGroupSchema = new Schema<ITemplateObjectiveColumnGroup>(
+  {
+    groupId: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    columnIds: { type: [{ type: String, trim: true }], default: [] },
+    displayOrder: { type: Number, required: true, min: 0 },
+  },
+  { _id: false },
+);
+
+const objectiveRowGroupSchema = new Schema<ITemplateObjectiveRowGroup>(
+  {
+    rowGroupKey: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    source: {
+      type: String,
+      required: true,
+      enum: ['PREDEFINED', 'EMPLOYEE_CREATED', 'MANAGER_CREATED'],
+    },
+    displayOrder: { type: Number, required: true, min: 0 },
+  },
+  { _id: false },
+);
+
+const objectiveRowAssignmentSchema = new Schema<ITemplateObjectiveRowAssignment>(
+  {
+    objectiveKey: { type: String, required: true, trim: true },
+    rowGroupKey: { type: String, required: true, trim: true },
+    displayOrder: { type: Number, required: true, min: 0 },
+  },
+  { _id: false },
+);
+
+const objectiveColumnTermPolicySchema = new Schema<ITemplateObjectiveColumnTermPolicy>(
+  {
+    columnId: { type: String, required: true, trim: true },
+    mode: {
+      type: String,
+      required: true,
+      enum: [
+        'EVERY_REVIEW_PERIOD',
+        'CURRENT_PERIOD',
+        'SELECTED_PERIODS',
+        'SHARED_ANNUAL',
+      ],
+    },
+    selectedTerms: {
+      type: [{ type: String, enum: Object.values(AssessmentTermCode) }],
+      default: undefined,
+    },
+  },
+  { _id: false },
+);
+
+const objectiveFormulaSchema = new Schema<ITemplateObjectiveFormula>(
+  {
+    formulaId: { type: String, required: true, trim: true },
+    targetColumnId: { type: String, required: true, trim: true },
+    scope: {
+      type: String,
+      required: true,
+      enum: ['ROW', 'ROW_ACROSS_TERMS', 'GROUP', 'TABLE'],
+    },
+    ast: { type: Schema.Types.Mixed, required: true },
+    emptyPolicy: {
+      type: String,
+      required: true,
+      enum: ['IGNORE', 'ZERO', 'ERROR'],
+      default: 'IGNORE',
+    },
+    divideByZeroPolicy: {
+      type: String,
+      required: true,
+      enum: ['NULL', 'ZERO', 'ERROR'],
+      default: 'NULL',
+    },
+    decimalPrecision: { type: Number, min: 0, max: 12 },
+  },
+  { _id: false },
+);
+
+const objectiveCalculatedRowSchema = new Schema<ITemplateObjectiveCalculatedRow>(
+  {
+    calculatedRowId: { type: String, required: true, trim: true },
+    label: { type: String, required: true, trim: true },
+    scope: { type: String, required: true, enum: ['GROUP', 'TABLE'] },
+    formulaId: { type: String, required: true, trim: true },
+    rowGroupKey: { type: String, trim: true },
+    displayOrder: { type: Number, required: true, min: 0 },
+  },
+  { _id: false },
+);
+
+const objectiveTableLayoutSchema = new Schema<ITemplateObjectiveTableLayout>(
+  {
+    enabled: { type: Boolean, default: false },
+    layoutVersion: { type: Number, required: true, min: 1, default: 1 },
+    columns: { type: [objectiveTableColumnSchema], default: [] },
+    columnGroups: { type: [objectiveColumnGroupSchema], default: [] },
+    rowGroups: { type: [objectiveRowGroupSchema], default: [] },
+    rowAssignments: { type: [objectiveRowAssignmentSchema], default: [] },
+    termPolicies: { type: [objectiveColumnTermPolicySchema], default: [] },
+    formulas: { type: [objectiveFormulaSchema], default: [] },
+    calculatedRows: { type: [objectiveCalculatedRowSchema], default: [] },
+    dynamicRowPolicy: {
+      type: new Schema(
+        {
+          employeeDefaultScope: {
+            type: String,
+            enum: ['CURRENT_TERM'],
+            default: 'CURRENT_TERM',
+          },
+          managerDefaultScope: {
+            type: String,
+            enum: ['CURRENT_TERM'],
+            default: 'CURRENT_TERM',
+          },
+          allowEmployeeTermChoice: { type: Boolean, default: false },
+          allowManagerTermChoice: { type: Boolean, default: false },
+        },
+        { _id: false },
+      ),
+      default: () => ({
+        employeeDefaultScope: 'CURRENT_TERM',
+        managerDefaultScope: 'CURRENT_TERM',
+        allowEmployeeTermChoice: false,
+        allowManagerTermChoice: false,
+      }),
+    },
   },
   { _id: false },
 );
@@ -283,6 +608,7 @@ const objectiveConfigSchema = new Schema<ITemplateObjectiveConfig>(
       },
     },
     predefinedObjectives: { type: [predefinedObjectiveSchema], default: [] },
+    tableLayout: { type: objectiveTableLayoutSchema, default: undefined },
   },
   { _id: false },
 );
@@ -366,6 +692,7 @@ const templateFieldSchema = new Schema<ITemplateField>(
     editabilityRules: Schema.Types.Mixed,
     optionConfig: Schema.Types.Mixed,
     scoringConfig: Schema.Types.Mixed,
+    metadata: Schema.Types.Mixed,
     defaultValue: Schema.Types.Mixed,
     colSpan: { type: Number, enum: [1, 2, 3, 4], default: 4 },
     behaviors: {

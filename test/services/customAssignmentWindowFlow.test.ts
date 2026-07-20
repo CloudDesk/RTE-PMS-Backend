@@ -343,7 +343,7 @@ describe('Custom assignment window flow', () => {
     expect(q3.termState).toBe(TermWorkflowState.OBJECTIVE_SETTING_OPEN);
   });
 
-  it('moves continue-from-achievement to achievement open only when custom achievement is active', async () => {
+  it('does not create a workflow state while only the legacy custom achievement window is active', async () => {
     const service = createAssignmentService();
     const q3: any = termAssignment();
     mockTransition();
@@ -355,13 +355,8 @@ describe('Custom assignment window flow', () => {
       termCycleMap(q3, cycleQ3Windows()),
     );
 
-    expect(transitionTermAssignmentState).toHaveBeenCalledTimes(3);
-    expect((transitionTermAssignmentState as jest.Mock).mock.calls.map((call) => call[1])).toEqual([
-      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
-      TermWorkflowState.OBJECTIVE_APPROVED,
-      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-    ]);
-    expect(q3.termState).toBe(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
+    expect(q3.termState).toBe(TermWorkflowState.NOT_STARTED);
   });
 
   it('moves continue-with-achievement to manager review when achievement is past and custom manager review is active', async () => {

@@ -6,6 +6,7 @@ import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { User } from '../models/user.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
+import { Objective } from '../models/pms-objective.model';
 import { Types } from 'mongoose';
 import { NotificationEvent } from '../models/pms-notification-event.model';
 import { AssessmentTermCode, normalizePmsRole, PmsRole } from '../constants/pms.enums';
@@ -391,7 +392,7 @@ export class SlaService {
       new Set(assignments.map((assignment) => assignment.annualAssignmentId.toString())),
     );
 
-    const [termCycles, annualAssignments, submissions, annualCycles, adminUsers] = await Promise.all([
+    const [termCycles, annualAssignments, submissions, objectives, annualCycles, adminUsers] = await Promise.all([
       TermCycle.find({
         _id: { $in: cycleTermIds.map((id) => new Types.ObjectId(id)) },
         isDeleted: false,
@@ -405,10 +406,17 @@ export class SlaService {
         .select('templateVersionId orgSnapshot cycleId employeeSnapshot managerSnapshot assignmentWindowSnapshot')
         .lean(),
       EmployeeAchievementSubmission.find({
-        termAssignmentId: { $in: termAssignmentIds },
+        annualAssignmentId: { $in: annualAssignmentIds.map((id) => new Types.ObjectId(id)) },
         isDeleted: false,
       })
-        .select('termAssignmentId status')
+        .select('annualAssignmentId status achievementItems')
+        .lean(),
+      Objective.find({
+        termAssignmentId: { $in: termAssignmentIds },
+        status: 'OBJECTIVE_APPROVED',
+        isDeleted: false,
+      })
+        .select('termAssignmentId weightage source isPredefined')
         .lean(),
       AnnualCycle.find({
         _id: {
@@ -446,9 +454,23 @@ export class SlaService {
 
     const termCycleById = new Map(termCycles.map((cycle) => [cycle._id.toString(), cycle]));
     const annualAssignmentById = new Map(annualAssignments.map((assignment) => [assignment._id.toString(), assignment]));
-    const submissionByTermAssignmentId = new Map(
-      submissions.map((submission) => [submission.termAssignmentId.toString(), submission]),
+    const submissionByAnnualAssignmentId = new Map(
+      submissions.map((submission) => [submission.annualAssignmentId.toString(), submission]),
     );
+    const scoreableObjectiveIdsByTermAssignmentId = new Map<string, string[]>();
+    for (const objective of objectives) {
+      if (
+        !Number.isFinite(Number(objective.weightage)) &&
+        objective.isPredefined !== true &&
+        objective.source !== 'PREDEFINED'
+      ) {
+        continue;
+      }
+      const key = objective.termAssignmentId.toString();
+      const ids = scoreableObjectiveIdsByTermAssignmentId.get(key) ?? [];
+      ids.push(objective._id.toString());
+      scoreableObjectiveIdsByTermAssignmentId.set(key, ids);
+    }
     const annualCycleById = new Map(annualCycles.map((cycle) => [cycle._id.toString(), cycle]));
     const templateVersionById = new Map(templateVersions.map((template) => [template._id.toString(), template]));
     const adminRecipientIds = adminUsers
@@ -486,11 +508,37 @@ export class SlaService {
         continue;
       }
 
-      const submission = submissionByTermAssignmentId.get(assignment._id.toString());
-      if (
+      const submission = submissionByAnnualAssignmentId.get(assignment.annualAssignmentId.toString());
+      const employeeAchievementConfig = (
+        (templateVersion?.metadata as Record<string, any> | undefined)?.employeeAchievementConfig ?? {}
+      ) as Record<string, any>;
+      const objectiveLinkedAchievementRequired =
+        employeeAchievementConfig.objectiveLinkedAchievementRequired !== false;
+      const scoreableObjectiveIds = scoreableObjectiveIdsByTermAssignmentId.get(
+        assignment._id.toString(),
+      ) ?? [];
+      const submittedObjectiveIds = new Set(
+        (submission?.achievementItems ?? [])
+          .filter((item: Record<string, any>) =>
+            item?.type === 'OBJECTIVE' &&
+            item?.objectiveId &&
+            String(item.description ?? '').trim() &&
+            (
+              item.itemStatus === EmployeeAchievementSubmissionStatus.SUBMITTED ||
+              item.itemStatus === EmployeeAchievementSubmissionStatus.LOCKED ||
+              Boolean(item.submittedAt)
+            ),
+          )
+          .map((item: Record<string, any>) => item.objectiveId.toString()),
+      );
+      const termSubmissionComplete =
         submission?.status === EmployeeAchievementSubmissionStatus.LOCKED ||
-        submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED
-      ) {
+        (
+          objectiveLinkedAchievementRequired && scoreableObjectiveIds.length > 0
+            ? scoreableObjectiveIds.every((objectiveId) => submittedObjectiveIds.has(objectiveId))
+            : submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED
+        );
+      if (termSubmissionComplete) {
         continue;
       }
 
@@ -533,7 +581,7 @@ export class SlaService {
           dueDate: dueAt.toISOString(),
           allowedUntilAt: allowedUntilAt.toISOString(),
           graceDays,
-          routePath: '/my/achievements',
+          routePath: `/my/performance?tab=achievement&termAssignmentId=${assignment._id.toString()}`,
           currentStatus: submission?.status ?? EmployeeAchievementSubmissionStatus.DRAFT,
           overdueRecipientUserIds,
           escalationRecipientUserIds,

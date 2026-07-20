@@ -1379,12 +1379,6 @@ export class CycleService extends BaseService {
         endDate,
         `${assessmentTermCode} Objective Approval window`,
       );
-      this.validateAchievementSubmissionWindow(
-        quarter.achievementSubmissionWindow,
-        startDate,
-        endDate,
-        `${assessmentTermCode} Employee Achievement Submission Window`,
-      );
       this.validateWindowWithinQuarter(
         quarter.managerReviewWindow ?? quarter.reviewWindow,
         startDate,
@@ -1460,36 +1454,6 @@ export class CycleService extends BaseService {
     }
   }
 
-  private validateAchievementSubmissionWindow(
-    window: AchievementSubmissionWindowInput | undefined,
-    quarterStart: Date,
-    quarterEnd: Date,
-    label: string,
-  ): void {
-    if (!window) {
-      throw new Error(`${label} is required and must have at least one full day`);
-    }
-
-    const hasStart = Boolean(window.startDate);
-    const hasEnd = Boolean(window.endDate);
-    if (!hasStart || !hasEnd) {
-      throw new Error(`${label} is required and must include both startDate and endDate`);
-    }
-
-    const startDate = new Date(window.startDate as Date | string);
-    const endDate = new Date(window.endDate as Date | string);
-    this.assertValidDateRange(startDate, endDate, label);
-    if (this.inclusiveDurationDays(startDate, endDate) < 1) {
-      throw new Error(`${label} must have at least one full day`);
-    }
-    if (
-      this.dateOnlyTime(startDate) < this.dateOnlyTime(quarterStart) ||
-      this.dateOnlyTime(endDate) > this.dateOnlyTime(quarterEnd)
-    ) {
-      throw new Error(`${label} must be within Assessment Term dates`);
-    }
-  }
-
   private validateQuarterWindowSequence(
     quarter: TermCycleInput,
     assessmentTermCode: QuarterCode,
@@ -1502,10 +1466,6 @@ export class CycleService extends BaseService {
       {
         label: 'objective approval window',
         window: quarter.objectiveApprovalWindow,
-      },
-      {
-        label: 'employee achievement submission window',
-        window: quarter.achievementSubmissionWindow,
       },
       {
         label: 'manager review window',
@@ -1534,22 +1494,6 @@ export class CycleService extends BaseService {
       }
     }
 
-    const objectiveApproval = quarter.objectiveApprovalWindow;
-    const achievementSubmission = quarter.achievementSubmissionWindow;
-    const managerReview = quarter.managerReviewWindow ?? quarter.reviewWindow;
-    if (objectiveApproval?.endDate && achievementSubmission?.startDate) {
-      const expectedAchievementStart = this.addDays(new Date(objectiveApproval.endDate), 1);
-      if (this.dateOnlyTime(new Date(achievementSubmission.startDate)) !== expectedAchievementStart.getTime()) {
-        throw new Error(`${assessmentTermCode} Employee Achievement Submission Window must start immediately after Objective Approval ends`);
-      }
-    }
-
-    if (achievementSubmission?.endDate && managerReview?.startDate) {
-      const expectedManagerReviewStart = this.addDays(new Date(achievementSubmission.endDate), 1);
-      if (this.dateOnlyTime(new Date(managerReview.startDate)) !== expectedManagerReviewStart.getTime()) {
-        throw new Error(`${assessmentTermCode} Manager Review must start immediately after Employee Achievement Submission Window ends`);
-      }
-    }
   }
 
   private assertValidDateRange(startDate: Date, endDate: Date, label: string): void {

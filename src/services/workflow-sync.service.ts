@@ -4,8 +4,6 @@ import { accessService } from './access.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   ObjectiveStatus,
-  PmsTemplateSectionLevel,
-  PmsTemplateSectionType,
   PmsRole,
   TermWorkflowState,
   WorkflowEntityType,
@@ -14,8 +12,6 @@ import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { EmployeeAchievementSubmission, EmployeeAchievementSubmissionStatus } from '../models/pms-employee-achievement-submission.model';
 import { Objective } from '../models/pms-objective.model';
-import { PmsTemplateVersion } from '../models/pms-template-version.model';
-import type { ITemplateSection } from '../models/pms-template-version.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
@@ -62,11 +58,6 @@ interface WorkflowSyncCandidate {
 interface ObjectiveSettingCloseCheck {
   canClose: boolean;
   reason: string;
-}
-
-interface ObjectiveScoringReadiness {
-  ready: boolean;
-  reason?: string;
 }
 
 export interface WorkflowSyncInput {
@@ -315,21 +306,6 @@ export class WorkflowSyncService extends BaseService {
       };
     }
 
-    if (
-      candidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN &&
-      candidate.windowOverrideApplied !== true
-    ) {
-      const readiness = await this.validateObjectiveScoringReadyForAchievementOpen(termAssignment);
-      if (!readiness.ready) {
-        return {
-          ...baseItem,
-          status: 'SKIPPED',
-          skipReason: 'OBJECTIVE_SCORING_NOT_READY',
-          message: readiness.reason,
-        };
-      }
-    }
-
     const actor = this.requireActor();
     const syncSource = input.source ?? 'ADMIN_MANUAL_SYNC';
     const transitionPath = candidate.transitionPath?.length
@@ -484,18 +460,6 @@ export class WorkflowSyncService extends BaseService {
           status: 'SKIPPED',
           skipReason: 'TRANSITION_NOT_ALLOWED',
           message: nextValidation.message,
-        };
-      }
-    }
-
-    if (finalCandidate.targetState === TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN) {
-      const readiness = await this.validateObjectiveScoringReadyForAchievementOpen(termAssignment);
-      if (!readiness.ready) {
-        return {
-          ...baseItem,
-          status: 'SKIPPED',
-          skipReason: 'OBJECTIVE_SCORING_NOT_READY',
-          message: readiness.reason,
         };
       }
     }
@@ -768,23 +732,6 @@ export class WorkflowSyncService extends BaseService {
       ignoreWindowDates || this.isWindowActive(now, window);
 
     if (customFlowMode === 'CONTINUE_FROM_ACHIEVEMENT') {
-      if (active(effectiveWindows.achievementSubmissionWindow)) {
-        return {
-          ...this.transitionCandidate(
-            TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-            'Achievement Submission Window',
-            effectiveWindows.achievementSubmissionWindow,
-            'Custom assignment achievement submission window is active for this employee.',
-            true,
-          ),
-          transitionPath: [
-            TermWorkflowState.OBJECTIVE_SETTING_OPEN,
-            TermWorkflowState.OBJECTIVE_APPROVED,
-            TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-          ],
-        };
-      }
-
       if (groupedManagerReviewEnabled) {
         return {
           skipReason: 'NOT_ELIGIBLE',
@@ -829,7 +776,7 @@ export class WorkflowSyncService extends BaseService {
 
       return {
         skipReason: 'NOT_ELIGIBLE',
-        reason: 'Custom achievement, manager review, or finalization window is not active for this employee.',
+        reason: 'Custom manager review or finalization window is not active for this employee.',
       };
     }
 
@@ -972,8 +919,8 @@ export class WorkflowSyncService extends BaseService {
 
     if (objectives.length === 0) {
       return {
-        canClose: false,
-        reason: 'Objective setting is still open and no active objectives were found.',
+        canClose: true,
+        reason: 'No active objectives were found.',
       };
     }
 
@@ -997,7 +944,7 @@ export class WorkflowSyncService extends BaseService {
     termAssignment: ITermAssignment,
   ): Promise<string | undefined> {
     const submission = await EmployeeAchievementSubmission.findOne({
-      termAssignmentId: termAssignment._id,
+      annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     }).lean();
 
@@ -1011,10 +958,7 @@ export class WorkflowSyncService extends BaseService {
     termAssignment: ITermAssignment,
     submission: Record<string, any> | null | undefined,
   ): Promise<boolean> {
-    if (
-      submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED ||
-      submission?.status === EmployeeAchievementSubmissionStatus.LOCKED
-    ) {
+    if (submission?.status === EmployeeAchievementSubmissionStatus.LOCKED) {
       return true;
     }
 
@@ -1076,112 +1020,6 @@ export class WorkflowSyncService extends BaseService {
     );
   }
 
-  private async validateObjectiveScoringReadyForAchievementOpen(
-    termAssignment: ITermAssignment,
-  ): Promise<ObjectiveScoringReadiness> {
-    const objectiveSectionWeightage = await this.getObjectiveScoringWeightage(termAssignment);
-
-    if (objectiveSectionWeightage <= 0) {
-      return { ready: true };
-    }
-
-    const approvedObjectives = await Objective.find({
-      termAssignmentId: termAssignment._id,
-      isDeleted: false,
-      status: ObjectiveStatus.OBJECTIVE_APPROVED,
-    })
-      .select('title weightage')
-      .lean();
-
-    if (approvedObjectives.length === 0) {
-      return {
-        ready: false,
-        reason:
-          `Performance Objectives has ${this.formatWeightage(objectiveSectionWeightage)}% scoring weightage, ` +
-          'but no approved objectives exist. Add/approve objectives or change the scoring split before opening achievement submission.',
-      };
-    }
-
-    const approvedObjectiveWeightage = approvedObjectives.reduce(
-      (total, objective) => total + Number(objective.weightage ?? 0),
-      0,
-    );
-
-    if (Math.abs(approvedObjectiveWeightage - 100) > 0.01) {
-      return {
-        ready: false,
-        reason:
-          'Approved objective weightage must total 100% before achievement submission opens. ' +
-          `Current approved objective total is ${this.formatWeightage(approvedObjectiveWeightage)}%.`,
-      };
-    }
-
-    return { ready: true };
-  }
-
-  private async getObjectiveScoringWeightage(termAssignment: ITermAssignment): Promise<number> {
-    const templateVersionId = await this.resolveTemplateVersionId(termAssignment);
-    if (!templateVersionId) {
-      return 0;
-    }
-
-    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
-      .select('sections')
-      .lean();
-
-    if (!templateVersion) {
-      return 0;
-    }
-
-    return (templateVersion.sections ?? [])
-      .filter((section) => this.isObjectiveScoringSectionInTermScope(section, termAssignment.assessmentTermCode))
-      .reduce((total, section) => total + Number(section.sectionScoringConfig?.weightage ?? 0), 0);
-  }
-
-  private async resolveTemplateVersionId(termAssignment: ITermAssignment): Promise<Types.ObjectId | undefined> {
-    if (termAssignment.templateVersionId) {
-      return termAssignment.templateVersionId;
-    }
-
-    const annualAssignment = await AnnualAssignment.findById(termAssignment.annualAssignmentId)
-      .select('templateVersionId')
-      .lean();
-
-    return annualAssignment?.templateVersionId;
-  }
-
-  private isObjectiveScoringSectionInTermScope(
-    section: ITemplateSection,
-    assessmentTermCode: AssessmentTermCodeType,
-  ): boolean {
-    if (section.sectionType !== PmsTemplateSectionType.OBJECTIVES) {
-      return false;
-    }
-
-    if (!this.isTermLevelTemplateSection(section.level)) {
-      return false;
-    }
-
-    if (section.sectionScoringConfig?.participatesInScoring !== true) {
-      return false;
-    }
-
-    const allowedTerms = [
-      ...(section.termScope ?? []),
-      ...(section.repeatFor ?? []),
-    ];
-
-    return allowedTerms.length === 0 || allowedTerms.includes(assessmentTermCode);
-  }
-
-  private isTermLevelTemplateSection(level?: unknown): boolean {
-    return String(level ?? '').trim().toUpperCase() === PmsTemplateSectionLevel.TERM;
-  }
-
-  private formatWeightage(value: number): string {
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  }
-
   private resolveApprovedStateCandidate(
     termCycle: ITermCycle | undefined,
     termAssignment: ITermAssignment,
@@ -1204,31 +1042,10 @@ export class WorkflowSyncService extends BaseService {
       termCycle,
       annualAssignment,
     );
-    const achievementWindow = effectiveWindows.achievementSubmissionWindow;
-    if (achievementWindow?.enabled === true) {
-      if (!ignoreWindowDates && !this.hasWindowStarted(now, achievementWindow)) {
-        return {
-          skipReason: 'NOT_ELIGIBLE',
-          reason: 'Employee achievement submission window has not started.',
-        };
-      }
-      return this.transitionCandidate(
-        TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-        'Employee Achievement Submission Window',
-        achievementWindow,
-        ignoreWindowDates
-          ? 'Employee achievement submission window date bypassed for testing.'
-          : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
-          ? 'Custom employee achievement submission window is eligible for this employee.'
-          : 'Employee achievement submission window is eligible.',
-        ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
-      );
-    }
-
     if (groupedManagerReviewEnabled) {
       return {
         skipReason: 'NOT_ELIGIBLE',
-        reason: 'Employee achievement is disabled and grouped manager review is configured for this cycle. Manager review opens at the configured grouped review period.',
+        reason: 'Grouped manager review is configured for this cycle. Manager review opens at the configured grouped review period.',
       };
     }
 
@@ -1244,10 +1061,10 @@ export class WorkflowSyncService extends BaseService {
       'Manager Review Window',
       managerReviewWindow,
       ignoreWindowDates
-        ? 'Employee achievement is disabled; manager review window date bypassed for testing.'
+        ? 'Manager review window date bypassed for testing.'
         : effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM'
-        ? 'Employee achievement is disabled; custom manager review window is eligible for this employee.'
-        : 'Employee achievement is disabled; manager review window is eligible.',
+        ? 'Custom manager review window is eligible for this employee.'
+        : 'Manager review window is eligible.',
       ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
     );
   }

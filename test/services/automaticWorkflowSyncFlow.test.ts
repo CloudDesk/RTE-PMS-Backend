@@ -292,7 +292,7 @@ describe('Automatic workflow sync flow', () => {
     expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
 
-  it('opens custom continue-with-achievement automatically when the custom achievement window starts', async () => {
+  it('keeps a custom continue flow scheduled while only the legacy achievement window is active', async () => {
     mockCommonQueries(
       TermWorkflowState.NOT_STARTED,
       customContinueAchievementAssignment('2026-07-15'),
@@ -304,19 +304,11 @@ describe('Automatic workflow sync flow', () => {
       source: 'AUTOMATIC_DAILY_SYNC',
     });
 
-    expect(result.totalUpdated).toBe(1);
-    expect((transitionTermAssignmentState as jest.Mock).mock.calls.map((call) => call[1])).toEqual([
-      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
-      TermWorkflowState.OBJECTIVE_APPROVED,
-      TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
-    ]);
-    expect((transitionTermAssignmentState as jest.Mock).mock.calls[2][5]).toEqual(
-      expect.objectContaining({
-        source: 'AUTOMATIC_DAILY_SYNC',
-        windowName: 'Achievement Submission Window',
-        windowOverrideApplied: true,
-      }),
+    expect(result.totalUpdated).toBe(0);
+    expect(result.results[0].message).toBe(
+      'Custom manager review or finalization window is not active for this employee.',
     );
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
 
   it('keeps custom continue-with-achievement scheduled before the custom achievement window starts', async () => {
@@ -333,7 +325,7 @@ describe('Automatic workflow sync flow', () => {
 
     expect(result.totalUpdated).toBe(0);
     expect(result.results[0].message).toBe(
-      'Custom achievement, manager review, or finalization window is not active for this employee.',
+      'Custom manager review or finalization window is not active for this employee.',
     );
     expect(transitionTermAssignmentState).not.toHaveBeenCalled();
   });
@@ -351,7 +343,7 @@ describe('Automatic workflow sync flow', () => {
     expect(result.results[0].warning).toContain('Employee achievement submission is not submitted or incomplete');
     expect(result.results[0].message).toContain('Warning: Employee achievement submission is not submitted or incomplete');
     expect(EmployeeAchievementSubmission.findOne).toHaveBeenCalledWith({
-      termAssignmentId,
+      annualAssignmentId,
       isDeleted: false,
     });
     expect(transitionTermAssignmentState).toHaveBeenCalledWith(
@@ -370,7 +362,20 @@ describe('Automatic workflow sync flow', () => {
   it('opens manager review without a warning when employee achievement is submitted', async () => {
     mockCommonQueries(TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN);
     (EmployeeAchievementSubmission.findOne as jest.Mock).mockReturnValue({
-      lean: jest.fn().mockResolvedValue({ status: 'SUBMITTED' }),
+      lean: jest.fn().mockResolvedValue({
+        status: 'SUBMITTED',
+        achievementItems: [{
+          type: 'ADDITIONAL',
+          description: 'Submitted achievement',
+          itemStatus: 'SUBMITTED',
+        }],
+      }),
+    });
+    const { Objective } = jest.requireMock('../../src/models/pms-objective.model');
+    (Objective.find as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
     });
     const service = createService('2026-09-16T00:00:00.000Z');
 

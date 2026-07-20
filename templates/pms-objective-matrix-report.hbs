@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{documentTitle}}</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; color: #172033; font-size: 10px; }
+    body { background: #ffffff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .watermark { position: fixed; inset: 37% 0 auto; z-index: 0; transform: rotate(-22deg); text-align: center; font-size: 54px; font-weight: 800; letter-spacing: 7px; color: rgba(185, 28, 28, 0.10); pointer-events: none; }
+    .page-content { position: relative; z-index: 1; }
+    .report-header { border: 1px solid #cbd5e1; border-top: 6px solid #1d4ed8; border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
+    .report-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; padding: 14px 16px 11px; background: #eff6ff; }
+    .report-title h1 { margin: 0; font-size: 20px; color: #172554; }
+    .report-title p { margin: 4px 0 0; color: #475569; }
+    .badge { display: inline-block; padding: 5px 9px; border-radius: 999px; background: {{#if official}}#dcfce7{{else}}#fef3c7{{/if}}; color: {{#if official}}#166534{{else}}#92400e{{/if}}; font-weight: 700; white-space: nowrap; }
+    .meta-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid #dbeafe; }
+    .meta { min-height: 48px; padding: 9px 12px; border-right: 1px solid #dbeafe; border-bottom: 1px solid #dbeafe; }
+    .meta:nth-child(4n) { border-right: 0; }
+    .meta-label { margin-bottom: 3px; color: #64748b; font-size: 8px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; }
+    .meta-value { color: #0f172a; font-size: 10px; font-weight: 700; overflow-wrap: anywhere; }
+    .section-title { margin: 13px 0 7px; color: #172554; font-size: 13px; font-weight: 800; break-after: avoid-page; page-break-after: avoid; }
+    .band { margin-bottom: 13px; }
+    .band-label { padding: 6px 9px; border: 1px solid #bfdbfe; border-bottom: 0; border-radius: 6px 6px 0 0; background: #eff6ff; color: #1e40af; font-weight: 700; break-after: avoid-page; page-break-after: avoid; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 7px; vertical-align: top; overflow-wrap: anywhere; }
+    th { background: #e2e8f0; color: #1e293b; font-weight: 800; }
+    .group-head { background: #dbeafe; color: #1e3a8a; text-align: center; }
+    .identity-head { width: 170px; }
+    .identity { background: #f8fafc; }
+    .objective-title { margin-bottom: 3px; color: #0f172a; font-weight: 800; }
+    .row-meta { color: #64748b; font-size: 8px; line-height: 1.35; }
+    .calculated { background: #eef2ff; color: #3730a3; font-weight: 700; }
+    .calculated-label { display: block; margin-top: 2px; font-size: 7px; letter-spacing: .6px; text-transform: uppercase; }
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .summary-card { border: 1px solid #cbd5e1; border-radius: 7px; padding: 9px; break-inside: avoid; }
+    .summary-card h3 { margin: 0 0 7px; font-size: 11px; color: #1e3a8a; }
+    .summary-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 5px 0; border-top: 1px solid #e2e8f0; }
+    .summary-row:first-of-type { border-top: 0; }
+    .summary-value { font-weight: 800; }
+    .decision { margin-top: 11px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 7px; background: #f8fafc; break-inside: avoid; }
+    .decision-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .integrity { margin-top: 12px; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 7px; background: #f8fafc; color: #475569; font-size: 8px; line-height: 1.5; break-inside: avoid; }
+    .hash { font-family: "Courier New", monospace; overflow-wrap: anywhere; color: #1e293b; }
+    @page { size: A4 landscape; margin: 14mm 10mm 17mm; }
+  </style>
+</head>
+<body>
+  {{#if watermark}}<div class="watermark">{{watermark}}</div>{{/if}}
+  <main class="page-content">
+    <header class="report-header">
+      <div class="report-title">
+        <div>
+          <h1>{{documentTitle}}</h1>
+          <p>Template-linked annual objective record</p>
+        </div>
+        <span class="badge">{{snapshotModeLabel}}</span>
+      </div>
+      <div class="meta-grid">
+        <div class="meta"><div class="meta-label">Employee</div><div class="meta-value">{{employeeName}} ({{employeeCode}})</div></div>
+        <div class="meta"><div class="meta-label">Role / Department</div><div class="meta-value">{{employeeRole}} / {{department}}</div></div>
+        <div class="meta"><div class="meta-label">Manager</div><div class="meta-value">{{managerName}}</div></div>
+        <div class="meta"><div class="meta-label">PDF View</div><div class="meta-value">{{viewLabel}}</div></div>
+        <div class="meta"><div class="meta-label">Cycle</div><div class="meta-value">{{cycleName}} ({{cycleCode}})</div></div>
+        <div class="meta"><div class="meta-label">Cadence / Terms</div><div class="meta-value">{{cadence}} / {{termOrder}}</div></div>
+        <div class="meta"><div class="meta-label">Template</div><div class="meta-value">{{templateName}} - Version {{templateVersion}}</div></div>
+        <div class="meta"><div class="meta-label">Annual Assignment</div><div class="meta-value">{{annualAssignmentId}}</div></div>
+      </div>
+    </header>
+
+    <h2 class="section-title">Objective Matrix</h2>
+    {{#each columnBands}}
+      <section class="band">
+        <div class="band-label">{{label}}</div>
+        <table>
+          <thead>
+            <tr>
+              <th class="identity-head" rowspan="2">Objective / Group</th>
+              {{#each headerGroups}}<th class="group-head" colspan="{{colspan}}">{{label}}</th>{{/each}}
+              <th rowspan="2" style="width: 76px">Status</th>
+            </tr>
+            <tr>{{#each columns}}<th style="width: {{width}}px">{{label}}</th>{{/each}}</tr>
+          </thead>
+          <tbody>
+            {{#each rows}}
+              <tr>
+                <td class="identity">
+                  <div class="objective-title">{{objectiveTitle}}</div>
+                  <div class="row-meta">{{rowGroup}}<br />{{source}}</div>
+                </td>
+                {{#each cells}}
+                  <td class="{{#if calculated}}calculated{{/if}}">{{value}}{{#if calculated}}<span class="calculated-label">Calculated</span>{{/if}}</td>
+                {{/each}}
+                <td>{{status}}</td>
+              </tr>
+            {{/each}}
+          </tbody>
+        </table>
+      </section>
+    {{/each}}
+
+    <div class="summary-grid">
+      <section class="summary-card">
+        <h3>Formula Results</h3>
+        {{#each formulaResults}}<div class="summary-row"><span>{{label}} ({{scope}})</span><span class="summary-value">{{value}}</span></div>{{/each}}
+        {{#unless formulaResults.length}}<div class="summary-row"><span>No formula results configured</span><span>N/A</span></div>{{/unless}}
+      </section>
+      <section class="summary-card">
+        <h3>Calculated Rows</h3>
+        {{#each calculatedRows}}<div class="summary-row"><span>{{label}} ({{scope}})</span><span class="summary-value">{{value}}</span></div>{{/each}}
+        {{#unless calculatedRows.length}}<div class="summary-row"><span>No calculated rows configured</span><span>N/A</span></div>{{/unless}}
+      </section>
+      <section class="summary-card">
+        <h3>Term State Legend</h3>
+        {{#each termStates}}<div class="summary-row"><span>{{term}}</span><span class="summary-value">{{state}}</span></div>{{/each}}
+      </section>
+      <section class="summary-card">
+        <h3>Record Context</h3>
+        <div class="summary-row"><span>Final decision reference</span><span class="summary-value">{{finalDecisionReference}}</span></div>
+        <div class="summary-row"><span>Final decision status</span><span class="summary-value">{{finalDecisionStatus}}</span></div>
+        <div class="summary-row"><span>Reopened previously</span><span class="summary-value">{{#if wasReopened}}Yes{{else}}No{{/if}}</span></div>
+      </section>
+    </div>
+
+    {{#if showFinalDecisionOutcome}}
+      <section class="decision">
+        <div class="section-title" style="margin-top:0">Visible Final Decision Outcome</div>
+        <div class="decision-grid">
+          <div><div class="meta-label">Reference</div><div class="meta-value">{{finalDecisionReference}}</div></div>
+          <div><div class="meta-label">Status</div><div class="meta-value">{{finalDecisionStatus}}</div></div>
+          <div><div class="meta-label">Final Score</div><div class="meta-value">{{finalScore}}</div></div>
+          <div><div class="meta-label">Final Rating</div><div class="meta-value">{{finalRating}}</div></div>
+        </div>
+      </section>
+    {{/if}}
+
+    <footer class="integrity">
+      <strong>Generation integrity</strong><br />
+      Generated: {{generatedAt}} | Frozen snapshot: {{snapshotCreatedAt}} | Layout version: {{layoutVersion}} | Content version: {{contentVersion}}<br />
+      Report content hash: <span class="hash">{{contentHash}}</span><br />
+      Matrix content hash: <span class="hash">{{matrixContentHash}}</span>
+    </footer>
+  </main>
+</body>
+</html>
