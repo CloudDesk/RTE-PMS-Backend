@@ -14,7 +14,7 @@ env:
   AZURE_RESOURCE_GROUP: RTE
   AZURE_CONTAINER_REGISTRY_NAME: acrrtepmsprod
   AZURE_CONTAINER_APP_NAME: rte-pms-prod
-  IMAGE_NAME: rte-pms-prod
+  IMAGE_NAME: rte-pms-backend
 
 concurrency:
   group: azure-container-app-pms-prod
