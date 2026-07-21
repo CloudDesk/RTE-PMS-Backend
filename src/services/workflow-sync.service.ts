@@ -974,11 +974,15 @@ export class WorkflowSyncService extends BaseService {
   ): Promise<boolean> {
     const templateVersion = annualAssignment?.templateVersionId
       ? await PmsTemplateVersion.findById(annualAssignment.templateVersionId)
-        .select('metadata')
+        .select('metadata sections')
         .lean()
       : null;
+    const achievementSection = templateVersion?.sections?.find(
+      (section) => section.sectionKey === 'employee_achievement_submission',
+    );
     const config = resolveEmployeeAchievementCompletionConfig(
       (templateVersion?.metadata ?? {}) as Record<string, any>,
+      (achievementSection?.metadata ?? {}) as Record<string, any>,
     );
     if (config.achievementEntryMode === 'EMPLOYEE_AUTHORED') {
       return isEmployeeAchievementSubmissionComplete({ submission, config });

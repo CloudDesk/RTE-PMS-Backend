@@ -84,6 +84,29 @@ describe('EmployeeAchievementSubmissionService - Phase 1 contracts', () => {
     }));
   });
 
+  it('uses section-level employee-authored configuration when version metadata is absent', () => {
+    const service = createService();
+    const config = service.resolveTemplateConfig(
+      { metadata: {} },
+      {
+        sectionKey: 'employee_achievement_submission',
+        metadata: {
+          achievementEntryMode: AchievementEntryMode.EMPLOYEE_AUTHORED,
+          objectiveRelationshipEnabled: true,
+          objectiveRelationshipRequired: false,
+          objectiveLinkedAchievementRequired: false,
+        },
+      },
+    );
+
+    expect(config).toEqual(expect.objectContaining({
+      achievementEntryMode: AchievementEntryMode.EMPLOYEE_AUTHORED,
+      objectiveLinkedAchievementRequired: false,
+      objectiveRelationshipEnabled: true,
+      objectiveRelationshipRequired: false,
+    }));
+  });
+
   it('returns new item identity and relationship fields without dropping legacy fields', () => {
     const service = createService();
     const objectiveId = new Types.ObjectId();

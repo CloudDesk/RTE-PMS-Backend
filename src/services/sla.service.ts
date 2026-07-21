@@ -516,9 +516,12 @@ export class SlaService {
       const employeeAchievementConfig = (
         (templateVersion?.metadata as Record<string, any> | undefined)?.employeeAchievementConfig ?? {}
       ) as Record<string, any>;
+      const achievementSection = templateVersion?.sections?.find(
+        (section) => section.sectionKey === 'employee_achievement_submission',
+      );
       const completionConfig = resolveEmployeeAchievementCompletionConfig({
         employeeAchievementConfig,
-      });
+      }, (achievementSection?.metadata ?? {}) as Record<string, any>);
       const scoreableObjectiveIds = scoreableObjectiveIdsByTermAssignmentId.get(
         assignment._id.toString(),
       ) ?? [];
