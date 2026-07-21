@@ -1,0 +1,108 @@
+name: Deploy PROD PMS Backend to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - PROD
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_RESOURCE_GROUP: RTE
+  AZURE_CONTAINER_REGISTRY_NAME: acrrtepmsprod
+  AZURE_CONTAINER_APP_NAME: rte-pms-prod
+  IMAGE_NAME: rte-pms-prod
+
+concurrency:
+  group: azure-container-app-pms-prod
+  cancel-in-progress: false
+
+jobs:
+  build_and_deploy:
+    name: Build and deploy PMS backend
+    runs-on: ubuntu-latest
+    environment: PROD
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set image names
+        run: |
+          login_server="${AZURE_CONTAINER_REGISTRY_NAME}.azurecr.io"
+          echo "ACR_LOGIN_SERVER=$login_server" >> "$GITHUB_ENV"
+          echo "IMAGE_SHA=$login_server/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "IMAGE_PROD=$login_server/${IMAGE_NAME}:prod" >> "$GITHUB_ENV"
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name "$AZURE_CONTAINER_REGISTRY_NAME"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push PMS backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ env.IMAGE_SHA }}
+            ${{ env.IMAGE_PROD }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update Container App image
+        run: |
+          az containerapp update \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --image "$IMAGE_SHA"
+
+      - name: Resolve Container App URL
+        run: |
+          fqdn="$(az containerapp show \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)"
+
+          if [ -z "$fqdn" ]; then
+            echo "Container App ingress FQDN was not found."
+            exit 1
+          fi
+
+          echo "APP_URL=https://$fqdn" >> "$GITHUB_ENV"
+
+      - name: Verify PMS backend health
+        run: |
+          for endpoint in health/live health/ready; do
+            echo "Checking $APP_URL/$endpoint"
+
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error "$APP_URL/$endpoint"; then
+                echo
+                echo "$endpoint health check passed."
+                break
+              fi
+
+              if [ "$attempt" -eq 30 ]; then
+                echo "$endpoint health check failed."
+                exit 1
+              fi
+
+              echo "$endpoint is not healthy yet. Attempt $attempt/30."
+              sleep 10
+            done
+          done
