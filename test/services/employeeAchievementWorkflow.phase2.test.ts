@@ -251,5 +251,19 @@ describe('EmployeeAchievementSubmissionService - Phase 2 workflow', () => {
       config: legacyConfig,
       scoreableObjectiveIds: ['legacy-objective'],
     })).toBe(false);
+
+    const sectionConfigured = resolveEmployeeAchievementCompletionConfig(
+      {},
+      {
+        achievementEntryMode: AchievementEntryMode.EMPLOYEE_AUTHORED,
+        objectiveRelationshipRequired: false,
+        objectiveLinkedAchievementRequired: false,
+      },
+    );
+    expect(sectionConfigured).toEqual(expect.objectContaining({
+      achievementEntryMode: AchievementEntryMode.EMPLOYEE_AUTHORED,
+      objectiveRelationshipRequired: false,
+      objectiveLinkedAchievementRequired: false,
+    }));
   });
 });

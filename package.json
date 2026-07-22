@@ -25,6 +25,8 @@
     "rollout:pms-employee-authored-achievements": "ts-node src/scripts/rollout-employee-authored-achievements.ts",
     "db:clone": "ts-node scripts/simpleCloneDatabase.ts",
     "db:clone:advanced": "ts-node scripts/cloneDatabase.ts",
+    "containerapp:env:prod:dry-run": "ts-node src/scripts/sync-containerapp-env-prod.ts --dry-run",
+    "containerapp:env:prod": "ts-node src/scripts/sync-containerapp-env-prod.ts --yes",
     "set-project": "gcloud config set project zuno-hr-2025",
     "hrms-build": "docker build -t zuno-cd-hr-india .",
     "hrms-tag": "docker tag zuno-cd-hr-india gcr.io/zuno-hr-2025/zuno-cd-hr-india",
