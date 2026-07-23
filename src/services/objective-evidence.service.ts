@@ -24,7 +24,10 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { BaseService } from './base.service';
 import { DelegationService } from './delegation.service';
-import { isObjectiveMatrixStageWindowOpen } from './objective-matrix.service';
+import {
+  isGlobalDirectorObjectiveRead,
+  isObjectiveMatrixStageWindowOpen,
+} from './objective-matrix.service';
 import { PmsDocumentService } from './pms-document.service';
 
 export const TERM_SUPPORTING_DOCUMENT = 'TERM_SUPPORTING_DOCUMENT';
@@ -338,7 +341,7 @@ export class ObjectiveEvidenceService extends BaseService {
         managerId: annual.assignedManagerId.toString(),
       },
     });
-    if (!access.allowed) {
+    if (!access.allowed && !isGlobalDirectorObjectiveRead(actorRole)) {
       const delegation = await new DelegationService(this.context).getActiveDelegation(
         actorId.toString(),
         annual.assignedManagerId.toString(),

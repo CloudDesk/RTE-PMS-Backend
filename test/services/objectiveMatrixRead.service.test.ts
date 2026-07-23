@@ -21,6 +21,7 @@ import { TermCycle } from '../../src/models/pms-term-cycle.model';
 import { accessService } from '../../src/services/access.service';
 import {
   isObjectiveMatrixDateWindowOpen,
+  isGlobalDirectorObjectiveRead,
   isObjectiveMatrixStageWindowOpen,
   ObjectiveMatrixService,
   resolveObjectiveMatrixCellPermission,
@@ -62,6 +63,49 @@ describe('Objective matrix read model Phase 5', () => {
           : {}),
       });
     }
+  });
+
+  it('grants only Director the global objective-matrix read exception', async () => {
+    expect(isGlobalDirectorObjectiveRead(PmsRole.DIRECTOR)).toBe(true);
+    expect(isGlobalDirectorObjectiveRead(PmsRole.ADMIN)).toBe(false);
+    expect(isGlobalDirectorObjectiveRead(PmsRole.MANAGER)).toBe(false);
+    expect(isGlobalDirectorObjectiveRead(PmsRole.EMPLOYEE)).toBe(false);
+    expect(isGlobalDirectorObjectiveRead(PmsRole.MANAGEMENT)).toBe(false);
+
+    const access = jest.spyOn(accessService, 'canPerform').mockResolvedValue({
+      allowed: false,
+      mappedRole: PmsRole.DIRECTOR,
+      message: 'Hierarchy denied',
+    });
+    const service = new ObjectiveMatrixService({} as any);
+    await expect((service as any).assertAccess(
+      { actorId: new Types.ObjectId().toString(), actorRole: PmsRole.DIRECTOR },
+      {
+        _id: new Types.ObjectId(),
+        employeeId: new Types.ObjectId(),
+        assignedManagerId: new Types.ObjectId(),
+        cycleId: new Types.ObjectId(),
+      },
+    )).resolves.toBeUndefined();
+    expect(access).not.toHaveBeenCalled();
+
+    expect(resolveObjectiveMatrixCellPermission({
+      role: PmsRole.DIRECTOR,
+      workflowState: TermWorkflowState.MANAGER_REVIEW_OPEN,
+      termPosition: 'CURRENT',
+      windowOpen: true,
+      columnFillOwner: PmsRole.MANAGER,
+      columnRequired: true,
+      columnType: 'LONG_TEXT',
+      explicitVisibility: 'VISIBLE',
+      explicitEditable: true,
+      rowSource: ObjectiveSource.MANAGER_CREATED,
+    })).toEqual({
+      visible: true,
+      editable: false,
+      required: false,
+      denialReason: 'ROLE_READ_ONLY',
+    });
   });
 
   it('hides manager approval actions outside the effective approval dates', () => {

@@ -148,6 +148,7 @@ describe('Objective matrix write model Phase 6', () => {
           visible: true, editable: true, required: false, recordVersion: 2,
           valueVersion: index === 0 ? 3 : undefined,
         })) },
+        evidenceByTerm: {},
         actions: {
           canEdit: false, canDelete: false, canSubmit: false, canApprove: false,
           canReturn: false, canComment: true, canAttach: false,

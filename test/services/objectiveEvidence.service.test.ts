@@ -134,7 +134,7 @@ describe('ObjectiveEvidenceService Phase 2', () => {
     });
   });
 
-  it('authorizes active attachment content without returning it in the matrix contract', async () => {
+  it('allows a Director to read authorized evidence outside hierarchy without exposing a storage URL in the matrix', async () => {
     const employeeId = new Types.ObjectId();
     const managerId = new Types.ObjectId();
     const evidenceId = new Types.ObjectId();
@@ -175,8 +175,9 @@ describe('ObjectiveEvidenceService Phase 2', () => {
       templateVersionId: templateId,
     }));
     jest.spyOn(accessService, 'canPerform').mockResolvedValue({
-      allowed: true,
-      mappedRole: 'EMPLOYEE',
+      allowed: false,
+      mappedRole: 'DIRECTOR',
+      message: 'Directors can access only employee PMS records within their extended hierarchy.',
     });
     jest.spyOn(PmsTemplateVersion, 'findOne').mockReturnValue(queryResult({
       _id: templateId,
@@ -188,7 +189,7 @@ describe('ObjectiveEvidenceService Phase 2', () => {
             columns: [{
               type: 'OBJECTIVE_EVIDENCE',
               bindingKey: 'system.objectiveEvidence',
-              access: [{ role: 'EMPLOYEE', visible: true, editable: true }],
+              access: [{ role: 'DIRECTOR', visible: true, editable: false }],
               evidenceConfig: config(),
             }],
           },
@@ -206,7 +207,7 @@ describe('ObjectiveEvidenceService Phase 2', () => {
     }));
 
     const result = await new ObjectiveEvidenceService(
-      context('EMPLOYEE', employeeId.toString()),
+      context('DIRECTOR', new Types.ObjectId().toString()),
     ).resolveActiveAttachmentContent(
       evidenceId.toString(),
       attachmentId.toString(),

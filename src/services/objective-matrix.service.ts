@@ -299,6 +299,10 @@ function objectiveCoreValue(objective: LeanRecord, fieldKey: string): unknown {
   return values[fieldKey];
 }
 
+export function isGlobalDirectorObjectiveRead(role: string | undefined): boolean {
+  return normalizePmsRole(role ?? '') === PmsRole.DIRECTOR;
+}
+
 function typedStoredValue(value?: LeanRecord): unknown {
   if (!value) return undefined;
   if (value.valueNumber !== undefined) return value.valueNumber;
@@ -924,6 +928,11 @@ export class ObjectiveMatrixService {
   }
 
   private async assertAccess(actor: MatrixActor, annualAssignment: LeanRecord): Promise<void> {
+    // Director access to management PMS records is globally read-only. Keep this
+    // exception at the matrix read boundary so no Manager, Employee, Admin, or
+    // matrix write authorization behavior is broadened.
+    if (isGlobalDirectorObjectiveRead(actor.actorRole)) return;
+
     const access = await accessService.canPerform({
       actor,
       action: 'objective.view',
