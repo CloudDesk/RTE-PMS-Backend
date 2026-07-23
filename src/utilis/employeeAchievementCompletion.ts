@@ -15,8 +15,12 @@ export type EmployeeAchievementCompletionConfig = {
 
 export function resolveEmployeeAchievementCompletionConfig(
   metadata?: Record<string, any>,
+  sectionMetadata?: Record<string, any>,
 ): EmployeeAchievementCompletionConfig {
-  const raw = (metadata?.employeeAchievementConfig ?? {}) as Record<string, any>;
+  const raw = {
+    ...(sectionMetadata ?? {}),
+    ...((metadata?.employeeAchievementConfig ?? {}) as Record<string, any>),
+  };
   const achievementEntryMode = raw.achievementEntryMode === EMPLOYEE_AUTHORED
     ? EMPLOYEE_AUTHORED
     : OBJECTIVE_ROWS;

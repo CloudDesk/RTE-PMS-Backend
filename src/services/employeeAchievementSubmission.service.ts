@@ -1983,7 +1983,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   ): AchievementTemplateConfig {
     const metadata = (templateVersion?.metadata ?? {}) as Record<string, any>;
     const sectionExists = Boolean(section);
-    const employeeAchievementConfig = (metadata.employeeAchievementConfig ?? {}) as Record<string, any>;
+    // Achievement settings were historically stored on the section and are now
+    // also stored on version metadata. Keep the assigned version authoritative,
+    // but do not discard the section settings when version metadata is absent.
+    const employeeAchievementConfig = {
+      ...((section.metadata ?? {}) as Record<string, any>),
+      ...((metadata.employeeAchievementConfig ?? {}) as Record<string, any>),
+    };
     const achievementEntryMode =
       employeeAchievementConfig.achievementEntryMode === AchievementEntryMode.EMPLOYEE_AUTHORED
         ? AchievementEntryMode.EMPLOYEE_AUTHORED
