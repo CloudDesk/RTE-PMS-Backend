@@ -952,6 +952,7 @@ export class ManagerReviewPeriodService extends BaseService {
       assessmentTermCode: submission.assessmentTermCode,
       status: submission.status,
       achievementItems: (submission.achievementItems ?? []).map((item: Record<string, any>) => ({
+        itemId: item.itemId,
         type: item.type,
         objectiveId: item.objectiveId?.toString?.(),
         objectiveSnapshot: item.objectiveSnapshot
@@ -959,6 +960,15 @@ export class ManagerReviewPeriodService extends BaseService {
             ...item.objectiveSnapshot,
             targetDate: item.objectiveSnapshot.targetDate
               ? new Date(item.objectiveSnapshot.targetDate).toISOString()
+              : undefined,
+          }
+          : undefined,
+        relatedObjectiveId: item.relatedObjectiveId?.toString?.(),
+        relatedObjectiveSnapshot: item.relatedObjectiveSnapshot
+          ? {
+            ...item.relatedObjectiveSnapshot,
+            targetDate: item.relatedObjectiveSnapshot.targetDate
+              ? new Date(item.relatedObjectiveSnapshot.targetDate).toISOString()
               : undefined,
           }
           : undefined,

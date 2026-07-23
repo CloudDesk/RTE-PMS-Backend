@@ -153,6 +153,48 @@ describe('ObjectiveService - Reporting and dashboard readiness helpers', () => {
     expect(actualValue).toBe(95);
   });
 
+  it('does not treat an employee-authored achievement narrative as an objective actual', () => {
+    const objectiveId = new Types.ObjectId().toString();
+    const actualValue = service.resolveReportingActualValue(
+      objectiveId,
+      {
+        achievementItems: [
+          {
+            type: 'EMPLOYEE_AUTHORED',
+            objectiveId,
+            relatedObjectiveId: objectiveId,
+            description: 'Delivered the rollout ahead of schedule.',
+            outcome: 'Reduced processing time by 20%.',
+          },
+        ],
+        achievementValues: [],
+      },
+    );
+
+    expect(actualValue).toBeUndefined();
+  });
+
+  it('uses separated objective actual values even when multiple achievements relate to one objective', () => {
+    const objectiveId = new Types.ObjectId().toString();
+    const actualValue = service.resolveReportingActualValue(
+      objectiveId,
+      {
+        achievementItems: [
+          { type: 'EMPLOYEE_AUTHORED', relatedObjectiveId: objectiveId, description: 'First contribution.' },
+          { type: 'EMPLOYEE_AUTHORED', relatedObjectiveId: objectiveId, description: 'Second contribution.' },
+        ],
+        achievementValues: [
+          {
+            fieldKey: 'objective_actuals',
+            valueJson: [{ objectiveId, actual: 87 }],
+          },
+        ],
+      },
+    );
+
+    expect(actualValue).toBe(87);
+  });
+
   it('reports assignment level from rule, flexible source, template, or direct objective fields', () => {
     expect(service.resolveObjectiveAssignmentLevel({
       assignmentRuleRefs: [new Types.ObjectId()],

@@ -110,6 +110,33 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   );
 
   fastify.put(
+    '/:termAssignmentId/items/by-item/:itemId/draft',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId, itemId } = request.params as {
+          termAssignmentId: string;
+          itemId: string;
+        };
+        const body = (request.body || {}) as SaveAchievementItemInput;
+        const submission = await request.container!.employeeAchievementSubmissionService.saveItemDraft(
+          termAssignmentId,
+          {
+            ...body,
+            achievementItem: {
+              ...(body.achievementItem || {}),
+              itemId,
+            },
+          },
+        );
+        return reply.send(successResponse('Achievement item draft saved successfully', submission));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
     '/:termAssignmentId/items/:objectiveId/draft',
     { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
     async (request, reply) => {
@@ -170,6 +197,33 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         return reply.send(
           successResponse('Achievement item submitted successfully', submission),
         );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:termAssignmentId/items/by-item/:itemId/submit',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId, itemId } = request.params as {
+          termAssignmentId: string;
+          itemId: string;
+        };
+        const body = (request.body || {}) as SubmitAchievementItemInput;
+        const submission = await request.container!.employeeAchievementSubmissionService.submitItem(
+          termAssignmentId,
+          {
+            ...body,
+            achievementItem: {
+              ...(body.achievementItem || {}),
+              itemId,
+            },
+          },
+        );
+        return reply.send(successResponse('Achievement item submitted successfully', submission));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

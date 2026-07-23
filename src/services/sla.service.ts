@@ -18,6 +18,10 @@ import {
 } from '../models/pms-employee-achievement-submission.model';
 import { PmsTemplateVersion, type ITemplateSection } from '../models/pms-template-version.model';
 import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
+import {
+  isEmployeeAchievementSubmissionComplete,
+  resolveEmployeeAchievementCompletionConfig,
+} from '../utilis/employeeAchievementCompletion';
 
 const SUPPORTED_SLA_RULES = {
   objective_submission_pending: {
@@ -512,32 +516,20 @@ export class SlaService {
       const employeeAchievementConfig = (
         (templateVersion?.metadata as Record<string, any> | undefined)?.employeeAchievementConfig ?? {}
       ) as Record<string, any>;
-      const objectiveLinkedAchievementRequired =
-        employeeAchievementConfig.objectiveLinkedAchievementRequired !== false;
+      const achievementSection = templateVersion?.sections?.find(
+        (section) => section.sectionKey === 'employee_achievement_submission',
+      );
+      const completionConfig = resolveEmployeeAchievementCompletionConfig({
+        employeeAchievementConfig,
+      }, (achievementSection?.metadata ?? {}) as Record<string, any>);
       const scoreableObjectiveIds = scoreableObjectiveIdsByTermAssignmentId.get(
         assignment._id.toString(),
       ) ?? [];
-      const submittedObjectiveIds = new Set(
-        (submission?.achievementItems ?? [])
-          .filter((item: Record<string, any>) =>
-            item?.type === 'OBJECTIVE' &&
-            item?.objectiveId &&
-            String(item.description ?? '').trim() &&
-            (
-              item.itemStatus === EmployeeAchievementSubmissionStatus.SUBMITTED ||
-              item.itemStatus === EmployeeAchievementSubmissionStatus.LOCKED ||
-              Boolean(item.submittedAt)
-            ),
-          )
-          .map((item: Record<string, any>) => item.objectiveId.toString()),
-      );
-      const termSubmissionComplete =
-        submission?.status === EmployeeAchievementSubmissionStatus.LOCKED ||
-        (
-          objectiveLinkedAchievementRequired && scoreableObjectiveIds.length > 0
-            ? scoreableObjectiveIds.every((objectiveId) => submittedObjectiveIds.has(objectiveId))
-            : submission?.status === EmployeeAchievementSubmissionStatus.SUBMITTED
-        );
+      const termSubmissionComplete = isEmployeeAchievementSubmissionComplete({
+        submission,
+        config: completionConfig,
+        scoreableObjectiveIds,
+      });
       if (termSubmissionComplete) {
         continue;
       }

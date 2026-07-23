@@ -9996,6 +9996,7 @@ export class ObjectiveService extends BaseService {
     if (!achievementSubmission) return undefined;
 
     const objectiveItem = (achievementSubmission.achievementItems ?? []).find((item: Record<string, any>) =>
+      item.type !== 'EMPLOYEE_AUTHORED' &&
       item.objectiveId?.toString?.() === objectiveId,
     );
     const directActual =

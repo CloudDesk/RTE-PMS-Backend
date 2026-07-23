@@ -10,11 +10,12 @@ import {
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
-import { EmployeeAchievementSubmission, EmployeeAchievementSubmissionStatus } from '../models/pms-employee-achievement-submission.model';
+import { EmployeeAchievementSubmission } from '../models/pms-employee-achievement-submission.model';
 import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
+import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import type { ITermCycle } from '../models/pms-term-cycle.model';
 import { workflowService } from './workflow.service';
 import { ManagerReviewPeriodService } from './managerReviewPeriod.service';
@@ -27,6 +28,10 @@ import type {
   AssessmentTermCode as AssessmentTermCodeType,
   TermWorkflowState as TermWorkflowStateType,
 } from '../constants/pms.enums';
+import {
+  isEmployeeAchievementSubmissionComplete,
+  resolveEmployeeAchievementCompletionConfig,
+} from '../utilis/employeeAchievementCompletion';
 
 type SyncSkipReason =
   | 'NOT_ELIGIBLE'
@@ -656,7 +661,10 @@ export class WorkflowSyncService extends BaseService {
           : 'Manager review window is eligible.',
         ignoreWindowDates || effectiveWindows.windowSource === 'ASSIGNMENT_CUSTOM',
       );
-      candidate.warning = await this.getAchievementSubmissionWarningForManagerReview(termAssignment);
+      candidate.warning = await this.getAchievementSubmissionWarningForManagerReview(
+        termAssignment,
+        annualAssignment,
+      );
       return candidate;
     }
 
@@ -942,13 +950,18 @@ export class WorkflowSyncService extends BaseService {
 
   private async getAchievementSubmissionWarningForManagerReview(
     termAssignment: ITermAssignment,
+    annualAssignment?: Record<string, any>,
   ): Promise<string | undefined> {
     const submission = await EmployeeAchievementSubmission.findOne({
       annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     }).lean();
 
-    const ready = await this.isAchievementSubmissionReadyForManagerReview(termAssignment, submission);
+    const ready = await this.isAchievementSubmissionReadyForManagerReview(
+      termAssignment,
+      submission,
+      annualAssignment,
+    );
     return ready
       ? undefined
       : 'Employee achievement submission is not submitted or incomplete. Sync is allowed, but manager review will open with missing employee input.';
@@ -957,25 +970,25 @@ export class WorkflowSyncService extends BaseService {
   private async isAchievementSubmissionReadyForManagerReview(
     termAssignment: ITermAssignment,
     submission: Record<string, any> | null | undefined,
+    annualAssignment?: Record<string, any>,
   ): Promise<boolean> {
-    if (submission?.status === EmployeeAchievementSubmissionStatus.LOCKED) {
-      return true;
-    }
-
-    const achievementItems = Array.isArray(submission?.achievementItems)
-      ? submission.achievementItems
-      : [];
-
-    if (achievementItems.length === 0) {
-      return false;
-    }
-
-    const submittedItems = achievementItems.filter((item) =>
-      this.isAchievementItemSubmittedForSync(item),
+    const templateVersion = annualAssignment?.templateVersionId
+      ? await PmsTemplateVersion.findById(annualAssignment.templateVersionId)
+        .select('metadata sections')
+        .lean()
+      : null;
+    const achievementSection = templateVersion?.sections?.find(
+      (section) => section.sectionKey === 'employee_achievement_submission',
     );
-
-    if (submittedItems.length === 0) {
-      return false;
+    const config = resolveEmployeeAchievementCompletionConfig(
+      (templateVersion?.metadata ?? {}) as Record<string, any>,
+      (achievementSection?.metadata ?? {}) as Record<string, any>,
+    );
+    if (config.achievementEntryMode === 'EMPLOYEE_AUTHORED') {
+      return isEmployeeAchievementSubmissionComplete({ submission, config });
+    }
+    if (!submission || !Array.isArray(submission.achievementItems) || submission.achievementItems.length === 0) {
+      return isEmployeeAchievementSubmissionComplete({ submission, config });
     }
 
     const approvedObjectives = await Objective.find({
@@ -993,31 +1006,11 @@ export class WorkflowSyncService extends BaseService {
       )
       .map((objective: Record<string, any>) => objective._id.toString());
 
-    if (scoreableObjectiveIds.length === 0) {
-      return true;
-    }
-
-    const submittedObjectiveIds = new Set(
-      submittedItems
-        .filter((item) =>
-          item?.type === 'OBJECTIVE' &&
-          item?.objectiveId &&
-          String(item.description ?? '').trim()
-        )
-        .map((item) => item.objectiveId.toString()),
-    );
-
-    return scoreableObjectiveIds.every((objectiveId) =>
-      submittedObjectiveIds.has(objectiveId),
-    );
-  }
-
-  private isAchievementItemSubmittedForSync(item: Record<string, any>): boolean {
-    return (
-      item?.itemStatus === EmployeeAchievementSubmissionStatus.SUBMITTED ||
-      item?.itemStatus === EmployeeAchievementSubmissionStatus.LOCKED ||
-      Boolean(item?.submittedAt)
-    );
+    return isEmployeeAchievementSubmissionComplete({
+      submission,
+      config,
+      scoreableObjectiveIds,
+    });
   }
 
   private resolveApprovedStateCandidate(
