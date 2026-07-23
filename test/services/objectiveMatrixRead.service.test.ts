@@ -11,6 +11,8 @@ import {
   TermWorkflowState,
 } from '../../src/constants/pms.enums';
 import { AnnualAssignment } from '../../src/models/pms-annual-assignment.model';
+import { ObjectiveAttachment } from '../../src/models/pms-objective-attachment.model';
+import { ObjectiveEvidence } from '../../src/models/pms-objective-evidence.model';
 import { Objective } from '../../src/models/pms-objective.model';
 import { ObjectiveValue } from '../../src/models/pms-objective-value.model';
 import { PmsTemplateVersion } from '../../src/models/pms-template-version.model';
@@ -22,6 +24,7 @@ import {
   isObjectiveMatrixStageWindowOpen,
   ObjectiveMatrixService,
   resolveObjectiveMatrixCellPermission,
+  resolveObjectiveTermEvidencePermission,
   validateObjectiveMatrixRowForSubmit,
 } from '../../src/services/objective-matrix.service';
 
@@ -111,6 +114,32 @@ describe('Objective matrix read model Phase 5', () => {
     })).toBe(false);
   });
 
+  it('resolves evidence editability independently from generic matrix-cell persistence', () => {
+    expect(resolveObjectiveTermEvidencePermission({
+      role: PmsRole.EMPLOYEE,
+      workflowState: TermWorkflowState.OBJECTIVE_APPROVED,
+      termPosition: 'CURRENT',
+      windowOpen: true,
+      explicitEditable: true,
+    })).toEqual({ editable: true });
+
+    expect(resolveObjectiveTermEvidencePermission({
+      role: PmsRole.MANAGER,
+      workflowState: TermWorkflowState.OBJECTIVE_APPROVED,
+      termPosition: 'CURRENT',
+      windowOpen: true,
+      explicitEditable: false,
+    })).toEqual({ editable: false, denialReason: 'ROLE_READ_ONLY' });
+
+    expect(resolveObjectiveTermEvidencePermission({
+      role: PmsRole.EMPLOYEE,
+      workflowState: TermWorkflowState.NOT_STARTED,
+      termPosition: 'FUTURE',
+      windowOpen: true,
+      explicitEditable: true,
+    })).toEqual({ editable: false, denialReason: 'TERM_NOT_OPEN' });
+  });
+
   it('validates configured employee-required cells instead of legacy objective fields', () => {
     const matrix = {
       columns: [
@@ -151,6 +180,8 @@ describe('Objective matrix read model Phase 5', () => {
     const q2AssignmentId = new Types.ObjectId();
     const q1ObjectiveId = new Types.ObjectId();
     const q2ObjectiveId = new Types.ObjectId();
+    const evidenceId = new Types.ObjectId();
+    const attachmentId = new Types.ObjectId();
     const rowKey = 'predefined:delivery';
     const access = [PmsRole.EMPLOYEE, PmsRole.MANAGER, PmsRole.DIRECTOR, PmsRole.ADMIN, PmsRole.MANAGEMENT]
       .map((role) => ({ role, visible: true, editable: role === PmsRole.MANAGER }));
@@ -184,6 +215,29 @@ describe('Objective matrix read model Phase 5', () => {
           type: 'FORMULA', displayOrder: 5, fillOwner: 'SYSTEM',
           workflowStage: 'CALCULATED', access: access.map((entry) => ({ ...entry, editable: false })),
         },
+        {
+          columnId: 'evidence', bindingKey: 'system.objectiveEvidence', label: 'Supporting Documents',
+          type: 'OBJECTIVE_EVIDENCE', displayOrder: 6, fillOwner: 'EMPLOYEE',
+          workflowStage: 'EMPLOYEE_ACHIEVEMENT',
+          access: access.map((entry) => ({
+            ...entry,
+            editable: entry.role === PmsRole.EMPLOYEE,
+            required: false,
+          })),
+          evidenceConfig: {
+            scope: 'PER_EMPLOYEE_TERM',
+            displayMode: 'ANNUAL_AGGREGATED',
+            maxActiveFilesPerTerm: 1,
+            replacementPolicy: 'REPLACE_ACTIVE_TERM_DOCUMENT',
+            maxFileSizeBytes: 1048576,
+            allowedMimeTypes: ['application/pdf'],
+            showTermLabel: true,
+            allowPreview: true,
+            allowDownload: true,
+            allowEmployeeRemove: true,
+            retainReplacementHistory: true,
+          },
+        },
       ],
       columnGroups: [{
         groupId: 'results', label: 'Results',
@@ -199,6 +253,7 @@ describe('Objective matrix read model Phase 5', () => {
         { columnId: 'q2', mode: 'SELECTED_PERIODS', selectedTerms: [AssessmentTermCode.Q2] },
         { columnId: 'secret', mode: 'SHARED_ANNUAL' },
         { columnId: 'actual', mode: 'SHARED_ANNUAL' },
+        { columnId: 'evidence', mode: 'SHARED_ANNUAL' },
       ],
       formulas: [{
         formulaId: 'actual', targetColumnId: 'actual', scope: 'ROW_ACROSS_TERMS',
@@ -260,6 +315,26 @@ describe('Objective matrix read model Phase 5', () => {
         templateFieldId: 'q2', valueNumber: 30, version: 1, updatedAt: new Date('2026-05-01'),
       },
     ];
+    const evidenceRecords = [{
+      _id: evidenceId,
+      objectiveId: q1ObjectiveId,
+      termAssignmentId: q1AssignmentId,
+      assessmentTermCode: AssessmentTermCode.Q1,
+      evidenceType: 'TERM_SUPPORTING_DOCUMENT',
+      attachmentIds: [attachmentId],
+      version: 8,
+    }];
+    const attachments = [{
+      _id: attachmentId,
+      objectiveId: q1ObjectiveId,
+      documentId: 'document-q1',
+      fileName: 'q1-summary.pdf',
+      fileUrl: 'https://storage.example.test/private-object',
+      fileType: 'application/pdf',
+      fileSize: 540000,
+      uploadedAt: new Date('2026-04-10T08:00:00.000Z'),
+      version: 2,
+    }];
 
     jest.spyOn(accessService, 'canPerform').mockResolvedValue({ allowed: true, mappedRole: PmsRole.MANAGER });
     jest.spyOn(AnnualAssignment, 'findOne').mockReturnValue({ lean: jest.fn().mockResolvedValue(annual) } as never);
@@ -274,6 +349,12 @@ describe('Objective matrix read model Phase 5', () => {
     } as never);
     jest.spyOn(ObjectiveValue, 'find').mockReturnValue({
       sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(values) }),
+    } as never);
+    const evidenceFind = jest.spyOn(ObjectiveEvidence, 'find').mockReturnValue({
+      lean: jest.fn().mockResolvedValue(evidenceRecords),
+    } as never);
+    jest.spyOn(ObjectiveAttachment, 'find').mockReturnValue({
+      lean: jest.fn().mockImplementation(async () => attachments),
     } as never);
     const service = new ObjectiveMatrixService({
       reqRole: PmsRole.MANAGER,
@@ -303,6 +384,42 @@ describe('Objective matrix read model Phase 5', () => {
     expect(matrix.rows[0].sharedCells.find((cell) => cell.columnId === 'actual')).toMatchObject({
       value: 30, kind: 'FORMULA', editable: false, denialReason: 'SYSTEM_CALCULATED',
     });
+    expect(matrix.rows[0].evidenceByTerm).toMatchObject({
+      Q1: {
+        evidenceId: evidenceId.toString(),
+        objectiveId: q1ObjectiveId.toString(),
+        termAssignmentId: q1AssignmentId.toString(),
+        termCode: AssessmentTermCode.Q1,
+        version: 8,
+        editable: false,
+        denialReason: 'WINDOW_CLOSED',
+        attachment: {
+          id: attachmentId.toString(),
+          documentId: 'document-q1',
+          fileName: 'q1-summary.pdf',
+          fileType: 'application/pdf',
+          fileSize: 540000,
+          uploadedAt: '2026-04-10T08:00:00.000Z',
+          previewAvailable: true,
+          downloadAvailable: true,
+        },
+      },
+      Q2: {
+        objectiveId: q2ObjectiveId.toString(),
+        termAssignmentId: q2AssignmentId.toString(),
+        termCode: AssessmentTermCode.Q2,
+        version: 0,
+        editable: false,
+        denialReason: 'TERM_NOT_OPEN',
+      },
+    });
+    expect(JSON.stringify(matrix.rows[0].evidenceByTerm)).not.toContain('fileUrl');
+    expect(matrix.contentVersion).toBe(8);
+    expect(evidenceFind).toHaveBeenCalledWith(expect.objectContaining({
+      objectiveId: { $in: [q1ObjectiveId, q2ObjectiveId] },
+      evidenceType: 'TERM_SUPPORTING_DOCUMENT',
+      isDeleted: false,
+    }));
     expect(matrix.formulaResults[0].sourceVersions).toEqual(expect.objectContaining({
       [`${rowKey}:Q1:q1`]: 2,
       [`${rowKey}:Q2:q2`]: 1,
@@ -310,6 +427,10 @@ describe('Objective matrix read model Phase 5', () => {
     expect(matrix.contentHash).toMatch(/^[a-f0-9]{64}$/);
     const repeated = await service.getAnnualMatrix(annualAssignmentId.toString(), { mode: 'manager' });
     expect(repeated.contentHash).toBe(matrix.contentHash);
+
+    attachments[0].fileName = 'q1-summary-replaced.pdf';
+    const replaced = await service.getAnnualMatrix(annualAssignmentId.toString(), { mode: 'manager' });
+    expect(replaced.contentHash).not.toBe(matrix.contentHash);
 
     const q2Matrix = await service.getAnnualMatrix(annualAssignmentId.toString(), {
       mode: 'manager',
@@ -319,6 +440,20 @@ describe('Objective matrix read model Phase 5', () => {
     expect(q2Matrix.rows[0].termCells.Q2?.find((cell) => cell.columnId === 'q2')).toMatchObject({
       value: 30, editable: true,
     });
+
+    const evidenceCallsBeforeHiddenView = evidenceFind.mock.calls.length;
+    const evidenceColumn = layout.columns.find((column) => column.columnId === 'evidence')!;
+    evidenceColumn.access = evidenceColumn.access.map((entry) => ({
+      ...entry,
+      visible: entry.role === PmsRole.MANAGER ? false : entry.visible,
+    }));
+    const hiddenEvidenceMatrix = await service.getAnnualMatrix(
+      annualAssignmentId.toString(),
+      { mode: 'manager' },
+    );
+    expect(hiddenEvidenceMatrix.columns.map((column) => column.columnId)).not.toContain('evidence');
+    expect(hiddenEvidenceMatrix.rows[0].evidenceByTerm).toEqual({});
+    expect(evidenceFind).toHaveBeenCalledTimes(evidenceCallsBeforeHiddenView);
 
     await expect(service.getAnnualMatrix(annualAssignmentId.toString(), {
       mode: 'manager',
