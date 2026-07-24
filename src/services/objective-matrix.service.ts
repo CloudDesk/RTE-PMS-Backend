@@ -289,7 +289,7 @@ export class ObjectiveMatrixService {
     if (!annualAssignment) throw new Error('Annual assignment not found');
     await this.assertAccess(actor, annualAssignment);
 
-    const { mode, viewRole } = this.resolveView(actor, query.mode);
+    const { mode, viewRole, permissionRole } = this.resolveView(actor, query.mode);
     const includeAudit = query.includeAudit === true || query.includeAudit === 'true';
     if (includeAudit && normalizePmsRole(actor.actorRole) !== PmsRole.ADMIN) {
       throw new Error('Matrix audit details require Admin access');
@@ -357,7 +357,11 @@ export class ObjectiveMatrixService {
       .filter((column) => this.columnAccess(column, viewRole).visible)
       .map((column) => ({
         ...column,
-        access: column.access?.filter((entry) => entry.role === viewRole),
+        access: column.access
+          ?.filter((entry) => entry.role === viewRole)
+          .map((entry) => permissionRole === PmsRole.DIRECTOR
+            ? { ...entry, editable: false, required: false }
+            : entry),
       }))
       .sort((left, right) => left.displayOrder - right.displayOrder);
     const visibleColumnIds = new Set(visibleColumns.map((column) => column.columnId));
@@ -386,6 +390,7 @@ export class ObjectiveMatrixService {
       termOrder,
       currentTermCode,
       viewRole,
+      permissionRole,
       includeAudit,
       formulaSourceCells,
     }));
@@ -480,6 +485,7 @@ export class ObjectiveMatrixService {
     termOrder: AssessmentTermCodeType[];
     currentTermCode?: AssessmentTermCodeType;
     viewRole: string;
+    permissionRole: string;
     includeAudit: boolean;
     formulaSourceCells: ObjectiveMatrixFormulaSourceCell[];
   }): ObjectiveMatrixRow {
@@ -523,7 +529,7 @@ export class ObjectiveMatrixService {
         else termCells[termCode] = [...(termCells[termCode] ?? []), cell];
       }
     }
-    const role = input.viewRole;
+    const role = input.permissionRole;
     const ownDraft = role === PmsRole.EMPLOYEE && first.source === ObjectiveSource.EMPLOYEE_CREATED &&
       input.siblings.some((sibling) => sibling.status === ObjectiveStatus.OBJECTIVE_DRAFT);
     const ownRevision = role === PmsRole.EMPLOYEE && first.source === ObjectiveSource.EMPLOYEE_CREATED &&
@@ -556,7 +562,7 @@ export class ObjectiveMatrixService {
     const actionCycle = actionAssignment?.cycleTermId
       ? input.termCycleById.get(actionAssignment.cycleTermId.toString())
       : undefined;
-    const titleAccess = titleColumn ? this.columnAccess(titleColumn, role) : undefined;
+    const titleAccess = titleColumn ? this.columnAccess(titleColumn, input.viewRole) : undefined;
     const objectiveSettingEditable = Boolean(titleColumn && actionAssignment &&
       resolveObjectiveMatrixCellPermission({
         role,
@@ -619,6 +625,7 @@ export class ObjectiveMatrixService {
     termOrder: AssessmentTermCodeType[];
     currentTermCode?: AssessmentTermCodeType;
     viewRole: string;
+    permissionRole: string;
     includeAudit: boolean;
   }): ObjectiveMatrixCell {
     const objectiveValues = input.valuesByObjective.get(input.objective._id.toString()) ?? [];
@@ -641,7 +648,7 @@ export class ObjectiveMatrixService {
     );
     const access = this.columnAccess(input.column, input.viewRole);
     const resolvedPermission = resolveObjectiveMatrixCellPermission({
-      role: input.viewRole,
+      role: input.permissionRole,
       workflowState: assignment.termState,
       termPosition: position,
       windowOpen,
@@ -797,13 +804,29 @@ export class ObjectiveMatrixService {
         : mode === 'admin'
           ? PmsRole.ADMIN
           : role === PmsRole.MANAGEMENT ? PmsRole.MANAGEMENT : PmsRole.DIRECTOR;
-    if (role !== PmsRole.ADMIN && requestedRole !== role) {
+    const canReadCrossPerspective =
+      role === PmsRole.ADMIN || role === PmsRole.DIRECTOR;
+    if (!canReadCrossPerspective && requestedRole !== role) {
       throw new Error(`Matrix mode ${mode} is not permitted for role ${actor.actorRole}`);
     }
-    return { mode, viewRole: role === PmsRole.ADMIN ? requestedRole : role };
+    const viewRole = canReadCrossPerspective ? requestedRole : role;
+    return {
+      mode,
+      viewRole,
+      // Director can inspect another perspective's configured columns, but all
+      // permission and row-action calculations must remain Director read-only.
+      permissionRole: role === PmsRole.DIRECTOR ? PmsRole.DIRECTOR : viewRole,
+    };
   }
 
   private async assertAccess(actor: MatrixActor, annualAssignment: LeanRecord): Promise<void> {
+    // Director matrix access is global and read-only. Cell/action permissions
+    // still prevent Director edits; this bypass only keeps matrix-enabled
+    // assignments readable from management performance summaries.
+    if (normalizePmsRole(actor.actorRole) === PmsRole.DIRECTOR) {
+      return;
+    }
+
     const access = await accessService.canPerform({
       actor,
       action: 'objective.view',

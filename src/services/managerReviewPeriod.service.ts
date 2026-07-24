@@ -13,6 +13,7 @@ import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-peri
 import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
+import { LOV } from '../models/lov.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -90,9 +91,13 @@ export interface SaveManagerReviewPeriodDraftInput {
 }
 
 export interface SubmitManagerReviewPeriodInput extends SaveManagerReviewPeriodDraftInput {
-  score: number;
+  score?: number;
   comments: string;
 }
+
+// Current client flow stores the manager's rating without a numeric score.
+// Retain the score fields and legacy path for future client activation.
+const RATING_ONLY_MANAGER_REVIEW = true;
 
 export type ManagerReviewPeriodWorkspaceMode = 'manager' | 'employee' | 'admin';
 
@@ -365,7 +370,8 @@ export class ManagerReviewPeriodService extends BaseService {
     }
     await this.assertIncludedTermsReadyForManagerReview(review);
 
-    this.applyReviewInput(review, input, false);
+    const overallRating = await this.validateManagerOverallRating(input.overallRating, false);
+    this.applyReviewInput(review, { ...input, overallRating }, false);
     await review.save();
     await this.audit(
       'PMS_MANAGER_REVIEW_PERIOD_DRAFT_SAVED',
@@ -389,14 +395,15 @@ export class ManagerReviewPeriodService extends BaseService {
       throw new Error('Grouped manager review can be submitted only when manager review is open');
     }
     await this.assertIncludedTermsReadyForManagerReview(review);
-    if (!Number.isFinite(Number(input.score))) {
+    if (!RATING_ONLY_MANAGER_REVIEW && !Number.isFinite(Number(input.score))) {
       throw new Error('Grouped manager review requires a numeric score');
     }
     if (!input.comments?.trim()) {
       throw new Error('Grouped manager review comments are required');
     }
+    const overallRating = await this.validateManagerOverallRating(input.overallRating, true);
 
-    this.applyReviewInput(review, input, true);
+    this.applyReviewInput(review, { ...input, overallRating }, true);
     review.previousReviewState = review.reviewState;
     review.reviewState = ManagerReviewPeriodState.MANAGER_REVIEW_SUBMITTED;
     review.submittedAt = new Date();
@@ -697,8 +704,8 @@ export class ManagerReviewPeriodService extends BaseService {
   ): void {
     review.ratings = this.normalizeRatings(input.ratings ?? []);
     review.comments = input.comments?.trim();
-    review.score = input.score;
-    review.overallScore = input.score;
+    review.score = RATING_ONLY_MANAGER_REVIEW ? undefined : input.score;
+    review.overallScore = RATING_ONLY_MANAGER_REVIEW ? undefined : input.score;
     review.overallRating = input.overallRating?.trim();
     review.recommendation = input.recommendation?.trim();
     review.achievements = input.achievements?.trim();
@@ -710,6 +717,37 @@ export class ManagerReviewPeriodService extends BaseService {
     }
     review.updatedBy = this.actorIdObject();
     review.version += 1;
+  }
+
+  private async validateManagerOverallRating(
+    rating: string | undefined,
+    required: boolean,
+  ): Promise<string | undefined> {
+    const normalizedRating = rating?.trim();
+    if (!normalizedRating) {
+      if (required) {
+        throw new Error('Overall Rating is required');
+      }
+      return undefined;
+    }
+
+    const managerRatingLov = await LOV.findOne({ type: 'managerrating' })
+      .select('values')
+      .lean();
+    const activeOptions = managerRatingLov?.values?.filter(
+      (option) => option.isActive !== false,
+    ) ?? [];
+    const matchedOption = activeOptions.find(
+      (option) =>
+        option.value.trim().toLowerCase() === normalizedRating.toLowerCase() ||
+        option.label.trim().toLowerCase() === normalizedRating.toLowerCase(),
+    );
+
+    if (!matchedOption) {
+      throw new Error('Overall Rating must be an active Manager Rating option');
+    }
+
+    return matchedOption.value.trim();
   }
 
   private async mapRecords(

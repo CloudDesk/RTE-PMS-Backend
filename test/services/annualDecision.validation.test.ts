@@ -146,4 +146,16 @@ describe('AnnualDecisionService numeric validation', () => {
     expect(maskStoredObjectiveMatrixSnapshot(snapshot, true)).toBe(snapshot);
     expect(snapshot).toHaveProperty('objectiveMatrix');
   });
+
+  it('proposes the latest applicable manager rating without requiring a score', () => {
+    const proposedRating = (service as any).resolveProposedFinalRating(
+      { applicableTerms: ['Q1', 'Q2'] },
+      [
+        { assessmentTermCode: 'Q1', termRating: 'Average', termScore: undefined },
+        { assessmentTermCode: 'Q2', termRating: 'Good', termScore: undefined },
+      ],
+    );
+
+    expect(proposedRating).toBe('Good');
+  });
 });

@@ -111,6 +111,56 @@ describe('Objective matrix read model Phase 5', () => {
     })).toBe(false);
   });
 
+  it('allows global Director matrix reads while keeping matrix cells read-only', async () => {
+    const actorId = new Types.ObjectId();
+    const accessCheck = jest.spyOn(accessService, 'canPerform');
+    const service = new ObjectiveMatrixService({
+      reqRole: PmsRole.DIRECTOR,
+      requestId: 'director-global-matrix-read',
+      user: {
+        _id: actorId,
+        email: 'director@example.test',
+        name: 'Director',
+        role: PmsRole.DIRECTOR,
+        departmentId: 'management',
+        active: true,
+        country: 'IN',
+        currency: 'INR',
+        licenseType: 'FULL',
+        portalAccess: true,
+      },
+    });
+
+    await expect(
+      (service as any).assertAccess(
+        { actorId: actorId.toString(), actorRole: PmsRole.DIRECTOR },
+        {
+          employeeId: new Types.ObjectId(),
+          assignedManagerId: new Types.ObjectId(),
+          cycleId: new Types.ObjectId(),
+        },
+      ),
+    ).resolves.toBeUndefined();
+    expect(accessCheck).not.toHaveBeenCalled();
+    expect(resolveObjectiveMatrixCellPermission({
+      role: PmsRole.DIRECTOR,
+      workflowState: TermWorkflowState.MANAGER_REVIEW_OPEN,
+      termPosition: 'CURRENT',
+      windowOpen: true,
+      columnFillOwner: PmsRole.MANAGER,
+      columnRequired: true,
+      columnType: 'NUMERIC_INPUT',
+      explicitVisibility: 'VISIBLE',
+      explicitEditable: true,
+      rowSource: ObjectiveSource.MANAGER_CREATED,
+    })).toEqual({
+      visible: true,
+      editable: false,
+      required: false,
+      denialReason: 'ROLE_READ_ONLY',
+    });
+  });
+
   it('validates configured employee-required cells instead of legacy objective fields', () => {
     const matrix = {
       columns: [
@@ -324,5 +374,66 @@ describe('Objective matrix read model Phase 5', () => {
       mode: 'manager',
       termAssignmentId: new Types.ObjectId().toString(),
     })).rejects.toThrow('Selected term does not belong to the annual assignment');
+
+    const directorService = new ObjectiveMatrixService({
+      reqRole: PmsRole.DIRECTOR,
+      requestId: 'director-cross-perspective-read',
+      user: {
+        _id: new Types.ObjectId(),
+        email: 'director@example.test',
+        name: 'Director',
+        role: PmsRole.DIRECTOR,
+        departmentId: 'management',
+        active: true,
+        country: 'IN',
+        currency: 'INR',
+        licenseType: 'FULL',
+        portalAccess: true,
+      },
+    });
+
+    for (const mode of ['employee', 'manager', 'admin'] as const) {
+      const directorMatrix = await directorService.getAnnualMatrix(
+        annualAssignmentId.toString(),
+        { mode },
+      );
+      const expectedProjectionRole = mode === 'employee'
+        ? PmsRole.EMPLOYEE
+        : mode === 'manager'
+          ? PmsRole.MANAGER
+          : PmsRole.ADMIN;
+
+      expect(directorMatrix.mode).toBe(mode);
+      expect(directorMatrix.viewRole).toBe(expectedProjectionRole);
+      expect(directorMatrix.rows).toHaveLength(1);
+      expect(
+        directorMatrix.columns
+          .flatMap((column) => column.access ?? [])
+          .every((entry) => entry.editable === false && entry.required === false),
+      ).toBe(true);
+      expect(directorMatrix.rows[0].actions).toEqual({
+        canEdit: false,
+        canDelete: false,
+        canSubmit: false,
+        canApprove: false,
+        canReturn: false,
+        canComment: false,
+        canAttach: false,
+      });
+      const directorSourceCells = [
+        ...directorMatrix.rows[0].sharedCells,
+        ...Object.values(directorMatrix.rows[0].termCells).flat(),
+      ].filter((cell) => cell.kind === 'SOURCE');
+      expect(directorSourceCells.length).toBeGreaterThan(0);
+      expect(directorSourceCells).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          editable: false,
+          required: false,
+          denialReason: 'ROLE_READ_ONLY',
+        }),
+      ]));
+      expect(directorSourceCells.every((cell) => cell.editable === false)).toBe(true);
+      expect(directorSourceCells.every((cell) => cell.required === false)).toBe(true);
+    }
   });
 });

@@ -32,6 +32,7 @@ import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-peri
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
+import { LOV } from '../models/lov.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -99,13 +100,16 @@ const SYSTEM_MANAGED_TERM_REVIEW_FIELD_KEYS = new Set([
 ]);
 
 const MAX_MANUAL_ASSESSMENT_TERM_SCORE = 100;
+// Current client flow is rating-only. Keep the score calculation implementation
+// available below so it can be re-enabled without rebuilding the review workflow.
+const RATING_ONLY_MANAGER_REVIEW = true;
 
 export interface SaveTermReviewDraftInput extends TermReviewBaseInput {}
 
 export interface SubmitTermReviewInput extends TermReviewBaseInput {
   ratings: TermReviewRatingInput[];
   comments: string;
-  score: number;
+  score?: number;
 }
 
 export interface SubmitTermReviewResult {
@@ -220,6 +224,7 @@ export type TermReviewAssignmentRecord = {
   isDelegated?: boolean;
   templateVersionId?: string;
   reviewConfig: {
+    ratingOnly?: boolean;
     mode?: 'AUTO' | 'MANUAL';
     objectiveRating: {
       scoreType: string;
@@ -524,6 +529,7 @@ export class TermReviewService extends BaseService {
         isDelegated: actor.actorId !== termAssignment.assignedManagerId.toString(),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
+          ratingOnly: RATING_ONLY_MANAGER_REVIEW,
           mode: reviewConfig.mode ?? 'AUTO',
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
@@ -653,9 +659,16 @@ export class TermReviewService extends BaseService {
     }
     const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const reviewConfig = await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode);
-    const scoringResolution = this.resolveTermReviewScoring(input, reviewConfig, approvedObjectives);
+    const scoringResolution = this.resolveTermReviewPersistence(
+      input,
+      reviewConfig,
+      approvedObjectives,
+    );
+    const overallRating = await this.validateManagerOverallRating(input.overallRating, false);
 
-    this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
+    if (!RATING_ONLY_MANAGER_REVIEW) {
+      this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
+    }
     
     await this.validateReviewValuesAgainstTemplate(
       input.reviewValues ?? [],
@@ -713,15 +726,19 @@ export class TermReviewService extends BaseService {
       reviewStatus: TermReviewStatus.MANAGER_REVIEW_OPEN,
       ratings: this.normalizeRatings(input.ratings ?? []),
       comments: input.comments?.trim(),
-      score: scoringResolution.overallScore,
-      overallScore: scoringResolution.overallScore,
-      overallRating: input.overallRating?.trim(),
+      ...(RATING_ONLY_MANAGER_REVIEW
+        ? {}
+        : {
+            score: scoringResolution.overallScore,
+            overallScore: scoringResolution.overallScore,
+            scoreSnapshot: scoringResolution.scoreSnapshot,
+          }),
+      overallRating,
       finalTermRemarks: input.comments?.trim(),
       recommendation: input.recommendation?.trim(),
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
       attachments: this.normalizeAttachments(input.attachments ?? []),
-      scoreSnapshot: scoringResolution.scoreSnapshot,
       actingDelegateUserId,
       originalOwnerUserId,
       updatedBy: this.actorIdObject(),
@@ -733,6 +750,9 @@ export class TermReviewService extends BaseService {
         existingReview._id,
         {
           $set: reviewPayload,
+          ...(RATING_ONLY_MANAGER_REVIEW
+            ? { $unset: { score: 1, overallScore: 1, scoreSnapshot: 1 } }
+            : {}),
           $inc: { version: 1 },
         },
         { new: true, runValidators: true },
@@ -748,6 +768,7 @@ export class TermReviewService extends BaseService {
       termAssignment,
       {
         ...input,
+        overallRating,
         score: scoringResolution.overallScore,
         reviewValues: scoringResolution.reviewValues,
       },
@@ -763,13 +784,15 @@ export class TermReviewService extends BaseService {
       existingReview?.toObject(),
       termReview.toObject(),
     );
-    await this.audit(
-      'PMS_TERM_REVIEW_SCORE_SNAPSHOT_CALCULATED',
-      'QUARTER_REVIEW',
-      termReview._id.toString(),
-      existingReview?.scoreSnapshot,
-      scoringResolution.scoreSnapshot,
-    );
+    if (!RATING_ONLY_MANAGER_REVIEW) {
+      await this.audit(
+        'PMS_TERM_REVIEW_SCORE_SNAPSHOT_CALCULATED',
+        'QUARTER_REVIEW',
+        termReview._id.toString(),
+        existingReview?.scoreSnapshot,
+        scoringResolution.scoreSnapshot,
+      );
+    }
 
     return {
       termReview,
@@ -814,8 +837,17 @@ export class TermReviewService extends BaseService {
     const approvedObjectives = await this.getApprovedObjectives(termAssignment._id);
     const annualAssignment = await this.getAnnualAssignment(termAssignment.annualAssignmentId.toString());
     const reviewConfig = await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode);
-    const scoringResolution = this.resolveTermReviewScoring(input, reviewConfig, approvedObjectives);
-    this.validateReviewInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
+    const scoringResolution = this.resolveTermReviewPersistence(
+      input,
+      reviewConfig,
+      approvedObjectives,
+    );
+    const overallRating = await this.validateManagerOverallRating(input.overallRating, true);
+    if (RATING_ONLY_MANAGER_REVIEW) {
+      this.validateRatingOnlyReviewInput(input);
+    } else {
+      this.validateReviewInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
+    }
 
     await this.validateReviewValuesAgainstTemplate(
       input.reviewValues ?? [],
@@ -874,15 +906,19 @@ export class TermReviewService extends BaseService {
       reviewStatus: TermReviewStatus.MANAGER_REVIEW_SUBMITTED,
       ratings: this.normalizeRatings(input.ratings),
       comments: input.comments.trim(),
-      score: scoringResolution.overallScore,
-      overallScore: scoringResolution.overallScore,
-      overallRating: input.overallRating?.trim(),
+      ...(RATING_ONLY_MANAGER_REVIEW
+        ? {}
+        : {
+            score: scoringResolution.overallScore,
+            overallScore: scoringResolution.overallScore,
+            scoreSnapshot: scoringResolution.scoreSnapshot,
+          }),
+      overallRating,
       finalTermRemarks: input.comments.trim(),
       recommendation: input.recommendation?.trim(),
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
       attachments: this.normalizeAttachments(input.attachments ?? []),
-      scoreSnapshot: scoringResolution.scoreSnapshot,
       actingDelegateUserId,
       originalOwnerUserId,
       submittedAt: submissionTimestamp,
@@ -896,6 +932,9 @@ export class TermReviewService extends BaseService {
         existingReview._id,
         {
           $set: reviewPayload,
+          ...(RATING_ONLY_MANAGER_REVIEW
+            ? { $unset: { score: 1, overallScore: 1, scoreSnapshot: 1 } }
+            : {}),
           $inc: { version: 1 },
         },
         { new: true, runValidators: true },
@@ -911,6 +950,7 @@ export class TermReviewService extends BaseService {
       termAssignment,
       {
         ...input,
+        overallRating,
         score: scoringResolution.overallScore,
         reviewValues: scoringResolution.reviewValues,
       },
@@ -931,13 +971,15 @@ export class TermReviewService extends BaseService {
       existingReview?.toObject(),
       termReview.toObject(),
     );
-    await this.audit(
-      'PMS_TERM_REVIEW_SCORE_SNAPSHOT_CALCULATED',
-      'QUARTER_REVIEW',
-      termReview._id.toString(),
-      existingReview?.scoreSnapshot,
-      scoringResolution.scoreSnapshot,
-    );
+    if (!RATING_ONLY_MANAGER_REVIEW) {
+      await this.audit(
+        'PMS_TERM_REVIEW_SCORE_SNAPSHOT_CALCULATED',
+        'QUARTER_REVIEW',
+        termReview._id.toString(),
+        existingReview?.scoreSnapshot,
+        scoringResolution.scoreSnapshot,
+      );
+    }
 
     const finalizedTermAssignment = await this.finalizeSubmittedTermReview(
       submittedTermAssignment,
@@ -1268,6 +1310,7 @@ export class TermReviewService extends BaseService {
         isDelegated: actor.actorId !== termAssignment.assignedManagerId.toString(),
         templateVersionId: annualAssignment?.templateVersionId?.toString() ?? '',
         reviewConfig: {
+          ratingOnly: RATING_ONLY_MANAGER_REVIEW,
           mode: reviewConfig.mode ?? 'AUTO',
           objectiveRating: reviewConfig.objectiveRatingRule,
           overallScoreMax: reviewConfig.overallScoreMax,
@@ -1657,6 +1700,12 @@ export class TermReviewService extends BaseService {
     this.validateOverallScoreAgainstTemplate(resolvedScore, reviewConfig);
   }
 
+  private validateRatingOnlyReviewInput(input: SubmitTermReviewInput): void {
+    if (!input.comments?.trim()) {
+      throw new Error('Review comments are required');
+    }
+  }
+
   private requiresObjectiveRatings(reviewConfig: TermReviewConfig): boolean {
     return this.allowsObjectiveRatings(reviewConfig) && reviewConfig.objectiveRatingRule !== null;
   }
@@ -1738,6 +1787,57 @@ export class TermReviewService extends BaseService {
     }
 
     return undefined;
+  }
+
+  private resolveTermReviewPersistence(
+    input: TermReviewBaseInput,
+    reviewConfig: TermReviewConfig,
+    approvedObjectives: any[],
+  ): {
+    overallScore: number | undefined;
+    reviewValues: TermReviewValueInput[];
+    scoreSnapshot: any;
+  } {
+    if (!RATING_ONLY_MANAGER_REVIEW) {
+      return this.resolveTermReviewScoring(input, reviewConfig, approvedObjectives);
+    }
+
+    return {
+      overallScore: undefined,
+      reviewValues: this.getTemplateReviewValues(input.reviewValues ?? []),
+      scoreSnapshot: undefined,
+    };
+  }
+
+  private async validateManagerOverallRating(
+    rating: string | undefined,
+    required: boolean,
+  ): Promise<string | undefined> {
+    const normalizedRating = rating?.trim();
+    if (!normalizedRating) {
+      if (required) {
+        throw new Error('Overall Rating is required');
+      }
+      return undefined;
+    }
+
+    const managerRatingLov = await LOV.findOne({ type: 'managerrating' })
+      .select('values')
+      .lean();
+    const activeOptions = managerRatingLov?.values?.filter(
+      (option) => option.isActive !== false,
+    ) ?? [];
+    const matchedOption = activeOptions.find(
+      (option) =>
+        option.value.trim().toLowerCase() === normalizedRating.toLowerCase() ||
+        option.label.trim().toLowerCase() === normalizedRating.toLowerCase(),
+    );
+
+    if (!matchedOption) {
+      throw new Error('Overall Rating must be an active Manager Rating option');
+    }
+
+    return matchedOption.value.trim();
   }
 
   private resolveTermReviewScoring(
