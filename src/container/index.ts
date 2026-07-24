@@ -22,6 +22,7 @@ import { ManagerInitiatedReviewService } from '../services/managerInitiatedRevie
 import { ProbationReviewService } from '../services/probationReview.service';
 import { ManagerReviewPeriodService } from '../services/managerReviewPeriod.service';
 import { ObjectiveEvidenceService } from '../services/objective-evidence.service';
+import { PmsEmployeeProfileImportService } from '../services/pmsEmployeeProfileImport.service';
 
 export class Container {
   private static instance: Container;
@@ -66,6 +67,7 @@ export class Container {
       probationReviewService: new ProbationReviewService(context),
       managerReviewPeriodService: new ManagerReviewPeriodService(context),
       objectiveEvidenceService: new ObjectiveEvidenceService(context),
+      pmsEmployeeProfileImportService: new PmsEmployeeProfileImportService(context),
     };
   }
 

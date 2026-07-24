@@ -26,6 +26,7 @@ import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { Delegation } from '../models/pms-delegation.model';
+import { PmsEmployeeCareerProfile } from '../models/pms-employee-career-profile.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
   IPmsTemplateVersion,
@@ -85,6 +86,7 @@ export interface ResolvedTemplateField {
   scoringConfig?: Record<string, unknown>;
   validationRules?: Record<string, unknown>;
   conditionalRendering?: TemplateField['conditionalRendering'];
+  metadata?: Record<string, unknown>;
 }
 
 export interface ResolvedTemplateSection {
@@ -113,6 +115,7 @@ export interface ResolvedTemplateVersion {
     scoreType?: string;
     weight?: number;
   }>;
+  systemValues?: Record<string, unknown>;
   simulationContext?: {
     annualAssignmentId?: string;
     termAssignmentId?: string;
@@ -826,6 +829,9 @@ export class PmsTemplateService extends BaseService {
     const hierarchyScope = derivedContext.hierarchyScope ?? input.hierarchyScope;
     const quarter = derivedContext.quarter ?? input.quarter;
     const values = input.values ?? {};
+    const systemValues = await this.resolveEmployeeProfileSystemValues(
+      derivedContext.employeeId,
+    );
 
     const sections = version.sections
       .filter((section) => this.isSectionInScope(section, quarter))
@@ -861,6 +867,11 @@ export class PmsTemplateService extends BaseService {
         });
         const fields = (section.fields ?? [])
           .filter((field) => visibleFieldKeys.has(field.fieldKey))
+          .filter(
+            (field) =>
+              !this.isEmployeeCareerProfileField(field) ||
+              this.actorCanViewEmployeeCareerProfileFields(),
+          )
           .map((field) =>
             this.toResolvedField(field, {
               role,
@@ -911,6 +922,7 @@ export class PmsTemplateService extends BaseService {
       workflowState,
       sections,
       scoringParticipants,
+      systemValues,
       simulationContext: {
         annualAssignmentId: derivedContext.annualAssignmentId,
         termAssignmentId: derivedContext.termAssignmentId,
@@ -1764,15 +1776,17 @@ export class PmsTemplateService extends BaseService {
       type: this.mapFieldTypeForClient(field.fieldType),
       required: behavior?.mandatory ?? field.isRequired ?? requiredFor.includes(context.role),
       visible: true,
-      editable: this.isFieldEditable(
-        field,
-        context.role,
-        context.workflowState,
-        behavior,
-        context.allowEmployeeAssignedCustomObjectiveSetting,
-        context.sectionGrantsEditability,
-        context.policyManagedSection,
-      ),
+      editable: this.isEmployeeCareerProfileField(field)
+        ? false
+        : this.isFieldEditable(
+            field,
+            context.role,
+            context.workflowState,
+            behavior,
+            context.allowEmployeeAssignedCustomObjectiveSetting,
+            context.sectionGrantsEditability,
+            context.policyManagedSection,
+          ),
       placeholder: field.placeholder,
       helpText: field.helpText,
       hideLabel: field.hideLabel,
@@ -1786,6 +1800,7 @@ export class PmsTemplateService extends BaseService {
       scoringConfig: field.scoringConfig,
       validationRules: field.validationRules,
       conditionalRendering: field.conditionalRendering,
+      metadata: field.metadata,
     };
   }
 
@@ -2954,6 +2969,7 @@ export class PmsTemplateService extends BaseService {
     visibilityFlags: string[];
     annualAssignmentId?: string;
     termAssignmentId?: string;
+    employeeId?: string;
   }> {
     const visibilityFlags = new Set(input.visibilityFlags ?? []);
     let hierarchyScope = input.hierarchyScope;
@@ -3026,6 +3042,86 @@ export class PmsTemplateService extends BaseService {
       visibilityFlags: [...visibilityFlags],
       annualAssignmentId,
       termAssignmentId,
+      employeeId: annualAssignment.employeeId?.toString(),
+    };
+  }
+
+  private isEmployeeCareerProfileField(field: ITemplateField): boolean {
+    const bindingKey = String(
+      field.metadata?.bindingKey ?? field.fieldKey ?? '',
+    ).trim();
+    return (
+      field.metadata?.valueSourceType === 'PMS_EMPLOYEE_CAREER_PROFILE' ||
+      bindingKey.startsWith('employeeProfile.')
+    );
+  }
+
+  private actorCanViewEmployeeCareerProfileFields(): boolean {
+    const actor = this.context.user;
+    if (!actor) return false;
+    const role = normalizePmsRole(actor.role);
+    return [
+      PmsRole.ADMIN,
+      PmsRole.MANAGER,
+      PmsRole.MANAGEMENT,
+      PmsRole.DIRECTOR,
+    ].includes(role);
+  }
+
+  private async resolveEmployeeProfileSystemValues(
+    employeeId?: string,
+  ): Promise<Record<string, unknown>> {
+    if (!employeeId || !this.actorCanViewEmployeeCareerProfileFields()) {
+      return {};
+    }
+
+    const profile = await PmsEmployeeCareerProfile.findOne({ employeeId }).lean();
+    if (!profile) {
+      return {
+        'employeeProfile.qualification': 'Not available',
+        'employeeProfile.currentGrade': 'Not available',
+        'employeeProfile.gradeEffectiveDate': 'Not available',
+        'employeeProfile.yearsInGrade': 'Not available',
+        'employeeProfile.previousExperienceYears': 'Not available',
+        'employeeProfile.asOfDate': 'Not available',
+        'employeeProfile.careerProgressionPast': [],
+      };
+    }
+
+    const dateValue = (value?: Date) =>
+      value instanceof Date && Number.isFinite(value.getTime())
+        ? value.toISOString().slice(0, 10)
+        : 'Not available';
+    const optionalValue = (value: unknown) =>
+      value === undefined || value === null || String(value).trim() === ''
+        ? 'Not available'
+        : value;
+
+    return {
+      'employeeProfile.qualification': optionalValue(profile.qualification),
+      'employeeProfile.currentGrade': profile.currentGrade,
+      'employeeProfile.gradeEffectiveDate': dateValue(
+        profile.gradeEffectiveDate,
+      ),
+      'employeeProfile.yearsInGrade': optionalValue(profile.yearsInGrade),
+      'employeeProfile.previousExperienceYears': optionalValue(
+        profile.previousExperienceYears,
+      ),
+      'employeeProfile.asOfDate': dateValue(profile.asOfDate),
+      'employeeProfile.careerProgressionPast': (
+        profile.careerProgressionPast ?? []
+      )
+        .slice()
+        .sort(
+          (left, right) =>
+            right.year - left.year || left.sequence - right.sequence,
+        )
+        .map((entry) => ({
+          year: entry.year,
+          grade: entry.grade ?? '',
+          function: entry.function ?? '',
+          unitOrDepartment: entry.unitOrDepartment ?? '',
+        })),
     };
   }
 
