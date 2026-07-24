@@ -1,5 +1,6 @@
 import {
   buildObjectiveMatrixReportViewModel,
+  objectiveEvidenceReportValue,
   renderObjectiveMatrixReportHtml,
 } from '../../src/services/pms-objective-matrix-pdf.service';
 import type { AnnualObjectiveMatrixResponse } from '../../src/types/pms-objective-matrix';
@@ -200,5 +201,74 @@ describe('PMS objective matrix PDF view model', () => {
     expect(managerReport.finalRating).toBe('Exceeds Expectations');
     expect(employeeReport.showFinalDecisionOutcome).toBe(false);
     expect(employeeReport.finalRating).toBe('N/A');
+  });
+
+  it('exports objective evidence once as term-labelled metadata without storage URLs', () => {
+    const matrix = matrixFor('MANAGER', 'manager');
+    matrix.columns[5] = {
+      ...matrix.columns[5],
+      columnId: 'supporting-documents',
+      bindingKey: 'system.objectiveEvidence',
+      label: 'Supporting Documents',
+      type: 'OBJECTIVE_EVIDENCE',
+      workflowStage: 'EMPLOYEE_ACHIEVEMENT',
+    } as any;
+    matrix.termPolicies[5] = {
+      columnId: 'supporting-documents',
+      mode: 'EVERY_REVIEW_PERIOD',
+    };
+    matrix.rows[0].evidenceByTerm = {
+      Q1: {
+        evidenceId: 'evidence-q1',
+        objectiveId: 'objective-1',
+        termAssignmentId: 'term-1',
+        termCode: 'Q1',
+        version: 2,
+        editable: false,
+        attachment: {
+          id: 'attachment-q1',
+          documentId: 'document-q1',
+          fileName: 'q1-summary.pdf',
+          uploadedAt: '2026-04-15T10:00:00.000Z',
+          previewAvailable: true,
+          downloadAvailable: true,
+        },
+      },
+      Q3: {
+        evidenceId: 'evidence-q3',
+        objectiveId: 'objective-3',
+        termAssignmentId: 'term-3',
+        termCode: 'Q3',
+        version: 1,
+        editable: false,
+        attachment: {
+          id: 'attachment-q3',
+          documentId: 'document-q3',
+          fileName: 'customer-feedback.png',
+          uploadedAt: '2026-10-15T10:00:00.000Z',
+          previewAvailable: true,
+          downloadAvailable: true,
+        },
+      },
+    } as any;
+
+    expect(objectiveEvidenceReportValue(matrix.rows[0], matrix.termOrder)).toBe(
+      'Q1 — q1-summary.pdf | Q3 — customer-feedback.png',
+    );
+    const report = buildObjectiveMatrixReportViewModel({
+      ...common,
+      matrix,
+      snapshotMode: 'frozen',
+    });
+    const evidenceColumns = report.columnBands
+      .flatMap((band) => band.columns)
+      .filter((column) => column.columnType === 'OBJECTIVE_EVIDENCE');
+    expect(evidenceColumns).toHaveLength(1);
+    const evidenceValues = report.columnBands
+      .flatMap((band) => band.rows)
+      .flatMap((row) => row.cells)
+      .map((cell) => cell.value);
+    expect(evidenceValues).toContain('Q1 — q1-summary.pdf | Q3 — customer-feedback.png');
+    expect(JSON.stringify(report)).not.toContain('storage.googleapis.com');
   });
 });

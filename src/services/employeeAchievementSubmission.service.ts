@@ -130,6 +130,9 @@ type AchievementTemplateConfig = {
 
 type AchievementObjectiveRecord = {
   id: string;
+  objectiveRowKey?: string;
+  rowOriginTermCode?: AssessmentTermCodeType;
+  rowCoverage?: AssessmentTermCodeType[];
   assessmentTermCode?: AssessmentTermCodeType;
   objectiveNo?: number;
   title: string;
@@ -2062,7 +2065,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       isDeleted: false,
     })
       .select(
-        'termAssignmentId assessmentTermCode objectiveNo title description expectedOutcome targetMetric targetValue targetDate weightage source isPredefined objectiveSnapshot',
+        'termAssignmentId objectiveRowKey rowOriginTermCode rowCoverage assessmentTermCode objectiveNo title description expectedOutcome targetMetric targetValue targetDate weightage source isPredefined objectiveSnapshot',
       )
       .lean();
 
@@ -2081,6 +2084,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
       return {
         id: objective._id.toString(),
+        objectiveRowKey: objective.objectiveRowKey,
+        rowOriginTermCode: objective.rowOriginTermCode,
+        rowCoverage: objective.rowCoverage,
         assessmentTermCode:
           objective.assessmentTermCode ??
           termCodeByAssignmentId.get(objective.termAssignmentId.toString()),

@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import axios from 'axios';
 import { Types } from 'mongoose';
 import { authenticate } from '../middleware/auth';
 import { Objective } from '../models/pms-objective.model';
@@ -48,6 +49,7 @@ import type {
   ObjectiveMatrixReadQuery,
 } from '../types/pms-objective-matrix';
 import type { ObjectiveMatrixPdfQuery } from '../types/pms-objective-matrix-report';
+import { ObjectiveEvidenceError } from '../services/objective-evidence.service';
 
 const MAX_OBJECTIVE_ATTACHMENT_BYTES = 1024 * 1024;
 
@@ -168,6 +170,52 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/objective-evidence/:evidenceId/attachments/:attachmentId/:action',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Evidence'] } },
+    async (request, reply) => {
+      try {
+        const { evidenceId, attachmentId, action } = request.params as {
+          evidenceId: string;
+          attachmentId: string;
+          action: string;
+        };
+        if (action !== 'preview' && action !== 'download') {
+          throw new ObjectiveEvidenceError(
+            'Supporting document not available.',
+            404,
+            'PMS_OBJECTIVE_EVIDENCE_CONTENT_NOT_AVAILABLE',
+          );
+        }
+        const content = await request.container!.objectiveEvidenceService
+          .resolveActiveAttachmentContent(evidenceId, attachmentId, action);
+        const upstream = await axios.get<ArrayBuffer>(content.fileUrl, {
+          responseType: 'arraybuffer',
+          timeout: 15000,
+          maxContentLength: MAX_OBJECTIVE_ATTACHMENT_BYTES,
+          maxBodyLength: MAX_OBJECTIVE_ATTACHMENT_BYTES,
+        });
+        const safeFileName = content.fileName
+          .replace(/[\r\n"]/g, '_')
+          .replace(/[^\w.\-() ]+/g, '_');
+        return reply
+          .header('Content-Type', content.fileType)
+          .header('Content-Disposition', `${action === 'preview' ? 'inline' : 'attachment'}; filename="${safeFileName}"`)
+          .header('X-Content-Type-Options', 'nosniff')
+          .header('Cache-Control', 'private, no-store')
+          .send(Buffer.from(upstream.data));
+      } catch (error: unknown) {
+        if (axios.isAxiosError(error)) {
+          return reply.status(502).send(errorResponse(
+            'PMS_OBJECTIVE_EVIDENCE_CONTENT_ERROR',
+            'The supporting document could not be opened.',
+          ));
+        }
+        return sendObjectiveEvidenceRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/manager-library/items',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
@@ -224,6 +272,68 @@ export const objectiveRoutes: RouteHandler = async (
         return reply.send(successResponse('Annual objective matrix fetched successfully', matrix));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/:objectiveId/term-evidence',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Evidence'] } },
+    async (request, reply) => {
+      try {
+        if (!isMultipartRequest(request)) {
+          throw new ObjectiveEvidenceError(
+            'Choose a document to upload.',
+            400,
+            'PMS_OBJECTIVE_EVIDENCE_FILE_REQUIRED',
+          );
+        }
+        const { objectiveId } = request.params as { objectiveId: string };
+        const { body, files } = await parseMultipartForm(request);
+        if (files.length !== 1) {
+          throw new ObjectiveEvidenceError(
+            files.length === 0
+              ? 'Choose a document to upload.'
+              : 'Upload one supporting document at a time.',
+            400,
+            'PMS_OBJECTIVE_EVIDENCE_FILE_REQUIRED',
+          );
+        }
+        const result = await request.container!.objectiveEvidenceService.replaceTermEvidence({
+          objectiveId,
+          file: files[0],
+          expectedEvidenceVersion: optionalEvidenceVersion(body.expectedEvidenceVersion),
+        });
+        const termLabel = result.termCode;
+        return reply.send(successResponse(
+          result.operation === 'REPLACED'
+            ? `${termLabel} supporting document replaced successfully`
+            : `${termLabel} supporting document uploaded successfully`,
+          result,
+        ));
+      } catch (error: unknown) {
+        return sendObjectiveEvidenceRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.delete(
+    '/:objectiveId/term-evidence',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Evidence'] } },
+    async (request, reply) => {
+      try {
+        const { objectiveId } = request.params as { objectiveId: string };
+        const body = (request.body ?? {}) as Record<string, unknown>;
+        const result = await request.container!.objectiveEvidenceService.removeTermEvidence({
+          objectiveId,
+          expectedEvidenceVersion: optionalEvidenceVersion(body.expectedEvidenceVersion),
+        });
+        return reply.send(successResponse(
+          `${result.termCode} supporting document removed successfully`,
+          result,
+        ));
+      } catch (error: unknown) {
+        return sendObjectiveEvidenceRouteError(reply, error);
       }
     },
   );
@@ -1215,4 +1325,30 @@ function sendRouteError(reply: FastifyReply, error: unknown) {
     return reply.status(413).send(errorResponse('PMS_OBJECTIVE_ERROR', 'Objective attachments must be less than 1 MB per file.'));
   }
   return reply.status(400).send(errorResponse('PMS_OBJECTIVE_ERROR', message));
+}
+
+function optionalEvidenceVersion(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const version = Number(value);
+  if (!Number.isInteger(version) || version < 0) {
+    throw new ObjectiveEvidenceError(
+      'Expected evidence version must be a non-negative integer.',
+      400,
+      'PMS_OBJECTIVE_EVIDENCE_INVALID_VERSION',
+    );
+  }
+  return version;
+}
+
+function sendObjectiveEvidenceRouteError(reply: FastifyReply, error: unknown) {
+  if (error instanceof ObjectiveEvidenceError) {
+    return reply
+      .status(error.statusCode)
+      .send(errorResponse(error.code, error.message));
+  }
+  const message = error instanceof Error ? error.message : 'Unexpected error';
+  return reply.status(500).send(errorResponse(
+    'PMS_OBJECTIVE_EVIDENCE_ERROR',
+    message,
+  ));
 }

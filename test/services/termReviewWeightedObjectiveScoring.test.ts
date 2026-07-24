@@ -265,4 +265,16 @@ describe('TermReviewService - weighted objective scoring validation', () => {
       ),
     ).toThrow('Overall objective score must be between 0 and 100.');
   });
+
+  it('accepts a rating-only submission without a numeric score', () => {
+    const service = createService();
+
+    expect(() =>
+      service.validateRatingOnlyReviewInput({
+        ratings: [],
+        comments: 'Reviewed.',
+        overallRating: 'Good',
+      }),
+    ).not.toThrow();
+  });
 });
