@@ -3060,12 +3060,12 @@ export class PmsTemplateService extends BaseService {
     const actor = this.context.user;
     if (!actor) return false;
     const role = normalizePmsRole(actor.role);
-    return [
+    return new Set<string>([
       PmsRole.ADMIN,
       PmsRole.MANAGER,
       PmsRole.MANAGEMENT,
       PmsRole.DIRECTOR,
-    ].includes(role);
+    ]).has(role);
   }
 
   private async resolveEmployeeProfileSystemValues(
