@@ -423,7 +423,7 @@ export class WorkflowSyncService extends BaseService {
     const syncSource = input.source ?? 'ADMIN_MANUAL_SYNC';
     const closeReason =
       input.reason?.trim() ||
-      'All objectives are approved; objective setting auto-closed during workflow sync.';
+      closeCheck.reason;
 
     const closeValidation = workflowService.validateTransition({
       entityType: WorkflowEntityType.TERM_ASSIGNMENT,

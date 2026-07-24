@@ -206,6 +206,8 @@ describe('Objective matrix read model Phase 5', () => {
       required: false,
       denialReason: 'ROLE_READ_ONLY',
     });
+  });
+
   it('resolves evidence editability independently from generic matrix-cell persistence', () => {
     expect(resolveObjectiveTermEvidencePermission({
       role: PmsRole.EMPLOYEE,

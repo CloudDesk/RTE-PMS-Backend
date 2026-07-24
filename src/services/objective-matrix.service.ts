@@ -598,10 +598,10 @@ export class ObjectiveMatrixService {
         else termCells[termCode] = [...(termCells[termCode] ?? []), cell];
       }
     }
-    const role = input.viewRole;
+    const role = input.permissionRole;
     const evidenceByTerm: Partial<Record<AssessmentTermCodeType, ObjectiveTermEvidenceSummary>> = {};
     if (input.evidenceColumn) {
-      const evidenceAccess = this.columnAccess(input.evidenceColumn, role);
+      const evidenceAccess = this.columnAccess(input.evidenceColumn, input.viewRole);
       const evidenceConfig = input.evidenceColumn.evidenceConfig;
       for (const termCode of coverage) {
         const sibling = siblingByTerm.get(termCode)!;
