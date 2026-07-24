@@ -193,7 +193,9 @@ function displayColumns(matrix: AnnualObjectiveMatrixResponse): ObjectiveMatrixR
     const groupLabel = matrix.columnGroups.find((group) =>
       group.columnIds.includes(column.columnId),
     )?.label || 'Objective fields';
-    const terms = policy?.mode === 'EVERY_REVIEW_PERIOD'
+    const terms = column.type === 'OBJECTIVE_EVIDENCE'
+      ? []
+      : policy?.mode === 'EVERY_REVIEW_PERIOD'
       ? matrix.termOrder
       : policy?.mode === 'SELECTED_PERIODS'
         ? matrix.termOrder.filter((term) => policy.selectedTerms?.includes(term))
@@ -205,6 +207,7 @@ function displayColumns(matrix: AnnualObjectiveMatrixResponse): ObjectiveMatrixR
       return [{
         key: column.columnId,
         columnId: column.columnId,
+        columnType: column.type,
         label: column.label,
         groupLabel,
         width,
@@ -213,6 +216,7 @@ function displayColumns(matrix: AnnualObjectiveMatrixResponse): ObjectiveMatrixR
     return terms.map((term) => ({
       key: `${column.columnId}:${term}`,
       columnId: column.columnId,
+      columnType: column.type,
       termCode: term,
       label: terms.length === 1 || column.label.toUpperCase().includes(term)
         ? column.label
@@ -221,6 +225,19 @@ function displayColumns(matrix: AnnualObjectiveMatrixResponse): ObjectiveMatrixR
       width,
     }));
   });
+}
+
+export function objectiveEvidenceReportValue(
+  row: ObjectiveMatrixRow,
+  termOrder: AnnualObjectiveMatrixResponse['termOrder'],
+): string {
+  const documents = termOrder.flatMap((termCode) => {
+    const summary = row.evidenceByTerm?.[termCode];
+    return summary?.attachment?.fileName
+      ? [`${termCode} — ${summary.attachment.fileName}`]
+      : [];
+  });
+  return documents.length > 0 ? documents.join(' | ') : 'No supporting documents';
 }
 
 function splitColumnBands(columns: ObjectiveMatrixReportColumn[]): ObjectiveMatrixReportColumn[][] {
@@ -291,6 +308,12 @@ function buildBands(matrix: AnnualObjectiveMatrixResponse): ObjectiveMatrixRepor
       source: titleCase(row.source),
       status: statusFor(row, matrix),
       cells: bandColumns.map((column) => {
+        if (column.columnType === 'OBJECTIVE_EVIDENCE') {
+          return {
+            value: objectiveEvidenceReportValue(row, matrix.termOrder),
+            calculated: false,
+          };
+        }
         const cell = cellFor(row, column);
         return {
           value: stringValue(cell?.value),

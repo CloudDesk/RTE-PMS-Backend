@@ -63,6 +63,7 @@ export type TemplateObjectiveColumnType =
   | 'BOOLEAN'
   | 'RATING_SCALE'
   | 'ATTACHMENT'
+  | 'OBJECTIVE_EVIDENCE'
   | 'FORMULA'
   | 'SYSTEM_DISPLAY';
 export type TemplateObjectiveColumnTermMode =
@@ -83,6 +84,24 @@ export interface ITemplateObjectiveTableColumnAccess {
   required?: boolean;
 }
 
+export type ObjectiveEvidenceDisplayMode = 'ANNUAL_AGGREGATED';
+export type ObjectiveEvidenceScope = 'PER_EMPLOYEE_TERM';
+export type ObjectiveEvidenceReplacementPolicy = 'REPLACE_ACTIVE_TERM_DOCUMENT';
+
+export interface IObjectiveEvidenceColumnConfig {
+  scope: ObjectiveEvidenceScope;
+  displayMode: ObjectiveEvidenceDisplayMode;
+  maxActiveFilesPerTerm: 1;
+  replacementPolicy: ObjectiveEvidenceReplacementPolicy;
+  maxFileSizeBytes: number;
+  allowedMimeTypes: string[];
+  showTermLabel: boolean;
+  allowPreview: boolean;
+  allowDownload: boolean;
+  allowEmployeeRemove: boolean;
+  retainReplacementHistory: boolean;
+}
+
 export interface ITemplateObjectiveTableColumn {
   columnId: string;
   bindingKey: string;
@@ -101,6 +120,7 @@ export interface ITemplateObjectiveTableColumn {
   | 'CALCULATED';
   options?: ITemplateOption[];
   access?: ITemplateObjectiveTableColumnAccess[];
+  evidenceConfig?: IObjectiveEvidenceColumnConfig;
 }
 
 export interface ITemplateObjectiveColumnGroup {
@@ -373,6 +393,43 @@ const objectiveTableColumnAccessSchema = new Schema<ITemplateObjectiveTableColum
   { _id: false },
 );
 
+const objectiveEvidenceColumnConfigSchema = new Schema<IObjectiveEvidenceColumnConfig>(
+  {
+    scope: {
+      type: String,
+      required: true,
+      enum: ['PER_EMPLOYEE_TERM'],
+    },
+    displayMode: {
+      type: String,
+      required: true,
+      enum: ['ANNUAL_AGGREGATED'],
+    },
+    maxActiveFilesPerTerm: {
+      type: Number,
+      required: true,
+      enum: [1],
+    },
+    replacementPolicy: {
+      type: String,
+      required: true,
+      enum: ['REPLACE_ACTIVE_TERM_DOCUMENT'],
+    },
+    maxFileSizeBytes: { type: Number, required: true, min: 1 },
+    allowedMimeTypes: {
+      type: [{ type: String, trim: true }],
+      required: true,
+      default: undefined,
+    },
+    showTermLabel: { type: Boolean, required: true },
+    allowPreview: { type: Boolean, required: true },
+    allowDownload: { type: Boolean, required: true },
+    allowEmployeeRemove: { type: Boolean, required: true },
+    retainReplacementHistory: { type: Boolean, required: true },
+  },
+  { _id: false },
+);
+
 const objectiveTableColumnSchema = new Schema<ITemplateObjectiveTableColumn>(
   {
     columnId: { type: String, required: true, trim: true },
@@ -392,6 +449,7 @@ const objectiveTableColumnSchema = new Schema<ITemplateObjectiveTableColumn>(
         PmsTemplateFieldType.BOOLEAN,
         PmsTemplateFieldType.RATING_SCALE,
         PmsTemplateFieldType.ATTACHMENT,
+        'OBJECTIVE_EVIDENCE',
         PmsTemplateFieldType.FORMULA,
         'SYSTEM_DISPLAY',
       ],
@@ -429,6 +487,10 @@ const objectiveTableColumnSchema = new Schema<ITemplateObjectiveTableColumn>(
       default: undefined,
     },
     access: { type: [objectiveTableColumnAccessSchema], default: [] },
+    evidenceConfig: {
+      type: objectiveEvidenceColumnConfigSchema,
+      default: undefined,
+    },
   },
   { _id: false },
 );

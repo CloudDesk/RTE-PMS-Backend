@@ -5,6 +5,7 @@ import {
 import {
   AnnualDecisionService,
   assertObjectiveMatrixFreezeIntegrity,
+  buildObjectiveEvidenceSnapshotManifest,
   maskStoredObjectiveMatrixSnapshot,
   type SaveDecisionDraftInput,
 } from '../../src/services/annualDecision.service';
@@ -135,6 +136,7 @@ describe('AnnualDecisionService numeric validation', () => {
         employee: { columns: [{ columnKey: 'employee-visible' }] },
       },
       objectiveMatrixContentHash: 'a'.repeat(64),
+      objectiveEvidenceManifest: [{ attachmentId: 'admin-only-attachment' }],
       decision: { finalRating: 'Exceeds' },
     };
 
@@ -157,5 +159,53 @@ describe('AnnualDecisionService numeric validation', () => {
     );
 
     expect(proposedRating).toBe('Good');
+  it('freezes evidence identifiers, metadata, and evidence version in term order', () => {
+    const manifest = buildObjectiveEvidenceSnapshotManifest({
+      termOrder: ['Q1', 'Q2', 'Q3', 'Q4'],
+      rows: [{
+        objectiveRowKey: 'row-1',
+        evidenceByTerm: {
+          Q1: {
+            evidenceId: 'evidence-q1',
+            version: 3,
+            attachment: {
+              id: 'attachment-q1',
+              documentId: 'document-q1',
+              fileName: 'q1-summary.pdf',
+              fileType: 'application/pdf',
+              fileSize: 42000,
+              uploadedAt: '2026-04-15T10:00:00.000Z',
+            },
+          },
+          Q3: {
+            evidenceId: 'evidence-q3',
+            version: 1,
+            attachment: {
+              id: 'attachment-q3',
+              documentId: 'document-q3',
+              fileName: 'q3-feedback.png',
+              uploadedAt: '2026-10-15T10:00:00.000Z',
+            },
+          },
+        },
+      }],
+    } as any);
+
+    expect(manifest).toEqual([
+      expect.objectContaining({
+        objectiveRowKey: 'row-1',
+        termCode: 'Q1',
+        evidenceId: 'evidence-q1',
+        evidenceVersion: 3,
+        attachmentId: 'attachment-q1',
+        documentId: 'document-q1',
+        fileName: 'q1-summary.pdf',
+      }),
+      expect.objectContaining({
+        termCode: 'Q3',
+        evidenceVersion: 1,
+        attachmentId: 'attachment-q3',
+      }),
+    ]);
   });
 });

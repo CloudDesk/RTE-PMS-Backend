@@ -20,6 +20,7 @@ import { PmsDocumentService } from '../services/pms-document.service';
 import { ManagerInitiatedReviewService } from '../services/managerInitiatedReview.service';
 import { ProbationReviewService } from '../services/probationReview.service';
 import { ManagerReviewPeriodService } from '../services/managerReviewPeriod.service';
+import { ObjectiveEvidenceService } from '../services/objective-evidence.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -44,4 +45,5 @@ export interface ServiceContainer {
   managerInitiatedReviewService: ManagerInitiatedReviewService;
   probationReviewService: ProbationReviewService;
   managerReviewPeriodService: ManagerReviewPeriodService;
+  objectiveEvidenceService: ObjectiveEvidenceService;
 }

@@ -135,6 +135,42 @@ export function assertObjectiveMatrixFreezeIntegrity(
   }
 }
 
+export function buildObjectiveEvidenceSnapshotManifest(
+  matrix: AnnualObjectiveMatrixResponse | null,
+): Array<{
+  objectiveRowKey: string;
+  termCode: string;
+  evidenceId?: string;
+  evidenceVersion: number;
+  attachmentId: string;
+  documentId: string;
+  fileName: string;
+  fileType?: string;
+  fileSize?: number;
+  uploadedAt: string;
+}> {
+  if (!matrix) return [];
+  return matrix.rows.flatMap((row) =>
+    matrix.termOrder.flatMap((termCode) => {
+      const evidence = row.evidenceByTerm?.[termCode];
+      const attachment = evidence?.attachment;
+      if (!evidence || !attachment) return [];
+      return [{
+        objectiveRowKey: row.objectiveRowKey,
+        termCode,
+        evidenceId: evidence.evidenceId,
+        evidenceVersion: evidence.version,
+        attachmentId: attachment.id,
+        documentId: attachment.documentId,
+        fileName: attachment.fileName,
+        fileType: attachment.fileType,
+        fileSize: attachment.fileSize,
+        uploadedAt: attachment.uploadedAt,
+      }];
+    }),
+  );
+}
+
 export function maskStoredObjectiveMatrixSnapshot(
   value: unknown,
   canSeeStoredAdminObjectiveMatrix: boolean,
@@ -151,6 +187,7 @@ export function maskStoredObjectiveMatrixSnapshot(
   const masked = { ...(value as Record<string, unknown>) };
   delete masked.objectiveMatrix;
   delete masked.objectiveMatricesByView;
+  delete masked.objectiveEvidenceManifest;
   return masked;
 }
 
@@ -1000,6 +1037,7 @@ export class AnnualDecisionService extends BaseService {
         objectiveMatrixContentHash: objectiveMatrix?.contentHash,
         objectiveMatrixLayoutVersion: objectiveMatrix?.layoutVersion,
         objectiveMatrixContentVersion: objectiveMatrix?.contentVersion,
+        objectiveEvidenceManifest: buildObjectiveEvidenceSnapshotManifest(objectiveMatrix),
         reportMetadata: {
           cycle: cycle ? {
             _id: cycle._id,

@@ -20,6 +20,7 @@ const COLUMN_TYPES = new Set<string>([
   PmsTemplateFieldType.BOOLEAN,
   PmsTemplateFieldType.RATING_SCALE,
   PmsTemplateFieldType.ATTACHMENT,
+  'OBJECTIVE_EVIDENCE',
   PmsTemplateFieldType.FORMULA,
   'SYSTEM_DISPLAY',
 ]);
@@ -184,6 +185,23 @@ export function normalizeObjectiveTableLayout(
           required: access.required === true,
         }))
         : [],
+      evidenceConfig: column.evidenceConfig && typeof column.evidenceConfig === 'object'
+        ? {
+          scope: String(column.evidenceConfig.scope ?? '').toUpperCase(),
+          displayMode: String(column.evidenceConfig.displayMode ?? '').toUpperCase(),
+          maxActiveFilesPerTerm: Number(column.evidenceConfig.maxActiveFilesPerTerm),
+          replacementPolicy: String(column.evidenceConfig.replacementPolicy ?? '').toUpperCase(),
+          maxFileSizeBytes: Number(column.evidenceConfig.maxFileSizeBytes),
+          allowedMimeTypes: Array.isArray(column.evidenceConfig.allowedMimeTypes)
+            ? column.evidenceConfig.allowedMimeTypes.map((mimeType: unknown) => String(mimeType).trim())
+            : [],
+          showTermLabel: column.evidenceConfig.showTermLabel === true,
+          allowPreview: column.evidenceConfig.allowPreview === true,
+          allowDownload: column.evidenceConfig.allowDownload === true,
+          allowEmployeeRemove: column.evidenceConfig.allowEmployeeRemove === true,
+          retainReplacementHistory: column.evidenceConfig.retainReplacementHistory === true,
+        } as any
+        : undefined,
     };
   });
 
@@ -405,6 +423,9 @@ export function objectiveTableLayoutValidationErrors(
   for (const duplicate of duplicateValues(columns.map((column) => column.bindingKey))) {
     errors.push(`${prefix} has duplicate bindingKey "${duplicate}"`);
   }
+  if (columns.filter((column) => column.type === 'OBJECTIVE_EVIDENCE').length > 1) {
+    errors.push(`${prefix} allows only one OBJECTIVE_EVIDENCE column`);
+  }
   for (const column of columns) {
     if (!column.columnId?.trim()) errors.push(`${prefix} has a column without columnId`);
     if (!column.bindingKey?.trim()) errors.push(`${prefix} column "${column.columnId}" requires bindingKey`);
@@ -428,6 +449,44 @@ export function objectiveTableLayoutValidationErrors(
         options.activationReady && (!column.options || column.options.length === 0)) {
       errors.push(`${prefix} dropdown column "${column.columnId}" requires options`);
     }
+    if (column.type === 'OBJECTIVE_EVIDENCE') {
+      const config = column.evidenceConfig;
+      if (column.bindingKey !== 'system.objectiveEvidence') {
+        errors.push(`${prefix} evidence column "${column.columnId}" must use bindingKey "system.objectiveEvidence"`);
+      }
+      if (column.fillOwner !== 'EMPLOYEE' || column.workflowStage !== 'EMPLOYEE_ACHIEVEMENT') {
+        errors.push(`${prefix} evidence column "${column.columnId}" must be EMPLOYEE/EMPLOYEE_ACHIEVEMENT`);
+      }
+      if (column.required === true) {
+        errors.push(`${prefix} evidence column "${column.columnId}" must be optional`);
+      }
+      if (!config) {
+        errors.push(`${prefix} evidence column "${column.columnId}" requires evidenceConfig`);
+      } else {
+        if (config.scope !== 'PER_EMPLOYEE_TERM') {
+          errors.push(`${prefix} evidence column "${column.columnId}" must use PER_EMPLOYEE_TERM scope`);
+        }
+        if (config.displayMode !== 'ANNUAL_AGGREGATED') {
+          errors.push(`${prefix} evidence column "${column.columnId}" must use ANNUAL_AGGREGATED display`);
+        }
+        if (config.maxActiveFilesPerTerm !== 1) {
+          errors.push(`${prefix} evidence column "${column.columnId}" must allow one active file per term`);
+        }
+        if (config.replacementPolicy !== 'REPLACE_ACTIVE_TERM_DOCUMENT') {
+          errors.push(`${prefix} evidence column "${column.columnId}" must replace the active term document`);
+        }
+        if (!Number.isInteger(config.maxFileSizeBytes) || config.maxFileSizeBytes < 1) {
+          errors.push(`${prefix} evidence column "${column.columnId}" requires a positive max file size`);
+        }
+        if (!Array.isArray(config.allowedMimeTypes) ||
+            config.allowedMimeTypes.length === 0 ||
+            config.allowedMimeTypes.some((mimeType) => !mimeType.trim())) {
+          errors.push(`${prefix} evidence column "${column.columnId}" requires allowed MIME types`);
+        }
+      }
+    } else if (column.evidenceConfig) {
+      errors.push(`${prefix} column "${column.columnId}" cannot have evidenceConfig unless its type is OBJECTIVE_EVIDENCE`);
+    }
     for (const duplicate of duplicateValues((column.access ?? []).map((access) => access.role))) {
       errors.push(`${prefix} column "${column.columnId}" has duplicate access role "${duplicate}"`);
     }
@@ -440,6 +499,14 @@ export function objectiveTableLayoutValidationErrors(
       }
       if ((column.type === 'FORMULA' || column.type === 'SYSTEM_DISPLAY') && access.editable) {
         errors.push(`${prefix} calculated column "${column.columnId}" cannot be editable for ${access.role}`);
+      }
+      if (column.type === 'OBJECTIVE_EVIDENCE') {
+        if (access.required) {
+          errors.push(`${prefix} evidence column "${column.columnId}" cannot be required for ${access.role}`);
+        }
+        if (access.editable && access.role !== PmsRole.EMPLOYEE) {
+          errors.push(`${prefix} evidence column "${column.columnId}" cannot be editable for ${access.role}`);
+        }
       }
     }
   }
@@ -520,6 +587,10 @@ export function objectiveTableLayoutValidationErrors(
     if (policy.mode === 'SELECTED_PERIODS' && (!policy.selectedTerms || policy.selectedTerms.length === 0)) {
       errors.push(`${prefix} column "${policy.columnId}" must select at least one assessment term`);
     }
+    if (columnById.get(policy.columnId)?.type === 'OBJECTIVE_EVIDENCE' &&
+        policy.mode !== 'EVERY_REVIEW_PERIOD') {
+      errors.push(`${prefix} evidence column "${policy.columnId}" must use EVERY_REVIEW_PERIOD`);
+    }
   }
 
   const dependencies = new Map<string, string[]>();
@@ -557,6 +628,9 @@ export function objectiveTableLayoutValidationErrors(
       if (!columnIds.has(reference)) errors.push(`${prefix} formula "${formula.formulaId}" references missing column "${reference}"`);
       if (reference === formula.targetColumnId) errors.push(`${prefix} formula "${formula.formulaId}" cannot reference itself`);
       const source = columnById.get(reference);
+      if (source?.type === 'OBJECTIVE_EVIDENCE') {
+        errors.push(`${prefix} formula "${formula.formulaId}" cannot reference evidence column "${reference}"`);
+      }
       if (source && ![
         PmsTemplateFieldType.NUMERIC_INPUT,
         PmsTemplateFieldType.PERCENTAGE,
