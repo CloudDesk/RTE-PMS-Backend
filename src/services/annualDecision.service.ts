@@ -14,7 +14,10 @@ import {
   PmsTemplateSectionType,
   TermWorkflowState,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AnnualDecisionValue } from '../models/pms-annual-decision-value.model';
@@ -37,6 +40,7 @@ import {
   type ResolvedTemplateVersion,
 } from './pms-template.service';
 import { PmsScoringService } from './pms-scoring.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { ObjectiveMatrixService } from './objective-matrix.service';
 import type {
   AnnualObjectiveMatrixResponse,
@@ -808,6 +812,13 @@ export class AnnualDecisionService extends BaseService {
     this.validateDecisionInput(decisionInput, appraisalOutcomeType, false);
     await this.validateAnnualTemplateInput(annualAssignment, decisionInput, false);
 
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      annualAssignment._id,
+      EmployeeCareerProfileSnapshotTrigger.ANNUAL_DECISION_DRAFT,
+    );
+
     const payload = {
       annualAssignmentId: annualAssignment._id,
       cycleId: annualAssignment.cycleId,
@@ -968,6 +979,12 @@ export class AnnualDecisionService extends BaseService {
     if (!annualAssignment.templateVersionId) {
       throw new Error('Locked template version is required before freezing annual decision');
     }
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      annualAssignment._id,
+      EmployeeCareerProfileSnapshotTrigger.ANNUAL_FINALIZATION,
+    );
     const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(annualAssignment, 'admin');
     assertObjectiveMatrixFreezeIntegrity(objectiveMatrix);
     const matrixService = new ObjectiveMatrixService(this.context);

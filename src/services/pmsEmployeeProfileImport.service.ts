@@ -8,6 +8,7 @@ import {
   PmsEmployeeCareerProfileChange,
   PmsEmployeeCareerProfileChangeAction,
   PmsEmployeeProfileImportRow,
+  PmsEmployeeProfileImportFile,
   PmsEmployeeProfileUpdateSource,
   PmsEmployeeProfileImport,
   PmsEmployeeProfileImportStatus,
@@ -67,6 +68,29 @@ const GRADE_REFERENCE_HEADERS = [
 
 const REQUIRED_SHEETS = Object.values(PmsEmployeeProfileWorkbookSheet);
 const TEMPLATE_PROTECTION_PASSWORD = 'rte-pms-template';
+const IMPORT_VALIDATION_IGNORED_WORKSHEET_NODES = [
+  'sheetPr',
+  'sheetViews',
+  'sheetFormatPr',
+  'cols',
+  'autoFilter',
+  'mergeCells',
+  'rowBreaks',
+  'hyperlinks',
+  'pageMargins',
+  'dataValidations',
+  'pageSetup',
+  'headerFooter',
+  'printOptions',
+  'picture',
+  'drawing',
+  'sheetProtection',
+  'tableParts',
+  'conditionalFormatting',
+  'extLst',
+];
+const ACTIVE_BACKGROUND_IMPORTS = new Set<string>();
+const IMPORT_FILE_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export type PmsEmployeeProfileTemplateEmployee = {
   employeeId: string;
@@ -121,6 +145,8 @@ export type ParsedEmployeeProfileRow = {
   previousExperienceYears?: number;
   qualification?: string;
   asOfDate: Date;
+  sourceProfileVersion?: number;
+  submittedCareerProgressionPast?: ParsedCareerProgressionRow[];
   careerProgressionPast: ParsedCareerProgressionRow[];
   valid: boolean;
   errors: string[];
@@ -142,6 +168,8 @@ export type PmsEmployeeProfileWorkbookValidation = {
 export type PmsEmployeeProfileImportConfirmation = {
   importReference: string;
   status: 'COMPLETED';
+  confirmationAttemptCount: number;
+  recovered: boolean;
   createdProfiles: number;
   updatedProfiles: number;
   unchangedProfiles: number;
@@ -150,6 +178,28 @@ export type PmsEmployeeProfileImportConfirmation = {
     employeeId: string;
     employeeCode: string;
   }>;
+};
+
+export type PmsEmployeeProfileImportOperation = {
+  importReference: string;
+  status: string;
+  processingStage?: 'VALIDATION' | 'IMPORT';
+  failedStage?: 'VALIDATION' | 'IMPORT';
+  progress: {
+    processedRows: number;
+    totalRows: number;
+    percent: number;
+    message?: string;
+  };
+  failureReason?: string;
+  validation?: PmsEmployeeProfileWorkbookValidation;
+  result?: PmsEmployeeProfileImportConfirmation;
+  preview: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
 };
 
 export type PmsEmployeeCareerProfileListItem = {
@@ -225,6 +275,623 @@ export class PmsEmployeeProfileImportService extends BaseService {
     return Buffer.from(buffer);
   }
 
+  async queueImportWorkbook(input: {
+    buffer: Buffer;
+    originalFileName: string;
+  }): Promise<PmsEmployeeProfileImportOperation> {
+    const actor = this.assertAdminActor();
+    if (!input.buffer.length) throw new Error('The uploaded workbook is empty');
+    if (input.buffer.length > PMS_EMPLOYEE_PROFILE_MAX_FILE_BYTES) {
+      throw new Error('The workbook exceeds the 10 MB file-size limit');
+    }
+
+    const importId = new Types.ObjectId();
+    const safeFileName =
+      this.cleanText(input.originalFileName, 255) || 'career-profiles.xlsx';
+    const fileChecksum = crypto
+      .createHash('sha256')
+      .update(input.buffer)
+      .digest('hex');
+
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await PmsEmployeeProfileImport.create(
+          [
+            {
+              _id: importId,
+              originalFileName: safeFileName,
+              fileChecksum,
+              templateVersion: 'PENDING',
+              status: PmsEmployeeProfileImportStatus.QUEUED,
+              uploadedBy: new Types.ObjectId(actor.actorId),
+              uploadedAt: new Date(),
+              processingStage: 'VALIDATION',
+              progress: {
+                processedRows: 0,
+                totalRows: 0,
+                percent: 0,
+                message: 'Validation queued in the application',
+              },
+            },
+          ],
+          { session },
+        );
+        await PmsEmployeeProfileImportFile.create(
+          [
+            {
+              importId,
+              workbook: input.buffer,
+              expiresAt: new Date(Date.now() + IMPORT_FILE_RETENTION_MS),
+            },
+          ],
+          { session },
+        );
+      });
+    } finally {
+      await session.endSession();
+    }
+    this.scheduleBackgroundValidation(importId.toString());
+    return this.getImportOperation(importId.toString());
+  }
+
+  async processQueuedValidation(
+    importReference: string,
+  ): Promise<PmsEmployeeProfileImportOperation> {
+    if (!Types.ObjectId.isValid(importReference)) {
+      throw new Error('Invalid import reference');
+    }
+    const importId = new Types.ObjectId(importReference);
+    const staleHeartbeat = new Date(Date.now() - 20 * 60 * 1000);
+    const claimed = await PmsEmployeeProfileImport.findOneAndUpdate(
+      {
+        _id: importId,
+        $or: [
+          {
+            status: {
+              $in: [
+                PmsEmployeeProfileImportStatus.UPLOADED,
+                PmsEmployeeProfileImportStatus.QUEUED,
+              ],
+            },
+          },
+          {
+            status: PmsEmployeeProfileImportStatus.VALIDATING,
+            processingHeartbeatAt: { $lt: staleHeartbeat },
+          },
+          {
+            status: PmsEmployeeProfileImportStatus.FAILED,
+            failedStage: 'VALIDATION',
+          },
+        ],
+      },
+      {
+        $set: {
+          status: PmsEmployeeProfileImportStatus.VALIDATING,
+          processingStage: 'VALIDATION',
+          processingStartedAt: new Date(),
+          processingHeartbeatAt: new Date(),
+          'progress.percent': 5,
+          'progress.message': 'Reading and validating workbook',
+        },
+        $inc: { validationAttemptCount: 1, version: 1 },
+      },
+      { new: true },
+    ).lean();
+    if (!claimed) return this.getImportOperation(importReference, false);
+
+    let validationCompleted = false;
+    try {
+      const storedFile = await PmsEmployeeProfileImportFile.findOne({
+        importId,
+      })
+        .select('workbook')
+        .lean();
+      if (!storedFile?.workbook) {
+        throw new Error(
+          'The temporary workbook is no longer available. Upload it again.',
+        );
+      }
+      const buffer = this.readStoredWorkbookBuffer(storedFile.workbook);
+      const referenceData = await this.loadReferenceData();
+      const validation = await this.validateWorkbookBuffer(buffer, referenceData);
+      await this.mergeExistingCareerHistoryForImport(validation);
+      const duplicateImport = await PmsEmployeeProfileImport.findOne({
+        _id: { $ne: importId },
+        fileChecksum: claimed.fileChecksum,
+        status: {
+          $in: [
+            PmsEmployeeProfileImportStatus.VALIDATED,
+            PmsEmployeeProfileImportStatus.IMPORT_QUEUED,
+            PmsEmployeeProfileImportStatus.IMPORTING,
+            PmsEmployeeProfileImportStatus.COMPLETED,
+          ],
+        },
+      })
+        .select('_id status createdAt')
+        .sort({ createdAt: -1 })
+        .lean();
+      if (duplicateImport) {
+        const issue = this.issue(
+          'WARNING',
+          PmsEmployeeProfileWorkbookSheet.INSTRUCTIONS,
+          'DUPLICATE_FILE',
+          `This workbook matches prior import ${duplicateImport._id.toString()} (${duplicateImport.status}). Review it before confirming.`,
+        );
+        validation.issues.push(issue);
+        validation.warningCount += 1;
+        validation.profiles.forEach((profile) =>
+          profile.warnings.push(issue.message),
+        );
+      }
+
+      if (validation.canImport) {
+        await PmsEmployeeProfileImportRow.deleteMany({ importId });
+        await PmsEmployeeProfileImportRow.insertMany(
+          validation.profiles.map((profile) => ({
+            importId,
+            employeeId: new Types.ObjectId(profile.employeeId!),
+            employeeCode: profile.employeeCode,
+            employeeName: profile.employeeName,
+            designation: profile.designation,
+            department: profile.department,
+            managerName: profile.managerName,
+            warnings: profile.warnings,
+            sourceRowNumber: profile.rowNumber,
+            currentGrade: profile.currentGrade,
+            gradeEffectiveDate: profile.gradeEffectiveDate,
+            yearsInGrade: profile.yearsInGrade,
+            previousExperienceYears: profile.previousExperienceYears,
+            qualification: profile.qualification,
+            asOfDate: profile.asOfDate!,
+            sourceProfileVersion: profile.sourceProfileVersion,
+            submittedCareerProgressionPast:
+              profile.submittedCareerProgressionPast ?? [],
+            careerProgressionPast: profile.careerProgressionPast,
+          })),
+          { ordered: true },
+        );
+      }
+      const now = new Date();
+      await PmsEmployeeProfileImport.updateOne(
+        { _id: importId, status: PmsEmployeeProfileImportStatus.VALIDATING },
+        {
+          $set: {
+            templateVersion: validation.templateVersion || 'UNKNOWN',
+            status: validation.canImport
+              ? PmsEmployeeProfileImportStatus.VALIDATED
+              : PmsEmployeeProfileImportStatus.VALIDATION_FAILED,
+            validatedAt: now,
+            processingHeartbeatAt: now,
+            validationIssues: validation.issues.slice(0, 5000),
+            affectedEmployeeIds: validation.profiles
+              .map((profile) => profile.employeeId)
+              .filter((id): id is string => Boolean(id))
+              .map((id) => new Types.ObjectId(id)),
+            counts: {
+              profileRows: validation.profileRowCount,
+              careerRows: validation.careerRowCount,
+              validProfiles: validation.validCount,
+              invalidProfiles: validation.invalidCount,
+              warningCount: validation.warningCount,
+              createdProfiles: 0,
+              updatedProfiles: 0,
+              unchangedProfiles: 0,
+              failedProfiles: 0,
+            },
+            progress: {
+              processedRows:
+                validation.profileRowCount + validation.careerRowCount,
+              totalRows:
+                validation.profileRowCount + validation.careerRowCount,
+              percent: 100,
+              message: validation.canImport
+                ? 'Validation complete; ready to import'
+                : 'Validation complete; corrections required',
+            },
+          },
+          $unset: {
+            failedStage: 1,
+            failureReason: 1,
+          },
+        },
+      );
+      validationCompleted = true;
+      return this.getImportOperation(importReference, false);
+    } catch (error) {
+      await PmsEmployeeProfileImport.updateOne(
+        { _id: importId },
+        {
+          $set: {
+            status: PmsEmployeeProfileImportStatus.FAILED,
+            failedStage: 'VALIDATION',
+            failureReason:
+              error instanceof Error
+                ? this.cleanText(error.message, 2000)
+                : 'Background validation failed',
+            processingHeartbeatAt: new Date(),
+            'progress.message': 'Background validation failed',
+          },
+        },
+      );
+      throw error;
+    } finally {
+      if (validationCompleted) {
+        await PmsEmployeeProfileImportFile.deleteOne({ importId }).catch(
+          () => undefined,
+        );
+      }
+    }
+  }
+
+  async queueImportConfirmation(
+    importReference: string,
+  ): Promise<PmsEmployeeProfileImportOperation> {
+    const actor = this.assertAdminActor();
+    if (!Types.ObjectId.isValid(importReference)) {
+      throw new Error('Invalid import reference');
+    }
+    const importId = new Types.ObjectId(importReference);
+    const existing = await PmsEmployeeProfileImport.findById(importId).lean();
+    if (!existing) throw new Error('Employee profile import audit was not found');
+    if (existing.status === PmsEmployeeProfileImportStatus.COMPLETED) {
+      return this.getImportOperation(importReference);
+    }
+    const retryableFailure =
+      existing.status === PmsEmployeeProfileImportStatus.FAILED &&
+      existing.failedStage === 'IMPORT';
+    if (
+      existing.status !== PmsEmployeeProfileImportStatus.VALIDATED &&
+      !retryableFailure
+    ) {
+      throw new Error(
+        `Only a validated or failed import can be queued. Current status: ${existing.status}`,
+      );
+    }
+    const queued = await PmsEmployeeProfileImport.findOneAndUpdate(
+      {
+        _id: importId,
+        status: existing.status,
+      },
+      {
+        $set: {
+          status: PmsEmployeeProfileImportStatus.IMPORT_QUEUED,
+          processingStage: 'IMPORT',
+          lastAttemptedBy: new Types.ObjectId(actor.actorId),
+          progress: {
+            processedRows: 0,
+            totalRows: existing.counts.validProfiles,
+            percent: 0,
+            message: 'Import queued',
+          },
+        },
+        $inc: { version: 1 },
+      },
+      { new: true },
+    );
+    if (!queued) throw new Error('Import status changed; refresh and try again');
+    this.scheduleBackgroundConfirmation(importReference);
+    return this.getImportOperation(importReference);
+  }
+
+  async processQueuedConfirmation(
+    importReference: string,
+  ): Promise<PmsEmployeeProfileImportConfirmation> {
+    if (!Types.ObjectId.isValid(importReference)) {
+      throw new Error('Invalid import reference');
+    }
+    const audit = await PmsEmployeeProfileImport.findById(importReference)
+      .select('uploadedBy lastAttemptedBy status')
+      .lean();
+    if (!audit) throw new Error('Employee profile import audit was not found');
+    const actorId = audit.lastAttemptedBy || audit.uploadedBy;
+    const actor = await User.findById(actorId)
+      .select(
+        '_id email name role departmentId active country currency licenseType portalAccess scope',
+      )
+      .lean();
+    if (!actor) throw new Error('Import confirmation actor was not found');
+    const workerService = new PmsEmployeeProfileImportService({
+      requestId: `pms-profile-import-worker:${importReference}`,
+      reqRole: String(actor.role || 'ADMIN'),
+      user: {
+        _id: actor._id,
+        email: String(actor.email || ''),
+        name: String(actor.name || ''),
+        role: String(actor.role || 'ADMIN'),
+        departmentId: String(actor.departmentId || ''),
+        active: actor.active !== false,
+        country: String(actor.country || 'IN'),
+        currency: String(actor.currency || 'INR'),
+        licenseType: String(actor.licenseType || 'employee'),
+        portalAccess: Boolean(actor.portalAccess),
+        scope: (actor as any).scope
+          ? String((actor as any).scope)
+          : undefined,
+      },
+    });
+    return workerService.confirmImport(importReference);
+  }
+
+  async retryImportOperation(
+    importReference: string,
+  ): Promise<PmsEmployeeProfileImportOperation> {
+    this.assertAdminActor();
+    if (!Types.ObjectId.isValid(importReference)) {
+      throw new Error('Invalid import reference');
+    }
+    const audit = await PmsEmployeeProfileImport.findById(importReference).lean();
+    if (!audit) throw new Error('Employee profile import audit was not found');
+    if (
+      audit.status !== PmsEmployeeProfileImportStatus.FAILED ||
+      !audit.failedStage
+    ) {
+      throw new Error('Only a failed background operation can be retried');
+    }
+    if (audit.failedStage === 'IMPORT') {
+      return this.queueImportConfirmation(importReference);
+    }
+    const storedFile = await PmsEmployeeProfileImportFile.exists({
+      importId: audit._id,
+    });
+    if (!storedFile) {
+      throw new Error(
+        'The temporary workbook is no longer available. Upload the workbook again.',
+      );
+    }
+    const reset = await PmsEmployeeProfileImport.findOneAndUpdate(
+      {
+        _id: audit._id,
+        status: PmsEmployeeProfileImportStatus.FAILED,
+        failedStage: 'VALIDATION',
+      },
+      {
+        $set: {
+          status: PmsEmployeeProfileImportStatus.QUEUED,
+          processingStage: 'VALIDATION',
+          progress: {
+            processedRows: 0,
+            totalRows: 0,
+            percent: 0,
+            message: 'Validation retry queued',
+          },
+        },
+        $unset: { failureReason: 1, failedStage: 1 },
+        $inc: { version: 1 },
+      },
+      { new: true },
+    );
+    if (!reset) throw new Error('Import status changed; refresh and try again');
+    this.scheduleBackgroundValidation(importReference);
+    return this.getImportOperation(importReference);
+  }
+
+  async getImportOperation(
+    importReference: string,
+    requireAdmin = true,
+    previewInput: { page?: number; limit?: number } = {},
+  ): Promise<PmsEmployeeProfileImportOperation> {
+    if (requireAdmin) this.assertAdminActor();
+    if (!Types.ObjectId.isValid(importReference)) {
+      throw new Error('Invalid import reference');
+    }
+    const audit = await PmsEmployeeProfileImport.findById(importReference).lean();
+    if (!audit) throw new Error('Employee profile import audit was not found');
+    const heartbeatAge = audit.processingHeartbeatAt
+      ? Date.now() - new Date(audit.processingHeartbeatAt).getTime()
+      : Number.POSITIVE_INFINITY;
+    if (
+      audit.status === PmsEmployeeProfileImportStatus.QUEUED ||
+      (audit.status === PmsEmployeeProfileImportStatus.VALIDATING &&
+        heartbeatAge >= 20 * 60 * 1000)
+    ) {
+      this.scheduleBackgroundValidation(importReference);
+    } else if (
+      audit.status === PmsEmployeeProfileImportStatus.IMPORT_QUEUED
+    ) {
+      this.scheduleBackgroundConfirmation(importReference);
+    }
+    const previewPage = Math.max(1, Number(previewInput.page) || 1);
+    const previewLimit = Math.min(
+      200,
+      Math.max(1, Number(previewInput.limit) || 100),
+    );
+    const previewTotal = audit.counts?.validProfiles || 0;
+    const operation: PmsEmployeeProfileImportOperation = {
+      importReference,
+      status: audit.status,
+      processingStage: audit.processingStage,
+      failedStage: audit.failedStage,
+      progress: audit.progress || {
+        processedRows: 0,
+        totalRows: 0,
+        percent: 0,
+      },
+      failureReason: audit.failureReason,
+      preview: {
+        page: previewPage,
+        limit: previewLimit,
+        total: previewTotal,
+        totalPages: Math.max(1, Math.ceil(previewTotal / previewLimit)),
+      },
+    };
+    const includeValidation =
+      [
+        PmsEmployeeProfileImportStatus.VALIDATED,
+        PmsEmployeeProfileImportStatus.VALIDATION_FAILED,
+        PmsEmployeeProfileImportStatus.IMPORT_QUEUED,
+        PmsEmployeeProfileImportStatus.IMPORTING,
+      ].includes(audit.status as any) ||
+      (audit.status === PmsEmployeeProfileImportStatus.FAILED &&
+        audit.failedStage === 'IMPORT');
+    if (includeValidation) {
+      const rows =
+        audit.status !== PmsEmployeeProfileImportStatus.VALIDATION_FAILED
+          ? await PmsEmployeeProfileImportRow.find({ importId: audit._id })
+              .sort({ sourceRowNumber: 1 })
+              .skip((previewPage - 1) * previewLimit)
+              .limit(previewLimit)
+              .lean()
+          : [];
+      operation.validation = {
+        templateVersion: audit.templateVersion,
+        profileRowCount: audit.counts.profileRows,
+        careerRowCount: audit.counts.careerRows,
+        validCount: audit.counts.validProfiles,
+        invalidCount: audit.counts.invalidProfiles,
+        warningCount: audit.counts.warningCount,
+        canImport:
+          audit.status !== PmsEmployeeProfileImportStatus.VALIDATION_FAILED,
+        issues: audit.validationIssues || [],
+        profiles: rows.map((row) => ({
+          rowNumber: row.sourceRowNumber,
+          employeeId: row.employeeId.toString(),
+          employeeCode: row.employeeCode,
+          employeeName: row.employeeName,
+          designation: row.designation,
+          department: row.department,
+          managerName: row.managerName,
+          currentGrade: row.currentGrade,
+          gradeEffectiveDate: row.gradeEffectiveDate,
+          yearsInGrade: row.yearsInGrade,
+          previousExperienceYears: row.previousExperienceYears,
+          qualification: row.qualification,
+          asOfDate: row.asOfDate,
+          careerProgressionPast: row.careerProgressionPast as any,
+          valid: true,
+          errors: [],
+          warnings: row.warnings || [],
+        })),
+      };
+    }
+    if (audit.status === PmsEmployeeProfileImportStatus.COMPLETED) {
+      const rows = await PmsEmployeeProfileImportRow.find({
+        importId: audit._id,
+      })
+        .select('employeeId employeeCode')
+        .sort({ sourceRowNumber: 1 })
+        .skip((previewPage - 1) * previewLimit)
+        .limit(previewLimit)
+        .lean();
+      operation.result = {
+        importReference,
+        status: 'COMPLETED',
+        confirmationAttemptCount: audit.confirmationAttemptCount || 1,
+        recovered: Boolean(audit.recoveredAt),
+        createdProfiles: audit.counts.createdProfiles,
+        updatedProfiles: audit.counts.updatedProfiles,
+        unchangedProfiles: audit.counts.unchangedProfiles,
+        failedProfiles: audit.counts.failedProfiles,
+        affectedEmployees: rows.map((row) => ({
+          employeeId: row.employeeId.toString(),
+          employeeCode: row.employeeCode,
+        })),
+      };
+    }
+    return operation;
+  }
+
+  private scheduleBackgroundValidation(importReference: string): void {
+    this.scheduleBackgroundOperation(
+      `VALIDATION:${importReference}`,
+      importReference,
+      'VALIDATION',
+      async (service) => {
+        await service.processQueuedValidation(importReference);
+      },
+    );
+  }
+
+  private readStoredWorkbookBuffer(value: unknown): Buffer {
+    if (Buffer.isBuffer(value)) return Buffer.from(value);
+
+    const storedBinary = value as {
+      value?: (asRaw?: boolean) => unknown;
+      buffer?: Uint8Array;
+      position?: number;
+    };
+    if (typeof storedBinary?.value === 'function') {
+      const rawValue = storedBinary.value(true);
+      if (rawValue instanceof Uint8Array) {
+        return Buffer.from(rawValue);
+      }
+    }
+    if (storedBinary?.buffer instanceof Uint8Array) {
+      const validLength = Math.min(
+        storedBinary.buffer.length,
+        Math.max(0, Number(storedBinary.position) || storedBinary.buffer.length),
+      );
+      return Buffer.from(storedBinary.buffer.subarray(0, validLength));
+    }
+    throw new Error('The temporary workbook data is invalid. Upload it again.');
+  }
+
+  private scheduleBackgroundConfirmation(importReference: string): void {
+    this.scheduleBackgroundOperation(
+      `IMPORT:${importReference}`,
+      importReference,
+      'IMPORT',
+      async (service) => {
+        await service.processQueuedConfirmation(importReference);
+      },
+    );
+  }
+
+  private scheduleBackgroundOperation(
+    key: string,
+    importReference: string,
+    stage: 'VALIDATION' | 'IMPORT',
+    operation: (service: PmsEmployeeProfileImportService) => Promise<void>,
+  ): void {
+    if (ACTIVE_BACKGROUND_IMPORTS.has(key)) return;
+    ACTIVE_BACKGROUND_IMPORTS.add(key);
+    setImmediate(async () => {
+      const service = new PmsEmployeeProfileImportService({
+        requestId: `pms-profile-import-background:${importReference}`,
+        reqRole: 'SYSTEM',
+      });
+      try {
+        await operation(service);
+      } catch (error) {
+        await PmsEmployeeProfileImport.updateOne(
+          {
+            _id: new Types.ObjectId(importReference),
+            status: {
+              $in:
+                stage === 'VALIDATION'
+                  ? [
+                      PmsEmployeeProfileImportStatus.QUEUED,
+                      PmsEmployeeProfileImportStatus.VALIDATING,
+                    ]
+                  : [
+                      PmsEmployeeProfileImportStatus.IMPORT_QUEUED,
+                      PmsEmployeeProfileImportStatus.IMPORTING,
+                    ],
+            },
+          },
+          {
+            $set: {
+              status: PmsEmployeeProfileImportStatus.FAILED,
+              failedStage: stage,
+              failureReason:
+                error instanceof Error
+                  ? this.cleanText(error.message, 2000)
+                  : `Background ${stage.toLowerCase()} failed`,
+              processingHeartbeatAt: new Date(),
+              'progress.message': `Background ${stage.toLowerCase()} failed`,
+            },
+          },
+        ).catch(() => undefined);
+        console.error(
+          `[PMS employee profile import] ${stage} failed for ${importReference}`,
+          error,
+        );
+      } finally {
+        ACTIVE_BACKGROUND_IMPORTS.delete(key);
+      }
+    });
+  }
+
   async validateImportWorkbook(input: {
     buffer: Buffer;
     originalFileName: string;
@@ -239,6 +906,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
 
     const referenceData = await this.loadReferenceData();
     const validation = await this.validateWorkbookBuffer(input.buffer, referenceData);
+    await this.mergeExistingCareerHistoryForImport(validation);
     const fileChecksum = crypto
       .createHash('sha256')
       .update(input.buffer)
@@ -304,6 +972,11 @@ export class PmsEmployeeProfileImportService extends BaseService {
             importId: importAudit._id,
             employeeId: new Types.ObjectId(profile.employeeId!),
             employeeCode: profile.employeeCode,
+            employeeName: profile.employeeName,
+            designation: profile.designation,
+            department: profile.department,
+            managerName: profile.managerName,
+            warnings: profile.warnings,
             sourceRowNumber: profile.rowNumber,
             currentGrade: profile.currentGrade,
             gradeEffectiveDate: profile.gradeEffectiveDate,
@@ -311,6 +984,9 @@ export class PmsEmployeeProfileImportService extends BaseService {
             previousExperienceYears: profile.previousExperienceYears,
             qualification: profile.qualification,
             asOfDate: profile.asOfDate!,
+            sourceProfileVersion: profile.sourceProfileVersion,
+            submittedCareerProgressionPast:
+              profile.submittedCareerProgressionPast ?? [],
             careerProgressionPast: profile.careerProgressionPast.map((entry) => ({
               year: entry.year,
               grade: entry.grade,
@@ -367,6 +1043,8 @@ export class PmsEmployeeProfileImportService extends BaseService {
       return {
         importReference,
         status: 'COMPLETED',
+        confirmationAttemptCount: audit.confirmationAttemptCount ?? 1,
+        recovered: Boolean(audit.recoveredAt),
         createdProfiles: audit.counts.createdProfiles,
         updatedProfiles: audit.counts.updatedProfiles,
         unchangedProfiles: audit.counts.unchangedProfiles,
@@ -377,80 +1055,120 @@ export class PmsEmployeeProfileImportService extends BaseService {
         })),
       };
     }
-    if (audit.status !== PmsEmployeeProfileImportStatus.VALIDATED) {
-      throw new Error(
-        `Only a validated import can be confirmed. Current status: ${audit.status}`,
-      );
-    }
-
-    const stagedRows = await PmsEmployeeProfileImportRow.find({ importId })
-      .sort({ sourceRowNumber: 1 })
-      .lean();
     if (
-      stagedRows.length === 0 ||
-      stagedRows.length !== audit.counts.validProfiles
+      audit.status !== PmsEmployeeProfileImportStatus.VALIDATED &&
+      audit.status !== PmsEmployeeProfileImportStatus.FAILED &&
+      audit.status !== PmsEmployeeProfileImportStatus.IMPORT_QUEUED
     ) {
       throw new Error(
-        'Validated import rows are incomplete. Upload and validate the workbook again.',
+        `Only a validated or failed import can be confirmed. Current status: ${audit.status}`,
       );
     }
+    const recoveryAttempt =
+      audit.status === PmsEmployeeProfileImportStatus.FAILED ||
+      (audit.status === PmsEmployeeProfileImportStatus.IMPORT_QUEUED &&
+        (audit.confirmationAttemptCount ?? 0) > 0);
+    const now = new Date();
+    let stagedRows: any[] = [];
+    try {
+      stagedRows = await PmsEmployeeProfileImportRow.find({ importId })
+        .sort({ sourceRowNumber: 1 })
+        .lean();
+      if (
+        stagedRows.length === 0 ||
+        stagedRows.length !== audit.counts.validProfiles
+      ) {
+        throw new Error(
+          'Validated import rows are incomplete. Upload and validate the workbook again.',
+        );
+      }
 
-    const referenceData = await this.loadReferenceData();
-    const employeeById = new Map(
-      referenceData.employees.map((employee) => [employee.employeeId, employee]),
-    );
-    const activeGradeCodes = new Set(
-      referenceData.grades.map((grade) => this.normalizeKey(grade.code)),
-    );
-    for (const row of stagedRows) {
-      const employee = employeeById.get(row.employeeId.toString());
-      if (
-        !employee ||
-        this.normalizeKey(employee.employeeCode) !==
-          this.normalizeKey(row.employeeCode)
-      ) {
-        throw new Error(
-          `Employee ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
-        );
+      const referenceData = await this.loadReferenceData();
+      const employeeById = new Map(
+        referenceData.employees.map((employee) => [
+          employee.employeeId,
+          employee,
+        ]),
+      );
+      const activeGradeCodes = new Set(
+        referenceData.grades.map((grade) => this.normalizeKey(grade.code)),
+      );
+      for (const row of stagedRows) {
+        const employee = employeeById.get(row.employeeId.toString());
+        if (
+          !employee ||
+          this.normalizeKey(employee.employeeCode) !==
+            this.normalizeKey(row.employeeCode)
+        ) {
+          throw new Error(
+            `Employee ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
+          );
+        }
+        const submittedCareerProgressionPast =
+          row.submittedCareerProgressionPast ?? row.careerProgressionPast;
+        const gradeCodes = [
+          row.currentGrade,
+          ...submittedCareerProgressionPast
+            .map((entry: { grade?: string }) => entry.grade)
+            .filter((grade: string | undefined): grade is string =>
+              Boolean(grade),
+            ),
+        ];
+        if (
+          gradeCodes.some(
+            (gradeCode) => !activeGradeCodes.has(this.normalizeKey(gradeCode)),
+          )
+        ) {
+          throw new Error(
+            `A Grade LOV value used by ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
+          );
+        }
       }
-      const gradeCodes = [
-        row.currentGrade,
-        ...row.careerProgressionPast
-          .map((entry) => entry.grade)
-          .filter((grade): grade is string => Boolean(grade)),
-      ];
-      if (
-        gradeCodes.some(
-          (gradeCode) => !activeGradeCodes.has(this.normalizeKey(gradeCode)),
-        )
-      ) {
-        throw new Error(
-          `A Grade LOV value used by ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
-        );
-      }
+    } catch (error) {
+      await this.recordImportConfirmationFailure({
+        importId,
+        actorId: actor.actorId,
+        attemptedAt: now,
+        failedProfiles: stagedRows.length || audit.counts.validProfiles,
+        error,
+      });
+      throw error;
     }
 
-    const session = await mongoose.startSession();
+    let session: mongoose.ClientSession | undefined;
     let createdProfiles = 0;
     let updatedProfiles = 0;
     let unchangedProfiles = 0;
-    const now = new Date();
     const confirmationDate = this.currentServerDate();
 
     try {
+      session = await mongoose.startSession();
       await session.withTransaction(async () => {
         const lockedAudit = await PmsEmployeeProfileImport.findOneAndUpdate(
           {
             _id: importId,
-            status: PmsEmployeeProfileImportStatus.VALIDATED,
+            status: {
+              $in: [
+                PmsEmployeeProfileImportStatus.VALIDATED,
+                PmsEmployeeProfileImportStatus.FAILED,
+                PmsEmployeeProfileImportStatus.IMPORT_QUEUED,
+              ],
+            },
           },
           {
             $set: {
               status: PmsEmployeeProfileImportStatus.IMPORTING,
               confirmedAt: now,
+              lastAttemptedAt: now,
+              lastAttemptedBy: new Types.ObjectId(actor.actorId),
+              ...(recoveryAttempt ? { recoveredAt: now } : {}),
               failureReason: undefined,
+              'counts.failedProfiles': 0,
+              processingHeartbeatAt: now,
+              'progress.percent': 10,
+              'progress.message': 'Applying validated profile changes',
             },
-            $inc: { version: 1 },
+            $inc: { version: 1, confirmationAttemptCount: 1 },
           },
           { new: true, session },
         );
@@ -464,7 +1182,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
         const existingProfiles = await PmsEmployeeCareerProfile.find({
           employeeId: { $in: employeeIds },
         })
-          .session(session)
+          .session(session!)
           .lean();
         const existingByEmployeeId = new Map(
           existingProfiles.map((profile) => [
@@ -476,6 +1194,14 @@ export class PmsEmployeeProfileImportService extends BaseService {
 
         for (const row of stagedRows) {
           const existing = existingByEmployeeId.get(row.employeeId.toString());
+          if (row.sourceProfileVersion !== undefined) {
+            const currentProfileVersion = existing?.profileVersion ?? 0;
+            if (currentProfileVersion !== row.sourceProfileVersion) {
+              throw new Error(
+                `Career profile for ${row.employeeCode} changed after validation. Validate the workbook again.`,
+              );
+            }
+          }
           const normalized = {
             ...this.normalizedProfileValues(row),
             asOfDate: confirmationDate,
@@ -575,41 +1301,34 @@ export class PmsEmployeeProfileImportService extends BaseService {
               'counts.updatedProfiles': updatedProfiles,
               'counts.unchangedProfiles': unchangedProfiles,
               'counts.failedProfiles': 0,
+              processingHeartbeatAt: now,
+              'progress.processedRows': stagedRows.length,
+              'progress.totalRows': stagedRows.length,
+              'progress.percent': 100,
+              'progress.message': 'Import completed',
             },
           },
           { session },
         );
       });
     } catch (error) {
-      await PmsEmployeeProfileImport.updateOne(
-        {
-          _id: importId,
-          status: {
-            $in: [
-              PmsEmployeeProfileImportStatus.VALIDATED,
-              PmsEmployeeProfileImportStatus.IMPORTING,
-            ],
-          },
-        },
-        {
-          $set: {
-            status: PmsEmployeeProfileImportStatus.FAILED,
-            failureReason:
-              error instanceof Error
-                ? this.cleanText(error.message, 2000)
-                : 'Import confirmation failed',
-            'counts.failedProfiles': stagedRows.length,
-          },
-        },
-      );
+      await this.recordImportConfirmationFailure({
+        importId,
+        actorId: actor.actorId,
+        attemptedAt: now,
+        failedProfiles: stagedRows.length,
+        error,
+      });
       throw error;
     } finally {
-      await session.endSession();
+      await session?.endSession();
     }
 
     return {
       importReference,
       status: 'COMPLETED',
+      confirmationAttemptCount: (audit.confirmationAttemptCount ?? 0) + 1,
+      recovered: recoveryAttempt,
       createdProfiles,
       updatedProfiles,
       unchangedProfiles,
@@ -619,6 +1338,46 @@ export class PmsEmployeeProfileImportService extends BaseService {
         employeeCode: row.employeeCode,
       })),
     };
+  }
+
+  private async recordImportConfirmationFailure(input: {
+    importId: Types.ObjectId;
+    actorId: string;
+    attemptedAt: Date;
+    failedProfiles: number;
+    error: unknown;
+  }): Promise<void> {
+    await PmsEmployeeProfileImport.updateOne(
+      {
+        _id: input.importId,
+        status: {
+          $in: [
+            PmsEmployeeProfileImportStatus.VALIDATED,
+            PmsEmployeeProfileImportStatus.IMPORTING,
+            PmsEmployeeProfileImportStatus.FAILED,
+            PmsEmployeeProfileImportStatus.IMPORT_QUEUED,
+          ],
+        },
+      },
+      {
+        $set: {
+          status: PmsEmployeeProfileImportStatus.FAILED,
+          failedStage: 'IMPORT',
+          lastAttemptedAt: input.attemptedAt,
+          lastAttemptedBy: new Types.ObjectId(input.actorId),
+          lastFailedAt: input.attemptedAt,
+          failureReason:
+            input.error instanceof Error
+              ? this.cleanText(input.error.message, 2000)
+              : 'Import confirmation failed',
+          'counts.failedProfiles': input.failedProfiles,
+        },
+        $inc: {
+          version: 1,
+          confirmationAttemptCount: 1,
+        },
+      },
+    );
   }
 
   async listCareerProfiles(input: {
@@ -1303,7 +2062,12 @@ export class PmsEmployeeProfileImportService extends BaseService {
     const workbook = new ExcelJS.Workbook();
 
     try {
-      await workbook.xlsx.load(buffer);
+      await workbook.xlsx.load(buffer as any, {
+        // Import validation needs workbook names and cell values only. Skipping
+        // presentation/protection metadata avoids expanding worksheet nodes
+        // that are irrelevant to server-side validation.
+        ignoreNodes: IMPORT_VALIDATION_IGNORED_WORKSHEET_NODES,
+      });
     } catch {
       return this.emptyValidation([
         this.issue(
@@ -2190,8 +2954,8 @@ export class PmsEmployeeProfileImportService extends BaseService {
     guidance(
       39,
       'Existing data',
-      'For every employee included in Employee Profile, this workbook becomes the new complete imported career profile. Blank optional profile cells clear previously imported values, and a blank career-history section clears that employee’s previously imported career history.',
-      'danger',
+      'Current profile fields are updated from this workbook. Career Progression Past is incremental: existing history is preserved, new Year + Grade rows are appended, and a blank career-history section leaves existing history unchanged. Use the Admin profile page with a reason to correct or remove stored history.',
+      'warning',
     );
     guidance(
       40,
@@ -2853,6 +3617,147 @@ export class PmsEmployeeProfileImportService extends BaseService {
       profileVersion: profile.profileVersion,
       lastUpdatedSource: profile.lastUpdatedSource,
     };
+  }
+
+  private async mergeExistingCareerHistoryForImport(
+    validation: PmsEmployeeProfileWorkbookValidation,
+  ): Promise<void> {
+    for (const profile of validation.profiles) {
+      profile.submittedCareerProgressionPast =
+        profile.careerProgressionPast.map((entry) => ({ ...entry }));
+      profile.sourceProfileVersion = 0;
+    }
+
+    const employeeIds = validation.profiles
+      .map((profile) => profile.employeeId)
+      .filter(
+        (employeeId): employeeId is string =>
+          typeof employeeId === 'string' &&
+          Types.ObjectId.isValid(employeeId),
+      )
+      .map((employeeId) => new Types.ObjectId(employeeId));
+    if (employeeIds.length === 0) return;
+
+    const existingProfiles = await PmsEmployeeCareerProfile.find({
+      employeeId: { $in: employeeIds },
+    })
+      .select('employeeId profileVersion careerProgressionPast')
+      .lean();
+    const existingByEmployeeId = new Map(
+      existingProfiles.map((profile) => [
+        profile.employeeId.toString(),
+        profile,
+      ]),
+    );
+
+    for (const profile of validation.profiles) {
+      if (!profile.employeeId) continue;
+      const existing = existingByEmployeeId.get(profile.employeeId);
+      if (!existing) continue;
+
+      profile.sourceProfileVersion = existing.profileVersion;
+      const merged: ParsedCareerProgressionRow[] = (
+        existing.careerProgressionPast ?? []
+      ).map((entry) => ({
+        rowNumber: profile.rowNumber,
+        employeeCode: profile.employeeCode,
+        year: entry.year,
+        grade: entry.grade,
+        function: entry.function,
+        unitOrDepartment: entry.unitOrDepartment,
+        sequence: entry.sequence,
+      }));
+      const existingByKey = new Map(
+        merged.map((entry) => [this.careerHistoryKey(entry), entry]),
+      );
+
+      for (const incoming of profile.submittedCareerProgressionPast ?? []) {
+        const key = this.careerHistoryKey(incoming);
+        const stored = existingByKey.get(key);
+        if (!stored) {
+          const appended = { ...incoming };
+          merged.push(appended);
+          existingByKey.set(key, appended);
+          continue;
+        }
+
+        if (this.careerHistoryDetailsEqual(stored, incoming)) {
+          const warning = this.issue(
+            'WARNING',
+            PmsEmployeeProfileWorkbookSheet.CAREER_PROGRESSION,
+            'CAREER_HISTORY_ALREADY_EXISTS',
+            `Year ${incoming.year} and Grade ${incoming.grade || '(blank)'} already exist for ${profile.employeeCode}; the stored history row will be kept unchanged.`,
+            incoming.rowNumber,
+            profile.employeeCode,
+            CAREER_HEADERS[2],
+          );
+          validation.issues.push(warning);
+          profile.warnings.push(
+            `Career row ${incoming.rowNumber}: ${warning.message}`,
+          );
+          continue;
+        }
+
+        const conflict = this.issue(
+          'ERROR',
+          PmsEmployeeProfileWorkbookSheet.CAREER_PROGRESSION,
+          'CAREER_HISTORY_CONFLICT',
+          `Year ${incoming.year} and Grade ${incoming.grade || '(blank)'} already exist for ${profile.employeeCode} with different Function or Unit / Department values. Correct the stored history from the Admin profile page, or remove this conflicting workbook row.`,
+          incoming.rowNumber,
+          profile.employeeCode,
+          CAREER_HEADERS[2],
+        );
+        validation.issues.push(conflict);
+        profile.valid = false;
+        profile.errors.push(
+          `Career row ${incoming.rowNumber}: ${conflict.message}`,
+        );
+      }
+
+      profile.careerProgressionPast = merged.sort(
+        (left, right) =>
+          left.year - right.year ||
+          left.sequence - right.sequence ||
+          this.normalizeKey(left.grade).localeCompare(
+            this.normalizeKey(right.grade),
+          ),
+      );
+    }
+
+    validation.validCount = validation.profiles.filter(
+      (profile) => profile.valid,
+    ).length;
+    validation.invalidCount = validation.profiles.length - validation.validCount;
+    validation.warningCount = validation.issues.filter(
+      (issue) => issue.severity === 'WARNING',
+    ).length;
+    validation.canImport =
+      validation.validCount > 0 &&
+      !validation.issues.some((issue) => issue.severity === 'ERROR');
+  }
+
+  private careerHistoryKey(entry: {
+    year: number;
+    grade?: string;
+  }): string {
+    return `${Number(entry.year)}:${this.normalizeKey(entry.grade) || '<blank>'}`;
+  }
+
+  private careerHistoryDetailsEqual(
+    left: {
+      function?: string;
+      unitOrDepartment?: string;
+    },
+    right: {
+      function?: string;
+      unitOrDepartment?: string;
+    },
+  ): boolean {
+    return (
+      this.normalizeKey(left.function) === this.normalizeKey(right.function) &&
+      this.normalizeKey(left.unitOrDepartment) ===
+        this.normalizeKey(right.unitOrDepartment)
+    );
   }
 
   private normalizedProfileValues(row: {

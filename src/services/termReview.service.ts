@@ -21,7 +21,10 @@ import type {
   NoObjectiveScoringPolicy as NoObjectiveScoringPolicyType,
   ObjectiveScoringMode as ObjectiveScoringModeType,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
@@ -38,6 +41,7 @@ import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { PmsScoringService } from './pms-scoring.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   mapEffectiveTermWindowsForResponse,
@@ -744,6 +748,13 @@ export class TermReviewService extends BaseService {
       updatedBy: this.actorIdObject(),
       createdBy: existingReview?.createdBy ?? this.actorIdObject(),
     };
+
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      termAssignment.annualAssignmentId,
+      EmployeeCareerProfileSnapshotTrigger.FIRST_MANAGER_REVIEW_SUBMISSION,
+    );
 
     const termReview = existingReview
       ? await TermReview.findByIdAndUpdate(

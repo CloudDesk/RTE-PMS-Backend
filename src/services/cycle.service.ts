@@ -11,7 +11,10 @@ import {
   TermWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
@@ -22,6 +25,7 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { emailService } from './email.service';
 import { ObjectiveService } from './objective.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { workflowService } from './workflow.service';
 import {
   defaultReviewCadenceConfig,
@@ -611,6 +615,19 @@ export class CycleService extends BaseService {
     const reason = input.reason?.trim();
     if (!reason) {
       throw new Error('Close reason is required');
+    }
+    const assignmentIds = await AnnualAssignment.find({
+      cycleId: cycle._id,
+      isDeleted: false,
+    }).distinct('_id');
+    const snapshotService = new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    );
+    for (const assignmentId of assignmentIds) {
+      await snapshotService.freezeForAnnualAssignment(
+        assignmentId,
+        EmployeeCareerProfileSnapshotTrigger.ASSIGNMENT_CLOSED,
+      );
     }
     return this.executeTransition(cycle, AnnualWorkflowState.CLOSED, 'PMS_CYCLE_CLOSED', {
       closedAt: new Date(),

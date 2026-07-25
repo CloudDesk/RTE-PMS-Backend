@@ -18,6 +18,39 @@ interface IVisibilityCache {
   managerMeritVisible: boolean;
 }
 
+export const EmployeeCareerProfileSnapshotTrigger = {
+  FIRST_MANAGER_REVIEW_SUBMISSION: 'FIRST_MANAGER_REVIEW_SUBMISSION',
+  ANNUAL_DECISION_DRAFT: 'ANNUAL_DECISION_DRAFT',
+  ANNUAL_FINALIZATION: 'ANNUAL_FINALIZATION',
+  ASSIGNMENT_CLOSED: 'ASSIGNMENT_CLOSED',
+  LEGACY_BACKFILL: 'LEGACY_BACKFILL',
+} as const;
+
+export type EmployeeCareerProfileSnapshotTrigger =
+  (typeof EmployeeCareerProfileSnapshotTrigger)[keyof typeof EmployeeCareerProfileSnapshotTrigger];
+
+export interface IEmployeeCareerProfileSnapshot {
+  profileAvailable: boolean;
+  sourceProfileId?: Types.ObjectId;
+  profileVersion?: number;
+  currentGrade?: string;
+  gradeEffectiveDate?: Date;
+  yearsInGradeAtReferenceDate?: number;
+  previousExperienceYears?: number;
+  qualification?: string;
+  careerProgressionPast: Array<{
+    year: number;
+    grade?: string;
+    function?: string;
+    unitOrDepartment?: string;
+    sequence: number;
+  }>;
+  profileAsOfDate?: Date;
+  snapshotAt: Date;
+  trigger: EmployeeCareerProfileSnapshotTrigger;
+  triggeredBy?: Types.ObjectId;
+}
+
 export interface IAnnualAssignment extends Document {
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
@@ -43,6 +76,7 @@ export interface IAnnualAssignment extends Document {
   employeeSnapshot?: Record<string, unknown>;
   managerSnapshot?: Record<string, unknown>;
   orgSnapshot?: Record<string, unknown>;
+  careerProfileSnapshot?: IEmployeeCareerProfileSnapshot;
   communicationStatus?: string;
   isDeleted: boolean;
   createdBy?: Types.ObjectId;
@@ -63,6 +97,47 @@ const visibilityCacheSchema = new Schema<IVisibilityCache>(
   },
   { _id: false },
 );
+
+const careerProfileSnapshotEntrySchema = new Schema(
+  {
+    year: { type: Number, required: true, min: 1900, max: 2200 },
+    grade: { type: String, trim: true, maxlength: 100 },
+    function: { type: String, trim: true, maxlength: 150 },
+    unitOrDepartment: { type: String, trim: true, maxlength: 150 },
+    sequence: { type: Number, required: true, min: 1 },
+  },
+  { _id: false },
+);
+
+const employeeCareerProfileSnapshotSchema =
+  new Schema<IEmployeeCareerProfileSnapshot>(
+    {
+      profileAvailable: { type: Boolean, required: true },
+      sourceProfileId: {
+        type: Schema.Types.ObjectId,
+        ref: 'PmsEmployeeCareerProfile',
+      },
+      profileVersion: { type: Number, min: 1 },
+      currentGrade: { type: String, trim: true, maxlength: 100 },
+      gradeEffectiveDate: Date,
+      yearsInGradeAtReferenceDate: { type: Number, min: 0, max: 80 },
+      previousExperienceYears: { type: Number, min: 0, max: 80 },
+      qualification: { type: String, trim: true, maxlength: 250 },
+      careerProgressionPast: {
+        type: [careerProfileSnapshotEntrySchema],
+        default: [],
+      },
+      profileAsOfDate: Date,
+      snapshotAt: { type: Date, required: true },
+      trigger: {
+        type: String,
+        required: true,
+        enum: Object.values(EmployeeCareerProfileSnapshotTrigger),
+      },
+      triggeredBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    },
+    { _id: false },
+  );
 
 const annualAssignmentSchema = new Schema<IAnnualAssignment>(
   {
@@ -138,6 +213,10 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
     employeeSnapshot: { type: Schema.Types.Mixed, default: {} },
     managerSnapshot: { type: Schema.Types.Mixed, default: {} },
     orgSnapshot: { type: Schema.Types.Mixed, default: {} },
+    careerProfileSnapshot: {
+      type: employeeCareerProfileSnapshotSchema,
+      default: undefined,
+    },
     communicationStatus: { type: String, default: 'NOT_REQUIRED' },
     isDeleted: { type: Boolean, default: false, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -160,6 +239,7 @@ annualAssignmentSchema.index({ cycleId: 1, appraisalOutcomeType: 1 });
 annualAssignmentSchema.index({ cycleId: 1, 'employeeSnapshot.department': 1 });
 annualAssignmentSchema.index({ cycleId: 1, 'orgSnapshot.businessUnit': 1 });
 annualAssignmentSchema.index({ launchSource: 1, launchedByUserId: 1, annualState: 1 });
+annualAssignmentSchema.index({ 'careerProfileSnapshot.snapshotAt': 1 });
 
 export const AnnualAssignment = mongoose.model<IAnnualAssignment>(
   'AnnualAssignment',

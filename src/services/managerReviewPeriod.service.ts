@@ -6,7 +6,10 @@ import {
   PmsRole,
   TermWorkflowState,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { EmployeeAchievementSubmission } from '../models/pms-employee-achievement-submission.model';
 import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
@@ -17,6 +20,7 @@ import { LOV } from '../models/lov.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   intersectGroupTerms,
@@ -402,6 +406,13 @@ export class ManagerReviewPeriodService extends BaseService {
       throw new Error('Grouped manager review comments are required');
     }
     const overallRating = await this.validateManagerOverallRating(input.overallRating, true);
+
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      review.annualAssignmentId,
+      EmployeeCareerProfileSnapshotTrigger.FIRST_MANAGER_REVIEW_SUBMISSION,
+    );
 
     this.applyReviewInput(review, { ...input, overallRating }, true);
     review.previousReviewState = review.reviewState;

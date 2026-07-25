@@ -134,7 +134,7 @@ describe('PMS employee profile Phase 2 workbook template', () => {
     expect((careerSheet as any).sheetProtection.sheet).toBe(true);
   });
 
-  it('gives non-technical administrators clear completion and replacement guidance', async () => {
+  it('gives non-technical administrators clear completion and incremental-history guidance', async () => {
     const workbook = await templateWorkbook();
     const instructions = workbook.getWorksheet(
       PmsEmployeeProfileWorkbookSheet.INSTRUCTIONS,
@@ -168,7 +168,7 @@ describe('PMS employee profile Phase 2 workbook template', () => {
       'Do not repeat the same Employee Code + Year + Grade combination',
     );
     expect(instructions.getCell('B39').value).toContain(
-      'Blank optional profile cells clear previously imported values',
+      'Career Progression Past is incremental',
     );
     expect(instructions.getCell('B40').value).toContain(
       'Nothing is saved when the workbook has a blocking error',
@@ -364,6 +364,118 @@ describe('PMS employee profile Phase 2 workbook template', () => {
     );
   });
 
+  it('preserves stored career history and appends only new imported movements', async () => {
+    const validation = careerMergeValidation([
+      {
+        rowNumber: 2,
+        employeeCode: 'RTE0001',
+        year: 2025,
+        grade: 'G5',
+        function: 'Operations',
+        unitOrDepartment: 'Plant 2',
+        sequence: 1,
+      },
+    ]);
+    mockExistingCareerProfile([
+      { year: 2020, grade: 'G2', sequence: 1 },
+      { year: 2023, grade: 'G4', sequence: 1 },
+      { year: 2024, grade: 'G4', sequence: 1 },
+    ]);
+
+    await (service() as any).mergeExistingCareerHistoryForImport(validation);
+
+    expect(validation.canImport).toBe(true);
+    expect(validation.profiles[0].sourceProfileVersion).toBe(4);
+    expect(validation.profiles[0].submittedCareerProgressionPast).toHaveLength(1);
+    expect(
+      validation.profiles[0].careerProgressionPast.map(
+        (entry: any) => `${entry.year}-${entry.grade}`,
+      ),
+    ).toEqual(['2020-G2', '2023-G4', '2024-G4', '2025-G5']);
+  });
+
+  it('keeps an identical stored Year and Grade once and reports a warning', async () => {
+    const validation = careerMergeValidation([
+      {
+        rowNumber: 2,
+        employeeCode: 'RTE0001',
+        year: 2024,
+        grade: 'g4',
+        function: ' operations ',
+        unitOrDepartment: 'plant 2',
+        sequence: 9,
+      },
+    ]);
+    mockExistingCareerProfile([
+      {
+        year: 2024,
+        grade: 'G4',
+        function: 'Operations',
+        unitOrDepartment: 'Plant 2',
+        sequence: 1,
+      },
+    ]);
+
+    await (service() as any).mergeExistingCareerHistoryForImport(validation);
+
+    expect(validation.canImport).toBe(true);
+    expect(validation.warningCount).toBe(1);
+    expect(validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'CAREER_HISTORY_ALREADY_EXISTS' }),
+      ]),
+    );
+    expect(validation.profiles[0].careerProgressionPast).toHaveLength(1);
+    expect(validation.profiles[0].careerProgressionPast[0].sequence).toBe(1);
+  });
+
+  it('blocks an imported Year and Grade that conflicts with stored history details', async () => {
+    const validation = careerMergeValidation([
+      {
+        rowNumber: 2,
+        employeeCode: 'RTE0001',
+        year: 2024,
+        grade: 'G4',
+        function: 'Engineering',
+        unitOrDepartment: 'Plant 3',
+        sequence: 1,
+      },
+    ]);
+    mockExistingCareerProfile([
+      {
+        year: 2024,
+        grade: 'G4',
+        function: 'Operations',
+        unitOrDepartment: 'Plant 2',
+        sequence: 1,
+      },
+    ]);
+
+    await (service() as any).mergeExistingCareerHistoryForImport(validation);
+
+    expect(validation.canImport).toBe(false);
+    expect(validation.invalidCount).toBe(1);
+    expect(validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'CAREER_HISTORY_CONFLICT' }),
+      ]),
+    );
+  });
+
+  it('keeps all stored history when the later workbook has no career rows', async () => {
+    const validation = careerMergeValidation([]);
+    mockExistingCareerProfile([
+      { year: 2020, grade: 'G2', sequence: 1 },
+      { year: 2024, grade: 'G4', sequence: 1 },
+    ]);
+
+    await (service() as any).mergeExistingCareerHistoryForImport(validation);
+
+    expect(validation.canImport).toBe(true);
+    expect(validation.profiles[0].submittedCareerProgressionPast).toEqual([]);
+    expect(validation.profiles[0].careerProgressionPast).toHaveLength(2);
+  });
+
   it('generates a structured validation error workbook from an import audit', async () => {
     jest.spyOn(PmsEmployeeProfileImport, 'findById').mockReturnValueOnce({
       lean: jest.fn().mockResolvedValue({
@@ -385,7 +497,7 @@ describe('PMS employee profile Phase 2 workbook template', () => {
       new Types.ObjectId().toString(),
     );
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
+    await workbook.xlsx.load(buffer as any);
     const sheet = workbook.getWorksheet('Validation Errors')!;
 
     expect(sheet.getRow(1).values).toEqual(
@@ -416,6 +528,7 @@ describe('PMS employee profile Phase 2 workbook template', () => {
       previousExperienceYears: index,
       qualification: index === 1 ? undefined : 'B.E.',
       asOfDate: confirmationDate,
+      sourceProfileVersion: index === 0 ? 1 : index === 1 ? 3 : 0,
       careerProgressionPast: [],
     }));
     const existingProfiles = [
@@ -520,7 +633,305 @@ describe('PMS employee profile Phase 2 workbook template', () => {
     expect(session.withTransaction).toHaveBeenCalledTimes(1);
     expect(session.endSession).toHaveBeenCalledTimes(1);
   });
+
+  it('blocks confirmation when the stored profile changed after incremental validation', async () => {
+    const importId = new Types.ObjectId();
+    const employeeId = new Types.ObjectId();
+    jest.spyOn(PmsEmployeeProfileImport, 'findById').mockReturnValueOnce({
+      lean: jest.fn().mockResolvedValue({
+        _id: importId,
+        status: 'VALIDATED',
+        confirmationAttemptCount: 0,
+        counts: { validProfiles: 1 },
+      }),
+    } as any);
+    jest.spyOn(PmsEmployeeProfileImportRow, 'find').mockReturnValueOnce({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            importId,
+            employeeId,
+            employeeCode: 'RTE1999',
+            sourceRowNumber: 2,
+            currentGrade: 'G4',
+            yearsInGrade: 2,
+            asOfDate: new Date('2026-07-25T00:00:00.000Z'),
+            sourceProfileVersion: 2,
+            submittedCareerProgressionPast: [
+              { year: 2025, grade: 'G4', sequence: 1 },
+            ],
+            careerProgressionPast: [
+              { year: 2025, grade: 'G4', sequence: 1 },
+            ],
+          },
+        ]),
+      }),
+    } as any);
+    const importService = service();
+    jest.spyOn(importService as any, 'loadReferenceData').mockResolvedValue({
+      employees: [
+        {
+          employeeId: employeeId.toString(),
+          employeeCode: 'RTE1999',
+          name: 'Changed Employee',
+          designation: 'Engineer',
+          department: 'Engineering',
+          managerCode: '',
+          managerName: '',
+          active: true,
+        },
+      ],
+      grades: [{ code: 'G4', label: 'Grade 4', displayOrder: 1 }],
+    });
+    jest
+      .spyOn(PmsEmployeeProfileImport, 'findOneAndUpdate')
+      .mockResolvedValue({ _id: importId } as any);
+    jest.spyOn(PmsEmployeeCareerProfile, 'find').mockReturnValueOnce({
+      session: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: new Types.ObjectId(),
+            employeeId,
+            profileVersion: 3,
+          },
+        ]),
+      }),
+    } as any);
+    const bulkWrite = jest.spyOn(PmsEmployeeCareerProfile, 'bulkWrite');
+    jest
+      .spyOn(PmsEmployeeProfileImport, 'updateOne')
+      .mockResolvedValue({ modifiedCount: 1 } as any);
+    const session = {
+      withTransaction: jest.fn(async (callback: () => Promise<void>) => callback()),
+      endSession: jest.fn().mockResolvedValue(undefined),
+    };
+    jest.spyOn(mongoose, 'startSession').mockResolvedValue(session as any);
+
+    await expect(
+      importService.confirmImport(importId.toString()),
+    ).rejects.toThrow(
+      'Career profile for RTE1999 changed after validation. Validate the workbook again.',
+    );
+    expect(bulkWrite).not.toHaveBeenCalled();
+    expect(session.endSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed import from its retained validated rows', async () => {
+    const importId = new Types.ObjectId();
+    const employeeId = new Types.ObjectId();
+    const stagedRows = [
+      {
+        _id: new Types.ObjectId(),
+        importId,
+        employeeId,
+        employeeCode: 'RTE2001',
+        sourceRowNumber: 2,
+        currentGrade: 'G4',
+        yearsInGrade: 2,
+        previousExperienceYears: 1,
+        qualification: 'B.E.',
+        asOfDate: new Date('2026-07-24T00:00:00.000Z'),
+        careerProgressionPast: [],
+      },
+    ];
+
+    jest.spyOn(PmsEmployeeProfileImport, 'findById').mockReturnValueOnce({
+      lean: jest.fn().mockResolvedValue({
+        _id: importId,
+        status: 'FAILED',
+        confirmationAttemptCount: 1,
+        counts: {
+          validProfiles: 1,
+          createdProfiles: 0,
+          updatedProfiles: 0,
+          unchangedProfiles: 0,
+          failedProfiles: 1,
+        },
+      }),
+    } as any);
+    jest.spyOn(PmsEmployeeProfileImportRow, 'find').mockReturnValueOnce({
+      sort: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(stagedRows),
+      }),
+    } as any);
+    const importService = service();
+    jest.spyOn(importService as any, 'loadReferenceData').mockResolvedValue({
+      employees: [
+        {
+          employeeId: employeeId.toString(),
+          employeeCode: 'RTE2001',
+          name: 'Recovery Employee',
+          designation: 'Engineer',
+          department: 'Engineering',
+          managerCode: '',
+          managerName: '',
+          active: true,
+        },
+      ],
+      grades: [{ code: 'G4', label: 'Grade 4', displayOrder: 1 }],
+    });
+    const lock = jest
+      .spyOn(PmsEmployeeProfileImport, 'findOneAndUpdate')
+      .mockResolvedValue({ _id: importId } as any);
+    jest.spyOn(PmsEmployeeCareerProfile, 'find').mockReturnValueOnce({
+      session: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    } as any);
+    jest
+      .spyOn(PmsEmployeeCareerProfile, 'bulkWrite')
+      .mockResolvedValue({ insertedCount: 1, modifiedCount: 0 } as any);
+    jest
+      .spyOn(PmsEmployeeProfileImport, 'updateOne')
+      .mockResolvedValue({ modifiedCount: 1 } as any);
+    const session = {
+      withTransaction: jest.fn(async (callback: () => Promise<void>) => callback()),
+      endSession: jest.fn().mockResolvedValue(undefined),
+    };
+    jest.spyOn(mongoose, 'startSession').mockResolvedValue(session as any);
+
+    const result = await importService.confirmImport(importId.toString());
+
+    expect(result).toMatchObject({
+      status: 'COMPLETED',
+      recovered: true,
+      confirmationAttemptCount: 2,
+      createdProfiles: 1,
+      failedProfiles: 0,
+    });
+    expect(lock.mock.calls[0][0]).toMatchObject({
+      _id: importId,
+      status: { $in: ['VALIDATED', 'FAILED', 'IMPORT_QUEUED'] },
+    });
+    expect(lock.mock.calls[0][1]).toMatchObject({
+      $set: {
+        status: 'IMPORTING',
+        recoveredAt: expect.any(Date),
+        'counts.failedProfiles': 0,
+      },
+      $inc: { version: 1, confirmationAttemptCount: 1 },
+    });
+  });
+
+  it('marks a failed confirmation attempt without deleting its staged rows', async () => {
+    const importId = new Types.ObjectId();
+    const employeeId = new Types.ObjectId();
+    const stagedRows = [
+      {
+        _id: new Types.ObjectId(),
+        importId,
+        employeeId,
+        employeeCode: 'RTE3001',
+        sourceRowNumber: 2,
+        currentGrade: 'G4',
+        yearsInGrade: 2,
+        asOfDate: new Date('2026-07-24T00:00:00.000Z'),
+        careerProgressionPast: [],
+      },
+    ];
+
+    jest.spyOn(PmsEmployeeProfileImport, 'findById').mockReturnValueOnce({
+      lean: jest.fn().mockResolvedValue({
+        _id: importId,
+        status: 'VALIDATED',
+        confirmationAttemptCount: 0,
+        counts: { validProfiles: 1 },
+      }),
+    } as any);
+    const stagedFind = jest
+      .spyOn(PmsEmployeeProfileImportRow, 'find')
+      .mockReturnValueOnce({
+        sort: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(stagedRows),
+        }),
+      } as any);
+    const importService = service();
+    jest.spyOn(importService as any, 'loadReferenceData').mockResolvedValue({
+      employees: [
+        {
+          employeeId: employeeId.toString(),
+          employeeCode: 'RTE3001',
+          name: 'Failure Employee',
+          designation: 'Engineer',
+          department: 'Engineering',
+          managerCode: '',
+          managerName: '',
+          active: true,
+        },
+      ],
+      grades: [{ code: 'G4', label: 'Grade 4', displayOrder: 1 }],
+    });
+    const failureUpdate = jest
+      .spyOn(PmsEmployeeProfileImport, 'updateOne')
+      .mockResolvedValue({ modifiedCount: 1 } as any);
+    const session = {
+      withTransaction: jest
+        .fn()
+        .mockRejectedValue(new Error('database write unavailable')),
+      endSession: jest.fn().mockResolvedValue(undefined),
+    };
+    jest.spyOn(mongoose, 'startSession').mockResolvedValue(session as any);
+
+    await expect(
+      importService.confirmImport(importId.toString()),
+    ).rejects.toThrow('database write unavailable');
+
+    expect(failureUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: importId }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'FAILED',
+          failureReason: 'database write unavailable',
+          'counts.failedProfiles': 1,
+        }),
+        $inc: { version: 1, confirmationAttemptCount: 1 },
+      }),
+    );
+    expect(stagedFind).toHaveBeenCalledTimes(1);
+    expect(session.endSession).toHaveBeenCalledTimes(1);
+  });
 });
+
+function careerMergeValidation(careerProgressionPast: any[]): any {
+  return {
+    templateVersion: PMS_EMPLOYEE_PROFILE_TEMPLATE_VERSION,
+    profileRowCount: 1,
+    careerRowCount: careerProgressionPast.length,
+    validCount: 1,
+    invalidCount: 0,
+    warningCount: 0,
+    canImport: true,
+    issues: [],
+    profiles: [
+      {
+        rowNumber: 2,
+        employeeId: referenceData.employees[0].employeeId,
+        employeeCode: 'RTE0001',
+        currentGrade: 'G5',
+        yearsInGrade: 1,
+        asOfDate: new Date('2026-07-25T00:00:00.000Z'),
+        careerProgressionPast,
+        valid: true,
+        errors: [],
+        warnings: [],
+      },
+    ],
+  };
+}
+
+function mockExistingCareerProfile(careerProgressionPast: any[]) {
+  jest.spyOn(PmsEmployeeCareerProfile, 'find').mockReturnValueOnce({
+    select: jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        {
+          employeeId: new Types.ObjectId(referenceData.employees[0].employeeId),
+          profileVersion: 4,
+          careerProgressionPast,
+        },
+      ]),
+    }),
+  } as any);
+}
 
 describe('PMS employee profile Phase 4 manual validation', () => {
   const activeGrades = new Map([

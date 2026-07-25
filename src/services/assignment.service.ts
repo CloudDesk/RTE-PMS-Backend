@@ -17,7 +17,10 @@ import {
   TermWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AssignmentExceptionQueue } from '../models/pms-assignment-exception-queue.model';
@@ -37,6 +40,7 @@ import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { emailService } from './email.service';
 import { ManagerReviewPeriodService } from './managerReviewPeriod.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
@@ -947,6 +951,12 @@ export class AssignmentService extends BaseService {
 
     const annualAssignment = await this.getAnnualAssignment(assignmentId);
     const previousValue = annualAssignment.toObject();
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      annualAssignment._id,
+      EmployeeCareerProfileSnapshotTrigger.ASSIGNMENT_CLOSED,
+    );
     const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,

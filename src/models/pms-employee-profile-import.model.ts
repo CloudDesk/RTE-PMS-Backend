@@ -2,8 +2,11 @@ import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export const PmsEmployeeProfileImportStatus = {
   UPLOADED: 'UPLOADED',
+  QUEUED: 'QUEUED',
+  VALIDATING: 'VALIDATING',
   VALIDATION_FAILED: 'VALIDATION_FAILED',
   VALIDATED: 'VALIDATED',
+  IMPORT_QUEUED: 'IMPORT_QUEUED',
   IMPORTING: 'IMPORTING',
   COMPLETED: 'COMPLETED',
   FAILED: 'FAILED',
@@ -52,6 +55,22 @@ export interface IPmsEmployeeProfileImport extends Document {
   validatedAt?: Date;
   confirmedAt?: Date;
   completedAt?: Date;
+  confirmationAttemptCount: number;
+  lastAttemptedAt?: Date;
+  lastAttemptedBy?: Types.ObjectId;
+  lastFailedAt?: Date;
+  recoveredAt?: Date;
+  validationAttemptCount: number;
+  processingStartedAt?: Date;
+  processingHeartbeatAt?: Date;
+  processingStage?: 'VALIDATION' | 'IMPORT';
+  failedStage?: 'VALIDATION' | 'IMPORT';
+  progress: {
+    processedRows: number;
+    totalRows: number;
+    percent: number;
+    message?: string;
+  };
   counts: IPmsEmployeeProfileImportCounts;
   validationIssues: IPmsEmployeeProfileImportIssue[];
   affectedEmployeeIds: Types.ObjectId[];
@@ -133,6 +152,45 @@ const pmsEmployeeProfileImportSchema = new Schema<IPmsEmployeeProfileImport>(
     validatedAt: Date,
     confirmedAt: Date,
     completedAt: Date,
+    confirmationAttemptCount: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+      validate: {
+        validator: Number.isInteger,
+        message: 'Confirmation-attempt count must be a whole number',
+      },
+    },
+    lastAttemptedAt: Date,
+    lastAttemptedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    lastFailedAt: Date,
+    recoveredAt: Date,
+    validationAttemptCount: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+    },
+    processingStartedAt: Date,
+    processingHeartbeatAt: Date,
+    processingStage: {
+      type: String,
+      enum: ['VALIDATION', 'IMPORT'],
+    },
+    failedStage: {
+      type: String,
+      enum: ['VALIDATION', 'IMPORT'],
+    },
+    progress: {
+      processedRows: { type: Number, default: 0, min: 0 },
+      totalRows: { type: Number, default: 0, min: 0 },
+      percent: { type: Number, default: 0, min: 0, max: 100 },
+      message: { type: String, trim: true, maxlength: 500 },
+    },
     counts: {
       type: importCountsSchema,
       default: () => ({}),
@@ -171,6 +229,11 @@ pmsEmployeeProfileImportSchema.index({ status: 1, createdAt: -1 });
 pmsEmployeeProfileImportSchema.index({ uploadedBy: 1, createdAt: -1 });
 pmsEmployeeProfileImportSchema.index({ fileChecksum: 1, createdAt: -1 });
 pmsEmployeeProfileImportSchema.index({ affectedEmployeeIds: 1, createdAt: -1 });
+pmsEmployeeProfileImportSchema.index({ status: 1, lastAttemptedAt: -1 });
+pmsEmployeeProfileImportSchema.index({
+  status: 1,
+  processingHeartbeatAt: 1,
+});
 
 export const PmsEmployeeProfileImport = mongoose.model<IPmsEmployeeProfileImport>(
   'PmsEmployeeProfileImport',

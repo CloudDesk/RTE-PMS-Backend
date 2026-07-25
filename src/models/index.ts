@@ -40,4 +40,5 @@ export * from './pms-reminder-rule.model';
 export * from './pms-employee-career-profile.model';
 export * from './pms-employee-profile-import.model';
 export * from './pms-employee-profile-import-row.model';
+export * from './pms-employee-profile-import-file.model';
 export * from './pms-employee-career-profile-change.model';
