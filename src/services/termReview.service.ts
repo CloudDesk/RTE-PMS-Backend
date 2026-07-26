@@ -3282,6 +3282,14 @@ export class TermReviewService extends BaseService {
 
   private async assertManagerAccess(action: string, termAssignment: ITermAssignment): Promise<void> {
     const actor = this.requireActor();
+    const actorRole = normalizePmsRole(actor.actorRole);
+    if (
+      actorRole === PmsRole.DIRECTOR &&
+      actor.actorId === termAssignment.assignedManagerId.toString()
+    ) {
+      return;
+    }
+
     const access = await accessService.canPerform({
       actor,
       action,

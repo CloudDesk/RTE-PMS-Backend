@@ -134,6 +134,7 @@ export interface AnnualObjectiveMatrixResponse {
   columns: ITemplateObjectiveTableColumn[];
   columnGroups: ITemplateObjectiveColumnGroup[];
   termPolicies: ITemplateObjectiveColumnTermPolicy[];
+  rowGroupColumnLabel?: string;
   dynamicRowPolicy: ITemplateObjectiveTableLayout['dynamicRowPolicy'];
   showRowGroups: boolean;
   rowGroups: ITemplateObjectiveRowGroup[];

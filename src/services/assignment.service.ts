@@ -50,6 +50,7 @@ import {
   type ObjectiveRowSeedEntry,
 } from './objective-assignment-seeding.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
+import { resolveFinalReviewer } from '../utilis/finalReviewer';
 import { AssessmentTermCode } from '../constants/pms.enums';
 import type {
   PmsAchievementWindowSnapshot,
@@ -383,6 +384,12 @@ export class AssignmentService extends BaseService {
       managerObjectId,
     );
     this.validateEmployeeEligibility(employeeSnapshot);
+    const finalReviewerResolution = await resolveFinalReviewer({
+      employeeId: employeeObjectId,
+      assignedManagerId: managerObjectId,
+      finalReviewRequired: annualCycle.finalReviewRequired === true,
+      defaultFinalReviewerId: annualCycle.defaultFinalReviewerId,
+    });
 
     const existingAssignment = await AnnualAssignment.findOne({
       employeeId: employeeObjectId,
@@ -406,6 +413,7 @@ export class AssignmentService extends BaseService {
       employeeSnapshot,
       managerSnapshot,
       orgSnapshot,
+      ...finalReviewerResolution,
       createdBy: this.actorIdObject(),
     });
 

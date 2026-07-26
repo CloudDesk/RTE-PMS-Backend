@@ -301,6 +301,7 @@ export function normalizeObjectiveTableLayout(
     layoutVersion: Number.isInteger(Number(layout.layoutVersion)) && Number(layout.layoutVersion) > 0
       ? Number(layout.layoutVersion)
       : 1,
+    rowGroupColumnLabel: String(layout.rowGroupColumnLabel ?? 'Row group').trim() || 'Row group',
     columns,
     columnGroups,
     rowGroups,
@@ -533,7 +534,11 @@ export function objectiveTableLayoutValidationErrors(
       errors.push(`${prefix} row group "${group.rowGroupKey}" has invalid source "${group.source}"`);
     }
   }
-  for (const duplicate of duplicateValues((layout.rowGroups ?? []).map((group) => group.source))) {
+  for (const duplicate of duplicateValues(
+    (layout.rowGroups ?? [])
+      .filter((group) => group.source !== 'PREDEFINED')
+      .map((group) => group.source),
+  )) {
     errors.push(`${prefix} has more than one destination row group for source "${duplicate}"`);
   }
   const rowGroupingEnabled = (layout.rowGroups ?? []).length > 0;

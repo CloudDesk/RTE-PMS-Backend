@@ -9,6 +9,7 @@ import { messaging } from '../config/firebase/firebaseConfig';
 import { generateEmailTemplate } from '../emails/templates';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import { uploadFileToGCP } from '../utilis/gcpStorage';
+import { getAllowedPmsReportingRoles } from '../utilis/reportingHierarchyRules';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -64,6 +65,7 @@ interface IUserCreate {
   specificRole?: string;
   departmentId: string;
   managerId?: string;
+  managerName?: string;
   employeeCode: string;
   biometricId?: string | null;
   active?: boolean;
@@ -132,6 +134,7 @@ interface IUserUpdate {
   specificRole?: string;
   departmentId?: string;
   managerId?: string;
+  managerName?: string;
   employeeCode?: string;
   biometricId?: string | null;
   active?: boolean;
@@ -239,10 +242,116 @@ export class UserService extends BaseService {
     return new RegExp(`^${value.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
   }
 
-  async getPotentialManagers(role: string, departmentId?: string): Promise<any[]> {
+  private getPmsReportingRoles(role?: string): string[] | null {
+    return getAllowedPmsReportingRoles(role);
+  }
+
+  private async validateReportingManager(
+    employeeRole: string,
+    managerId: string,
+    employeeId?: string,
+  ) {
+    if (!Types.ObjectId.isValid(managerId)) {
+      throw new Error('Valid Reporting Manager is required');
+    }
+
+    if (employeeId && managerId === employeeId) {
+      throw new Error('Employee cannot report to themselves');
+    }
+
+    const manager = await User.findById(managerId)
+      .select('_id name role active portalAccess managerId')
+      .lean();
+
+    if (!manager) {
+      throw new Error('Reporting Manager not found');
+    }
+    if (!manager.active) {
+      throw new Error('Reporting Manager must be active');
+    }
+    if (manager.portalAccess === false) {
+      throw new Error('Reporting Manager must have portal access');
+    }
+
+    const allowedRoles = this.getPmsReportingRoles(employeeRole);
+    const normalizedManagerRole = String(manager.role || '').trim().toLowerCase();
+    if (allowedRoles && !allowedRoles.includes(normalizedManagerRole)) {
+      throw new Error(
+        `${employeeRole} cannot report to a user with role ${manager.role}`,
+      );
+    }
+
+    const visited = new Set<string>();
+    let currentId: Types.ObjectId | undefined = manager._id;
+
+    while (currentId) {
+      const currentIdString = currentId.toString();
+      if (employeeId && currentIdString === employeeId) {
+        throw new Error('This Reporting Manager creates a circular reporting hierarchy');
+      }
+      if (visited.has(currentIdString)) {
+        throw new Error('The selected Reporting Manager belongs to an invalid circular hierarchy');
+      }
+      visited.add(currentIdString);
+
+      const current = await User.findById(currentId)
+        .select('managerId')
+        .lean();
+      currentId = current?.managerId
+        ? new Types.ObjectId(current.managerId)
+        : undefined;
+    }
+
+    return manager;
+  }
+
+  async getPotentialManagers(
+    role: string,
+    departmentId?: string,
+    employeeId?: string,
+  ): Promise<any[]> {
     try {
       const normalizedRole = role.trim().toLowerCase();
       const normalizedDepartmentId = departmentId?.trim();
+      const pmsReportingRoles = this.getPmsReportingRoles(normalizedRole);
+
+      if (pmsReportingRoles) {
+        if (pmsReportingRoles.length === 0) {
+          return [];
+        }
+
+        const potentialManagers = await User.find({
+          role: {
+            $in: pmsReportingRoles.map((allowedRole) =>
+              this.exactCaseInsensitiveRegex(allowedRole),
+            ),
+          },
+          active: true,
+          portalAccess: { $ne: false },
+          ...(employeeId && Types.ObjectId.isValid(employeeId)
+            ? { _id: { $ne: new Types.ObjectId(employeeId) } }
+            : {}),
+        })
+          .select(
+            '_id name email employeeCode role specificRole departmentId managerId managerName active portalAccess profilePicture',
+          )
+          .lean();
+
+        return potentialManagers.sort((left, right) => {
+          const leftSameDepartment =
+            normalizedDepartmentId &&
+            String(left.departmentId || '').toLowerCase() === normalizedDepartmentId.toLowerCase();
+          const rightSameDepartment =
+            normalizedDepartmentId &&
+            String(right.departmentId || '').toLowerCase() === normalizedDepartmentId.toLowerCase();
+
+          if (leftSameDepartment !== rightSameDepartment) {
+            return leftSameDepartment ? -1 : 1;
+          }
+          return String(left.name || '').localeCompare(String(right.name || ''));
+        });
+      }
+
       const roleAliases =
         normalizedRole === 'staff' || normalizedRole === 'employee'
           ? ['staff', 'employee']
@@ -332,6 +441,65 @@ export class UserService extends BaseService {
       console.error('Error fetching potential managers', error);
       throw error;
     }
+  }
+
+  async getReportingHierarchy(
+    userId: string,
+    includeSelf: boolean = false,
+    maxLevels: number = 3,
+  ) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new Error('Valid user ID is required');
+    }
+
+    const subject = await User.findById(userId)
+      .select('_id managerId')
+      .lean();
+    if (!subject) {
+      throw new Error('User not found');
+    }
+
+    const hierarchy: Array<{
+      level: number;
+      _id: string;
+      name: string;
+      employeeCode?: string;
+      role: string;
+      specificRole?: string;
+      managerId?: string;
+    }> = [];
+    const visited = new Set<string>();
+    let currentId: Types.ObjectId | undefined = includeSelf
+      ? subject._id
+      : subject.managerId;
+
+    while (currentId && hierarchy.length < maxLevels) {
+      const currentIdString = currentId.toString();
+      if (visited.has(currentIdString)) {
+        throw new Error('Circular reporting hierarchy detected');
+      }
+      visited.add(currentIdString);
+
+      const current = await User.findById(currentId)
+        .select('_id name employeeCode role specificRole managerId')
+        .lean();
+      if (!current) break;
+
+      hierarchy.push({
+        level: hierarchy.length + 1,
+        _id: current._id.toString(),
+        name: current.name,
+        employeeCode: current.employeeCode,
+        role: current.role,
+        specificRole: current.specificRole,
+        managerId: current.managerId?.toString(),
+      });
+      currentId = current.managerId
+        ? new Types.ObjectId(current.managerId)
+        : undefined;
+    }
+
+    return hierarchy;
   }
 
   async getUsers(query: {
@@ -1034,6 +1202,12 @@ export class UserService extends BaseService {
     if (!isDirectorRole(data.role) && !data.managerId) {
       throw new Error('Manager ID is required');
     }
+    if (isDirectorRole(data.role)) {
+      delete data.managerId;
+      delete data.managerName;
+    } else if (data.managerId) {
+      await this.validateReportingManager(data.role, data.managerId);
+    }
     if (!data.joiningDate) {
       throw new Error('Joining date is required');
     }
@@ -1220,8 +1394,27 @@ export class UserService extends BaseService {
 
     // Validate required fields if being updated
     const nextRole = data.role ?? user.role;
-    if (!isDirectorRole(nextRole) && data.managerId !== undefined && !data.managerId) {
+    const roleChanged =
+      data.role !== undefined &&
+      String(data.role).trim().toLowerCase() !== String(user.role).trim().toLowerCase();
+    const managerChanged =
+      data.managerId !== undefined &&
+      data.managerId !== user.managerId?.toString();
+    const nextManagerId =
+      data.managerId !== undefined
+        ? data.managerId
+        : user.managerId?.toString();
+    if (!isDirectorRole(nextRole) && !nextManagerId) {
       throw new Error('Manager ID is required');
+    }
+    if (isDirectorRole(nextRole)) {
+      delete data.managerId;
+      delete data.managerName;
+      user.managerId = undefined;
+      user.managerName = undefined;
+    } else if (nextManagerId && (roleChanged || managerChanged)) {
+      await this.validateReportingManager(nextRole, nextManagerId, id);
+      data.managerId = nextManagerId;
     }
     if (data.joiningDate !== undefined && !data.joiningDate) {
       throw new Error('Joining date is required');

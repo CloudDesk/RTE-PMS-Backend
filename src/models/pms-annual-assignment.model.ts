@@ -6,6 +6,10 @@ import type {
   AnnualWorkflowState as AnnualWorkflowStateType,
   AssessmentTermCode as AssessmentTermCodeType,
 } from '../constants/pms.enums';
+import type {
+  FinalReviewerSource,
+  FinalReviewStatus,
+} from '../utilis/finalReviewer';
 
 type QuarterCode = AssessmentTermCodeType;
 
@@ -54,6 +58,18 @@ export interface IEmployeeCareerProfileSnapshot {
 export interface IAnnualAssignment extends Document {
   employeeId: Types.ObjectId;
   assignedManagerId: Types.ObjectId;
+  finalReviewerId?: Types.ObjectId;
+  finalReviewerSource?: FinalReviewerSource;
+  finalReviewerSnapshot?: {
+    employeeCode?: string;
+    name: string;
+    email?: string;
+    role: string;
+    specificRole?: string;
+  };
+  finalReviewStatus: FinalReviewStatus;
+  finalReviewCompletedBy?: Types.ObjectId;
+  finalReviewCompletedAt?: Date;
   cycleId: Types.ObjectId;
   templateVersionId?: Types.ObjectId;
   termAssignmentIds: Types.ObjectId[];
@@ -153,6 +169,31 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
       ref: 'User',
       index: true,
     },
+    finalReviewerId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+    finalReviewerSource: {
+      type: String,
+      enum: ['REPORTING_L2', 'L1_DIRECTOR', 'CYCLE_DEFAULT'],
+    },
+    finalReviewerSnapshot: {
+      type: Schema.Types.Mixed,
+      default: undefined,
+    },
+    finalReviewStatus: {
+      type: String,
+      enum: ['NOT_REQUIRED', 'PENDING', 'IN_PROGRESS', 'COMPLETED'],
+      default: 'NOT_REQUIRED',
+      required: true,
+      index: true,
+    },
+    finalReviewCompletedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    finalReviewCompletedAt: Date,
     cycleId: {
       type: Schema.Types.ObjectId,
       required: true,
@@ -234,6 +275,7 @@ annualAssignmentSchema.index(
   { unique: true, name: 'idx_employee_annual_cycle' },
 );
 annualAssignmentSchema.index({ assignedManagerId: 1, annualState: 1 });
+annualAssignmentSchema.index({ finalReviewerId: 1, finalReviewStatus: 1 });
 annualAssignmentSchema.index({ cycleId: 1, assignedManagerId: 1, annualState: 1 });
 annualAssignmentSchema.index({ cycleId: 1, appraisalOutcomeType: 1 });
 annualAssignmentSchema.index({ cycleId: 1, 'employeeSnapshot.department': 1 });

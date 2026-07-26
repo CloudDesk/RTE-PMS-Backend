@@ -46,6 +46,7 @@ import {
   objectiveTableLayoutValidationErrors,
 } from './pms-template-objective-table-layout';
 import { permissionPolicyValidationErrors } from './pms-template-permission-policy';
+import { validateFinalReviewTemplateSections } from '../utilis/finalReviewTemplate';
 
 export type TemplateSection = IPmsTemplateVersion['sections'][number];
 export type TemplateField = TemplateSection['fields'][number];
@@ -2103,6 +2104,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   private validateSections(sections: TemplateSection[]): void {
+    validateFinalReviewTemplateSections(sections);
     const allowedQuarters = new Set(Object.values(AssessmentTermCode));
     const sectionKeys = new Set<string>();
     const allFieldKeys = new Set<string>();
