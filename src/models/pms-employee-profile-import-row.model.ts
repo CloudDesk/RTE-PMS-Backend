@@ -28,6 +28,7 @@ const careerProgressionPastSchema = new Schema<IPmsCareerProgressionPastEntry>(
   {
     year: { type: Number, required: true },
     grade: { type: String, trim: true, maxlength: 100 },
+    progression: { type: String, trim: true, maxlength: 150 },
     function: { type: String, trim: true, maxlength: 150 },
     unitOrDepartment: { type: String, trim: true, maxlength: 150 },
     sequence: { type: Number, required: true },

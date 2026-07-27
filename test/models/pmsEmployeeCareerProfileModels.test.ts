@@ -82,7 +82,7 @@ describe('PMS employee career profile data foundation', () => {
     expect(
       Object.values(error.errors).some((item: any) =>
         String(item.message).includes(
-          'Career progression requires Grade, Function, or Unit / Department',
+          'Career progression requires Grade, Progression, Function, or Unit / Department',
         ),
       ),
     ).toBe(true);

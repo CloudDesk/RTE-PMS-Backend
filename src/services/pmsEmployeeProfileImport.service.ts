@@ -19,7 +19,6 @@ import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import { BaseService } from './base.service';
 
 export const PMS_EMPLOYEE_PROFILE_TEMPLATE_VERSION = 'v1.1';
-export const PMS_EMPLOYEE_GRADE_LOV_TYPE = 'grade';
 export const PMS_EMPLOYEE_PROFILE_MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const PMS_EMPLOYEE_PROFILE_MAX_PROFILE_ROWS = 5000;
 export const PMS_EMPLOYEE_PROFILE_MAX_CAREER_ROWS = 25000;
@@ -49,6 +48,15 @@ const CAREER_HEADERS = [
   'Unit / Department',
   'Sequence',
 ] as const;
+
+const SINGLE_SHEET_TEMPLATE_VERSION = 'single-sheet-v1';
+const SINGLE_SHEET_HEADER_ALIASES = {
+  employeeCode: ['emp code', 'employee code'],
+  employeeName: ['emp name', 'employee name'],
+  year: ['year'],
+  progression: ['progression'],
+  promotedAs: ['promoted as'],
+} as const;
 
 const EMPLOYEE_REFERENCE_HEADERS = [
   'Employee Code',
@@ -124,6 +132,7 @@ export type ParsedCareerProgressionRow = {
   employeeCode: string;
   year: number;
   grade?: string;
+  progression?: string;
   function?: string;
   unitOrDepartment?: string;
   sequence: number;
@@ -221,6 +230,7 @@ export type PmsEmployeeCareerProfileListItem = {
 export type ManualCareerProgressionInput = {
   year: number;
   grade?: string;
+  progression?: string;
   function?: string;
   unitOrDepartment?: string;
   sequence: number;
@@ -255,16 +265,11 @@ export class PmsEmployeeProfileImportService extends BaseService {
   async generateImportTemplate(): Promise<Buffer> {
     const actor = this.assertAdminActor();
     const referenceData = await this.loadReferenceData();
-    if (referenceData.grades.length === 0) {
-      throw new Error(
-        `PMS Grade LOV "${PMS_EMPLOYEE_GRADE_LOV_TYPE}" has no active values. Configure grades before downloading the template.`,
-      );
-    }
 
     const actorEmployee = referenceData.employees.find(
       (employee) => employee.employeeId === actor.actorId,
     );
-    const workbook = await this.buildTemplateWorkbook({
+    const workbook = await this.buildSingleSheetTemplateWorkbook({
       ...referenceData,
       generatedAt: new Date(),
       generatedBy: actorEmployee
@@ -990,6 +995,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
             careerProgressionPast: profile.careerProgressionPast.map((entry) => ({
               year: entry.year,
               grade: entry.grade,
+              progression: entry.progression,
               function: entry.function,
               unitOrDepartment: entry.unitOrDepartment,
               sequence: entry.sequence,
@@ -1090,9 +1096,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
           employee,
         ]),
       );
-      const activeGradeCodes = new Set(
-        referenceData.grades.map((grade) => this.normalizeKey(grade.code)),
-      );
       for (const row of stagedRows) {
         const employee = employeeById.get(row.employeeId.toString());
         if (
@@ -1102,25 +1105,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
         ) {
           throw new Error(
             `Employee ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
-          );
-        }
-        const submittedCareerProgressionPast =
-          row.submittedCareerProgressionPast ?? row.careerProgressionPast;
-        const gradeCodes = [
-          row.currentGrade,
-          ...submittedCareerProgressionPast
-            .map((entry: { grade?: string }) => entry.grade)
-            .filter((grade: string | undefined): grade is string =>
-              Boolean(grade),
-            ),
-        ];
-        if (
-          gradeCodes.some(
-            (gradeCode) => !activeGradeCodes.has(this.normalizeKey(gradeCode)),
-          )
-        ) {
-          throw new Error(
-            `A Grade LOV value used by ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
           );
         }
       }
@@ -1413,14 +1397,13 @@ export class PmsEmployeeProfileImportService extends BaseService {
       userQuery.departmentId = input.department.trim();
     }
 
-    const [users, gradeLov, departmentLov] = await Promise.all([
+    const [users, departmentLov] = await Promise.all([
       User.find(userQuery)
         .select(
           '_id employeeCode name specificRole role departmentId managerId managerName active',
         )
         .sort({ employeeCode: 1 })
         .lean(),
-      LOV.findOne({ type: PMS_EMPLOYEE_GRADE_LOV_TYPE }).lean(),
       LOV.findOne({ type: 'department' }).lean(),
     ]);
     const employeeIds = users.map((user) => user._id);
@@ -1443,11 +1426,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
     const managerById = new Map(
       managers.map((manager) => [manager._id.toString(), manager.name]),
     );
-    const activeGrades = new Set(
-      (gradeLov?.values ?? [])
-        .filter((item) => item.isActive !== false)
-        .map((item) => this.normalizeKey(item.value)),
-    );
     const departmentLabels = new Map(
       (departmentLov?.values ?? []).map((item) => [
         this.normalizeKey(item.value),
@@ -1459,9 +1437,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
       .map((user): PmsEmployeeCareerProfileListItem => {
         const profile = profileByEmployeeId.get(user._id.toString());
         const validationAttention = Boolean(
-          profile &&
-            (user.active === false ||
-              !activeGrades.has(this.normalizeKey(profile.currentGrade))),
+          profile && user.active === false,
         );
         const managerId =
           user.managerId?.toString?.() ?? String(user.managerId ?? '');
@@ -1531,9 +1507,8 @@ export class PmsEmployeeProfileImportService extends BaseService {
       throw new Error('Employee was not found');
     }
 
-    const [profile, gradeLov, departmentLov, manager] = await Promise.all([
+    const [profile, departmentLov, manager] = await Promise.all([
       PmsEmployeeCareerProfile.findOne({ employeeId }).lean(),
-      LOV.findOne({ type: PMS_EMPLOYEE_GRADE_LOV_TYPE }).lean(),
       LOV.findOne({ type: 'department' }).lean(),
       employee.managerId && Types.ObjectId.isValid(employee.managerId.toString())
         ? User.findById(employee.managerId).select('_id employeeCode name').lean()
@@ -1574,16 +1549,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
             updatedAt: profile.updatedAt,
           }
         : null,
-      grades: (gradeLov?.values ?? [])
-        .filter((item) => item.isActive !== false)
-        .map((item) => ({
-          code: String(item.value ?? '').trim(),
-          label: String(item.label ?? item.value ?? '').trim(),
-        }))
-        .filter((item) => item.code),
-      gradeLovConfigured: Boolean(
-        (gradeLov?.values ?? []).some((item) => item.isActive !== false),
-      ),
     };
   }
 
@@ -1644,23 +1609,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
     if (!employee) {
       throw new Error('Employee was not found');
     }
-    const gradeLov = await LOV.findOne({
-      type: PMS_EMPLOYEE_GRADE_LOV_TYPE,
-    }).lean();
-    const activeGradeCodes = new Map(
-      (gradeLov?.values ?? [])
-        .filter((item) => item.isActive !== false)
-        .map((item) => [
-          this.normalizeKey(item.value),
-          String(item.value ?? '').trim(),
-        ]),
-    );
-    if (activeGradeCodes.size === 0) {
-      throw new Error(
-        'The PMS Grade LOV has no active values. Configure grades in Admin Setup before saving.',
-      );
-    }
-    const normalized = this.validateManualProfileInput(input, activeGradeCodes);
+    const normalized = this.validateManualProfileInput(input);
     const requestedVersion = Number(input.profileVersion ?? 0);
     if (!Number.isInteger(requestedVersion) || requestedVersion < 0) {
       throw new Error('Profile version is invalid. Refresh the page and try again.');
@@ -1887,6 +1836,175 @@ export class PmsEmployeeProfileImportService extends BaseService {
     return Buffer.from(buffer);
   }
 
+  async buildSingleSheetTemplateWorkbook(
+    input: TemplateBuildInput,
+  ): Promise<ExcelJS.Workbook> {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'RTE PMS';
+    workbook.lastModifiedBy = input.generatedBy;
+    workbook.created = input.generatedAt;
+    workbook.modified = input.generatedAt;
+    workbook.subject = 'PMS Employee Career Progression Import';
+    workbook.title = 'PMS Employee Career Progression Import Template';
+    workbook.company = 'RTE';
+
+    const instructions = workbook.addWorksheet('Instructions', {
+      views: [{ showGridLines: false }],
+    });
+    const sheet = workbook.addWorksheet('Career Progression', {
+      views: [{ state: 'frozen', ySplit: 1, showGridLines: false }],
+    });
+    const employeeReference = workbook.addWorksheet('Employee Reference', {
+      views: [{ state: 'frozen', ySplit: 1, showGridLines: false }],
+    });
+    const dataConfig = workbook.addWorksheet('Data Config', {
+      views: [{ state: 'frozen', ySplit: 1, showGridLines: false }],
+    });
+
+    instructions.columns = [
+      { key: 'item', width: 30 },
+      { key: 'value', width: 95 },
+    ];
+    instructions.addRow([
+      'PMS Employee Career Progression Import',
+      'Complete only the Career Progression tab.',
+    ]);
+    instructions.mergeCells('A1:B1');
+    this.styleHeader(instructions.getRow(1));
+    instructions.addRow(['Template version', SINGLE_SHEET_TEMPLATE_VERSION]);
+    instructions.addRow(['Generated at', input.generatedAt]);
+    instructions.getCell('B3').numFmt = 'dd/mm/yyyy hh:mm';
+    instructions.addRow(['Generated by', input.generatedBy]);
+    instructions.addRow([
+      'Employee blocks',
+      'Enter Emp Code on the first row of each employee. Blank continuation rows belong to the previous employee.',
+    ]);
+    instructions.addRow([
+      'Editable sheet',
+      'All workbook tabs are intentionally unprotected. Grouped or merged employee blocks can be pasted and edited. Keep the required Career Progression column headers so the upload can identify the data.',
+    ]);
+    instructions.addRow([
+      'Year',
+      'Enter month and year as Apr-25. The month is preserved for the effective date.',
+    ]);
+    instructions.addRow([
+      'Current promoted title',
+      'The latest non-empty Promoted as value becomes the current promoted title / designation. The same row month becomes its effective date.',
+    ]);
+    instructions.addRow([
+      'Past progression',
+      'All other movement rows are stored as Career Progression – Past. Progression and Promoted as are optional free text. A row where both are blank is ignored.',
+    ]);
+    instructions.addRow([
+      'Employee name',
+      'Emp Name is reference-only. PMS resolves the employee from Emp Code.',
+    ]);
+    instructions.addRow([
+      'No Grade LOV',
+      'Progression and Promoted as are not checked against a Grade LOV.',
+    ]);
+    instructions.getColumn(2).alignment = {
+      wrapText: true,
+      vertical: 'top',
+    };
+
+    sheet.columns = [
+      { header: 'Emp Code', key: 'employeeCode', width: 18 },
+      { header: 'Emp Name', key: 'employeeName', width: 34 },
+      { header: 'Year', key: 'year', width: 16 },
+      { header: 'Progression', key: 'progression', width: 28 },
+      { header: 'Promoted as', key: 'promotedAs', width: 30 },
+    ];
+    this.styleHeader(sheet.getRow(1));
+    sheet.autoFilter = 'A1:E1';
+    sheet.getCell('A1').note =
+      'Required on the first row of each employee block. Blank continuation rows use the previous employee code.';
+    sheet.getCell('B1').note =
+      'Reference only. Employee identity is resolved from Emp Code.';
+    sheet.getCell('C1').note =
+      'Required. Enter month and year, for example Apr-25.';
+    sheet.getCell('D1').note =
+      'Required free text, for example Promotion, Merit 100, or Promotion+Merit 50.';
+    sheet.getCell('E1').note =
+      'Optional for merit-only rows. The latest non-empty value becomes the current promoted title / designation and its month becomes the effective date.';
+
+    for (let columnNumber = 1; columnNumber <= 5; columnNumber += 1) {
+      sheet.getColumn(columnNumber).protection = { locked: false };
+      sheet.getCell(1, columnNumber).protection = { locked: true };
+    }
+
+    const activeEmployees = input.employees.filter(
+      (employee) => employee.active !== false,
+    );
+    this.populateEmployeeReferenceSheet(employeeReference, activeEmployees);
+    const employeeReferenceEnd = Math.max(activeEmployees.length + 1, 2);
+    workbook.definedNames.add(
+      `'Employee Reference'!$A$2:$A$${employeeReferenceEnd}`,
+      'PmsSingleSheetEmployeeCodes',
+    );
+    (sheet as any).dataValidations.add(
+      `A2:A${PMS_EMPLOYEE_PROFILE_MAX_CAREER_ROWS + 1}`,
+      {
+        type: 'list',
+        allowBlank: true,
+        formulae: ['PmsSingleSheetEmployeeCodes'],
+        showErrorMessage: true,
+        errorTitle: 'Invalid Employee Code',
+        error: 'Select or enter an Employee Code from Employee Reference.',
+      },
+    );
+
+    dataConfig.columns = [
+      { header: 'Column', key: 'column', width: 24 },
+      { header: 'Required', key: 'required', width: 14 },
+      { header: 'Format / Rule', key: 'rule', width: 72 },
+      { header: 'Example', key: 'example', width: 30 },
+    ];
+    this.styleHeader(dataConfig.getRow(1));
+    [
+      {
+        column: 'Emp Code',
+        required: 'Block start',
+        rule:
+          'Must exist in Employee Reference. Blank continuation rows use the previous code.',
+        example: '8502',
+      },
+      {
+        column: 'Emp Name',
+        required: 'No',
+        rule: 'Reference only; employee matching uses Emp Code.',
+        example: 'SARAVANAN R',
+      },
+      {
+        column: 'Year',
+        required: 'Yes',
+        rule: 'Month-year in MMM-YY or MMM-YYYY format.',
+        example: 'Apr-25',
+      },
+      {
+        column: 'Progression',
+        required: 'No',
+        rule:
+          'Optional free text; maximum 150 characters. No LOV. If Progression and Promoted as are both blank, the row is ignored.',
+        example: 'Promotion+Merit 50',
+      },
+      {
+        column: 'Promoted as',
+        required: 'Conditional',
+        rule:
+          'Free text; maximum 100 characters. Latest non-empty value becomes the current promoted title / designation.',
+        example: 'Asst. Manager',
+      },
+    ].forEach((row) => dataConfig.addRow(row));
+    dataConfig.autoFilter = 'A1:D6';
+    dataConfig.getColumn(3).alignment = {
+      wrapText: true,
+      vertical: 'top',
+    };
+
+    return workbook;
+  }
+
   async buildTemplateWorkbook(input: TemplateBuildInput): Promise<ExcelJS.Workbook> {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'RTE PMS';
@@ -2077,6 +2195,14 @@ export class PmsEmployeeProfileImportService extends BaseService {
           'The uploaded file is not a readable .xlsx workbook.',
         ),
       ]);
+    }
+
+    const singleSheetSource = this.findSingleSheetProgressionSource(workbook);
+    if (singleSheetSource) {
+      return this.validateSingleSheetProgressionSource(
+        singleSheetSource,
+        referenceData,
+      );
     }
 
     const actualSheetNames = workbook.worksheets.map((sheet) => sheet.name);
@@ -2625,7 +2751,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
   }
 
   private async loadReferenceData(): Promise<PmsEmployeeProfileReferenceData> {
-    const [users, gradeLov, departmentLov] = await Promise.all([
+    const [users, departmentLov] = await Promise.all([
       User.find({
         employeeCode: { $exists: true, $ne: '' },
         active: { $ne: false },
@@ -2635,7 +2761,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
         )
         .sort({ employeeCode: 1 })
         .lean(),
-      LOV.findOne({ type: PMS_EMPLOYEE_GRADE_LOV_TYPE }).lean(),
       LOV.findOne({ type: 'department' }).lean(),
     ]);
     const userMap = new Map(users.map((user) => [user._id.toString(), user]));
@@ -2661,21 +2786,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
         active: user.active !== false,
       };
     });
-    const grades = (gradeLov?.values ?? [])
-      .filter((item) => item.isActive !== false)
-      .map((item, index) => ({
-        code: String(item.value ?? '').trim(),
-        label: String(item.label ?? item.value ?? '').trim(),
-        displayOrder: index + 1,
-      }))
-      .filter((grade) => grade.code)
-      .sort(
-        (left, right) =>
-          left.displayOrder - right.displayOrder ||
-          left.code.localeCompare(right.code),
-      );
-
-    return { employees, grades };
+    return { employees, grades: [] };
   }
 
   private populateInstructionsSheet(
@@ -3154,6 +3265,448 @@ export class PmsEmployeeProfileImportService extends BaseService {
     });
   }
 
+  private findSingleSheetProgressionSource(workbook: ExcelJS.Workbook):
+    | {
+        sheet: ExcelJS.Worksheet;
+        headerRowNumber: number;
+        columns: {
+          employeeCode: number;
+          employeeName: number;
+          year: number;
+          progression: number;
+          promotedAs: number;
+        };
+      }
+    | undefined {
+    for (const sheet of workbook.worksheets) {
+      const lastHeaderRow = Math.min(10, sheet.actualRowCount);
+      for (let rowNumber = 1; rowNumber <= lastHeaderRow; rowNumber += 1) {
+        const headerColumns = new Map<string, number>();
+        const row = sheet.getRow(rowNumber);
+        for (
+          let columnNumber = 1;
+          columnNumber <= Math.max(5, sheet.actualColumnCount);
+          columnNumber += 1
+        ) {
+          const header = this.normalizeHeader(
+            this.cellText(row.getCell(columnNumber)),
+          );
+          if (header) headerColumns.set(header, columnNumber);
+        }
+
+        const resolveColumn = (
+          aliases: readonly string[],
+        ): number | undefined =>
+          aliases
+            .map((alias) => headerColumns.get(this.normalizeHeader(alias)))
+            .find((column): column is number => column !== undefined);
+
+        const columns = {
+          employeeCode: resolveColumn(
+            SINGLE_SHEET_HEADER_ALIASES.employeeCode,
+          ),
+          employeeName: resolveColumn(
+            SINGLE_SHEET_HEADER_ALIASES.employeeName,
+          ),
+          year: resolveColumn(SINGLE_SHEET_HEADER_ALIASES.year),
+          progression: resolveColumn(
+            SINGLE_SHEET_HEADER_ALIASES.progression,
+          ),
+          promotedAs: resolveColumn(
+            SINGLE_SHEET_HEADER_ALIASES.promotedAs,
+          ),
+        };
+        if (Object.values(columns).every((column) => column !== undefined)) {
+          return {
+            sheet,
+            headerRowNumber: rowNumber,
+            columns: columns as {
+              employeeCode: number;
+              employeeName: number;
+              year: number;
+              progression: number;
+              promotedAs: number;
+            },
+          };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private validateSingleSheetProgressionSource(
+    source: {
+      sheet: ExcelJS.Worksheet;
+      headerRowNumber: number;
+      columns: {
+        employeeCode: number;
+        employeeName: number;
+        year: number;
+        progression: number;
+        promotedAs: number;
+      };
+    },
+    referenceData: PmsEmployeeProfileReferenceData,
+  ): PmsEmployeeProfileWorkbookValidation {
+    type SourceMovement = {
+      rowNumber: number;
+      year: number;
+      effectiveDate: Date;
+      progression?: string;
+      promotedAs?: string;
+    };
+    type EmployeeGroup = {
+      employeeCode: string;
+      firstRowNumber: number;
+      employee?: PmsEmployeeProfileTemplateEmployee;
+      movements: SourceMovement[];
+      issues: PmsEmployeeProfileValidationIssue[];
+    };
+
+    const issues: PmsEmployeeProfileValidationIssue[] = [];
+    const employeeMap = new Map(
+      referenceData.employees.map((employee) => [
+        this.normalizeKey(employee.employeeCode),
+        employee,
+      ]),
+    );
+    const groups = new Map<string, EmployeeGroup>();
+    let currentEmployeeCode = '';
+    let sourceMovementCount = 0;
+    const asOfDate = this.currentServerDate();
+
+    for (
+      let rowNumber = source.headerRowNumber + 1;
+      rowNumber <= source.sheet.actualRowCount;
+      rowNumber += 1
+    ) {
+      const row = source.sheet.getRow(rowNumber);
+      const enteredEmployeeCode = this.cellText(
+        row.getCell(source.columns.employeeCode),
+      );
+      const enteredEmployeeName = this.cellText(
+        row.getCell(source.columns.employeeName),
+      );
+      const yearText = this.cellText(row.getCell(source.columns.year));
+      const progression = this.cellText(
+        row.getCell(source.columns.progression),
+      );
+      const promotedAs = this.cellText(row.getCell(source.columns.promotedAs));
+      if (enteredEmployeeCode) currentEmployeeCode = enteredEmployeeCode;
+      if (!yearText && !progression && !promotedAs) {
+        continue;
+      }
+      if (yearText && !progression && !promotedAs) {
+        continue;
+      }
+      if (!currentEmployeeCode) {
+        issues.push(
+          this.issue(
+            'ERROR',
+            source.sheet.name,
+            'EMPLOYEE_CODE_CONTEXT_REQUIRED',
+            'Employee Code is required on the first row of each employee block.',
+            rowNumber,
+            undefined,
+            'Emp Code',
+          ),
+        );
+        continue;
+      }
+
+      const normalizedCode = this.normalizeKey(currentEmployeeCode);
+      let group = groups.get(normalizedCode);
+      if (!group) {
+        const employee = employeeMap.get(normalizedCode);
+        group = {
+          employeeCode: employee?.employeeCode || currentEmployeeCode,
+          firstRowNumber: rowNumber,
+          employee,
+          movements: [],
+          issues: [],
+        };
+        groups.set(normalizedCode, group);
+        if (!employee) {
+          group.issues.push(
+            this.issue(
+              'ERROR',
+              source.sheet.name,
+              'EMPLOYEE_NOT_FOUND',
+              `Employee Code "${currentEmployeeCode}" was not found in the current employee master.`,
+              rowNumber,
+              currentEmployeeCode,
+              'Emp Code',
+            ),
+          );
+        } else if (!employee.active) {
+          group.issues.push(
+            this.issue(
+              'ERROR',
+              source.sheet.name,
+              'EMPLOYEE_INACTIVE',
+              'The employee is inactive and cannot be imported.',
+              rowNumber,
+              employee.employeeCode,
+              'Emp Code',
+            ),
+          );
+        }
+      }
+      if (
+        enteredEmployeeName &&
+        group.employee &&
+        this.normalizeKey(enteredEmployeeName) !==
+          this.normalizeKey(group.employee.name)
+      ) {
+        group.issues.push(
+          this.issue(
+            'WARNING',
+            source.sheet.name,
+            'EMPLOYEE_NAME_IGNORED',
+            `Emp Name "${enteredEmployeeName}" does not match the employee master name "${group.employee.name}". Employee Code ${group.employeeCode} will be used.`,
+            rowNumber,
+            group.employeeCode,
+            'Emp Name',
+          ),
+        );
+      }
+
+      const parsedPeriod = this.parseProgressionPeriod(
+        row.getCell(source.columns.year),
+      );
+      if (!parsedPeriod) {
+        group.issues.push(
+          this.issue(
+            'ERROR',
+            source.sheet.name,
+            'PROGRESSION_PERIOD_INVALID',
+            'Year must use a supported month-year value such as Apr-25.',
+            rowNumber,
+            group.employeeCode,
+            'Year',
+          ),
+        );
+      } else if (parsedPeriod.effectiveDate.getTime() > asOfDate.getTime()) {
+        group.issues.push(
+          this.issue(
+            'ERROR',
+            source.sheet.name,
+            'PROGRESSION_PERIOD_IN_FUTURE',
+            'Career progression month cannot be later than today.',
+            rowNumber,
+            group.employeeCode,
+            'Year',
+          ),
+        );
+      }
+      if (progression.length > 150) {
+        group.issues.push(
+          this.issue(
+            'ERROR',
+            source.sheet.name,
+            'PROGRESSION_TOO_LONG',
+            'Progression cannot exceed 150 characters.',
+            rowNumber,
+            group.employeeCode,
+            'Progression',
+          ),
+        );
+      }
+      if (promotedAs.length > 100) {
+        group.issues.push(
+          this.issue(
+            'ERROR',
+            source.sheet.name,
+            'PROMOTED_AS_TOO_LONG',
+            'Promoted as cannot exceed 100 characters.',
+            rowNumber,
+            group.employeeCode,
+            'Promoted as',
+          ),
+        );
+      }
+
+      sourceMovementCount += 1;
+      if (parsedPeriod && (progression || promotedAs)) {
+        group.movements.push({
+          rowNumber,
+          year: parsedPeriod.year,
+          effectiveDate: parsedPeriod.effectiveDate,
+          progression: progression || undefined,
+          promotedAs: promotedAs || undefined,
+        });
+      }
+    }
+
+    const profiles: ParsedEmployeeProfileRow[] = [];
+    for (const group of groups.values()) {
+      const movements = group.movements
+        .slice()
+        .sort(
+          (left, right) =>
+            left.effectiveDate.getTime() - right.effectiveDate.getTime() ||
+            left.rowNumber - right.rowNumber,
+        );
+      const movementKeys = new Set<string>();
+      for (const movement of movements) {
+        const key = this.careerHistoryKey({
+          year: movement.year,
+          grade: movement.promotedAs,
+          progression: movement.progression,
+        });
+        if (movementKeys.has(key)) {
+          group.issues.push(
+            this.issue(
+              'ERROR',
+              source.sheet.name,
+              'DUPLICATE_CAREER_MOVEMENT',
+              `Year ${movement.year}, Promoted as ${movement.promotedAs || '(blank)'}, and Progression ${movement.progression || '(blank)'} are repeated for ${group.employeeCode}.`,
+              movement.rowNumber,
+              group.employeeCode,
+              'Progression',
+            ),
+          );
+        } else {
+          movementKeys.add(key);
+        }
+      }
+      const currentMovement = movements
+        .slice()
+        .reverse()
+        .find((movement) => Boolean(movement.promotedAs));
+      if (!currentMovement) {
+        group.issues.push(
+          this.issue(
+            'ERROR',
+            source.sheet.name,
+            'CURRENT_GRADE_NOT_DERIVABLE',
+            'At least one Promoted as value is required to derive the current promoted title / designation.',
+            group.firstRowNumber,
+            group.employeeCode,
+            'Promoted as',
+          ),
+        );
+      }
+
+      const careerProgressionPast = movements
+        .filter((movement) => movement !== currentMovement)
+        .map(
+          (movement, index): ParsedCareerProgressionRow => ({
+            rowNumber: movement.rowNumber,
+            employeeCode: group.employeeCode,
+            year: movement.year,
+            grade: movement.promotedAs,
+            progression: movement.progression,
+            sequence: index + 1,
+          }),
+        );
+      const profileErrors = group.issues.filter(
+        (issue) => issue.severity === 'ERROR',
+      );
+      const profileWarnings = group.issues.filter(
+        (issue) => issue.severity === 'WARNING',
+      );
+      issues.push(...group.issues);
+      profiles.push({
+        rowNumber: group.firstRowNumber,
+        employeeId: group.employee?.employeeId,
+        employeeCode: group.employeeCode,
+        employeeName: group.employee?.name,
+        designation: group.employee?.designation,
+        department: group.employee?.department,
+        managerCode: group.employee?.managerCode,
+        managerName: group.employee?.managerName,
+        employeeActive: group.employee?.active,
+        currentGrade: currentMovement?.promotedAs || '',
+        gradeEffectiveDate: currentMovement?.effectiveDate,
+        asOfDate,
+        careerProgressionPast,
+        valid: profileErrors.length === 0,
+        errors: profileErrors.map((issue) => issue.message),
+        warnings: profileWarnings.map((issue) => issue.message),
+      });
+    }
+
+    if (profiles.length === 0) {
+      issues.push(
+        this.issue(
+          'ERROR',
+          source.sheet.name,
+          'NO_PROGRESSION_ROWS',
+          'The workbook does not contain any employee progression rows.',
+        ),
+      );
+    }
+
+    const invalidCount = profiles.filter((profile) => !profile.valid).length;
+    const validCount = profiles.length - invalidCount;
+    const errorCount = issues.filter((issue) => issue.severity === 'ERROR').length;
+    const warningCount = issues.filter(
+      (issue) => issue.severity === 'WARNING',
+    ).length;
+    return {
+      templateVersion: SINGLE_SHEET_TEMPLATE_VERSION,
+      profileRowCount: profiles.length,
+      careerRowCount: sourceMovementCount,
+      validCount,
+      invalidCount,
+      warningCount,
+      canImport: errorCount === 0 && validCount > 0,
+      issues,
+      profiles,
+    };
+  }
+
+  private normalizeHeader(value: string): string {
+    return value.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+  }
+
+  private parseProgressionPeriod(
+    cell: ExcelJS.Cell,
+  ): { year: number; effectiveDate: Date } | undefined {
+    if (cell.value instanceof Date && !Number.isNaN(cell.value.getTime())) {
+      const year = cell.value.getUTCFullYear();
+      return {
+        year,
+        effectiveDate: new Date(
+          Date.UTC(year, cell.value.getUTCMonth(), 1),
+        ),
+      };
+    }
+    const text = this.cellText(cell);
+    const match = text.match(
+      /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[-\s](\d{2}|\d{4})$/i,
+    );
+    if (!match) return undefined;
+    const months = [
+      'jan',
+      'feb',
+      'mar',
+      'apr',
+      'may',
+      'jun',
+      'jul',
+      'aug',
+      'sep',
+      'oct',
+      'nov',
+      'dec',
+    ];
+    const month = months.indexOf(match[1].toLocaleLowerCase());
+    const rawYear = Number(match[2]);
+    const year =
+      match[2].length === 2
+        ? rawYear >= 80
+          ? 1900 + rawYear
+          : 2000 + rawYear
+        : rawYear;
+    if (month < 0 || year < 1900 || year > 2200) return undefined;
+    return {
+      year,
+      effectiveDate: new Date(Date.UTC(year, month, 1)),
+    };
+  }
+
   private nonEmptyRows(sheet: ExcelJS.Worksheet, columnCount: number): ExcelJS.Row[] {
     const rows: ExcelJS.Row[] = [];
     for (let rowNumber = 2; rowNumber <= sheet.actualRowCount; rowNumber += 1) {
@@ -3418,28 +3971,27 @@ export class PmsEmployeeProfileImportService extends BaseService {
 
   private validateManualProfileInput(
     input: ManualEmployeeCareerProfileInput,
-    activeGradeCodes: Map<string, string>,
   ) {
     const reasonForChange = this.cleanText(input.reasonForChange, 500);
     if (reasonForChange.length < 3) {
       throw new Error('Reason for change must contain at least 3 characters');
     }
     const requestedGrade = this.cleanText(input.currentGrade, 100);
-    const currentGrade = activeGradeCodes.get(this.normalizeKey(requestedGrade));
-    if (!currentGrade) {
-      throw new Error('Current Grade must be an active value in the PMS Grade LOV');
+    if (!requestedGrade) {
+      throw new Error('Current promoted title / designation is required');
     }
+    const currentGrade = requestedGrade;
     const asOfDate = this.currentServerDate();
     const gradeEffectiveDate = this.manualDate(
       input.gradeEffectiveDate,
-      'Grade Effective Date',
+      'Role Effective Date',
       false,
     );
     if (
       gradeEffectiveDate &&
       gradeEffectiveDate.getTime() > asOfDate.getTime()
     ) {
-      throw new Error('Grade Effective Date cannot be later than today');
+      throw new Error('Role Effective Date cannot be later than today');
     }
     if (
       !gradeEffectiveDate &&
@@ -3448,12 +4000,12 @@ export class PmsEmployeeProfileImportService extends BaseService {
         input.yearsInGrade === ('' as any))
     ) {
       throw new Error(
-        'Years in Grade is required when Grade Effective Date is unavailable',
+        'Years in Current Role is required when Role Effective Date is unavailable',
       );
     }
     const yearsInGrade = gradeEffectiveDate
       ? undefined
-      : this.manualNumber(input.yearsInGrade, 'Years in Grade', true);
+      : this.manualNumber(input.yearsInGrade, 'Years in Current Role', true);
     const previousExperienceYears = this.manualNumber(
       input.previousExperienceYears,
       'Previous Experience',
@@ -3465,8 +4017,15 @@ export class PmsEmployeeProfileImportService extends BaseService {
     if (!Array.isArray(careerRows) || careerRows.length > 500) {
       throw new Error('Career Progression Past cannot contain more than 500 rows');
     }
+    const meaningfulCareerRows = careerRows.filter(
+      (row) =>
+        Boolean(this.cleanText(row.grade, 100)) ||
+        Boolean(this.cleanText(row.progression, 150)) ||
+        Boolean(this.cleanText(row.function, 150)) ||
+        Boolean(this.cleanText(row.unitOrDepartment, 150)),
+    );
     const careerYearGradeKeys = new Set<string>();
-    const careerProgressionPast = careerRows.map((row, index) => {
+    const careerProgressionPast = meaningfulCareerRows.map((row, index) => {
       const rowLabel = `Career row ${index + 1}`;
       const year = Number(row.year);
       if (
@@ -3483,22 +4042,16 @@ export class PmsEmployeeProfileImportService extends BaseService {
         throw new Error(`${rowLabel} Sequence must be a positive whole number`);
       }
       const gradeInput = this.cleanText(row.grade, 100);
-      const grade = gradeInput
-        ? activeGradeCodes.get(this.normalizeKey(gradeInput))
-        : undefined;
-      if (gradeInput && !grade) {
-        throw new Error(`${rowLabel} Grade must be an active Grade LOV value`);
-      }
+      const grade = gradeInput || undefined;
+      const progression =
+        this.cleanText(row.progression, 150) || undefined;
       const careerFunction =
         this.cleanText(row.function, 150) || undefined;
       const unitOrDepartment =
         this.cleanText(row.unitOrDepartment, 150) || undefined;
-      if (!grade && !careerFunction && !unitOrDepartment) {
-        throw new Error(
-          `${rowLabel} requires Grade, Function, or Unit / Department`,
-        );
-      }
-      const yearGradeKey = `${year}:${this.normalizeKey(grade || '') || '<blank>'}`;
+      const yearGradeKey = progression
+        ? `${year}:${this.normalizeKey(grade || '') || '<blank>'}:${this.normalizeKey(progression)}`
+        : `${year}:${this.normalizeKey(grade || '') || '<blank>'}`;
       if (careerYearGradeKeys.has(yearGradeKey)) {
         throw new Error(
           `${rowLabel} duplicates Year ${year} and Grade ${grade || '(blank)'}. Each Year + Grade combination can appear only once for an employee`,
@@ -3508,9 +4061,10 @@ export class PmsEmployeeProfileImportService extends BaseService {
       return {
         year,
         grade,
+        progression,
         function: careerFunction,
         unitOrDepartment,
-        sequence,
+        sequence: index + 1,
       };
     });
 
@@ -3609,6 +4163,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
         (entry: any) => ({
           year: entry.year,
           grade: entry.grade,
+          progression: entry.progression,
           function: entry.function,
           unitOrDepartment: entry.unitOrDepartment,
           sequence: entry.sequence,
@@ -3663,6 +4218,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
         employeeCode: profile.employeeCode,
         year: entry.year,
         grade: entry.grade,
+        progression: entry.progression,
         function: entry.function,
         unitOrDepartment: entry.unitOrDepartment,
         sequence: entry.sequence,
@@ -3686,7 +4242,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
             'WARNING',
             PmsEmployeeProfileWorkbookSheet.CAREER_PROGRESSION,
             'CAREER_HISTORY_ALREADY_EXISTS',
-            `Year ${incoming.year} and Grade ${incoming.grade || '(blank)'} already exist for ${profile.employeeCode}; the stored history row will be kept unchanged.`,
+            `Year ${incoming.year}, Grade ${incoming.grade || '(blank)'}, and Progression ${incoming.progression || '(blank)'} already exist for ${profile.employeeCode}; the stored history row will be kept unchanged.`,
             incoming.rowNumber,
             profile.employeeCode,
             CAREER_HEADERS[2],
@@ -3702,7 +4258,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
           'ERROR',
           PmsEmployeeProfileWorkbookSheet.CAREER_PROGRESSION,
           'CAREER_HISTORY_CONFLICT',
-          `Year ${incoming.year} and Grade ${incoming.grade || '(blank)'} already exist for ${profile.employeeCode} with different Function or Unit / Department values. Correct the stored history from the Admin profile page, or remove this conflicting workbook row.`,
+          `Year ${incoming.year}, Grade ${incoming.grade || '(blank)'}, and Progression ${incoming.progression || '(blank)'} already exist for ${profile.employeeCode} with different details. Correct the stored history from the Admin profile page, or remove this conflicting workbook row.`,
           incoming.rowNumber,
           profile.employeeCode,
           CAREER_HEADERS[2],
@@ -3739,21 +4295,29 @@ export class PmsEmployeeProfileImportService extends BaseService {
   private careerHistoryKey(entry: {
     year: number;
     grade?: string;
+    progression?: string;
   }): string {
-    return `${Number(entry.year)}:${this.normalizeKey(entry.grade) || '<blank>'}`;
+    const base = `${Number(entry.year)}:${this.normalizeKey(entry.grade) || '<blank>'}`;
+    return entry.progression
+      ? `${base}:${this.normalizeKey(entry.progression)}`
+      : base;
   }
 
   private careerHistoryDetailsEqual(
     left: {
+      progression?: string;
       function?: string;
       unitOrDepartment?: string;
     },
     right: {
+      progression?: string;
       function?: string;
       unitOrDepartment?: string;
     },
   ): boolean {
     return (
+      this.normalizeKey(left.progression) ===
+        this.normalizeKey(right.progression) &&
       this.normalizeKey(left.function) === this.normalizeKey(right.function) &&
       this.normalizeKey(left.unitOrDepartment) ===
         this.normalizeKey(right.unitOrDepartment)
@@ -3770,6 +4334,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
     careerProgressionPast: Array<{
       year: number;
       grade?: string;
+      progression?: string;
       function?: string;
       unitOrDepartment?: string;
       sequence: number;
@@ -3785,6 +4350,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
       careerProgressionPast: row.careerProgressionPast.map((entry) => ({
         year: entry.year,
         grade: entry.grade,
+        progression: entry.progression,
         function: entry.function,
         unitOrDepartment: entry.unitOrDepartment,
         sequence: entry.sequence,
@@ -3803,6 +4369,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
       careerProgressionPast: Array<{
         year: number;
         grade?: string;
+        progression?: string;
         function?: string;
         unitOrDepartment?: string;
         sequence: number;
@@ -3819,6 +4386,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
       entries: Array<{
         year: number;
         grade?: string;
+        progression?: string;
         function?: string;
         unitOrDepartment?: string;
         sequence: number;
@@ -3827,6 +4395,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
       entries.map((entry) => ({
         year: Number(entry.year),
         grade: normalizeOptionalText(entry.grade),
+        progression: normalizeOptionalText(entry.progression),
         function: normalizeOptionalText(entry.function),
         unitOrDepartment: normalizeOptionalText(entry.unitOrDepartment),
         sequence: Number(entry.sequence),

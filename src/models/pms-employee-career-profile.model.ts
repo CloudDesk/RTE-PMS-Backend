@@ -11,6 +11,7 @@ export type PmsEmployeeProfileUpdateSource =
 export interface IPmsCareerProgressionPastEntry {
   year: number;
   grade?: string;
+  progression?: string;
   function?: string;
   unitOrDepartment?: string;
   sequence: number;
@@ -50,6 +51,7 @@ const careerProgressionPastEntrySchema = new Schema<IPmsCareerProgressionPastEnt
       },
     },
     grade: { type: String, trim: true, maxlength: 100 },
+    progression: { type: String, trim: true, maxlength: 150 },
     function: { type: String, trim: true, maxlength: 150 },
     unitOrDepartment: { type: String, trim: true, maxlength: 150 },
     sequence: {
@@ -66,9 +68,16 @@ const careerProgressionPastEntrySchema = new Schema<IPmsCareerProgressionPastEnt
 );
 
 careerProgressionPastEntrySchema.pre('validate', function (next) {
-  if (!this.grade && !this.function && !this.unitOrDepartment) {
+  if (
+    !this.grade &&
+    !this.progression &&
+    !this.function &&
+    !this.unitOrDepartment
+  ) {
     return next(
-      new Error('Career progression requires Grade, Function, or Unit / Department'),
+      new Error(
+        'Career progression requires Grade, Progression, Function, or Unit / Department',
+      ),
     );
   }
   next();
@@ -182,7 +191,12 @@ pmsEmployeeCareerProfileSchema.pre('validate', function (next) {
 
     const normalizedGrade =
       String(entry.grade ?? '').trim().toLocaleLowerCase() || '<blank>';
-    const yearGradeKey = `${entry.year}:${normalizedGrade}`;
+    const normalizedProgression = String(entry.progression ?? '')
+      .trim()
+      .toLocaleLowerCase();
+    const yearGradeKey = normalizedProgression
+      ? `${entry.year}:${normalizedGrade}:${normalizedProgression}`
+      : `${entry.year}:${normalizedGrade}`;
     if (careerYearGradeKeys.has(yearGradeKey)) {
       this.invalidate(
         `careerProgressionPast.${index}.grade`,
