@@ -30,6 +30,7 @@ import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
 import { TermReviewValue } from '../models/pms-term-review-value.model';
 import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
+import { EmployeeAchievementSubmission } from '../models/pms-employee-achievement-submission.model';
 import { AuditLog } from '../models/audit-log.model';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -146,6 +147,10 @@ export interface AnnualSummaryResult {
     fields: Array<Record<string, unknown>>;
     values: Array<Record<string, unknown>>;
     availableActions: Array<'SAVE' | 'COMPLETE'>;
+  };
+  reviewContext: {
+    fieldCatalog: Array<Record<string, unknown>>;
+    employeeSubmission: Record<string, unknown> | null;
   };
 }
 
@@ -479,6 +484,8 @@ export class AnnualDecisionService extends BaseService {
       annualDecision,
       visibilityConfiguration,
       cycle,
+      employeeSubmission,
+      contextTemplateVersion,
     ] = await Promise.all([
       Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
       TermReview.find({ termAssignmentId: { $in: termAssignmentIds }, isDeleted: false }),
@@ -489,6 +496,13 @@ export class AnnualDecisionService extends BaseService {
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
+      EmployeeAchievementSubmission.findOne({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }).lean(),
+      annualAssignment.templateVersionId
+        ? PmsTemplateVersion.findById(annualAssignment.templateVersionId).select('sections').lean()
+        : null,
     ]);
     const termReviewIds = termReviews.map((review) => review._id);
     const termReviewValues = termReviewIds.length
@@ -644,7 +658,19 @@ export class AnnualDecisionService extends BaseService {
           )[0] ?? null
         )
       : null;
-    const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(annualAssignment);
+    const actor = this.requireActor();
+    const actorId = actor.actorId;
+    const isAdminActor =
+      normalizePmsRole(actor.actorRole) === PmsRole.ADMIN;
+    const isAssignedFinalReviewer =
+      annualAssignment.finalReviewerId?.toString() === actorId;
+    const actorMatrixMode: ObjectiveMatrixMode = isAssignedFinalReviewer
+      ? 'reviewer'
+      : this.objectiveMatrixModeForActor();
+    const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(
+      annualAssignment,
+      actorMatrixMode,
+    );
     const frozenMatrixSnapshot = preReopenSnapshots.find((snapshot) => {
       const finalSnapshot = snapshot.finalDecisionSnapshot as Record<string, unknown> | undefined;
       return finalSnapshot?.snapshotKind === 'ANNUAL_DECISION_FREEZE';
@@ -659,12 +685,6 @@ export class AnnualDecisionService extends BaseService {
     const frozenContentHash = activeOfficialFreeze && typeof frozenFinalSnapshot?.objectiveMatrixContentHash === 'string'
       ? frozenFinalSnapshot.objectiveMatrixContentHash
       : undefined;
-    const actorMatrixMode = this.objectiveMatrixModeForActor();
-    const actorId = this.requireActor().actorId;
-    const isAdminActor =
-      normalizePmsRole(this.requireActor().actorRole) === PmsRole.ADMIN;
-    const isAssignedFinalReviewer =
-      annualAssignment.finalReviewerId?.toString() === actorId;
     const finalReviewFields =
       annualAssignment.finalReviewStatus !== FinalReviewStatus.NOT_REQUIRED
         ? await this.finalReviewTemplateFields(annualAssignment)
@@ -814,6 +834,70 @@ export class AnnualDecisionService extends BaseService {
           [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(annualAssignment.finalReviewStatus as any)
             ? ['SAVE', 'COMPLETE']
             : [],
+      },
+      reviewContext: {
+        fieldCatalog: (contextTemplateVersion?.sections ?? []).flatMap((section: any) =>
+          (section.fields ?? []).map((field: any) => ({
+            fieldKey: field.fieldKey,
+            fieldLabel: field.fieldLabel,
+            fieldType: field.fieldType,
+            sectionKey: section.sectionKey,
+            sectionLabel: section.sectionLabel,
+            displayOrder: field.displayOrder,
+            options: field.options,
+            matrixConfig: field.matrixConfig,
+            gridConfig: field.gridConfig,
+          })),
+        ),
+        employeeSubmission: employeeSubmission
+          ? {
+              status: employeeSubmission.status,
+              assessmentTermCode: employeeSubmission.assessmentTermCode,
+              submittedAt: employeeSubmission.submittedAt
+                ? new Date(employeeSubmission.submittedAt).toISOString()
+                : undefined,
+              lockedAt: employeeSubmission.lockedAt
+                ? new Date(employeeSubmission.lockedAt).toISOString()
+                : undefined,
+              achievementItems: (employeeSubmission.achievementItems ?? []).map((item: any) => ({
+                itemId: item.itemId,
+                type: item.type,
+                subject: item.subject,
+                description: item.description,
+                employeeSelfRating: item.employeeSelfRating,
+                employeeSelfRatingComments: item.employeeSelfRatingComments,
+                outcome: item.outcome,
+                objectiveSnapshot: item.objectiveSnapshot,
+                relatedObjectiveSnapshot: item.relatedObjectiveSnapshot,
+                itemStatus: item.itemStatus,
+                submittedAt: item.submittedAt
+                  ? new Date(item.submittedAt).toISOString()
+                  : undefined,
+                attachments: (item.attachments ?? []).map((attachment: any) => ({
+                  fileName: attachment.fileName,
+                  fileType: attachment.fileType,
+                  fileSize: attachment.fileSize,
+                  documentId: attachment.documentId,
+                  uploadedAt: attachment.uploadedAt
+                    ? new Date(attachment.uploadedAt).toISOString()
+                    : undefined,
+                })),
+              })),
+              achievementValues: (employeeSubmission.achievementValues ?? []).map((value: any) => ({
+                templateFieldId: value.templateFieldId,
+                fieldKey: value.fieldKey,
+                sectionKey: value.sectionKey,
+                roleCode: value.roleCode,
+                workflowStage: value.workflowStage,
+                valueJson: value.valueJson,
+                valueText: value.valueText,
+                valueNumber: value.valueNumber,
+                valueDate: value.valueDate
+                  ? new Date(value.valueDate).toISOString()
+                  : undefined,
+              })),
+            }
+          : null,
       },
     };
   }

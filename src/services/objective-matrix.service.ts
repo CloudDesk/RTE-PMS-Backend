@@ -325,9 +325,15 @@ export class ObjectiveMatrixService {
       isDeleted: false,
     }).lean();
     if (!annualAssignment) throw new Error('Annual assignment not found');
-    await this.assertAccess(actor, annualAssignment);
+    await this.assertAccess(actor, annualAssignment, query.mode);
 
-    const { mode, viewRole, permissionRole } = this.resolveView(actor, query.mode);
+    const isAssignedFinalReviewer =
+      annualAssignment.finalReviewerId?.toString() === actor.actorId;
+    const { mode, viewRole, permissionRole } = this.resolveView(
+      actor,
+      query.mode,
+      isAssignedFinalReviewer,
+    );
     const includeAudit = query.includeAudit === true || query.includeAudit === 'true';
     if (includeAudit && normalizePmsRole(actor.actorRole) !== PmsRole.ADMIN) {
       throw new Error('Matrix audit details require Admin access');
@@ -909,7 +915,11 @@ export class ObjectiveMatrixService {
     return AssessmentTermType.QUARTERLY;
   }
 
-  private resolveView(actor: MatrixActor, requested?: ObjectiveMatrixMode) {
+  private resolveView(
+    actor: MatrixActor,
+    requested?: ObjectiveMatrixMode,
+    isAssignedFinalReviewer = false,
+  ) {
     const role = normalizePmsRole(actor.actorRole);
     if (!role) throw new Error(`Role ${actor.actorRole} is not mapped for PMS access`);
     if (requested && !['employee', 'manager', 'reviewer', 'admin'].includes(requested)) {
@@ -930,8 +940,10 @@ export class ObjectiveMatrixService {
         : mode === 'admin'
           ? PmsRole.ADMIN
           : role === PmsRole.MANAGEMENT ? PmsRole.MANAGEMENT : PmsRole.DIRECTOR;
+    const isFinalReviewerPerspective =
+      isAssignedFinalReviewer && mode === 'reviewer';
     const canReadCrossPerspective =
-      role === PmsRole.ADMIN || role === PmsRole.DIRECTOR;
+      role === PmsRole.ADMIN || role === PmsRole.DIRECTOR || isFinalReviewerPerspective;
     if (!canReadCrossPerspective && requestedRole !== role) {
       throw new Error(`Matrix mode ${mode} is not permitted for role ${actor.actorRole}`);
     }
@@ -941,15 +953,30 @@ export class ObjectiveMatrixService {
       viewRole,
       // Director can inspect another perspective's configured columns, but all
       // permission and row-action calculations must remain Director read-only.
-      permissionRole: role === PmsRole.DIRECTOR ? PmsRole.DIRECTOR : viewRole,
+      permissionRole:
+        role === PmsRole.DIRECTOR || isFinalReviewerPerspective
+          ? PmsRole.DIRECTOR
+          : viewRole,
     };
   }
 
-  private async assertAccess(actor: MatrixActor, annualAssignment: LeanRecord): Promise<void> {
+  private async assertAccess(
+    actor: MatrixActor,
+    annualAssignment: LeanRecord,
+    requestedMode?: ObjectiveMatrixMode,
+  ): Promise<void> {
     // Director matrix access is global and read-only. Cell/action permissions
     // still prevent Director edits; this bypass only keeps matrix-enabled
     // assignments readable from management performance summaries.
     if (normalizePmsRole(actor.actorRole) === PmsRole.DIRECTOR) {
+      return;
+    }
+    // A reporting-hierarchy reviewer may still have the functional MANAGER role.
+    // Their access is limited to the assignment explicitly resolved to them.
+    if (
+      requestedMode === 'reviewer' &&
+      annualAssignment.finalReviewerId?.toString() === actor.actorId
+    ) {
       return;
     }
 
