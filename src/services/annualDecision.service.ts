@@ -742,6 +742,23 @@ export class AnnualDecisionService extends BaseService {
     const l2Values = annualDecisionValues.filter(
       (value) => value.roleCode === 'DIRECTOR' && l2FieldKeys.has(value.fieldKey),
     );
+    const directorFieldKeys = new Set(
+      allFinalReviewFields
+        .filter((field) => field.reviewStage === 'DIRECTOR')
+        .map((field) => String(field.key)),
+    );
+    const hideDirectorStageValuesFromL2 =
+      activeFinalReviewStage === 'L2' &&
+      annualAssignment.directorReviewerId?.toString() !== actorId;
+    const visibleAnnualDecisionValues = hideDirectorStageValuesFromL2
+      ? annualDecisionValues.filter(
+          (value) =>
+            !(
+              value.roleCode === 'DIRECTOR' &&
+              directorFieldKeys.has(value.fieldKey)
+            ),
+        )
+      : annualDecisionValues;
     const l2EnteredById =
       annualAssignment.finalReviewCompletedBy?.toString() ??
       l2Values.find((value) => value.actorUserId)?.actorUserId?.toString();
@@ -879,7 +896,7 @@ export class AnnualDecisionService extends BaseService {
           })),
         };
       }),
-      annualDecisionValues: annualDecisionValues.map((value) => ({
+      annualDecisionValues: visibleAnnualDecisionValues.map((value) => ({
         templateFieldId: value.templateFieldId,
         fieldKey: value.fieldKey,
         sectionKey: value.sectionKey,
@@ -1006,15 +1023,37 @@ export class AnnualDecisionService extends BaseService {
       $or: [
         {
           finalReviewerId: actorId,
-          finalReviewStatus: { $in: [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS] },
+          finalReviewStatus: {
+            $in: [
+              FinalReviewStatus.PENDING,
+              FinalReviewStatus.IN_PROGRESS,
+              FinalReviewStatus.COMPLETED,
+            ],
+          },
         },
         {
           directorReviewerId: actorId,
           finalReviewStatus: FinalReviewStatus.COMPLETED,
-          directorReviewStatus: { $in: [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS] },
+          directorReviewStatus: {
+            $in: [
+              FinalReviewStatus.PENDING,
+              FinalReviewStatus.IN_PROGRESS,
+              FinalReviewStatus.COMPLETED,
+            ],
+          },
         },
       ],
-      annualState: AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+      annualState: {
+        $in: [
+          AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+          AnnualWorkflowState.ANNUAL_FINALIZED,
+          AnnualWorkflowState.VISIBILITY_ENABLED,
+          AnnualWorkflowState.COMMUNICATION_READY,
+          AnnualWorkflowState.COMMUNICATION_SENT,
+          AnnualWorkflowState.CLOSED,
+          AnnualWorkflowState.ARCHIVED,
+        ],
+      },
       isDeleted: false,
     }).sort({ updatedAt: -1 }).lean();
     const cycles = await AnnualCycle.find({
