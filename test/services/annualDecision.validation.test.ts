@@ -9,6 +9,8 @@ import {
   buildObjectiveEvidenceSnapshotManifest,
   maskStoredObjectiveMatrixSnapshot,
   isFinalReviewerFieldEditable,
+  isFinalReviewerOwnedDecisionValue,
+  validateSubmittedDecisionOverrideReason,
   type SaveDecisionDraftInput,
 } from '../../src/services/annualDecision.service';
 
@@ -241,6 +243,94 @@ describe('AnnualDecisionService numeric validation', () => {
         termCode: 'Q3',
         evidenceVersion: 1,
         attachmentId: 'attachment-q3',
+      }),
+    ]);
+  });
+});
+
+describe('Submitted annual decision corrections', () => {
+  const service = Object.create(AnnualDecisionService.prototype) as AnnualDecisionService;
+
+  it('requires an override reason only when correcting a submitted decision', () => {
+    expect(() =>
+      validateSubmittedDecisionOverrideReason('SUBMITTED', '   '),
+    ).toThrow('Override reason is required to correct a submitted annual decision');
+    expect(validateSubmittedDecisionOverrideReason('SUBMITTED', ' L3 recommendation ')).toBe(
+      'L3 recommendation',
+    );
+    expect(validateSubmittedDecisionOverrideReason('DRAFT', undefined)).toBeUndefined();
+  });
+
+  it('allows correction, resubmission, or freeze after both final reviewers complete', () => {
+    const actions = (service as unknown as {
+      resolveAvailableActions: (input: Record<string, unknown>) => string[];
+    }).resolveAvailableActions({
+      annualState: 'MANAGEMENT_DECISION_SUBMITTED',
+      finalDecisionStatus: 'SUBMITTED',
+      finalReviewStatus: 'COMPLETED',
+      directorReviewStatus: 'COMPLETED',
+      allTermsFinalized: true,
+      isAppraisalWindowOpen: true,
+    });
+
+    expect(actions).toEqual(['SAVE_DRAFT', 'SUBMIT', 'FREEZE']);
+  });
+
+  it('keeps a submitted decision locked until both final reviewers complete', () => {
+    const actions = (service as unknown as {
+      resolveAvailableActions: (input: Record<string, unknown>) => string[];
+    }).resolveAvailableActions({
+      annualState: 'MANAGEMENT_DECISION_SUBMITTED',
+      finalDecisionStatus: 'SUBMITTED',
+      finalReviewStatus: 'COMPLETED',
+      directorReviewStatus: 'PENDING',
+      allTermsFinalized: true,
+      isAppraisalWindowOpen: true,
+    });
+
+    expect(actions).toEqual([]);
+  });
+
+  it('keeps L2/L3 values outside the Admin decision ownership boundary', () => {
+    expect(isFinalReviewerOwnedDecisionValue({ roleCode: 'DIRECTOR' })).toBe(true);
+    expect(isFinalReviewerOwnedDecisionValue({ roleCode: 'director' })).toBe(true);
+    expect(isFinalReviewerOwnedDecisionValue({ roleCode: 'ADMIN' })).toBe(false);
+    expect(isFinalReviewerOwnedDecisionValue({})).toBe(false);
+  });
+
+  it('does not validate stored L2/L3 values as Admin values during resubmit', () => {
+    const input = (service as unknown as {
+      buildDecisionInputFromRecord: (
+        decision: Record<string, unknown>,
+        values: Array<Record<string, unknown>>,
+      ) => SaveDecisionDraftInput;
+    }).buildDecisionInputFromRecord(
+      {
+        isGradeApplied: false,
+        isMeritApplied: true,
+        meritDetails: { meritPercentage: '60' },
+        finalRating: 'Excellent',
+      },
+      [
+        {
+          fieldKey: 'merit_percentage',
+          sectionKey: 'annual_decision',
+          roleCode: 'ADMIN',
+          valueNumber: 60,
+        },
+        {
+          fieldKey: 'ed_svp_assessment',
+          sectionKey: 'yearly_reviewer_assessment',
+          roleCode: 'DIRECTOR',
+          valueText: 'Approved',
+        },
+      ],
+    );
+
+    expect(input.decisionValues).toEqual([
+      expect.objectContaining({
+        fieldKey: 'merit_percentage',
+        roleCode: 'ADMIN',
       }),
     ]);
   });

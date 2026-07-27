@@ -102,6 +102,26 @@ export function isFinalReviewerFieldEditable(field: Record<string, any>): boolea
   );
 }
 
+export function validateSubmittedDecisionOverrideReason(
+  decisionStatus: string | undefined,
+  reason: string | undefined,
+): string | undefined {
+  const normalizedReason = reason?.trim();
+  if (
+    decisionStatus === AnnualDecisionStatus.SUBMITTED &&
+    !normalizedReason
+  ) {
+    throw new Error('Override reason is required to correct a submitted annual decision');
+  }
+  return normalizedReason;
+}
+
+export function isFinalReviewerOwnedDecisionValue(
+  value: { roleCode?: string | null },
+): boolean {
+  return String(value.roleCode ?? '').toUpperCase() === 'DIRECTOR';
+}
+
 // Current client flow carries a mandatory manager rating into the annual
 // decision and intentionally leaves numeric scoring inactive.
 const RATING_ONLY_MANAGER_REVIEW = true;
@@ -302,6 +322,7 @@ export interface SaveDecisionDraftInput {
   finalScore?: number;
   finalRating?: string;
   decisionValues?: AnnualDecisionValueInput[];
+  overrideReason?: string;
 }
 
 interface AnnualDecisionValueInput {
@@ -1300,6 +1321,21 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Frozen annual decision cannot be edited');
     }
 
+    const isSubmittedOverride =
+      existingDecision?.decisionStatus === AnnualDecisionStatus.SUBMITTED;
+    const overrideReason = validateSubmittedDecisionOverrideReason(
+      existingDecision?.decisionStatus,
+      input.overrideReason,
+    );
+    const previousDecisionValues = isSubmittedOverride
+      ? await AnnualDecisionValue.find({
+          annualDecisionId: existingDecision!._id,
+          isDeleted: false,
+        }).lean()
+      : [];
+    let originalOverrideSnapshot: Record<string, unknown> | undefined;
+    let correctedOverrideSnapshot: Record<string, unknown> | undefined;
+
     await this.assertAnnualDecisionGate(
       annualAssignment,
       'SAVE_DRAFT',
@@ -1317,6 +1353,11 @@ export class AnnualDecisionService extends BaseService {
     );
     const rawDecisionInput: SaveDecisionDraftInput = {
       ...input,
+      // Final-review values belong to L2/L3 and must never be rewritten by
+      // the Admin decision payload during a submitted-decision correction.
+      decisionValues: input.decisionValues?.filter(
+        (value) => !isFinalReviewerOwnedDecisionValue(value),
+      ),
       finalScore: effectiveFinalScore,
       finalRating: RATING_ONLY_MANAGER_REVIEW
         ? existingDecision?.finalRating?.trim() || proposedFinalRating
@@ -1388,17 +1429,52 @@ export class AnnualDecisionService extends BaseService {
 
     await this.persistAnnualDecisionValues(decision, annualAssignment, decisionInput);
 
+    if (isSubmittedOverride) {
+      const correctedDecisionValues = await AnnualDecisionValue.find({
+        annualDecisionId: decision._id,
+        isDeleted: false,
+      }).lean();
+      originalOverrideSnapshot = {
+        decision: existingDecision?.toObject(),
+        decisionValues: previousDecisionValues,
+      };
+      correctedOverrideSnapshot = {
+        decision: decision.toObject(),
+        decisionValues: correctedDecisionValues,
+      };
+
+      await CorrectionLayer.create({
+        entityType: 'ANNUAL_DECISION',
+        entityId: decision._id,
+        fieldKey: 'SUBMITTED_DECISION_OVERRIDE',
+        originalValue: originalOverrideSnapshot,
+        correctedValue: correctedOverrideSnapshot,
+        correctionReason: overrideReason!,
+        correctedBy: this.actorIdObject(),
+        correctedAt: new Date(),
+        createdBy: this.actorIdObject(),
+        updatedBy: this.actorIdObject(),
+      });
+    }
+
     annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.DRAFT;
     annualAssignment.version += 1;
     await annualAssignment.save();
 
     await this.audit(
-      'PMS_ANNUAL_DECISION_DRAFT_SAVED',
+      isSubmittedOverride
+        ? 'PMS_ANNUAL_DECISION_SUBMITTED_OVERRIDE_SAVED'
+        : 'PMS_ANNUAL_DECISION_DRAFT_SAVED',
       'ANNUAL_DECISION',
       decision._id.toString(),
-      existingDecision?.toObject(),
-      decision.toObject(),
+      isSubmittedOverride
+        ? originalOverrideSnapshot
+        : existingDecision?.toObject(),
+      isSubmittedOverride
+        ? correctedOverrideSnapshot
+        : decision.toObject(),
+      isSubmittedOverride ? overrideReason : undefined,
     );
 
     return decision;
@@ -2304,7 +2380,7 @@ export class AnnualDecisionService extends BaseService {
         return [];
       }
       return this.areFinalReviewStagesComplete(finalReviewStatus, directorReviewStatus)
-        ? ['FREEZE']
+        ? ['SAVE_DRAFT', 'SUBMIT', 'FREEZE']
         : [];
     }
 
@@ -3104,11 +3180,23 @@ export class AnnualDecisionService extends BaseService {
   private resolveAnnualDecisionTemplateWorkflowState(
     annualAssignment: IAnnualAssignment,
   ): string {
+    const submittedDecisionCanBeCorrected =
+      annualAssignment.finalDecisionStatus === AnnualDecisionStatus.SUBMITTED &&
+      annualAssignment.annualState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
+      this.areFinalReviewStagesComplete(
+        annualAssignment.finalReviewStatus,
+        annualAssignment.directorReviewStatus,
+      );
+
     if (
-      annualAssignment.finalDecisionStatus === AnnualDecisionStatus.DRAFT &&
+      (
+        annualAssignment.finalDecisionStatus === AnnualDecisionStatus.DRAFT ||
+        submittedDecisionCanBeCorrected
+      ) &&
       (
         annualAssignment.annualState === AnnualWorkflowState.ALL_TERMS_FINALIZED ||
-        annualAssignment.annualState === AnnualWorkflowState.APPRAISAL_WINDOW_OPEN
+        annualAssignment.annualState === AnnualWorkflowState.APPRAISAL_WINDOW_OPEN ||
+        annualAssignment.annualState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED
       )
     ) {
       return AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
@@ -3291,17 +3379,19 @@ export class AnnualDecisionService extends BaseService {
       managementRemarks: decision.managementRemarks,
       finalScore: decision.finalScore,
       finalRating: decision.finalRating,
-      decisionValues: annualDecisionValues.map((value) => ({
-        templateFieldId: value.templateFieldId,
-        fieldKey: value.fieldKey,
-        sectionKey: value.sectionKey,
-        roleCode: value.roleCode,
-        actorUserId: value.actorUserId?.toString(),
-        valueJson: value.valueJson,
-        valueText: value.valueText,
-        valueNumber: value.valueNumber,
-        valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
-      })),
+      decisionValues: annualDecisionValues
+        .filter((value) => !isFinalReviewerOwnedDecisionValue(value))
+        .map((value) => ({
+          templateFieldId: value.templateFieldId,
+          fieldKey: value.fieldKey,
+          sectionKey: value.sectionKey,
+          roleCode: value.roleCode,
+          actorUserId: value.actorUserId?.toString(),
+          valueJson: value.valueJson,
+          valueText: value.valueText,
+          valueNumber: value.valueNumber,
+          valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
+        })),
     };
   }
 
@@ -3537,6 +3627,7 @@ export class AnnualDecisionService extends BaseService {
     return decisionValues
       .filter((decisionValue) => decisionValue.fieldKey?.trim() && decisionValue.sectionKey?.trim())
       .filter((decisionValue) => !this.isFinalScoreFieldKey(decisionValue.fieldKey))
+      .filter((decisionValue) => !isFinalReviewerOwnedDecisionValue(decisionValue))
       .map((decisionValue) => ({
         ...baseValue,
         templateFieldId: decisionValue.templateFieldId,
@@ -3578,6 +3669,9 @@ export class AnnualDecisionService extends BaseService {
     return existingValues
       .filter((value) => {
         if (!value.fieldKey || !value.sectionKey || this.isFinalScoreFieldKey(value.fieldKey)) return false;
+        // L2/L3 reviewer values are a separate ownership boundary. Preserve
+        // them exactly even when the Admin form posts the same field keys.
+        if (isFinalReviewerOwnedDecisionValue(value)) return true;
         const resolvedField = resolvedFieldMap.get(value.fieldKey);
         if (resolvedField?.editable === true) return false;
         return !nextKeys.has(`${value.sectionKey}::${value.fieldKey}`);
