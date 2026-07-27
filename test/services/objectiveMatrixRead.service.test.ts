@@ -374,6 +374,7 @@ describe('Objective matrix read model Phase 5', () => {
       rowGroups: [{
         rowGroupKey: 'company', label: 'Company Objectives', source: 'PREDEFINED', displayOrder: 1,
       }],
+      rowGroupColumnLabel: 'Metrics',
       rowAssignments: [{ objectiveKey: 'delivery', rowGroupKey: 'company', displayOrder: 1 }],
       termPolicies: [
         { columnId: 'objective', mode: 'SHARED_ANNUAL' },
@@ -468,7 +469,11 @@ describe('Objective matrix read model Phase 5', () => {
     jest.spyOn(AnnualAssignment, 'findOne').mockReturnValue({ lean: jest.fn().mockResolvedValue(annual) } as never);
     jest.spyOn(PmsTemplateVersion, 'findById').mockReturnValue({ lean: jest.fn().mockResolvedValue({
       _id: templateVersionId,
-      sections: [{ sectionType: PmsTemplateSectionType.OBJECTIVES, objectiveConfig: { tableLayout: layout } }],
+      sections: [{
+        sectionType: PmsTemplateSectionType.OBJECTIVES,
+        metadata: { objectiveTableShowRowGroups: true },
+        objectiveConfig: { tableLayout: layout },
+      }],
     }) } as never);
     jest.spyOn(TermAssignment, 'find').mockReturnValue({ lean: jest.fn().mockResolvedValue(terms) } as never);
     jest.spyOn(TermCycle, 'find').mockReturnValue({ lean: jest.fn().mockResolvedValue([]) } as never);
@@ -497,6 +502,15 @@ describe('Objective matrix read model Phase 5', () => {
     const matrix = await service.getAnnualMatrix(annualAssignmentId.toString(), { mode: 'manager' });
 
     expect(matrix.rows).toHaveLength(1);
+    expect(matrix.showRowGroups).toBe(true);
+    expect(matrix.rowGroupColumnLabel).toBe('Metrics');
+    expect(matrix.rowGroups).toEqual([
+      expect.objectContaining({
+        rowGroupKey: 'company',
+        label: 'Company Objectives',
+      }),
+    ]);
+    expect(matrix.rows[0].rowGroupKey).toBe('company');
     expect(matrix.rows[0].siblings.map((sibling) => sibling.termCode)).toEqual([
       AssessmentTermCode.Q1,
       AssessmentTermCode.Q2,
