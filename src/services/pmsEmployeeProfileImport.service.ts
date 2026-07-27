@@ -19,7 +19,6 @@ import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import { BaseService } from './base.service';
 
 export const PMS_EMPLOYEE_PROFILE_TEMPLATE_VERSION = 'v1.1';
-export const PMS_EMPLOYEE_GRADE_LOV_TYPE = 'grade';
 export const PMS_EMPLOYEE_PROFILE_MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const PMS_EMPLOYEE_PROFILE_MAX_PROFILE_ROWS = 5000;
 export const PMS_EMPLOYEE_PROFILE_MAX_CAREER_ROWS = 25000;
@@ -1097,9 +1096,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
           employee,
         ]),
       );
-      const activeGradeCodes = new Set(
-        referenceData.grades.map((grade) => this.normalizeKey(grade.code)),
-      );
       for (const row of stagedRows) {
         const employee = employeeById.get(row.employeeId.toString());
         if (
@@ -1110,27 +1106,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
           throw new Error(
             `Employee ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
           );
-        }
-        if (audit.templateVersion !== SINGLE_SHEET_TEMPLATE_VERSION) {
-          const submittedCareerProgressionPast =
-            row.submittedCareerProgressionPast ?? row.careerProgressionPast;
-          const gradeCodes = [
-            row.currentGrade,
-            ...submittedCareerProgressionPast
-              .map((entry: { grade?: string }) => entry.grade)
-              .filter((grade: string | undefined): grade is string =>
-                Boolean(grade),
-              ),
-          ];
-          if (
-            gradeCodes.some(
-              (gradeCode) => !activeGradeCodes.has(this.normalizeKey(gradeCode)),
-            )
-          ) {
-            throw new Error(
-              `A Grade LOV value used by ${row.employeeCode} changed after validation. Upload and validate the workbook again.`,
-            );
-          }
         }
       }
     } catch (error) {
@@ -1532,9 +1507,8 @@ export class PmsEmployeeProfileImportService extends BaseService {
       throw new Error('Employee was not found');
     }
 
-    const [profile, gradeLov, departmentLov, manager] = await Promise.all([
+    const [profile, departmentLov, manager] = await Promise.all([
       PmsEmployeeCareerProfile.findOne({ employeeId }).lean(),
-      LOV.findOne({ type: PMS_EMPLOYEE_GRADE_LOV_TYPE }).lean(),
       LOV.findOne({ type: 'department' }).lean(),
       employee.managerId && Types.ObjectId.isValid(employee.managerId.toString())
         ? User.findById(employee.managerId).select('_id employeeCode name').lean()
@@ -1575,16 +1549,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
             updatedAt: profile.updatedAt,
           }
         : null,
-      grades: (gradeLov?.values ?? [])
-        .filter((item) => item.isActive !== false)
-        .map((item) => ({
-          code: String(item.value ?? '').trim(),
-          label: String(item.label ?? item.value ?? '').trim(),
-        }))
-        .filter((item) => item.code),
-      gradeLovConfigured: Boolean(
-        (gradeLov?.values ?? []).some((item) => item.isActive !== false),
-      ),
     };
   }
 
@@ -2787,7 +2751,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
   }
 
   private async loadReferenceData(): Promise<PmsEmployeeProfileReferenceData> {
-    const [users, gradeLov, departmentLov] = await Promise.all([
+    const [users, departmentLov] = await Promise.all([
       User.find({
         employeeCode: { $exists: true, $ne: '' },
         active: { $ne: false },
@@ -2797,7 +2761,6 @@ export class PmsEmployeeProfileImportService extends BaseService {
         )
         .sort({ employeeCode: 1 })
         .lean(),
-      LOV.findOne({ type: PMS_EMPLOYEE_GRADE_LOV_TYPE }).lean(),
       LOV.findOne({ type: 'department' }).lean(),
     ]);
     const userMap = new Map(users.map((user) => [user._id.toString(), user]));
@@ -2823,21 +2786,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
         active: user.active !== false,
       };
     });
-    const grades = (gradeLov?.values ?? [])
-      .filter((item) => item.isActive !== false)
-      .map((item, index) => ({
-        code: String(item.value ?? '').trim(),
-        label: String(item.label ?? item.value ?? '').trim(),
-        displayOrder: index + 1,
-      }))
-      .filter((grade) => grade.code)
-      .sort(
-        (left, right) =>
-          left.displayOrder - right.displayOrder ||
-          left.code.localeCompare(right.code),
-      );
-
-    return { employees, grades };
+    return { employees, grades: [] };
   }
 
   private populateInstructionsSheet(
