@@ -5,6 +5,7 @@ import { errorResponse, successResponse } from '../utilis/apiResponse';
 import { parseMultipartForm } from '../utilis/parseMultiPartForm';
 import type {
   SaveAchievementDraftInput,
+  SaveAssignedFormValuesInput,
   SaveAchievementItemInput,
   SubmitAchievementInput,
   SubmitAchievementItemInput,
@@ -65,6 +66,24 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         return reply.send(
           successResponse('Employee achievement submission fetched successfully', submission),
         );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/:termAssignmentId/assigned-form-values',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Achievement Submission'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId } = request.params as { termAssignmentId: string };
+        const values =
+          await request.container!.employeeAchievementSubmissionService.saveAssignedFormValues(
+            termAssignmentId,
+            request.body as SaveAssignedFormValuesInput,
+          );
+        return reply.send(successResponse('Assigned form saved successfully', values));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

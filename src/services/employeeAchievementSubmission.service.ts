@@ -109,6 +109,15 @@ export interface SaveAchievementDraftInput {
   achievementValues?: AchievementValueInput[];
 }
 
+export interface SaveAssignedFormValuesInput {
+  values?: AchievementValueInput[];
+}
+
+export interface SavedAssignedFormValues {
+  objectiveValues: Array<Record<string, unknown>>;
+  achievementValues: Array<Record<string, unknown>>;
+}
+
 export interface SubmitAchievementInput extends SaveAchievementDraftInput { }
 
 export interface SaveAchievementItemInput {
@@ -347,6 +356,11 @@ type ConfiguredEmployeeFieldAttachment = {
 export class EmployeeAchievementSubmissionService extends BaseService {
   private static readonly SECTION_KEY = 'employee_achievement_submission';
   private static readonly FIELD_KEY = 'achievement_items';
+  private static readonly ASSIGNED_FORM_ACHIEVEMENT_FIELDS = new Set([
+    'personal_development_2_employee_term_inputs::special_achievements_and_improvements',
+    'personal_development_2_employee_term_inputs::appraisee_response',
+    'personal_development_2_employee_term_inputs::contribution_to_cfts',
+  ]);
 
   constructor(context: RequestContext) {
     super(context);
@@ -567,6 +581,128 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
 
     return this.mapSubmissionRecord(submission.toObject());
+  }
+
+  async saveAssignedFormValues(
+    termAssignmentId: string,
+    input: SaveAssignedFormValuesInput,
+  ): Promise<SavedAssignedFormValues> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    const actor = this.requireActor();
+
+    if (actor.actorId !== termAssignment.employeeId.toString()) {
+      throw new Error('Employee can edit only own assigned form');
+    }
+
+    const normalizedInput = (input.values ?? [])
+      .filter((value) => value.fieldKey?.trim() && value.sectionKey?.trim())
+      .map((value) => ({
+        templateFieldId: value.templateFieldId?.trim() || value.fieldKey.trim(),
+        fieldKey: value.fieldKey.trim(),
+        sectionKey: value.sectionKey.trim(),
+        roleCode: 'EMPLOYEE',
+        actorUserId: this.toObjectId(actor.actorId, 'actorId'),
+        workflowStage:
+          value.workflowStage?.trim() ||
+          (termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN
+            ? 'OBJECTIVE_SETTING_OPEN'
+            : 'EMPLOYEE_ACHIEVEMENT_OPEN'),
+        valueJson: value.valueJson,
+        valueText: value.valueText?.trim(),
+        valueNumber:
+          value.valueNumber === undefined || value.valueNumber === null
+            ? undefined
+            : Number(value.valueNumber),
+        valueDate: value.valueDate ? new Date(value.valueDate) : undefined,
+        valueStatus: value.valueStatus?.trim() || 'ACTIVE',
+      }));
+
+    const achievementValues = normalizedInput.filter((value) =>
+      EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS.has(
+        `${value.sectionKey}::${value.fieldKey}`,
+      ),
+    );
+    if (achievementValues.length !== normalizedInput.length) {
+      throw new Error('Assigned form contains an unsupported field');
+    }
+
+    if (termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
+      throw new Error('Achievement fields are not editable during Objective Setting');
+    }
+
+    await this.assertEmployeeEditAccess(termAssignment);
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const existingSubmission = await EmployeeAchievementSubmission.findOne({
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      isDeleted: false,
+    });
+    if (existingSubmission?.status === EmployeeAchievementSubmissionStatus.LOCKED) {
+      throw new Error('Submitted employee achievement is locked and cannot be edited');
+    }
+
+    const existingAchievementValues = (existingSubmission?.achievementValues ?? [])
+      .map((value: any) => value.toObject ? value.toObject() : { ...value });
+    const updatedKeys = new Set(
+      achievementValues.map((value) => `${value.sectionKey}::${value.fieldKey}`),
+    );
+    const nextAchievementValues = [
+      ...existingAchievementValues.filter(
+        (value: any) => !updatedKeys.has(`${value.sectionKey}::${value.fieldKey}`),
+      ),
+      ...achievementValues,
+    ];
+    const actorObjectId = this.actorIdObject();
+    const now = new Date();
+    const previousValue = existingSubmission?.toObject();
+    const submission = existingSubmission
+      ? await EmployeeAchievementSubmission.findByIdAndUpdate(
+        existingSubmission._id,
+        {
+          $set: {
+            achievementValues: nextAchievementValues,
+            draftSavedAt: now,
+            updatedBy: actorObjectId,
+          },
+          $inc: { version: 1 },
+        },
+        { new: true, runValidators: true },
+      )
+      : await EmployeeAchievementSubmission.create({
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        termAssignmentId: termAssignment._id,
+        cycleId: termAssignment.cycleId,
+        employeeId: termAssignment.employeeId,
+        managerId: termAssignment.assignedManagerId,
+        templateVersionId: annualAssignment.templateVersionId,
+        assessmentTermCode: termAssignment.assessmentTermCode,
+        achievementItems: [],
+        achievementValues: nextAchievementValues,
+        status: EmployeeAchievementSubmissionStatus.DRAFT,
+        draftSavedAt: now,
+        createdBy: actorObjectId,
+        updatedBy: actorObjectId,
+      });
+
+    if (!submission) {
+      throw new Error('Unable to save assigned form values');
+    }
+
+    await this.audit(
+      'PMS_ASSIGNED_FORM_VALUES_SAVED',
+      'EMPLOYEE_ACHIEVEMENT_SUBMISSION',
+      submission._id.toString(),
+      previousValue,
+      submission.toObject(),
+    );
+
+    return {
+      objectiveValues: [],
+      achievementValues: (submission.achievementValues ?? []).map((value: any) =>
+        value.toObject ? value.toObject() : { ...value },
+      ),
+    };
   }
 
   async submit(
