@@ -292,12 +292,141 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
       }
     },
   );
+
+  fastify.get(
+    '/:termAssignmentId/field-attachments',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Field Attachments'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId } = request.params as {
+          termAssignmentId: string;
+        };
+        const attachments =
+          await request.container!.employeeAchievementSubmissionService
+            .listTemplateFieldAttachments(termAssignmentId);
+        return reply.send(
+          successResponse('Template field attachments fetched successfully', attachments),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:termAssignmentId/field-attachments/:sectionKey/:fieldKey',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Field Attachments'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId, sectionKey, fieldKey } = request.params as {
+          termAssignmentId: string;
+          sectionKey: string;
+          fieldKey: string;
+        };
+        const { files } = await parseMultipartForm(request);
+        if (!files?.length) throw new Error('No attachment file uploaded');
+        const cachedBuffer = (files[0] as any).__cachedBuffer as
+          | Buffer
+          | undefined;
+        const fileSize = cachedBuffer?.length;
+        if ((fileSize ?? 0) >= MAX_ACHIEVEMENT_ATTACHMENT_BYTES) {
+          throw new Error('Field attachments must be less than 1 MB per file.');
+        }
+        const attachment =
+          await request.container!.employeeAchievementSubmissionService
+            .uploadTemplateFieldAttachment(
+              termAssignmentId,
+              sectionKey,
+              fieldKey,
+              files[0],
+              fileSize,
+            );
+        return reply.send(
+          successResponse('Field attachment uploaded successfully', attachment),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.delete(
+    '/:termAssignmentId/field-attachments/:attachmentId',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Field Attachments'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId, attachmentId } = request.params as {
+          termAssignmentId: string;
+          attachmentId: string;
+        };
+        const result =
+          await request.container!.employeeAchievementSubmissionService
+            .removeTemplateFieldAttachment(termAssignmentId, attachmentId);
+        return reply.send(
+          successResponse('Field attachment removed successfully', result),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/:termAssignmentId/field-attachments/:attachmentId/:action',
+    { onRequest: [authenticate], schema: { tags: ['PMS Employee Field Attachments'] } },
+    async (request, reply) => {
+      try {
+        const { termAssignmentId, attachmentId, action } = request.params as {
+          termAssignmentId: string;
+          attachmentId: string;
+          action: string;
+        };
+        if (action !== 'preview' && action !== 'download') {
+          throw new Error('Attachment not available');
+        }
+        const content =
+          await request.container!.employeeAchievementSubmissionService
+            .resolveTemplateFieldAttachmentContent(
+              termAssignmentId,
+              attachmentId,
+              action,
+            );
+        const response = await fetch(content.fileUrl);
+        if (!response.ok) throw new Error('The attachment could not be opened');
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength >= MAX_ACHIEVEMENT_ATTACHMENT_BYTES) {
+          throw new Error('The attachment could not be opened');
+        }
+        const safeFileName = content.fileName
+          .replace(/[\r\n"]/g, '_')
+          .replace(/[^\w.\-() ]+/g, '_');
+        return reply
+          .header('Content-Type', content.fileType)
+          .header(
+            'Content-Disposition',
+            `${action === 'preview' ? 'inline' : 'attachment'}; filename="${safeFileName}"`,
+          )
+          .header('X-Content-Type-Options', 'nosniff')
+          .header('Cache-Control', 'private, no-store')
+          .send(Buffer.from(arrayBuffer));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {
   const message = error instanceof Error ? error.message : 'Unexpected error';
   if (/less than 1 MB|file too large/i.test(message)) {
-    return reply.status(413).send(errorResponse('PMS_EMPLOYEE_ACHIEVEMENT_ERROR', ACHIEVEMENT_ATTACHMENT_SIZE_MESSAGE));
+    return reply.status(413).send(
+      errorResponse(
+        'PMS_EMPLOYEE_ACHIEVEMENT_ERROR',
+        /field attachment/i.test(message)
+          ? 'Field attachments must be less than 1 MB per file.'
+          : ACHIEVEMENT_ATTACHMENT_SIZE_MESSAGE,
+      ),
+    );
   }
   return reply.status(400).send(errorResponse('PMS_EMPLOYEE_ACHIEVEMENT_ERROR', message));
 }

@@ -14,6 +14,7 @@ export * from './pms-objective-attachment.model';
 export * from './pms-objective-comment.model';
 export * from './pms-objective-evidence.model';
 export * from './pms-employee-achievement-submission.model';
+export * from './pms-template-field-attachment.model';
 export * from './pms-term-review.model';
 export * from './pms-term-review-value.model';
 export * from './pms-manager-review-period-assignment.model';

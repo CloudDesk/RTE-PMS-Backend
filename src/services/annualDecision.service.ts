@@ -190,6 +190,7 @@ export interface AnnualSummaryResult {
   reviewContext: {
     fieldCatalog: Array<Record<string, unknown>>;
     employeeSubmission: Record<string, unknown> | null;
+    employeeSubmissions: Array<Record<string, unknown>>;
   };
 }
 
@@ -532,6 +533,7 @@ export class AnnualDecisionService extends BaseService {
       visibilityConfiguration,
       cycle,
       employeeSubmission,
+      employeeSubmissions,
       contextTemplateVersion,
     ] = await Promise.all([
       Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
@@ -547,6 +549,12 @@ export class AnnualDecisionService extends BaseService {
         annualAssignmentId: annualAssignment._id,
         isDeleted: false,
       }).lean(),
+      EmployeeAchievementSubmission.find({
+        termAssignmentId: { $in: termAssignmentIds },
+        isDeleted: false,
+      })
+        .sort({ assessmentTermCode: 1, createdAt: 1 })
+        .lean(),
       annualAssignment.templateVersionId
         ? PmsTemplateVersion.findById(annualAssignment.templateVersionId).select('sections').lean()
         : null,
@@ -986,6 +994,7 @@ export class AnnualDecisionService extends BaseService {
         ),
         employeeSubmission: employeeSubmission
           ? {
+              termAssignmentId: employeeSubmission.termAssignmentId?.toString(),
               status: employeeSubmission.status,
               assessmentTermCode: employeeSubmission.assessmentTermCode,
               submittedAt: employeeSubmission.submittedAt
@@ -1033,6 +1042,23 @@ export class AnnualDecisionService extends BaseService {
               })),
             }
           : null,
+        employeeSubmissions: employeeSubmissions.map((submission) => ({
+          termAssignmentId: submission.termAssignmentId?.toString(),
+          assessmentTermCode: submission.assessmentTermCode,
+          achievementValues: (submission.achievementValues ?? []).map((value: any) => ({
+            templateFieldId: value.templateFieldId,
+            fieldKey: value.fieldKey,
+            sectionKey: value.sectionKey,
+            roleCode: value.roleCode,
+            workflowStage: value.workflowStage,
+            valueJson: value.valueJson,
+            valueText: value.valueText,
+            valueNumber: value.valueNumber,
+            valueDate: value.valueDate
+              ? new Date(value.valueDate).toISOString()
+              : undefined,
+          })),
+        })),
       },
     };
   }

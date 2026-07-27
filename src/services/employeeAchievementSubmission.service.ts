@@ -30,6 +30,8 @@ import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
+import { PmsDocument } from '../models/pms-document.model';
+import { TemplateFieldAttachment } from '../models/pms-template-field-attachment.model';
 import {
   AchievementEntryMode,
   AchievementItemType,
@@ -41,6 +43,7 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { gcpFileStorageService } from './gcp-file-storage.service';
+import { PmsDocumentService } from './pms-document.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 
@@ -283,6 +286,7 @@ type ObjectiveActualValueCandidate = {
 };
 
 type EmployeeWorkUpdateFieldRecord = {
+  sectionKey: string;
   fieldKey: string;
   fieldLabel: string;
   fieldType: string;
@@ -302,6 +306,42 @@ export type UploadedAchievementAttachment = {
   fileSize?: number;
   documentId: string;
   uploadedAt: string;
+};
+
+type EmployeeFieldAttachmentConfig = {
+  enabled: boolean;
+  required?: boolean;
+  entryStage: 'OBJECTIVE_SETTING' | 'EMPLOYEE_ACHIEVEMENT';
+  maxActiveFiles?: number;
+  maxFileSizeBytes?: number;
+  allowedMimeTypes?: string[];
+  allowPreview?: boolean;
+  allowDownload?: boolean;
+  allowEmployeeReplace?: boolean;
+  allowEmployeeRemove?: boolean;
+};
+
+export type TemplateFieldAttachmentRecord = {
+  id: string;
+  termAssignmentId: string;
+  assessmentTermCode: AssessmentTermCodeType;
+  sectionKey: string;
+  fieldKey: string;
+  fieldLabel: string;
+  fileName: string;
+  fileType?: string;
+  fileSize?: number;
+  versionNo: number;
+  uploadedAt: string;
+  previewAvailable: boolean;
+  downloadAvailable: boolean;
+  editable: boolean;
+};
+
+type ConfiguredEmployeeFieldAttachment = {
+  section: ITemplateSection;
+  field: ITemplateField;
+  config: EmployeeFieldAttachmentConfig;
 };
 
 export class EmployeeAchievementSubmissionService extends BaseService {
@@ -366,7 +406,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         title: section.sectionLabel,
         fieldKey: field.fieldKey,
         fieldLabel: field.fieldLabel,
-        workUpdateFields: this.getWorkUpdateFields(section, field.fieldKey, resolvedFields),
+        workUpdateFields: this.getWorkUpdateFields(
+          templateVersion,
+          section,
+          field.fieldKey,
+          termAssignment.assessmentTermCode,
+          resolvedFields,
+        ),
       },
       objectives,
       submission: submission ? this.mapSubmissionRecord(submission) : null,
@@ -438,6 +484,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
 
     this.validateAchievementPayload(
+      templateVersion,
+      termAssignment.assessmentTermCode,
       section,
       field,
       normalizedItems,
@@ -577,6 +625,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
 
     this.validateAchievementPayload(
+      templateVersion,
+      termAssignment.assessmentTermCode,
       section,
       field,
       submitItems,
@@ -672,7 +722,14 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     input: SaveAchievementItemInput,
   ): Promise<AchievementSubmissionRecord> {
     const context = await this.prepareAchievementMutation(termAssignmentId);
-    const { termAssignment, annualAssignment, section, field, config } = context;
+    const {
+      termAssignment,
+      annualAssignment,
+      templateVersion,
+      section,
+      field,
+      config,
+    } = context;
     await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
@@ -724,6 +781,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       nextAchievementValues,
     );
     this.validateAchievementPayload(
+      templateVersion,
+      termAssignment.assessmentTermCode,
       section,
       field,
       nextItems,
@@ -795,7 +854,14 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     input: SubmitAchievementItemInput,
   ): Promise<AchievementSubmissionRecord> {
     const context = await this.prepareAchievementMutation(termAssignmentId);
-    const { termAssignment, annualAssignment, section, field, config } = context;
+    const {
+      termAssignment,
+      annualAssignment,
+      templateVersion,
+      section,
+      field,
+      config,
+    } = context;
     await this.assertEmployeeEditAccess(termAssignment);
 
     const existingSubmission = await EmployeeAchievementSubmission.findOne({
@@ -844,6 +910,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       nextAchievementValues,
     );
     this.validateAchievementPayload(
+      templateVersion,
+      termAssignment.assessmentTermCode,
       section,
       field,
       nextItems,
@@ -855,6 +923,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
     const achievementValues = nextAchievementValues;
     const promoteToSubmitted = this.canPromoteItemSubmissionToOverall(
+      templateVersion,
+      termAssignment.assessmentTermCode,
       section,
       field,
       nextItems,
@@ -999,6 +1069,321 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
 
     return attachment;
+  }
+
+  async listTemplateFieldAttachments(
+    termAssignmentId: string,
+  ): Promise<TemplateFieldAttachmentRecord[]> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    await this.assertViewAccess(termAssignment);
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const templateVersion = await this.getTemplateVersion(
+      annualAssignment.templateVersionId?.toString(),
+    );
+    const configuredFields = this.configuredEmployeeFieldAttachments(
+      templateVersion,
+      termAssignment.assessmentTermCode,
+    ).filter((configured) => this.canActorViewConfiguredAttachment(configured));
+    if (configuredFields.length === 0) return [];
+
+    const visibleKeys = new Set(
+      configuredFields.map(
+        ({ section, field }) => `${section.sectionKey}::${field.fieldKey}`,
+      ),
+    );
+    const editableKeys = new Set<string>();
+    for (const configured of configuredFields) {
+      if (await this.canActorEditConfiguredAttachment(termAssignment, configured)) {
+        editableKeys.add(
+          `${configured.section.sectionKey}::${configured.field.fieldKey}`,
+        );
+      }
+    }
+
+    const attachments = await TemplateFieldAttachment.find({
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    })
+      .sort({ uploadedAt: 1, createdAt: 1 })
+      .lean();
+    const fieldLabelByKey = new Map(
+      configuredFields.map(({ section, field }) => [
+        `${section.sectionKey}::${field.fieldKey}`,
+        field.fieldLabel,
+      ]),
+    );
+
+    return attachments
+      .filter((attachment) =>
+        visibleKeys.has(`${attachment.sectionKey}::${attachment.fieldKey}`),
+      )
+      .map((attachment) => {
+        const key = `${attachment.sectionKey}::${attachment.fieldKey}`;
+        const configured = configuredFields.find(
+          ({ section, field }) =>
+            section.sectionKey === attachment.sectionKey &&
+            field.fieldKey === attachment.fieldKey,
+        );
+        return {
+          id: attachment._id.toString(),
+          termAssignmentId: termAssignment._id.toString(),
+          assessmentTermCode: termAssignment.assessmentTermCode,
+          sectionKey: attachment.sectionKey,
+          fieldKey: attachment.fieldKey,
+          fieldLabel: fieldLabelByKey.get(key) || attachment.fieldKey,
+          fileName: attachment.fileName,
+          fileType: attachment.fileType,
+          fileSize: attachment.fileSize,
+          versionNo: attachment.versionNo,
+          uploadedAt: new Date(attachment.uploadedAt).toISOString(),
+          previewAvailable: configured?.config.allowPreview !== false,
+          downloadAvailable: configured?.config.allowDownload !== false,
+          editable: editableKeys.has(key),
+        };
+      });
+  }
+
+  async uploadTemplateFieldAttachment(
+    termAssignmentId: string,
+    sectionKey: string,
+    fieldKey: string,
+    file: MultipartFile,
+    fileSize?: number,
+  ): Promise<TemplateFieldAttachmentRecord> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const templateVersion = await this.getTemplateVersion(
+      annualAssignment.templateVersionId?.toString(),
+    );
+    const configured = this.getConfiguredEmployeeFieldAttachment(
+      templateVersion,
+      termAssignment.assessmentTermCode,
+      sectionKey,
+      fieldKey,
+    );
+    await this.assertConfiguredAttachmentEditAccess(termAssignment, configured);
+    this.validateTemplateFieldAttachmentFile(configured.config, file, fileSize);
+
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const activeAttachment = await TemplateFieldAttachment.findOne({
+      termAssignmentId: termAssignment._id,
+      sectionKey,
+      fieldKey,
+      isDeleted: false,
+    }).lean();
+    if (
+      activeAttachment &&
+      configured.config.allowEmployeeReplace === false
+    ) {
+      throw new Error('Replacing this attachment is not allowed');
+    }
+
+    const uploaded = await new PmsDocumentService(this.context).uploadDocument({
+      employeeId: termAssignment.employeeId.toString(),
+      cycleId: termAssignment.cycleId?.toString(),
+      annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+      termAssignmentId: termAssignment._id.toString(),
+      documentType: 'TemplateFieldAttachment',
+      documentName: `${configured.field.fieldLabel} - ${termAssignment.assessmentTermCode}`,
+      documentDate: this.getCurrentDate(),
+      description: `Optional supporting document for ${configured.field.fieldLabel}`,
+      file,
+    });
+    const documentId = uploaded.documentId?.toString?.() ??
+      String(uploaded.documentId ?? '');
+    if (!Types.ObjectId.isValid(documentId)) {
+      throw new Error('Attachment storage did not return a valid document id');
+    }
+
+    const nextVersion = Number(activeAttachment?.versionNo ?? 0) + 1;
+    const created = await TemplateFieldAttachment.create({
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      termAssignmentId: termAssignment._id,
+      cycleId: termAssignment.cycleId,
+      employeeId: termAssignment.employeeId,
+      templateVersionId: annualAssignment.templateVersionId,
+      sectionKey,
+      fieldKey,
+      documentId: new Types.ObjectId(documentId),
+      fileName: uploaded.fileName,
+      fileType: file.mimetype || undefined,
+      fileSize,
+      versionNo: nextVersion,
+      uploadedBy: actorId,
+      uploadedAt: uploaded.uploadedAt ?? this.getCurrentDate(),
+      createdBy: actorId,
+      updatedBy: actorId,
+    });
+
+    if (activeAttachment) {
+      await Promise.all([
+        TemplateFieldAttachment.updateOne(
+          { _id: activeAttachment._id, isDeleted: false },
+          {
+            $set: {
+              isDeleted: true,
+              updatedBy: actorId,
+            },
+            $inc: { version: 1 },
+          },
+        ),
+        PmsDocument.updateOne(
+          { _id: activeAttachment.documentId, isDeleted: false },
+          { $set: { isDeleted: true } },
+        ),
+      ]);
+    }
+
+    await this.audit(
+      activeAttachment
+        ? 'PMS_TEMPLATE_FIELD_ATTACHMENT_REPLACED'
+        : 'PMS_TEMPLATE_FIELD_ATTACHMENT_UPLOADED',
+      'TEMPLATE_FIELD_ATTACHMENT',
+      created._id.toString(),
+      activeAttachment,
+      created.toObject(),
+    );
+
+    return {
+      id: created._id.toString(),
+      termAssignmentId: termAssignment._id.toString(),
+      assessmentTermCode: termAssignment.assessmentTermCode,
+      sectionKey,
+      fieldKey,
+      fieldLabel: configured.field.fieldLabel,
+      fileName: created.fileName,
+      fileType: created.fileType,
+      fileSize: created.fileSize,
+      versionNo: created.versionNo,
+      uploadedAt: created.uploadedAt.toISOString(),
+      previewAvailable: configured.config.allowPreview !== false,
+      downloadAvailable: configured.config.allowDownload !== false,
+      editable: true,
+    };
+  }
+
+  async removeTemplateFieldAttachment(
+    termAssignmentId: string,
+    attachmentId: string,
+  ): Promise<{ attachmentId: string }> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    if (!Types.ObjectId.isValid(attachmentId)) {
+      throw new Error('Attachment not available');
+    }
+    const attachment = await TemplateFieldAttachment.findOne({
+      _id: new Types.ObjectId(attachmentId),
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    }).lean();
+    if (!attachment) throw new Error('Attachment not available');
+
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const templateVersion = await this.getTemplateVersion(
+      annualAssignment.templateVersionId?.toString(),
+    );
+    const configured = this.getConfiguredEmployeeFieldAttachment(
+      templateVersion,
+      termAssignment.assessmentTermCode,
+      attachment.sectionKey,
+      attachment.fieldKey,
+    );
+    await this.assertConfiguredAttachmentEditAccess(termAssignment, configured);
+    if (configured.config.allowEmployeeRemove === false) {
+      throw new Error('Removing this attachment is not allowed');
+    }
+
+    const actorId = this.actorIdObject();
+    await Promise.all([
+      TemplateFieldAttachment.updateOne(
+        { _id: attachment._id, isDeleted: false },
+        {
+          $set: { isDeleted: true, updatedBy: actorId },
+          $inc: { version: 1 },
+        },
+      ),
+      PmsDocument.updateOne(
+        { _id: attachment.documentId, isDeleted: false },
+        { $set: { isDeleted: true } },
+      ),
+    ]);
+    await this.audit(
+      'PMS_TEMPLATE_FIELD_ATTACHMENT_REMOVED',
+      'TEMPLATE_FIELD_ATTACHMENT',
+      attachment._id.toString(),
+      attachment,
+      { isDeleted: true },
+    );
+    return { attachmentId: attachment._id.toString() };
+  }
+
+  async resolveTemplateFieldAttachmentContent(
+    termAssignmentId: string,
+    attachmentId: string,
+    action: 'preview' | 'download',
+  ): Promise<{ fileUrl: string; fileName: string; fileType: string }> {
+    const termAssignment = await this.getTermAssignment(termAssignmentId);
+    await this.assertViewAccess(termAssignment);
+    if (!Types.ObjectId.isValid(attachmentId)) {
+      throw new Error('Attachment not available');
+    }
+    const attachment = await TemplateFieldAttachment.findOne({
+      _id: new Types.ObjectId(attachmentId),
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    }).lean();
+    if (!attachment) throw new Error('Attachment not available');
+
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const templateVersion = await this.getTemplateVersion(
+      annualAssignment.templateVersionId?.toString(),
+    );
+    const configured = this.getConfiguredEmployeeFieldAttachment(
+      templateVersion,
+      termAssignment.assessmentTermCode,
+      attachment.sectionKey,
+      attachment.fieldKey,
+    );
+    if (!this.canActorViewConfiguredAttachment(configured)) {
+      throw new Error('Attachment not available');
+    }
+    if (
+      (action === 'preview' && configured.config.allowPreview === false) ||
+      (action === 'download' && configured.config.allowDownload === false)
+    ) {
+      throw new Error('Attachment not available');
+    }
+
+    const document = await PmsDocument.findOne({
+      _id: attachment.documentId,
+      employeeId: termAssignment.employeeId,
+      annualAssignmentId: termAssignment.annualAssignmentId,
+      termAssignmentId: termAssignment._id,
+      isDeleted: false,
+    }).lean();
+    if (!document?.fileUrl) throw new Error('Attachment not available');
+
+    const parsedUrl = new URL(document.fileUrl);
+    if (
+      parsedUrl.protocol !== 'https:' ||
+      parsedUrl.hostname !== 'storage.googleapis.com'
+    ) {
+      throw new Error('Attachment not available');
+    }
+    return {
+      fileUrl: parsedUrl.toString(),
+      fileName: attachment.fileName,
+      fileType: attachment.fileType || document.fileType ||
+        'application/octet-stream',
+    };
   }
 
   private mapSubmissionRecord(
@@ -1302,6 +1687,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   private validateAchievementPayload(
+    templateVersion: { sections?: ITemplateSection[] } | null,
+    assessmentTermCode: AssessmentTermCodeType,
     section: ITemplateSection,
     field: ITemplateField,
     items: Array<Record<string, any>>,
@@ -1319,16 +1706,24 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Achievement Items field must use DATA_GRID');
     }
 
-    const sectionFieldMap = new Map(
-      (section.fields ?? []).map((sectionField) => [sectionField.fieldKey, sectionField]),
+    const workUpdateFields = this.getWorkUpdateFields(
+      templateVersion,
+      section,
+      field.fieldKey,
+      assessmentTermCode,
+      resolvedFields,
     );
+    const allowedValueKeys = new Set([
+      `${section.sectionKey}::${field.fieldKey}`,
+      ...workUpdateFields.map(
+        (workUpdateField) =>
+          `${workUpdateField.sectionKey}::${workUpdateField.fieldKey}`,
+      ),
+    ]);
     const resolvedFieldMap = new Map(resolvedFields.map((resolvedField) => [resolvedField.key, resolvedField]));
 
     for (const value of values) {
-      if (value.sectionKey !== EmployeeAchievementSubmissionService.SECTION_KEY) {
-        throw new Error('Only Employee Achievement Submission values can be saved through this API');
-      }
-      if (!sectionFieldMap.has(value.fieldKey)) {
+      if (!allowedValueKeys.has(`${value.sectionKey}::${value.fieldKey}`)) {
         throw new Error(`Field "${value.fieldKey}" is not configured for Employee Achievement Submission`);
       }
       if (value.fieldKey !== field.fieldKey && resolvedFieldMap.get(value.fieldKey)?.editable !== true) {
@@ -1376,7 +1771,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     }
 
     if (isSubmit) {
-      for (const workUpdateField of this.getWorkUpdateFields(section, field.fieldKey, resolvedFields)) {
+      for (const workUpdateField of workUpdateFields) {
         if (workUpdateField.editable !== true || workUpdateField.isRequired !== true) {
           continue;
         }
@@ -1884,6 +2279,8 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   private canPromoteItemSubmissionToOverall(
+    templateVersion: { sections?: ITemplateSection[] } | null,
+    assessmentTermCode: AssessmentTermCodeType,
     section: ITemplateSection,
     field: ITemplateField,
     items: Array<Record<string, any>>,
@@ -1943,7 +2340,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       return false;
     }
 
-    for (const workUpdateField of this.getWorkUpdateFields(section, field.fieldKey, resolvedFields)) {
+    for (const workUpdateField of this.getWorkUpdateFields(
+      templateVersion,
+      section,
+      field.fieldKey,
+      assessmentTermCode,
+      resolvedFields,
+    )) {
       if (workUpdateField.editable !== true || workUpdateField.isRequired !== true) {
         continue;
       }
@@ -2186,6 +2589,185 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     };
   }
 
+  private configuredEmployeeFieldAttachments(
+    templateVersion: { sections?: ITemplateSection[] } | null,
+    assessmentTermCode: AssessmentTermCodeType,
+  ): ConfiguredEmployeeFieldAttachment[] {
+    return (templateVersion?.sections ?? [])
+      .filter((section) => {
+        if (!this.isTermLevelTemplateSection(section.level)) return false;
+        const termScope = [
+          ...(section.termScope ?? []),
+          ...(section.repeatFor ?? []),
+        ];
+        return this.assessmentTermScopeMatches(termScope, assessmentTermCode);
+      })
+      .flatMap((section) =>
+        (section.fields ?? []).flatMap((field) => {
+          const config = field.metadata?.fieldAttachment as
+            | EmployeeFieldAttachmentConfig
+            | undefined;
+          return config?.enabled === true &&
+            ['OBJECTIVE_SETTING', 'EMPLOYEE_ACHIEVEMENT'].includes(
+              String(config.entryStage),
+            )
+            ? [{ section, field, config }]
+            : [];
+        }),
+      );
+  }
+
+  private getConfiguredEmployeeFieldAttachment(
+    templateVersion: { sections?: ITemplateSection[] } | null,
+    assessmentTermCode: AssessmentTermCodeType,
+    sectionKey: string,
+    fieldKey: string,
+  ): ConfiguredEmployeeFieldAttachment {
+    const configured = this.configuredEmployeeFieldAttachments(
+      templateVersion,
+      assessmentTermCode,
+    ).find(
+      ({ section, field }) =>
+        section.sectionKey === sectionKey && field.fieldKey === fieldKey,
+    );
+    if (!configured) {
+      throw new Error('Attachment is not configured for this field');
+    }
+    return configured;
+  }
+
+  private canActorViewConfiguredAttachment(
+    configured: ConfiguredEmployeeFieldAttachment,
+  ): boolean {
+    const actor = this.requireActor();
+    const role = normalizePmsRole(actor.actorRole);
+    if (!role) return false;
+    const permissionOverride = configured.field.metadata?.permissionOverride as
+      | Record<string, string>
+      | undefined;
+    const override = String(permissionOverride?.[role] ?? '').toLowerCase();
+    if (override === 'hidden') return false;
+    if (override === 'view' || override === 'edit') return true;
+
+    return (configured.field.behaviors ?? []).some(
+      (behavior) =>
+        normalizePmsRole(behavior.role) === role &&
+        behavior.visibility !== 'HIDDEN',
+    );
+  }
+
+  private async canActorEditConfiguredAttachment(
+    termAssignment: any,
+    configured: ConfiguredEmployeeFieldAttachment,
+  ): Promise<boolean> {
+    const actor = this.requireActor();
+    if (actor.actorId !== termAssignment.employeeId.toString()) return false;
+    try {
+      await this.assertConfiguredAttachmentEditAccess(
+        termAssignment,
+        configured,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async assertConfiguredAttachmentEditAccess(
+    termAssignment: any,
+    configured: ConfiguredEmployeeFieldAttachment,
+  ): Promise<void> {
+    const actor = this.requireActor();
+    if (actor.actorId !== termAssignment.employeeId.toString()) {
+      throw new Error('Employee can edit only own field attachments');
+    }
+    const employeePermission = String(
+      (
+        configured.field.metadata?.permissionOverride as
+          | Record<string, string>
+          | undefined
+      )?.EMPLOYEE ?? '',
+    ).toLowerCase();
+    const employeeBehaviorEditable = (configured.field.behaviors ?? []).some(
+      (behavior) =>
+        normalizePmsRole(behavior.role) === PmsRole.EMPLOYEE &&
+        behavior.editability === 'EDITABLE',
+    );
+    if (employeePermission !== 'edit' && !employeeBehaviorEditable) {
+      throw new Error('This field attachment is read-only');
+    }
+
+    if (configured.config.entryStage === 'OBJECTIVE_SETTING') {
+      if (termAssignment.termState !== TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
+        throw new Error(
+          'This field attachment is read-only because Objective Setting is closed.',
+        );
+      }
+      await this.assertObjectiveSettingAttachmentWindow(termAssignment);
+      return;
+    }
+
+    await this.assertEmployeeEditAccess(termAssignment);
+  }
+
+  private async assertObjectiveSettingAttachmentWindow(
+    termAssignment: any,
+  ): Promise<void> {
+    if (!termAssignment.cycleTermId) return;
+    const [termCycle, annualAssignment] = await Promise.all([
+      TermCycle.findById(termAssignment.cycleTermId)
+        .select('objectiveSettingWindow')
+        .lean(),
+      AnnualAssignment.findById(termAssignment.annualAssignmentId)
+        .select('assignmentWindowSnapshot')
+        .lean(),
+    ]);
+    if (!termCycle) return;
+    const window = resolveEffectiveTermWindows(
+      termAssignment,
+      termCycle,
+      annualAssignment,
+    ).objectiveSettingWindow;
+    if (!window?.startDate || !window?.endDate) return;
+
+    const now = this.getCurrentDate();
+    const start = new Date(window.startDate);
+    const end = new Date(window.endDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    if (now < start || now > end) {
+      throw new Error(
+        'Objective setting window is closed for this assessment term.',
+      );
+    }
+  }
+
+  private validateTemplateFieldAttachmentFile(
+    config: EmployeeFieldAttachmentConfig,
+    file: MultipartFile,
+    fileSize?: number,
+  ): void {
+    if (!file?.filename) throw new Error('No attachment file uploaded');
+    const maxFileSizeBytes = Number(config.maxFileSizeBytes ?? 1024 * 1024);
+    if (
+      Number.isFinite(fileSize) &&
+      Number(fileSize) >= maxFileSizeBytes
+    ) {
+      throw new Error('Field attachments must be less than 1 MB per file.');
+    }
+
+    const allowedMimeTypes = new Set(config.allowedMimeTypes ?? []);
+    if (
+      allowedMimeTypes.size > 0 &&
+      file.mimetype &&
+      !allowedMimeTypes.has(file.mimetype)
+    ) {
+      throw new Error(
+        'Unsupported attachment type. Upload PDF, Word, Excel, JPG, or PNG.',
+      );
+    }
+  }
+
   private getAchievementSection(
     templateVersion: { sections?: ITemplateSection[] } | null,
     assessmentTermCode: AssessmentTermCodeType,
@@ -2254,16 +2836,46 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   }
 
   private getWorkUpdateFields(
+    templateVersion: { sections?: ITemplateSection[] } | null,
     section: ITemplateSection,
     achievementFieldKey: string,
+    assessmentTermCode: AssessmentTermCodeType,
     resolvedFields: ResolvedTemplateField[] = [],
   ): EmployeeWorkUpdateFieldRecord[] {
     const resolvedFieldMap = new Map(resolvedFields.map((field) => [field.key, field]));
-    return (section.fields ?? [])
-      .filter((field) => field.fieldKey !== achievementFieldKey)
-      .filter((field) => resolvedFieldMap.has(field.fieldKey))
-      .sort((left, right) => Number(left.displayOrder ?? 0) - Number(right.displayOrder ?? 0))
-      .map((field) => ({
+    const employeeTermSections = (templateVersion?.sections ?? []).filter(
+      (candidate) => {
+        if (candidate.sectionKey === section.sectionKey) return true;
+        if (
+          candidate.metadata?.pdfOwnership !== 'E' ||
+          candidate.metadata?.pdfScope !== 'T-E' ||
+          !this.isTermLevelTemplateSection(candidate.level)
+        ) {
+          return false;
+        }
+        return this.assessmentTermScopeMatches(
+          [...(candidate.termScope ?? []), ...(candidate.repeatFor ?? [])],
+          assessmentTermCode,
+        );
+      },
+    );
+
+    return employeeTermSections
+      .flatMap((candidate) =>
+        (candidate.fields ?? []).map((field) => ({
+          sectionKey: candidate.sectionKey,
+          field,
+        })),
+      )
+      .filter(({ field }) => field.fieldKey !== achievementFieldKey)
+      .filter(({ field }) => resolvedFieldMap.has(field.fieldKey))
+      .sort(
+        (left, right) =>
+          Number(left.field.displayOrder ?? 0) -
+          Number(right.field.displayOrder ?? 0),
+      )
+      .map(({ sectionKey, field }) => ({
+        sectionKey,
         fieldKey: field.fieldKey,
         fieldLabel: field.fieldLabel,
         fieldType: field.fieldType,
@@ -2272,6 +2884,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         editable: resolvedFieldMap.get(field.fieldKey)?.editable === true,
         placeholder: field.placeholder,
         helpText: field.helpText,
+        metadata: field.metadata,
         options: (field.options ?? []).map((option) => ({
           label: option.label,
           value: option.value,
