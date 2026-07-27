@@ -44,6 +44,8 @@ export interface IAnnualCycle extends Document {
   communicationRuleConfig?: ICommunicationRuleConfig;
   assignmentTemplateSuggestionConfig?: IAssignmentTemplateSuggestionConfig;
   reviewCadenceConfig?: ReviewCadenceConfig;
+  finalReviewRequired: boolean;
+  defaultFinalReviewerId?: Types.ObjectId;
   launchSource?: 'ADMIN_CYCLE' | 'MANAGER_INITIATED';
   launchedByRole?: 'ADMIN' | 'MANAGER';
   launchedByUserId?: Types.ObjectId;
@@ -105,6 +107,11 @@ const annualCycleSchema = new Schema<IAnnualCycle>(
     communicationRuleConfig: { type: Schema.Types.Mixed, default: {} },
     assignmentTemplateSuggestionConfig: { type: Schema.Types.Mixed, default: {} },
     reviewCadenceConfig: { type: Schema.Types.Mixed, default: undefined },
+    finalReviewRequired: { type: Boolean, default: false, index: true },
+    defaultFinalReviewerId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
     launchSource: {
       type: String,
       enum: ['ADMIN_CYCLE', 'MANAGER_INITIATED'],

@@ -17,7 +17,10 @@ import {
   TermWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AssignmentExceptionQueue } from '../models/pms-assignment-exception-queue.model';
@@ -37,6 +40,7 @@ import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { emailService } from './email.service';
 import { ManagerReviewPeriodService } from './managerReviewPeriod.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import { workflowService } from './workflow.service';
 import { visibilityMaskService } from './visibilityMask.service';
@@ -46,6 +50,7 @@ import {
   type ObjectiveRowSeedEntry,
 } from './objective-assignment-seeding.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
+import { resolveFinalReviewer } from '../utilis/finalReviewer';
 import { AssessmentTermCode } from '../constants/pms.enums';
 import type {
   PmsAchievementWindowSnapshot,
@@ -379,6 +384,12 @@ export class AssignmentService extends BaseService {
       managerObjectId,
     );
     this.validateEmployeeEligibility(employeeSnapshot);
+    const finalReviewerResolution = await resolveFinalReviewer({
+      employeeId: employeeObjectId,
+      assignedManagerId: managerObjectId,
+      finalReviewRequired: annualCycle.finalReviewRequired === true,
+      defaultFinalReviewerId: annualCycle.defaultFinalReviewerId,
+    });
 
     const existingAssignment = await AnnualAssignment.findOne({
       employeeId: employeeObjectId,
@@ -402,6 +413,7 @@ export class AssignmentService extends BaseService {
       employeeSnapshot,
       managerSnapshot,
       orgSnapshot,
+      ...finalReviewerResolution,
       createdBy: this.actorIdObject(),
     });
 
@@ -947,6 +959,12 @@ export class AssignmentService extends BaseService {
 
     const annualAssignment = await this.getAnnualAssignment(assignmentId);
     const previousValue = annualAssignment.toObject();
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      annualAssignment._id,
+      EmployeeCareerProfileSnapshotTrigger.ASSIGNMENT_CLOSED,
+    );
     const termAssignments = await TermAssignment.find({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,

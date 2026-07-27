@@ -108,6 +108,40 @@ describe('Objective matrix read model Phase 5', () => {
     });
   });
 
+  it('allows a Manager-role user only when explicitly assigned as the Final Reviewer', async () => {
+    const reviewerId = new Types.ObjectId();
+    const access = jest.spyOn(accessService, 'canPerform').mockResolvedValue({
+      allowed: false,
+      mappedRole: PmsRole.MANAGER,
+      message: 'Managers can access only assigned employee PMS records.',
+    });
+    const service = new ObjectiveMatrixService({} as any);
+    const assignment = {
+      _id: new Types.ObjectId(),
+      employeeId: new Types.ObjectId(),
+      assignedManagerId: new Types.ObjectId(),
+      finalReviewerId: reviewerId,
+      cycleId: new Types.ObjectId(),
+    };
+
+    await expect((service as any).assertAccess(
+      { actorId: reviewerId.toString(), actorRole: PmsRole.MANAGER },
+      assignment,
+      'reviewer',
+    )).resolves.toBeUndefined();
+    expect(access).not.toHaveBeenCalled();
+
+    expect((service as any).resolveView(
+      { actorId: reviewerId.toString(), actorRole: PmsRole.MANAGER },
+      'reviewer',
+      true,
+    )).toMatchObject({
+      mode: 'reviewer',
+      viewRole: PmsRole.DIRECTOR,
+      permissionRole: PmsRole.DIRECTOR,
+    });
+  });
+
   it('hides manager approval actions outside the effective approval dates', () => {
     const window = {
       startDate: new Date('2026-02-01T00:00:00.000Z'),
@@ -206,6 +240,8 @@ describe('Objective matrix read model Phase 5', () => {
       required: false,
       denialReason: 'ROLE_READ_ONLY',
     });
+  });
+
   it('resolves evidence editability independently from generic matrix-cell persistence', () => {
     expect(resolveObjectiveTermEvidencePermission({
       role: PmsRole.EMPLOYEE,

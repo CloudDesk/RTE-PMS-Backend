@@ -4,11 +4,45 @@ import {
 } from '../../src/constants/pms.enums';
 import {
   AnnualDecisionService,
+  assertFinalReviewFreezeAllowed,
   assertObjectiveMatrixFreezeIntegrity,
   buildObjectiveEvidenceSnapshotManifest,
   maskStoredObjectiveMatrixSnapshot,
+  isFinalReviewerFieldEditable,
   type SaveDecisionDraftInput,
 } from '../../src/services/annualDecision.service';
+
+describe('Final Review Phase 3 guards', () => {
+  it('allows freeze only after completion or when review is not required', () => {
+    expect(() => assertFinalReviewFreezeAllowed('COMPLETED')).not.toThrow();
+    expect(() => assertFinalReviewFreezeAllowed('NOT_REQUIRED')).not.toThrow();
+    expect(() => assertFinalReviewFreezeAllowed('PENDING')).toThrow(
+      'L2 and Director assessments must be completed before finalisation',
+    );
+    expect(() => assertFinalReviewFreezeAllowed('IN_PROGRESS')).toThrow();
+    expect(() => assertFinalReviewFreezeAllowed('COMPLETED', 'PENDING')).toThrow();
+    expect(() => assertFinalReviewFreezeAllowed('COMPLETED', 'COMPLETED')).not.toThrow();
+  });
+
+  it('accepts only the canonical Director submitted-state editable behavior', () => {
+    expect(isFinalReviewerFieldEditable({
+      behaviors: [{
+        role: 'DIRECTOR',
+        workflowState: 'MANAGEMENT_DECISION_SUBMITTED',
+        visibility: 'VISIBLE',
+        editability: 'EDITABLE',
+      }],
+    })).toBe(true);
+    expect(isFinalReviewerFieldEditable({
+      behaviors: [{
+        role: 'ADMIN',
+        workflowState: 'MANAGEMENT_DECISION_SUBMITTED',
+        visibility: 'VISIBLE',
+        editability: 'EDITABLE',
+      }],
+    })).toBe(false);
+  });
+});
 
 describe('AnnualDecisionService numeric validation', () => {
   const service = Object.create(AnnualDecisionService.prototype) as AnnualDecisionService;
@@ -159,6 +193,8 @@ describe('AnnualDecisionService numeric validation', () => {
     );
 
     expect(proposedRating).toBe('Good');
+  });
+
   it('freezes evidence identifiers, metadata, and evidence version in term order', () => {
     const manifest = buildObjectiveEvidenceSnapshotManifest({
       termOrder: ['Q1', 'Q2', 'Q3', 'Q4'],

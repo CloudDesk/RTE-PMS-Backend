@@ -162,17 +162,17 @@ export const pmsEmployeeProfileRoutes: RouteHandler = async (
         }
 
         const result =
-          await request.container!.pmsEmployeeProfileImportService.validateImportWorkbook(
+          await request.container!.pmsEmployeeProfileImportService.queueImportWorkbook(
             {
               buffer,
               originalFileName,
             },
           );
-        return reply.send(
+        return reply.status(202).send(
           successResponse(
-            result.canImport
-              ? 'Employee career-profile workbook validated successfully'
-              : 'Employee career-profile workbook contains validation issues',
+            result.status === 'FAILED'
+              ? 'Workbook uploaded but background validation could not be queued'
+              : 'Employee career-profile workbook queued for validation',
             result,
           ),
         );
@@ -219,22 +219,88 @@ export const pmsEmployeeProfileRoutes: RouteHandler = async (
       onRequest: [authenticate, ensureAdmin],
       schema: {
         tags: ['PMS Employee Career Profiles'],
-        summary: 'Confirm a validated employee career-profile import',
+        summary:
+          'Confirm a validated import or safely retry a failed confirmation',
       },
     },
     async (request, reply) => {
       try {
         const { importReference } = request.params as { importReference: string };
         const result =
-          await request.container!.pmsEmployeeProfileImportService.confirmImport(
+          await request.container!.pmsEmployeeProfileImportService.queueImportConfirmation(
             importReference,
           );
-        return reply.send(
+        return reply.status(202).send(
           successResponse(
-            'Employee career profiles imported successfully',
+            result.status === 'FAILED'
+              ? 'Background import could not be queued'
+              : 'Employee career-profile import queued',
             result,
           ),
         );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.get(
+    '/import/:importReference/status',
+    {
+      onRequest: [authenticate, ensureAdmin],
+      schema: {
+        tags: ['PMS Employee Career Profiles'],
+        summary: 'Get background validation/import progress and results',
+      },
+    },
+    async (request, reply) => {
+      try {
+        const { importReference } = request.params as {
+          importReference: string;
+        };
+        const query = request.query as {
+          previewPage?: string;
+          previewLimit?: string;
+        };
+        const result =
+          await request.container!.pmsEmployeeProfileImportService.getImportOperation(
+            importReference,
+            true,
+            {
+              page: Number(query.previewPage) || 1,
+              limit: Number(query.previewLimit) || 100,
+            },
+          );
+        return reply.send(
+          successResponse('Employee career-profile import status retrieved', result),
+        );
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/import/:importReference/retry',
+    {
+      onRequest: [authenticate, ensureAdmin],
+      schema: {
+        tags: ['PMS Employee Career Profiles'],
+        summary: 'Retry a failed background validation or import operation',
+      },
+    },
+    async (request, reply) => {
+      try {
+        const { importReference } = request.params as {
+          importReference: string;
+        };
+        const result =
+          await request.container!.pmsEmployeeProfileImportService.retryImportOperation(
+            importReference,
+          );
+        return reply
+          .status(202)
+          .send(successResponse('Background import retry queued', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

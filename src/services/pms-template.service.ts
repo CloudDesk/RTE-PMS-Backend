@@ -22,7 +22,10 @@ import type {
 } from '../constants/pms.enums';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  type IEmployeeCareerProfileSnapshot,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { Delegation } from '../models/pms-delegation.model';
@@ -43,6 +46,7 @@ import {
   objectiveTableLayoutValidationErrors,
 } from './pms-template-objective-table-layout';
 import { permissionPolicyValidationErrors } from './pms-template-permission-policy';
+import { validateFinalReviewTemplateSections } from '../utilis/finalReviewTemplate';
 
 export type TemplateSection = IPmsTemplateVersion['sections'][number];
 export type TemplateField = TemplateSection['fields'][number];
@@ -831,6 +835,7 @@ export class PmsTemplateService extends BaseService {
     const values = input.values ?? {};
     const systemValues = await this.resolveEmployeeProfileSystemValues(
       derivedContext.employeeId,
+      derivedContext.careerProfileSnapshot,
     );
 
     const sections = version.sections
@@ -2099,6 +2104,7 @@ export class PmsTemplateService extends BaseService {
   }
 
   private validateSections(sections: TemplateSection[]): void {
+    validateFinalReviewTemplateSections(sections);
     const allowedQuarters = new Set(Object.values(AssessmentTermCode));
     const sectionKeys = new Set<string>();
     const allFieldKeys = new Set<string>();
@@ -2577,7 +2583,10 @@ export class PmsTemplateService extends BaseService {
         }
 
         // Check 8: Behavior rules validation
-        if (!field.behaviors || field.behaviors.length === 0) {
+        if (
+          (!field.behaviors || field.behaviors.length === 0) &&
+          !this.isEmployeeCareerProfileField(field)
+        ) {
           errors.push(`Field "${field.fieldLabel || field.fieldKey}" in section "${section.sectionLabel || section.sectionKey}" must have at least one workflow behavior rule defined`);
         }
 
@@ -2970,6 +2979,7 @@ export class PmsTemplateService extends BaseService {
     annualAssignmentId?: string;
     termAssignmentId?: string;
     employeeId?: string;
+    careerProfileSnapshot?: IEmployeeCareerProfileSnapshot;
   }> {
     const visibilityFlags = new Set(input.visibilityFlags ?? []);
     let hierarchyScope = input.hierarchyScope;
@@ -3043,6 +3053,7 @@ export class PmsTemplateService extends BaseService {
       annualAssignmentId,
       termAssignmentId,
       employeeId: annualAssignment.employeeId?.toString(),
+      careerProfileSnapshot: annualAssignment.careerProfileSnapshot,
     };
   }
 
@@ -3070,12 +3081,28 @@ export class PmsTemplateService extends BaseService {
 
   private async resolveEmployeeProfileSystemValues(
     employeeId?: string,
+    careerProfileSnapshot?: IEmployeeCareerProfileSnapshot,
   ): Promise<Record<string, unknown>> {
     if (!employeeId || !this.actorCanViewEmployeeCareerProfileFields()) {
       return {};
     }
 
-    const profile = await PmsEmployeeCareerProfile.findOne({ employeeId }).lean();
+    const profile = careerProfileSnapshot
+      ? careerProfileSnapshot.profileAvailable
+        ? {
+            qualification: careerProfileSnapshot.qualification,
+            currentGrade: careerProfileSnapshot.currentGrade,
+            gradeEffectiveDate: careerProfileSnapshot.gradeEffectiveDate,
+            yearsInGrade:
+              careerProfileSnapshot.yearsInGradeAtReferenceDate,
+            previousExperienceYears:
+              careerProfileSnapshot.previousExperienceYears,
+            asOfDate: careerProfileSnapshot.profileAsOfDate,
+            careerProgressionPast:
+              careerProfileSnapshot.careerProgressionPast,
+          }
+        : null
+      : await PmsEmployeeCareerProfile.findOne({ employeeId }).lean();
     if (!profile) {
       return {
         'employeeProfile.qualification': 'Not available',
@@ -3088,10 +3115,13 @@ export class PmsTemplateService extends BaseService {
       };
     }
 
-    const dateValue = (value?: Date) =>
-      value instanceof Date && Number.isFinite(value.getTime())
-        ? value.toISOString().slice(0, 10)
+    const dateValue = (value?: Date | string) => {
+      if (!value) return 'Not available';
+      const date = value instanceof Date ? value : new Date(value);
+      return Number.isFinite(date.getTime())
+        ? date.toISOString().slice(0, 10)
         : 'Not available';
+    };
     const optionalValue = (value: unknown) =>
       value === undefined || value === null || String(value).trim() === ''
         ? 'Not available'

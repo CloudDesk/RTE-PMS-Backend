@@ -1,10 +1,17 @@
-import { PmsTemplateFieldType } from '../../src/constants/pms.enums';
+import {
+  PmsTemplateFieldType,
+  PmsTemplateSectionType,
+} from '../../src/constants/pms.enums';
 import type { ITemplateField } from '../../src/models/pms-template-version.model';
 import { PmsTemplateService } from '../../src/services/pms-template.service';
 import type { RequestContext } from '../../src/types/context';
 import { PmsEmployeeCareerProfile } from '../../src/models/pms-employee-career-profile.model';
+import {
+  EmployeeCareerProfileSnapshotTrigger,
+  type IEmployeeCareerProfileSnapshot,
+} from '../../src/models/pms-annual-assignment.model';
 
-function context(): RequestContext {
+function context(role = 'ADMIN'): RequestContext {
   return {
     requestId: 'template-runtime-policy-test',
     reqRole: 'ADMIN',
@@ -12,7 +19,7 @@ function context(): RequestContext {
       _id: '64b000000000000000000001',
       email: 'admin@test.local',
       name: 'Admin',
-      role: 'ADMIN',
+      role,
       departmentId: '',
       active: true,
       country: '',
@@ -23,8 +30,8 @@ function context(): RequestContext {
   } as unknown as RequestContext;
 }
 
-function serviceRuntime() {
-  return new PmsTemplateService(context()) as unknown as {
+function serviceRuntime(role = 'ADMIN') {
+  return new PmsTemplateService(context(role)) as unknown as {
     resolveVisibleFieldKeys(
       fields: ITemplateField[],
       context: {
@@ -51,6 +58,7 @@ function serviceRuntime() {
     };
     resolveEmployeeProfileSystemValues(
       employeeId?: string,
+      careerProfileSnapshot?: IEmployeeCareerProfileSnapshot,
     ): Promise<Record<string, unknown>>;
   };
 }
@@ -221,6 +229,85 @@ describe('PMS template runtime policy regression', () => {
     });
   });
 
+  it('resolves career-profile values for Manager, Admin, Management, and Director', async () => {
+    jest.spyOn(PmsEmployeeCareerProfile, 'findOne').mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        currentGrade: 'G3',
+        careerProgressionPast: [
+          {
+            year: 2025,
+            grade: 'G3',
+            function: 'Production',
+            unitOrDepartment: 'Production',
+            sequence: 1,
+          },
+        ],
+      }),
+    } as any);
+
+    for (const role of ['MANAGER', 'ADMIN', 'MANAGEMENT', 'DIRECTOR']) {
+      const values = await serviceRuntime(role).resolveEmployeeProfileSystemValues(
+        '64b000000000000000000099',
+      );
+      expect(values['employeeProfile.currentGrade']).toBe('G3');
+      expect(values['employeeProfile.careerProgressionPast']).toHaveLength(1);
+    }
+
+    await expect(
+      serviceRuntime('EMPLOYEE').resolveEmployeeProfileSystemValues(
+        '64b000000000000000000099',
+      ),
+    ).resolves.toEqual({});
+  });
+
+  it('allows read-only employee career-profile fields during activation validation', async () => {
+    const service = new PmsTemplateService(context()) as unknown as {
+      validateTemplateVersionForActivation(
+        version: Record<string, unknown>,
+      ): Promise<void>;
+    };
+
+    await expect(
+      service.validateTemplateVersionForActivation({
+        sections: [
+          {
+            sectionKey: 'employee_career_profile',
+            sectionLabel: 'Employee Career Profile',
+            sectionType: PmsTemplateSectionType.ANNUAL_SUMMARY,
+            level: 'ANNUAL',
+            sectionScoringConfig: {
+              participatesInScoring: false,
+              weightage: 0,
+            },
+            visibilityRules: {
+              visibleTo: ['MANAGER', 'ADMIN'],
+            },
+            fields: [
+              {
+                fieldKey: 'employeeProfile.currentGrade',
+                fieldLabel: 'Current Grade',
+                fieldType: PmsTemplateFieldType.SHORT_TEXT,
+                visibilityRules: {
+                  visibleTo: ['MANAGER', 'ADMIN'],
+                },
+                editabilityRules: {
+                  editableBy: [],
+                },
+                behaviors: [],
+                metadata: {
+                  bindingKey: 'employeeProfile.currentGrade',
+                  readOnlySource: true,
+                  valueSourceType: 'PMS_EMPLOYEE_CAREER_PROFILE',
+                },
+              },
+            ],
+          },
+        ],
+        annualScoringConfig: {},
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it('resolves standardized scalar and repeating career-profile bindings without a generic grade key', async () => {
     jest.spyOn(PmsEmployeeCareerProfile, 'findOne').mockReturnValue({
       lean: jest.fn().mockResolvedValue({
@@ -257,5 +344,60 @@ describe('PMS template runtime policy regression', () => {
       },
     ]);
     expect(values).not.toHaveProperty('grade');
+  });
+
+  it('uses the frozen assignment snapshot instead of a later live career profile', async () => {
+    const liveProfileSpy = jest.spyOn(PmsEmployeeCareerProfile, 'findOne');
+    const values = await serviceRuntime().resolveEmployeeProfileSystemValues(
+      '64b000000000000000000099',
+      {
+        profileAvailable: true,
+        profileVersion: 2,
+        currentGrade: 'G4',
+        yearsInGradeAtReferenceDate: 1.5,
+        previousExperienceYears: 3,
+        qualification: 'Diploma',
+        careerProgressionPast: [
+          {
+            year: 2024,
+            grade: 'G3',
+            function: 'Quality',
+            unitOrDepartment: 'Plant 1',
+            sequence: 1,
+          },
+        ],
+        profileAsOfDate: new Date('2026-03-31T00:00:00.000Z'),
+        snapshotAt: new Date('2026-04-01T00:00:00.000Z'),
+        trigger:
+          EmployeeCareerProfileSnapshotTrigger
+            .FIRST_MANAGER_REVIEW_SUBMISSION,
+      },
+    );
+
+    expect(liveProfileSpy).not.toHaveBeenCalled();
+    expect(values).toMatchObject({
+      'employeeProfile.currentGrade': 'G4',
+      'employeeProfile.yearsInGrade': 1.5,
+      'employeeProfile.previousExperienceYears': 3,
+      'employeeProfile.qualification': 'Diploma',
+      'employeeProfile.asOfDate': '2026-03-31',
+    });
+  });
+
+  it('keeps a cycle empty when it froze before a career profile existed', async () => {
+    const liveProfileSpy = jest.spyOn(PmsEmployeeCareerProfile, 'findOne');
+    const values = await serviceRuntime().resolveEmployeeProfileSystemValues(
+      '64b000000000000000000099',
+      {
+        profileAvailable: false,
+        careerProgressionPast: [],
+        snapshotAt: new Date('2026-04-01T00:00:00.000Z'),
+        trigger: EmployeeCareerProfileSnapshotTrigger.ANNUAL_DECISION_DRAFT,
+      },
+    );
+
+    expect(liveProfileSpy).not.toHaveBeenCalled();
+    expect(values['employeeProfile.currentGrade']).toBe('Not available');
+    expect(values['employeeProfile.careerProgressionPast']).toEqual([]);
   });
 });

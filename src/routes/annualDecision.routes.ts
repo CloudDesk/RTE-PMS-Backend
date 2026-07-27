@@ -4,16 +4,73 @@ import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import type {
   AnnualDecisionListQuery,
+  ReassignFinalReviewerInput,
   OverrideFinalRatingInput,
   OverrideFinalScoreInput,
   ReopenDecisionInput,
   SaveDecisionDraftInput,
+  SaveFinalReviewInput,
   UpdateVisibilityInput,
 } from '../services/annualDecision.service';
 
 export const annualDecisionRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
+  fastify.get(
+    '/my-final-reviews',
+    { onRequest: [authenticate], schema: { tags: ['PMS Final Review'] } },
+    async (request, reply) => {
+      try {
+        const items = await request.container!.annualDecisionService.listMyFinalReviews();
+        return reply.send(successResponse('My Final Reviews fetched successfully', items));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.put(
+    '/:id/decision/final-review',
+    { onRequest: [authenticate], schema: { tags: ['PMS Final Review'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.annualDecisionService.saveFinalReview(id, request.body as SaveFinalReviewInput);
+        return reply.send(successResponse('Final Review saved successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/decision/final-review/complete',
+    { onRequest: [authenticate], schema: { tags: ['PMS Final Review'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.annualDecisionService.completeFinalReview(id);
+        return reply.send(successResponse('Final Review completed successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/:id/final-reviewer/reassign',
+    { onRequest: [authenticate], schema: { tags: ['PMS Final Review'] } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const result = await request.container!.annualDecisionService.reassignFinalReviewer(id, request.body as ReassignFinalReviewerInput);
+        return reply.send(successResponse('Final Reviewer reassigned successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.get(
     '/',
     { onRequest: [authenticate], schema: { tags: ['PMS Annual Appraisal Decision'] } },

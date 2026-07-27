@@ -271,7 +271,7 @@ describe('PMS template permission policy validation', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'ADMIN',
-          workflowState: 'COMMUNICATION_READY',
+          workflowState: 'MANAGEMENT_DECISION_DRAFT',
           editability: 'EDITABLE',
         }),
         expect.objectContaining({

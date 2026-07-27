@@ -9,10 +9,15 @@ import {
   PmsEmployeeProfileImportStatus,
 } from '../../src/models/pms-employee-profile-import.model';
 import { PmsEmployeeProfileImportRow } from '../../src/models/pms-employee-profile-import-row.model';
+import { PmsEmployeeProfileImportFile } from '../../src/models/pms-employee-profile-import-file.model';
 import {
   PmsEmployeeCareerProfileChange,
   PmsEmployeeCareerProfileChangeAction,
 } from '../../src/models/pms-employee-career-profile-change.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../../src/models/pms-annual-assignment.model';
 
 describe('PMS employee career profile data foundation', () => {
   it('accepts a valid manually maintained profile with embedded career history', async () => {
@@ -110,6 +115,44 @@ describe('PMS employee career profile data foundation', () => {
     expect(employeeIndex?.[1]?.unique).toBe(true);
     expect(employeeCodeIndex?.[1]?.unique).toBe(true);
   });
+
+  it('defines a validated cycle snapshot on the annual assignment', async () => {
+    const assignment = new AnnualAssignment({
+      employeeId: new Types.ObjectId(),
+      assignedManagerId: new Types.ObjectId(),
+      cycleId: new Types.ObjectId(),
+      applicableTerms: ['Q1'],
+      careerProfileSnapshot: {
+        profileAvailable: true,
+        sourceProfileId: new Types.ObjectId(),
+        profileVersion: 2,
+        currentGrade: 'G5',
+        yearsInGradeAtReferenceDate: 1.5,
+        previousExperienceYears: 4,
+        qualification: 'B.E.',
+        careerProgressionPast: [
+          {
+            year: 2024,
+            grade: 'G4',
+            function: 'Operations',
+            unitOrDepartment: 'Plant 1',
+            sequence: 1,
+          },
+        ],
+        profileAsOfDate: new Date('2026-03-31T00:00:00.000Z'),
+        snapshotAt: new Date('2026-04-01T00:00:00.000Z'),
+        trigger:
+          EmployeeCareerProfileSnapshotTrigger
+            .FIRST_MANAGER_REVIEW_SUBMISSION,
+      },
+    });
+
+    await expect(assignment.validate()).resolves.toBeUndefined();
+    expect(assignment.careerProfileSnapshot?.profileVersion).toBe(2);
+    expect(
+      AnnualAssignment.schema.path('careerProfileSnapshot.snapshotAt'),
+    ).toBeDefined();
+  });
 });
 
 describe('PMS employee profile import audit data foundation', () => {
@@ -125,7 +168,31 @@ describe('PMS employee profile import audit data foundation', () => {
     expect(importAudit.status).toBe(PmsEmployeeProfileImportStatus.UPLOADED);
     expect(importAudit.fileChecksum).toBe('abcdef123456');
     expect(importAudit.counts.profileRows).toBe(0);
+    expect(importAudit.confirmationAttemptCount).toBe(0);
+    expect(importAudit.validationAttemptCount).toBe(0);
+    expect(importAudit.progress.percent).toBe(0);
     expect(importAudit.validationIssues).toEqual([]);
+  });
+
+  it('stores confirmation recovery audit metadata', async () => {
+    const actorId = new Types.ObjectId();
+    const attemptedAt = new Date('2026-07-24T12:00:00.000Z');
+    const importAudit = new PmsEmployeeProfileImport({
+      originalFileName: 'employee-career-profiles.xlsx',
+      fileChecksum: 'abcdef123456',
+      templateVersion: '1.1',
+      status: PmsEmployeeProfileImportStatus.COMPLETED,
+      uploadedBy: actorId,
+      confirmationAttemptCount: 2,
+      lastAttemptedAt: attemptedAt,
+      lastAttemptedBy: actorId,
+      lastFailedAt: new Date('2026-07-24T11:55:00.000Z'),
+      recoveredAt: attemptedAt,
+    });
+
+    await expect(importAudit.validate()).resolves.toBeUndefined();
+    expect(importAudit.confirmationAttemptCount).toBe(2);
+    expect(importAudit.recoveredAt).toEqual(attemptedAt);
   });
 
   it('stores structured validation issues for later import phases', async () => {
@@ -165,6 +232,15 @@ describe('PMS employee profile import audit data foundation', () => {
       previousExperienceYears: 3.5,
       qualification: 'B.E.',
       asOfDate: new Date('2026-04-01T00:00:00.000Z'),
+      sourceProfileVersion: 2,
+      submittedCareerProgressionPast: [
+        {
+          year: 2025,
+          grade: 'G5',
+          function: 'Operations',
+          sequence: 1,
+        },
+      ],
       careerProgressionPast: [
         {
           year: 2024,
@@ -176,10 +252,26 @@ describe('PMS employee profile import audit data foundation', () => {
     });
 
     await expect(row.validate()).resolves.toBeUndefined();
+    expect(row.sourceProfileVersion).toBe(2);
+    expect(row.submittedCareerProgressionPast).toHaveLength(1);
     const uniqueIndex = PmsEmployeeProfileImportRow.schema
       .indexes()
       .find(([fields]) => fields.importId === 1 && fields.employeeId === 1);
     expect(uniqueIndex?.[1]?.unique).toBe(true);
+  });
+
+  it('stores temporary workbooks with an automatic expiry index', async () => {
+    const storedFile = new PmsEmployeeProfileImportFile({
+      importId: new Types.ObjectId(),
+      workbook: Buffer.from('xlsx-content'),
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    await expect(storedFile.validate()).resolves.toBeUndefined();
+    const ttlIndex = PmsEmployeeProfileImportFile.schema
+      .indexes()
+      .find(([fields]) => fields.expiresAt === 1);
+    expect(ttlIndex?.[1]?.expireAfterSeconds).toBe(0);
   });
 });
 

@@ -359,6 +359,33 @@ describe('PMS template objective table layout Phase 1', () => {
     ).toEqual([]);
   });
 
+  it('allows multiple predefined presentation groups for Metrics-style merged rows', () => {
+    const grouped = validLayout();
+    grouped.rowGroups = [
+      { rowGroupKey: 'metrics-p', label: 'P', source: 'PREDEFINED', displayOrder: 1 },
+      { rowGroupKey: 'metrics-q', label: 'Q', source: 'PREDEFINED', displayOrder: 2 },
+      { rowGroupKey: 'employee', label: 'Employee Objectives', source: 'EMPLOYEE_CREATED', displayOrder: 3 },
+      { rowGroupKey: 'manager', label: 'Manager Objectives', source: 'MANAGER_CREATED', displayOrder: 4 },
+    ];
+    grouped.rowAssignments = [
+      { objectiveKey: 'on-time-delivery', rowGroupKey: 'metrics-p', displayOrder: 1 },
+    ];
+    const section = objectiveSection(grouped);
+    const predefinedObjectives =
+      section.objectiveConfig?.predefinedObjectives || [];
+    predefinedObjectives[0]!.rowGroupKey = 'metrics-p';
+
+    expect(
+      objectiveTableLayoutValidationErrors(grouped, {
+        activationReady: true,
+        predefinedObjectives,
+        templateFieldKeys: ['objective_notes'],
+        allowEmployeeCreated: true,
+        allowManagerCreated: true,
+      }),
+    ).toEqual([]);
+  });
+
   it('accepts activation-ready flat layouts without dynamic row groups', () => {
     const flat = validLayout();
     flat.rowGroups = [];

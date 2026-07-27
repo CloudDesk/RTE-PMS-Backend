@@ -11,17 +11,22 @@ import {
   TermWorkflowState,
   WorkflowEntityType,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { PmsTemplate } from '../models/pms-template.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
+import { User } from '../models/user.model';
 import { WorkflowEvent } from '../models/pms-workflow-event.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { emailService } from './email.service';
 import { ObjectiveService } from './objective.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { workflowService } from './workflow.service';
 import {
   defaultReviewCadenceConfig,
@@ -35,6 +40,7 @@ import type {
   AssessmentTermCode as AssessmentTermCodeType,
   AssessmentTermType as AssessmentTermTypeType,
 } from '../constants/pms.enums';
+import { assertFinalReviewTemplateConfigured } from '../utilis/finalReviewTemplate';
 
 type QuarterCode = AssessmentTermCodeType;
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
@@ -98,6 +104,8 @@ export interface CreateCycleInput {
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
   reviewCadenceConfig?: Partial<ReviewCadenceConfig> | Record<string, unknown>;
+  finalReviewRequired?: boolean;
+  defaultFinalReviewerId?: string;
 }
 
 interface AppraisalWindowConfigInput {
@@ -135,6 +143,8 @@ export interface UpdateCycleInput {
   appraisalWindowConfig?: Record<string, unknown>;
   communicationRuleConfig?: ICommunicationRuleConfig;
   reviewCadenceConfig?: Partial<ReviewCadenceConfig> | Record<string, unknown>;
+  finalReviewRequired?: boolean;
+  defaultFinalReviewerId?: string;
 }
 
 export interface CycleListQuery {
@@ -273,6 +283,11 @@ export class CycleService extends BaseService {
       input.startDate,
       input.endDate,
     );
+    await this.validateFinalReviewConfiguration(
+      input.finalReviewRequired === true,
+      input.defaultFinalReviewerId,
+      templateVersionId,
+    );
     let code = input.code.trim().toUpperCase();
     let existingCycle = await AnnualCycle.exists({ code });
     if (existingCycle) {
@@ -312,6 +327,10 @@ export class CycleService extends BaseService {
               input.reviewCadenceConfig,
               input.assessmentTermType ?? getDefaultAssessmentTermType(),
             ),
+            finalReviewRequired: input.finalReviewRequired === true,
+            defaultFinalReviewerId: input.defaultFinalReviewerId
+              ? this.toObjectId(input.defaultFinalReviewerId, 'defaultFinalReviewerId')
+              : undefined,
             createdBy: this.actorIdObject(),
           },
         ],
@@ -386,6 +405,11 @@ export class CycleService extends BaseService {
     }).sort({ assessmentTermCode: 1 });
     const mergedInput = await this.buildMergedUpdateInput(cycle, existingQuarters, input);
     this.validateCycleInput(mergedInput);
+    await this.validateFinalReviewConfiguration(
+      mergedInput.finalReviewRequired === true,
+      mergedInput.defaultFinalReviewerId,
+      this.toObjectId(mergedInput.templateVersionId, 'templateVersionId'),
+    );
 
     const previousValue = {
       annualCycle: cycle.toObject(),
@@ -457,6 +481,17 @@ export class CycleService extends BaseService {
           input.reviewCadenceConfig ?? cycle.reviewCadenceConfig ?? defaultReviewCadenceConfig(),
           input.assessmentTermType ?? cycle.assessmentTermType ?? getDefaultAssessmentTermType(),
         );
+      }
+      if (input.finalReviewRequired !== undefined) {
+        cycle.finalReviewRequired = input.finalReviewRequired;
+        if (!input.finalReviewRequired) {
+          cycle.defaultFinalReviewerId = undefined;
+        }
+      }
+      if (input.defaultFinalReviewerId !== undefined) {
+        cycle.defaultFinalReviewerId = input.defaultFinalReviewerId
+          ? this.toObjectId(input.defaultFinalReviewerId, 'defaultFinalReviewerId')
+          : undefined;
       }
       cycle.updatedBy = this.actorIdObject();
 
@@ -611,6 +646,19 @@ export class CycleService extends BaseService {
     const reason = input.reason?.trim();
     if (!reason) {
       throw new Error('Close reason is required');
+    }
+    const assignmentIds = await AnnualAssignment.find({
+      cycleId: cycle._id,
+      isDeleted: false,
+    }).distinct('_id');
+    const snapshotService = new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    );
+    for (const assignmentId of assignmentIds) {
+      await snapshotService.freezeForAnnualAssignment(
+        assignmentId,
+        EmployeeCareerProfileSnapshotTrigger.ASSIGNMENT_CLOSED,
+      );
     }
     return this.executeTransition(cycle, AnnualWorkflowState.CLOSED, 'PMS_CYCLE_CLOSED', {
       closedAt: new Date(),
@@ -1041,7 +1089,46 @@ export class CycleService extends BaseService {
         input.communicationRuleConfig ?? cycle.communicationRuleConfig ?? {},
       reviewCadenceConfig:
         input.reviewCadenceConfig ?? cycle.reviewCadenceConfig ?? defaultReviewCadenceConfig(),
+      finalReviewRequired:
+        input.finalReviewRequired ?? cycle.finalReviewRequired ?? false,
+      defaultFinalReviewerId:
+        input.defaultFinalReviewerId ?? cycle.defaultFinalReviewerId?.toString(),
     };
+  }
+
+  private async validateFinalReviewConfiguration(
+    finalReviewRequired: boolean,
+    defaultFinalReviewerId: string | undefined,
+    templateVersionId: Types.ObjectId,
+  ): Promise<void> {
+    if (!finalReviewRequired) return;
+
+    const templateVersion = await PmsTemplateVersion.findById(templateVersionId)
+      .select('sections')
+      .lean();
+    if (!templateVersion) {
+      throw new Error('Template version not found for Final Review configuration');
+    }
+    assertFinalReviewTemplateConfigured(templateVersion.sections ?? []);
+
+    if (!defaultFinalReviewerId) return;
+    const defaultReviewerObjectId = this.toObjectId(
+      defaultFinalReviewerId,
+      'defaultFinalReviewerId',
+    );
+    const defaultReviewer = await User.findById(defaultReviewerObjectId)
+      .select('role active portalAccess')
+      .lean();
+    if (!defaultReviewer) throw new Error('Default Final Reviewer was not found');
+    if (defaultReviewer.active === false) {
+      throw new Error('Default Final Reviewer must be active');
+    }
+    if (defaultReviewer.portalAccess === false) {
+      throw new Error('Default Final Reviewer must have portal access');
+    }
+    if (String(defaultReviewer.role).trim().toLowerCase() !== 'director') {
+      throw new Error('Default Final Reviewer must have the Director role');
+    }
   }
 
   private termCyclesToInput(termCycles: ITermCycle[]): TermCycleInput[] {
@@ -1970,6 +2057,14 @@ export class CycleService extends BaseService {
     return actorId && Types.ObjectId.isValid(actorId)
       ? new Types.ObjectId(actorId)
       : undefined;
+  }
+
+  private toObjectId(value: string, fieldName: string): Types.ObjectId {
+    const normalized = String(value || '').trim();
+    if (!Types.ObjectId.isValid(normalized)) {
+      throw new Error(`Valid ${fieldName} is required`);
+    }
+    return new Types.ObjectId(normalized);
   }
 
   private requireActor() {

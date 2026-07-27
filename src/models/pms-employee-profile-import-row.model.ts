@@ -5,6 +5,11 @@ export interface IPmsEmployeeProfileImportRow extends Document {
   importId: Types.ObjectId;
   employeeId: Types.ObjectId;
   employeeCode: string;
+  employeeName?: string;
+  designation?: string;
+  department?: string;
+  managerName?: string;
+  warnings: string[];
   sourceRowNumber: number;
   currentGrade: string;
   gradeEffectiveDate?: Date;
@@ -12,6 +17,8 @@ export interface IPmsEmployeeProfileImportRow extends Document {
   previousExperienceYears?: number;
   qualification?: string;
   asOfDate: Date;
+  sourceProfileVersion?: number;
+  submittedCareerProgressionPast: IPmsCareerProgressionPastEntry[];
   careerProgressionPast: IPmsCareerProgressionPastEntry[];
   createdAt: Date;
   updatedAt: Date;
@@ -47,6 +54,14 @@ const pmsEmployeeProfileImportRowSchema =
         trim: true,
         maxlength: 50,
       },
+      employeeName: { type: String, trim: true, maxlength: 200 },
+      designation: { type: String, trim: true, maxlength: 200 },
+      department: { type: String, trim: true, maxlength: 200 },
+      managerName: { type: String, trim: true, maxlength: 200 },
+      warnings: {
+        type: [{ type: String, trim: true, maxlength: 1000 }],
+        default: [],
+      },
       sourceRowNumber: { type: Number, required: true, min: 2 },
       currentGrade: {
         type: String,
@@ -59,6 +74,11 @@ const pmsEmployeeProfileImportRowSchema =
       previousExperienceYears: { type: Number, min: 0, max: 80 },
       qualification: { type: String, trim: true, maxlength: 250 },
       asOfDate: { type: Date, required: true },
+      sourceProfileVersion: { type: Number, min: 0 },
+      submittedCareerProgressionPast: {
+        type: [careerProgressionPastSchema],
+        default: [],
+      },
       careerProgressionPast: {
         type: [careerProgressionPastSchema],
         default: [],

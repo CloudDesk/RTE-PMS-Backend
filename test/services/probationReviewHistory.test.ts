@@ -90,8 +90,8 @@ describe('ProbationReviewService history', () => {
       assignmentId: assignmentId.toString(),
       employeeName: 'Trainee One',
       actorName: 'Manager One',
-      filledByName: 'Filling Manager',
-      approvedByName: 'Approving Manager',
+      filledByName: 'Manager One',
+      approvedByName: '-',
       status: 'RETURNED',
       comment: 'Update ratings',
     });

@@ -171,6 +171,7 @@ export interface ITemplateObjectiveCalculatedRow {
 export interface ITemplateObjectiveTableLayout {
   enabled: boolean;
   layoutVersion: number;
+  rowGroupColumnLabel?: string;
   columns: ITemplateObjectiveTableColumn[];
   columnGroups: ITemplateObjectiveColumnGroup[];
   rowGroups: ITemplateObjectiveRowGroup[];
@@ -592,6 +593,7 @@ const objectiveTableLayoutSchema = new Schema<ITemplateObjectiveTableLayout>(
   {
     enabled: { type: Boolean, default: false },
     layoutVersion: { type: Number, required: true, min: 1, default: 1 },
+    rowGroupColumnLabel: { type: String, trim: true, default: 'Row group' },
     columns: { type: [objectiveTableColumnSchema], default: [] },
     columnGroups: { type: [objectiveColumnGroupSchema], default: [] },
     rowGroups: { type: [objectiveRowGroupSchema], default: [] },
