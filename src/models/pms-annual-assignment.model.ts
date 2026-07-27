@@ -45,6 +45,7 @@ export interface IEmployeeCareerProfileSnapshot {
   careerProgressionPast: Array<{
     year: number;
     grade?: string;
+    progression?: string;
     function?: string;
     unitOrDepartment?: string;
     sequence: number;
@@ -130,6 +131,7 @@ const careerProfileSnapshotEntrySchema = new Schema(
   {
     year: { type: Number, required: true, min: 1900, max: 2200 },
     grade: { type: String, trim: true, maxlength: 100 },
+    progression: { type: String, trim: true, maxlength: 150 },
     function: { type: String, trim: true, maxlength: 150 },
     unitOrDepartment: { type: String, trim: true, maxlength: 150 },
     sequence: { type: Number, required: true, min: 1 },

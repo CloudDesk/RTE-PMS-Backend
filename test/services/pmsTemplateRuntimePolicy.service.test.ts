@@ -321,6 +321,7 @@ describe('PMS template runtime policy regression', () => {
           {
             year: 2023,
             grade: 'G4',
+            progression: 'Promotion+Merit 50',
             function: 'Production',
             unitOrDepartment: 'Plant 1',
             sequence: 1,
@@ -339,6 +340,7 @@ describe('PMS template runtime policy regression', () => {
       {
         year: 2023,
         grade: 'G4',
+        progression: 'Promotion+Merit 50',
         function: 'Production',
         unitOrDepartment: 'Plant 1',
       },

@@ -63,6 +63,7 @@ describe('PMS employee career-profile cycle snapshots', () => {
           {
             year: 2022,
             grade: 'G3',
+            progression: 'Promotion',
             function: 'Production',
             unitOrDepartment: 'Plant 1',
             sequence: 2,
@@ -70,6 +71,7 @@ describe('PMS employee career-profile cycle snapshots', () => {
           {
             year: 2024,
             grade: 'G4',
+            progression: 'Promotion+Merit 50',
             function: 'Production',
             unitOrDepartment: 'Plant 2',
             sequence: 1,
@@ -97,6 +99,10 @@ describe('PMS employee career-profile cycle snapshots', () => {
     });
     expect(snapshot.careerProgressionPast.map((entry) => entry.year)).toEqual([
       2024, 2022,
+    ]);
+    expect(snapshot.careerProgressionPast.map((entry) => entry.progression)).toEqual([
+      'Promotion+Merit 50',
+      'Promotion',
     ]);
   });
 

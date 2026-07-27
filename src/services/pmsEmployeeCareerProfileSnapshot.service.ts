@@ -64,6 +64,7 @@ export function buildEmployeeCareerProfileSnapshot(
       .map((entry) => ({
         year: entry.year,
         grade: entry.grade,
+        progression: entry.progression,
         function: entry.function,
         unitOrDepartment: entry.unitOrDepartment,
         sequence: entry.sequence,

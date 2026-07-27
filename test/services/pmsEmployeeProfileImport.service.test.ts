@@ -84,6 +84,60 @@ describe('PMS employee profile Phase 2 workbook template', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
+  it('generates the current one-sheet progression template without Grade LOV columns', async () => {
+    const workbook = await service().buildSingleSheetTemplateWorkbook({
+      ...referenceData,
+      generatedAt: new Date('2026-07-27T06:30:00.000Z'),
+      generatedBy: 'ADM001 - PMS Admin',
+    });
+
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      'Instructions',
+      'Career Progression',
+      'Employee Reference',
+      'Data Config',
+    ]);
+    expect(
+      workbook.getWorksheet('Career Progression')?.getRow(1).values,
+    ).toEqual([
+      undefined,
+      'Emp Code',
+      'Emp Name',
+      'Year',
+      'Progression',
+      'Promoted as',
+    ]);
+    expect(
+      workbook.getWorksheet('Instructions')?.getCell('B2').value,
+    ).toBe('single-sheet-v1');
+    expect(
+      workbook.getWorksheet('Employee Reference')?.getCell('A2').value,
+    ).toBe('RTE0001');
+    expect(
+      workbook.getWorksheet('Data Config')?.getCell('A2').value,
+    ).toBe('Emp Code');
+    expect(
+      (workbook.getWorksheet('Career Progression') as any).dataValidations
+        .model,
+    ).toHaveProperty(
+      `A2:A${PMS_EMPLOYEE_PROFILE_MAX_CAREER_ROWS + 1}`,
+    );
+    expect(
+      (workbook.getWorksheet('Career Progression')?.model as any)
+        .sheetProtection,
+    ).toBeNull();
+    expect(
+      (workbook.getWorksheet('Instructions')?.model as any).sheetProtection,
+    ).toBeNull();
+    expect(
+      (workbook.getWorksheet('Employee Reference')?.model as any)
+        .sheetProtection,
+    ).toBeNull();
+    expect(
+      (workbook.getWorksheet('Data Config')?.model as any).sheetProtection,
+    ).toBeNull();
+  });
+
   it('generates the exact five-sheet versioned workbook with reference data', async () => {
     const workbook = await templateWorkbook();
 
@@ -222,6 +276,290 @@ describe('PMS employee profile Phase 2 workbook template', () => {
       new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())),
     );
     expect(result.profiles[0].careerProgressionPast).toHaveLength(1);
+  });
+
+  it('derives current grade and past progression from the grouped single-sheet format', async () => {
+    const singleSheetReference: PmsEmployeeProfileReferenceData = {
+      ...referenceData,
+      employees: [
+        {
+          ...referenceData.employees[0],
+          employeeCode: '8502',
+          name: 'SARAVANAN R',
+        },
+      ],
+    };
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Progression');
+    sheet.addRow([
+      'Emp Code',
+      'Emp Name',
+      'Year',
+      'Progression',
+      'Promoted as',
+    ]);
+    sheet.addRow([
+      8502,
+      'SARAVANAN R',
+      'Apr-21',
+      'Promotion',
+      'ENGINEER',
+    ]);
+    sheet.addRow(['', '', 'Apr-22', 'Merit 100', '']);
+    sheet.addRow([
+      '',
+      '',
+      'Apr-23',
+      'Promotion+Merit 50',
+      'Sr. Engineer',
+    ]);
+    sheet.addRow(['', '', 'Apr-24', 'Merit 100', '']);
+    sheet.addRow([
+      '',
+      '',
+      'Apr-25',
+      'Promotion+Merit 50',
+      'Asst. Manager',
+    ]);
+
+    const result = await service().validateWorkbookBuffer(
+      await workbookBuffer(workbook),
+      singleSheetReference,
+    );
+
+    expect(result.templateVersion).toBe('single-sheet-v1');
+    expect(result.canImport).toBe(true);
+    expect(result.validCount).toBe(1);
+    expect(result.profileRowCount).toBe(1);
+    expect(result.careerRowCount).toBe(5);
+    expect(result.profiles[0]).toMatchObject({
+      employeeCode: '8502',
+      employeeName: 'SARAVANAN R',
+      currentGrade: 'Asst. Manager',
+      gradeEffectiveDate: new Date('2025-04-01T00:00:00.000Z'),
+    });
+    expect(result.profiles[0].careerProgressionPast).toEqual([
+      expect.objectContaining({
+        year: 2021,
+        grade: 'ENGINEER',
+        progression: 'Promotion',
+      }),
+      expect.objectContaining({
+        year: 2022,
+        grade: undefined,
+        progression: 'Merit 100',
+      }),
+      expect.objectContaining({
+        year: 2023,
+        grade: 'Sr. Engineer',
+        progression: 'Promotion+Merit 50',
+      }),
+      expect.objectContaining({
+        year: 2024,
+        grade: undefined,
+        progression: 'Merit 100',
+      }),
+    ]);
+  });
+
+  it('accepts a real Excel date and appends a repeated employee code to the same group', async () => {
+    const singleSheetReference: PmsEmployeeProfileReferenceData = {
+      ...referenceData,
+      employees: [
+        {
+          ...referenceData.employees[0],
+          employeeCode: '8502',
+          name: 'SARAVANAN R',
+        },
+      ],
+    };
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Career Progression');
+    sheet.addRow([
+      'Emp Code',
+      'Emp Name',
+      'Year',
+      'Progression',
+      'Promoted as',
+    ]);
+    sheet.addRow([8502, 'SARAVANAN R', 'Apr-21', 'Promotion', 'ENGINEER']);
+    sheet.addRow(['', '', 'Apr-22', 'Merit 100', '']);
+    sheet.addRow([
+      '',
+      '',
+      'Apr-23',
+      'Promotion+Merit 50',
+      'Sr. Engineer',
+    ]);
+    sheet.addRow(['', '', 'Apr-24', 'Merit 100', '']);
+    sheet.addRow([
+      '',
+      '',
+      'Apr-25',
+      'Promotion+Merit 50',
+      'Asst. Manager',
+    ]);
+    sheet.addRow([
+      8502,
+      'Suresh',
+      new Date('2026-04-26T00:00:00.000Z'),
+      'Merit 100',
+      '',
+    ]);
+
+    const result = await service().validateWorkbookBuffer(
+      await workbookBuffer(workbook),
+      singleSheetReference,
+    );
+
+    expect(result.canImport).toBe(true);
+    expect(result.profileRowCount).toBe(1);
+    expect(result.careerRowCount).toBe(6);
+    expect(result.warningCount).toBe(1);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'WARNING',
+          code: 'EMPLOYEE_NAME_IGNORED',
+          employeeCode: '8502',
+        }),
+      ]),
+    );
+    expect(result.profiles[0]).toMatchObject({
+      employeeCode: '8502',
+      employeeName: 'SARAVANAN R',
+      currentGrade: 'Asst. Manager',
+      gradeEffectiveDate: new Date('2025-04-01T00:00:00.000Z'),
+    });
+    expect(result.profiles[0].careerProgressionPast).toContainEqual(
+      expect.objectContaining({
+        year: 2026,
+        grade: undefined,
+        progression: 'Merit 100',
+      }),
+    );
+  });
+
+  it('blocks an exact duplicate movement inside the same single-sheet workbook', async () => {
+    const singleSheetReference: PmsEmployeeProfileReferenceData = {
+      ...referenceData,
+      employees: [
+        {
+          ...referenceData.employees[0],
+          employeeCode: '8502',
+          name: 'SARAVANAN R',
+        },
+      ],
+    };
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Career Progression');
+    sheet.addRow([
+      'Emp Code',
+      'Emp Name',
+      'Year',
+      'Progression',
+      'Promoted as',
+    ]);
+    sheet.addRow([8502, 'SARAVANAN R', 'Apr-25', 'Promotion', 'Engineer']);
+    sheet.addRow([8502, 'SARAVANAN R', 'Apr-25', 'Promotion', 'Engineer']);
+
+    const result = await service().validateWorkbookBuffer(
+      await workbookBuffer(workbook),
+      singleSheetReference,
+    );
+
+    expect(result.canImport).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'ERROR',
+          code: 'DUPLICATE_CAREER_MOVEMENT',
+          employeeCode: '8502',
+        }),
+      ]),
+    );
+  });
+
+  it('ignores a year-only row when progression and promoted title are both blank', async () => {
+    const singleSheetReference: PmsEmployeeProfileReferenceData = {
+      ...referenceData,
+      employees: [
+        {
+          ...referenceData.employees[0],
+          employeeCode: '8502',
+          name: 'SARAVANAN R',
+        },
+      ],
+    };
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Career Progression');
+    sheet.addRow([
+      'Emp Code',
+      'Emp Name',
+      'Year',
+      'Progression',
+      'Promoted as',
+    ]);
+    sheet.addRow([8502, 'SARAVANAN R', 'Apr-25', 'Promotion', 'Asst. Manager']);
+    sheet.addRow([
+      8502,
+      'SARAVANAN R',
+      new Date('2026-04-25T00:00:00.000Z'),
+      '',
+      '',
+    ]);
+
+    const result = await service().validateWorkbookBuffer(
+      await workbookBuffer(workbook),
+      singleSheetReference,
+    );
+
+    expect(result.canImport).toBe(true);
+    expect(result.careerRowCount).toBe(1);
+    expect(result.profiles[0]).toMatchObject({
+      currentGrade: 'Asst. Manager',
+      gradeEffectiveDate: new Date('2025-04-01T00:00:00.000Z'),
+      careerProgressionPast: [],
+    });
+    expect(result.issues).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'PROGRESSION_REQUIRED' }),
+      ]),
+    );
+  });
+
+  it('accepts promoted title without a progression value', async () => {
+    const singleSheetReference: PmsEmployeeProfileReferenceData = {
+      ...referenceData,
+      employees: [
+        {
+          ...referenceData.employees[0],
+          employeeCode: '8502',
+          name: 'SARAVANAN R',
+        },
+      ],
+    };
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Career Progression');
+    sheet.addRow([
+      'Emp Code',
+      'Emp Name',
+      'Year',
+      'Progression',
+      'Promoted as',
+    ]);
+    sheet.addRow([8502, 'SARAVANAN R', 'Apr-25', '', 'Asst. Manager']);
+
+    const result = await service().validateWorkbookBuffer(
+      await workbookBuffer(workbook),
+      singleSheetReference,
+    );
+
+    expect(result.canImport).toBe(true);
+    expect(result.profiles[0]).toMatchObject({
+      currentGrade: 'Asst. Manager',
+      gradeEffectiveDate: new Date('2025-04-01T00:00:00.000Z'),
+    });
   });
 
   it('accepts Employee Profile data when optional Career Progression Past is blank', async () => {
@@ -523,13 +861,30 @@ describe('PMS employee profile Phase 2 workbook template', () => {
       employeeId,
       employeeCode: `RTE100${index + 1}`,
       sourceRowNumber: index + 2,
-      currentGrade: index === 1 ? 'G5' : 'G4',
+      currentGrade: index === 1 ? 'Asst. Manager' : 'G4',
+      gradeEffectiveDate:
+        index === 1 ? new Date('2025-04-01T00:00:00.000Z') : undefined,
       yearsInGrade: index + 1,
       previousExperienceYears: index,
       qualification: index === 1 ? undefined : 'B.E.',
       asOfDate: confirmationDate,
       sourceProfileVersion: index === 0 ? 1 : index === 1 ? 3 : 0,
-      careerProgressionPast: [],
+      careerProgressionPast:
+        index === 1
+          ? [
+              {
+                year: 2023,
+                grade: 'Sr. Engineer',
+                progression: 'Promotion+Merit 50',
+                sequence: 1,
+              },
+              {
+                year: 2024,
+                progression: 'Merit 100',
+                sequence: 2,
+              },
+            ]
+          : [],
     }));
     const existingProfiles = [
       {
@@ -562,6 +917,7 @@ describe('PMS employee profile Phase 2 workbook template', () => {
       lean: jest.fn().mockResolvedValue({
         _id: importId,
         status: 'VALIDATED',
+        templateVersion: 'single-sheet-v1',
         counts: {
           validProfiles: 3,
           createdProfiles: 0,
@@ -630,6 +986,26 @@ describe('PMS employee profile Phase 2 workbook template', () => {
         (operation) => operation.updateOne?.update?.$unset?.qualification === 1,
       ),
     ).toBe(true);
+    const updatedProfile = operations.find(
+      (operation) => operation.updateOne,
+    )?.updateOne?.update?.$set;
+    expect(updatedProfile).toMatchObject({
+      currentGrade: 'Asst. Manager',
+      gradeEffectiveDate: new Date('2025-04-01T00:00:00.000Z'),
+      careerProgressionPast: [
+        {
+          year: 2023,
+          grade: 'Sr. Engineer',
+          progression: 'Promotion+Merit 50',
+          sequence: 1,
+        },
+        {
+          year: 2024,
+          progression: 'Merit 100',
+          sequence: 2,
+        },
+      ],
+    });
     expect(session.withTransaction).toHaveBeenCalledTimes(1);
     expect(session.endSession).toHaveBeenCalledTimes(1);
   });
@@ -934,12 +1310,7 @@ function mockExistingCareerProfile(careerProgressionPast: any[]) {
 }
 
 describe('PMS employee profile Phase 4 manual validation', () => {
-  const activeGrades = new Map([
-    ['g4', 'G4'],
-    ['g5', 'G5'],
-  ]);
-
-  it('normalizes a valid manual profile using the same grade and career rules', () => {
+  it('preserves free-text grade values and validates career rules', () => {
     const result = (service() as any).validateManualProfileInput(
       {
         reasonForChange: 'Corrected from the approved HR source record',
@@ -957,29 +1328,78 @@ describe('PMS employee profile Phase 4 manual validation', () => {
           },
         ],
       },
-      activeGrades,
     );
 
-    expect(result.currentGrade).toBe('G5');
-    expect(result.careerProgressionPast[0].grade).toBe('G4');
+    expect(result.currentGrade).toBe('g5');
+    expect(result.careerProgressionPast[0].grade).toBe('g4');
     expect(result.previousExperienceYears).toBe(3.5);
   });
 
-  it('rejects an inactive grade', () => {
-    expect(() =>
-      (service() as any).validateManualProfileInput(
+  it('accepts free-text current and promoted grade values without an LOV', () => {
+    const result = (service() as any).validateManualProfileInput({
+      reasonForChange: 'Manual correction',
+      currentGrade: 'Asst. Manager',
+      yearsInGrade: 2,
+      careerProgressionPast: [
         {
-          reasonForChange: 'Manual correction',
-          currentGrade: 'G5',
-          yearsInGrade: 2,
-          careerProgressionPast: [
-            { year: 2024, grade: 'G4', sequence: 1 },
-            { year: 2024, grade: 'G6', sequence: 1 },
-          ],
+          year: 2024,
+          grade: 'Sr. Engineer',
+          progression: 'Promotion',
+          sequence: 1,
         },
-        activeGrades,
-      ),
-    ).toThrow();
+      ],
+    });
+
+    expect(result.currentGrade).toBe('Asst. Manager');
+    expect(result.careerProgressionPast[0]).toMatchObject({
+      grade: 'Sr. Engineer',
+      progression: 'Promotion',
+    });
+  });
+
+  it('ignores completely blank manually added rows', () => {
+    const result = (service() as any).validateManualProfileInput({
+      reasonForChange: 'Manual profile creation',
+      currentGrade: 'Asst. Manager',
+      yearsInGrade: 1,
+      careerProgressionPast: [
+        {
+          year: 2026,
+          grade: '',
+          progression: '',
+          function: '',
+          unitOrDepartment: '',
+          sequence: 1,
+        },
+      ],
+    });
+
+    expect(result.careerProgressionPast).toEqual([]);
+  });
+
+  it('accepts a manual promoted title without progression', () => {
+    const result = (service() as any).validateManualProfileInput({
+      reasonForChange: 'Manual profile creation',
+      currentGrade: 'Asst. Manager',
+      yearsInGrade: 1,
+      careerProgressionPast: [
+        {
+          year: 2025,
+          grade: 'Engineer',
+          progression: '',
+          sequence: 1,
+        },
+      ],
+    });
+
+    expect(result.careerProgressionPast).toEqual([
+      expect.objectContaining({
+        year: 2025,
+        grade: 'Engineer',
+        progression: undefined,
+        sequence: 1,
+      }),
+    ]);
   });
 
   it('rejects duplicate career year and grade even when sequence differs', () => {
@@ -994,7 +1414,6 @@ describe('PMS employee profile Phase 4 manual validation', () => {
             { year: 2024, grade: 'g4', sequence: 2 },
           ],
         },
-        activeGrades,
       ),
     ).toThrow('Each Year + Grade combination can appear only once');
   });
@@ -1010,7 +1429,6 @@ describe('PMS employee profile Phase 4 manual validation', () => {
           { year: 2024, grade: 'G5', sequence: 2 },
         ],
       },
-      activeGrades,
     );
 
     expect(result.careerProgressionPast).toHaveLength(2);
@@ -1024,10 +1442,9 @@ describe('PMS employee profile Phase 4 manual validation', () => {
           currentGrade: 'G4',
           careerProgressionPast: [],
         },
-        activeGrades,
       ),
     ).toThrow(
-      'Years in Grade is required when Grade Effective Date is unavailable',
+      'Years in Current Role is required when Role Effective Date is unavailable',
     );
   });
 });
