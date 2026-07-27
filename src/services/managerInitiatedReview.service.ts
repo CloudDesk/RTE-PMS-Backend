@@ -22,6 +22,11 @@ import { User } from '../models/user.model';
 import { auditService } from './audit.service';
 import { TermReviewService } from './termReview.service';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
+import { resolveFinalReviewer } from '../utilis/finalReviewer';
+import {
+  isFinalReviewSection,
+  validateFinalReviewTemplateSections,
+} from '../utilis/finalReviewTemplate';
 import type { IPmsTemplateVersion, ITemplateSection } from '../models/pms-template-version.model';
 
 export interface ManagerReviewTeamQuery {
@@ -397,6 +402,16 @@ export class ManagerInitiatedReviewService extends BaseService {
     if (!manager) throw new Error('Manager not found');
     if (employee.active === false) throw new Error('Employee is inactive');
 
+    validateFinalReviewTemplateSections(templateVersion.sections ?? []);
+    const finalReviewRequired = (templateVersion.sections ?? []).some(
+      isFinalReviewSection,
+    );
+    const finalReviewerResolution = await resolveFinalReviewer({
+      employeeId,
+      assignedManagerId: managerObjectId,
+      finalReviewRequired,
+    });
+
     const now = new Date();
     const startDate = this.parseDate(input.startDate, now);
     const endDate = this.parseDate(input.endDate, startDate);
@@ -425,6 +440,7 @@ export class ManagerInitiatedReviewService extends BaseService {
         managerId,
         reviewPeriodLabel,
       },
+      finalReviewRequired,
       createdBy: managerObjectId,
       updatedBy: managerObjectId,
       launchedAt: now,
@@ -468,6 +484,7 @@ export class ManagerInitiatedReviewService extends BaseService {
         location: employee.location,
         reportingManagerId: managerObjectId,
       },
+      ...finalReviewerResolution,
       createdBy: managerObjectId,
       updatedBy: managerObjectId,
     });

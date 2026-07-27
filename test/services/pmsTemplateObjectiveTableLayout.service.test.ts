@@ -211,6 +211,42 @@ function objectiveSection(layout: ITemplateObjectiveTableLayout): ITemplateSecti
   };
 }
 
+function addEvidenceColumn(layout: ITemplateObjectiveTableLayout): void {
+  layout.columns.push({
+    columnId: 'col-evidence',
+    bindingKey: 'system.objectiveEvidence',
+    label: 'Supporting Documents',
+    type: 'OBJECTIVE_EVIDENCE',
+    displayOrder: layout.columns.length + 1,
+    width: 320,
+    required: false,
+    fillOwner: 'EMPLOYEE',
+    workflowStage: 'EMPLOYEE_ACHIEVEMENT',
+    access: [
+      { role: 'EMPLOYEE', visible: true, editable: true, required: false },
+      { role: 'MANAGER', visible: true, editable: false, required: false },
+      { role: 'ADMIN', visible: true, editable: false, required: false },
+    ],
+    evidenceConfig: {
+      scope: 'PER_EMPLOYEE_TERM',
+      displayMode: 'ANNUAL_AGGREGATED',
+      maxActiveFilesPerTerm: 1,
+      replacementPolicy: 'REPLACE_ACTIVE_TERM_DOCUMENT',
+      maxFileSizeBytes: 1024 * 1024,
+      allowedMimeTypes: ['application/pdf', 'image/png'],
+      showTermLabel: true,
+      allowPreview: true,
+      allowDownload: true,
+      allowEmployeeRemove: true,
+      retainReplacementHistory: true,
+    },
+  });
+  layout.termPolicies.push({
+    columnId: 'col-evidence',
+    mode: 'EVERY_REVIEW_PERIOD',
+  });
+}
+
 describe('PMS template objective table layout Phase 1', () => {
   it('normalizes defaults and generates deterministic IDs only when absent', () => {
     const raw = {
@@ -323,6 +359,33 @@ describe('PMS template objective table layout Phase 1', () => {
     ).toEqual([]);
   });
 
+  it('allows multiple predefined presentation groups for Metrics-style merged rows', () => {
+    const grouped = validLayout();
+    grouped.rowGroups = [
+      { rowGroupKey: 'metrics-p', label: 'P', source: 'PREDEFINED', displayOrder: 1 },
+      { rowGroupKey: 'metrics-q', label: 'Q', source: 'PREDEFINED', displayOrder: 2 },
+      { rowGroupKey: 'employee', label: 'Employee Objectives', source: 'EMPLOYEE_CREATED', displayOrder: 3 },
+      { rowGroupKey: 'manager', label: 'Manager Objectives', source: 'MANAGER_CREATED', displayOrder: 4 },
+    ];
+    grouped.rowAssignments = [
+      { objectiveKey: 'on-time-delivery', rowGroupKey: 'metrics-p', displayOrder: 1 },
+    ];
+    const section = objectiveSection(grouped);
+    const predefinedObjectives =
+      section.objectiveConfig?.predefinedObjectives || [];
+    predefinedObjectives[0]!.rowGroupKey = 'metrics-p';
+
+    expect(
+      objectiveTableLayoutValidationErrors(grouped, {
+        activationReady: true,
+        predefinedObjectives,
+        templateFieldKeys: ['objective_notes'],
+        allowEmployeeCreated: true,
+        allowManagerCreated: true,
+      }),
+    ).toEqual([]);
+  });
+
   it('accepts activation-ready flat layouts without dynamic row groups', () => {
     const flat = validLayout();
     flat.rowGroups = [];
@@ -337,6 +400,69 @@ describe('PMS template objective table layout Phase 1', () => {
         allowManagerCreated: true,
       }),
     ).toEqual([]);
+  });
+
+  it('normalizes, validates, and persists the objective evidence contract', () => {
+    const layout = validLayout();
+    addEvidenceColumn(layout);
+    const normalized = normalizeObjectiveTableLayout(layout)!;
+
+    expect(normalized.columns.find((column) => column.columnId === 'col-evidence'))
+      .toMatchObject(layout.columns.find((column) => column.columnId === 'col-evidence')!);
+    expect(
+      objectiveTableLayoutValidationErrors(normalized, {
+        activationReady: true,
+        predefinedObjectives: objectiveSection(normalized).objectiveConfig!.predefinedObjectives,
+        templateFieldKeys: ['objective_notes'],
+        allowEmployeeCreated: true,
+        allowManagerCreated: true,
+      }),
+    ).toEqual([]);
+
+    const version = new PmsTemplateVersion({
+      templateId: new Types.ObjectId(),
+      versionNo: 1,
+      status: PmsTemplateStatus.DRAFT,
+      sections: [objectiveSection(normalized)],
+    });
+    expect(version.validateSync()).toBeUndefined();
+    expect(
+      version.toObject().sections[0].objectiveConfig?.tableLayout?.columns
+        .find((column) => column.columnId === 'col-evidence')?.evidenceConfig,
+    ).toMatchObject(layout.columns.find((column) => column.columnId === 'col-evidence')!.evidenceConfig!);
+  });
+
+  it('rejects unsafe objective evidence configuration', () => {
+    const invalid = validLayout();
+    addEvidenceColumn(invalid);
+    const evidence = invalid.columns.find((column) => column.columnId === 'col-evidence')!;
+    evidence.bindingKey = 'custom.evidence';
+    evidence.fillOwner = 'MANAGER';
+    evidence.workflowStage = 'MANAGER_REVIEW';
+    evidence.required = true;
+    evidence.access = [{ role: 'MANAGER', visible: true, editable: true, required: true }];
+    evidence.evidenceConfig!.maxActiveFilesPerTerm = 2 as 1;
+    invalid.termPolicies.find((policy) => policy.columnId === 'col-evidence')!.mode = 'SHARED_ANNUAL';
+    invalid.columns.push({ ...evidence, columnId: 'col-evidence-2', displayOrder: 5 });
+    invalid.termPolicies.push({ columnId: 'col-evidence-2', mode: 'EVERY_REVIEW_PERIOD' });
+
+    const errors = objectiveTableLayoutValidationErrors(invalid, {
+      activationReady: true,
+      predefinedObjectives: objectiveSection(invalid).objectiveConfig!.predefinedObjectives,
+      templateFieldKeys: ['objective_notes'],
+      allowEmployeeCreated: true,
+      allowManagerCreated: true,
+    });
+
+    expect(errors).toEqual(expect.arrayContaining([
+      'Objective table layout allows only one OBJECTIVE_EVIDENCE column',
+      'Objective table layout evidence column "col-evidence" must use bindingKey "system.objectiveEvidence"',
+      'Objective table layout evidence column "col-evidence" must be EMPLOYEE/EMPLOYEE_ACHIEVEMENT',
+      'Objective table layout evidence column "col-evidence" must be optional',
+      'Objective table layout evidence column "col-evidence" must allow one active file per term',
+      'Objective table layout evidence column "col-evidence" cannot be editable for MANAGER',
+      'Objective table layout evidence column "col-evidence" must use EVERY_REVIEW_PERIOD',
+    ]));
   });
 
   it('ignores stale row assignments when row grouping is disabled', () => {

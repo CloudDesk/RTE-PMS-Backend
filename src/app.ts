@@ -217,7 +217,13 @@ export async function createApp(): Promise<FastifyInstance> {
 
   app.register(formbody);
 
-  app.register(fastifyMultipart);
+  app.register(fastifyMultipart, {
+    limits: {
+      // Supports the career-profile import limit; its route also validates it.
+      fileSize: 10 * 1024 * 1024,
+      files: 10,
+    },
+  });
   // Register routes
   await app.register(routes);
 

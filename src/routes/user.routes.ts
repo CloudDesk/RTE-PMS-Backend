@@ -256,7 +256,7 @@ export const userRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
 
-  // Dynamic Priority-Based Manager Fetching Endpoint
+  // Reporting-role-based Manager Fetching Endpoint
   fastify.get(
     '/managers-for-role/:role',
     {
@@ -264,7 +264,7 @@ export const userRoutes: RouteHandler = async (
       schema: {
         tags: ['User Management'],
         summary: 'Get potential managers for a specific role',
-        description: 'Dynamically fetches active users who have a role with a higher priority (lower priority number) than the provided role.',
+        description: 'Fetches active users allowed as the immediate Reporting Manager for the provided functional role.',
         params: {
           type: 'object',
           required: ['role'],
@@ -275,7 +275,8 @@ export const userRoutes: RouteHandler = async (
         querystring: {
           type: 'object',
           properties: {
-            departmentId: { type: 'string', description: 'Optional department filter for manager lookup' }
+            departmentId: { type: 'string', description: 'Optional department used to sort same-department candidates first' },
+            employeeId: { type: 'string', description: 'Optional employee ID to exclude while editing' }
           }
         },
         response: {
@@ -293,6 +294,12 @@ export const userRoutes: RouteHandler = async (
                     email: { type: 'string' },
                     employeeCode: { type: 'string' },
                     role: { type: 'string' },
+                    specificRole: { type: 'string' },
+                    departmentId: { type: 'string' },
+                    managerId: { type: 'string' },
+                    managerName: { type: 'string' },
+                    active: { type: 'boolean' },
+                    portalAccess: { type: 'boolean' },
                     profilePicture: { type: 'string' }
                   }
                 }
@@ -305,8 +312,15 @@ export const userRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { role } = request.params as { role: string };
-        const { departmentId } = request.query as { departmentId?: string };
-        const potentialManagers = await request.container!.userService.getPotentialManagers(role, departmentId);
+        const { departmentId, employeeId } = request.query as {
+          departmentId?: string;
+          employeeId?: string;
+        };
+        const potentialManagers = await request.container!.userService.getPotentialManagers(
+          role,
+          departmentId,
+          employeeId,
+        );
 
         return reply.send({
           success: true,
@@ -319,6 +333,69 @@ export const userRoutes: RouteHandler = async (
         });
       }
     }
+  );
+
+  fastify.get(
+    '/:id/reporting-hierarchy',
+    {
+      onRequest: [authenticate],
+      schema: {
+        tags: ['User Management'],
+        summary: 'Get derived L1/L2/L3 reporting hierarchy',
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string' },
+          },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            includeSelf: { type: 'boolean', default: false },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    level: { type: 'number' },
+                    _id: { type: 'string' },
+                    name: { type: 'string' },
+                    employeeCode: { type: 'string' },
+                    role: { type: 'string' },
+                    specificRole: { type: 'string' },
+                    managerId: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: string };
+        const { includeSelf = false } = request.query as { includeSelf?: boolean };
+        const hierarchy = await request.container!.userService.getReportingHierarchy(
+          id,
+          includeSelf,
+        );
+        return reply.send({ success: true, data: hierarchy });
+      } catch (error: any) {
+        return reply.status(400).send({
+          success: false,
+          error: { message: error.message },
+        });
+      }
+    },
   );
 
   // Unified GET users endpoint

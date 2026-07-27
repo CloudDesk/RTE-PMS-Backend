@@ -14,7 +14,10 @@ import {
   PmsTemplateSectionType,
   TermWorkflowState,
 } from '../constants/pms.enums';
-import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import {
+  AnnualAssignment,
+  EmployeeCareerProfileSnapshotTrigger,
+} from '../models/pms-annual-assignment.model';
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AnnualDecisionValue } from '../models/pms-annual-decision-value.model';
@@ -27,6 +30,7 @@ import { TermCycle } from '../models/pms-term-cycle.model';
 import { TermReview } from '../models/pms-term-review.model';
 import { TermReviewValue } from '../models/pms-term-review-value.model';
 import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-period-assignment.model';
+import { EmployeeAchievementSubmission } from '../models/pms-employee-achievement-submission.model';
 import { AuditLog } from '../models/audit-log.model';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -37,6 +41,7 @@ import {
   type ResolvedTemplateVersion,
 } from './pms-template.service';
 import { PmsScoringService } from './pms-scoring.service';
+import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
 import { ObjectiveMatrixService } from './objective-matrix.service';
 import type {
   AnnualObjectiveMatrixResponse,
@@ -51,6 +56,9 @@ import type { AppraisalOutcomeType as AppraisalOutcomeTypeType } from '../consta
 import type { IAnnualDecisionValue } from '../models/pms-annual-decision-value.model';
 import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '../models/pms-template-version.model';
 import { PmsTemplate } from '../models/pms-template.model';
+import { LOV } from '../models/lov.model';
+import { User } from '../models/user.model';
+import { FinalReviewStatus, FinalReviewerSource } from '../utilis/finalReviewer';
 
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
@@ -71,6 +79,52 @@ type AppraisalWindowConfigInput = {
 
 type AnnualDecisionAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY' | 'REOPEN';
 type AnnualDecisionGateAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE';
+type FinalReviewStage = 'L2' | 'DIRECTOR';
+
+export function assertFinalReviewFreezeAllowed(
+  l2Status: string,
+  directorStatus: string = FinalReviewStatus.NOT_REQUIRED,
+): void {
+  const completed = (status: string) =>
+    status === FinalReviewStatus.NOT_REQUIRED || status === FinalReviewStatus.COMPLETED;
+  if (!completed(l2Status) || !completed(directorStatus)) {
+    throw new Error('L2 and Director assessments must be completed before finalisation');
+  }
+}
+
+export function isFinalReviewerFieldEditable(field: Record<string, any>): boolean {
+  return (field.behaviors ?? []).some(
+    (behavior: Record<string, unknown>) =>
+      behavior.role === 'DIRECTOR' &&
+      behavior.workflowState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
+      behavior.visibility === 'VISIBLE' &&
+      behavior.editability === 'EDITABLE',
+  );
+}
+
+export function validateSubmittedDecisionOverrideReason(
+  decisionStatus: string | undefined,
+  reason: string | undefined,
+): string | undefined {
+  const normalizedReason = reason?.trim();
+  if (
+    decisionStatus === AnnualDecisionStatus.SUBMITTED &&
+    !normalizedReason
+  ) {
+    throw new Error('Override reason is required to correct a submitted annual decision');
+  }
+  return normalizedReason;
+}
+
+export function isFinalReviewerOwnedDecisionValue(
+  value: { roleCode?: string | null },
+): boolean {
+  return String(value.roleCode ?? '').toUpperCase() === 'DIRECTOR';
+}
+
+// Current client flow carries a mandatory manager rating into the annual
+// decision and intentionally leaves numeric scoring inactive.
+const RATING_ONLY_MANAGER_REVIEW = true;
 
 interface AnnualDecisionReadiness {
   isAppraisalWindowOpen: boolean;
@@ -99,7 +153,9 @@ export interface AnnualSummaryResult {
   managerReviewPeriods: Array<Record<string, unknown>>;
   annualDecisionValues: Array<Record<string, unknown>>;
   calculatedFinalScore?: number;
+  proposedFinalRating?: string;
   finalScoreOverride: Record<string, unknown> | null;
+  finalRatingOverride: Record<string, unknown> | null;
   visibilityConfiguration: Record<string, unknown> | null;
   annualDecision: Record<string, unknown> | null;
   correctionHistory: Array<Record<string, unknown>>;
@@ -110,6 +166,31 @@ export interface AnnualSummaryResult {
     liveContentHash?: string;
     frozenContentHash?: string;
     matchesFrozen?: boolean;
+  };
+  finalReview?: {
+    status: string;
+    stage?: FinalReviewStage;
+    stageLabel?: string;
+    reviewer?: Record<string, unknown>;
+    l2Status?: string;
+    directorStatus?: string;
+    previousStage?: {
+      stage: 'L2';
+      label: string;
+      status: string;
+      enteredBy?: Record<string, unknown>;
+      completedAt?: string;
+      fields: Array<Record<string, unknown>>;
+      values: Array<Record<string, unknown>>;
+    };
+    fields: Array<Record<string, unknown>>;
+    values: Array<Record<string, unknown>>;
+    availableActions: Array<'SAVE' | 'COMPLETE'>;
+  };
+  reviewContext: {
+    fieldCatalog: Array<Record<string, unknown>>;
+    employeeSubmission: Record<string, unknown> | null;
+    employeeSubmissions: Array<Record<string, unknown>>;
   };
 }
 
@@ -128,6 +209,42 @@ export function assertObjectiveMatrixFreezeIntegrity(
   }
 }
 
+export function buildObjectiveEvidenceSnapshotManifest(
+  matrix: AnnualObjectiveMatrixResponse | null,
+): Array<{
+  objectiveRowKey: string;
+  termCode: string;
+  evidenceId?: string;
+  evidenceVersion: number;
+  attachmentId: string;
+  documentId: string;
+  fileName: string;
+  fileType?: string;
+  fileSize?: number;
+  uploadedAt: string;
+}> {
+  if (!matrix) return [];
+  return matrix.rows.flatMap((row) =>
+    matrix.termOrder.flatMap((termCode) => {
+      const evidence = row.evidenceByTerm?.[termCode];
+      const attachment = evidence?.attachment;
+      if (!evidence || !attachment) return [];
+      return [{
+        objectiveRowKey: row.objectiveRowKey,
+        termCode,
+        evidenceId: evidence.evidenceId,
+        evidenceVersion: evidence.version,
+        attachmentId: attachment.id,
+        documentId: attachment.documentId,
+        fileName: attachment.fileName,
+        fileType: attachment.fileType,
+        fileSize: attachment.fileSize,
+        uploadedAt: attachment.uploadedAt,
+      }];
+    }),
+  );
+}
+
 export function maskStoredObjectiveMatrixSnapshot(
   value: unknown,
   canSeeStoredAdminObjectiveMatrix: boolean,
@@ -144,6 +261,7 @@ export function maskStoredObjectiveMatrixSnapshot(
   const masked = { ...(value as Record<string, unknown>) };
   delete masked.objectiveMatrix;
   delete masked.objectiveMatricesByView;
+  delete masked.objectiveEvidenceManifest;
   return masked;
 }
 
@@ -187,6 +305,12 @@ export interface AnnualDecisionListItem {
   isAppraisalWindowOpen: boolean;
   availableActions: AnnualDecisionAction[];
   lockedReason?: string;
+  finalReviewStatus: string;
+  finalReviewerId?: string;
+  finalReviewerName?: string;
+  directorReviewStatus?: string;
+  directorReviewerId?: string;
+  directorReviewerName?: string;
 }
 
 export interface SaveDecisionDraftInput {
@@ -199,6 +323,7 @@ export interface SaveDecisionDraftInput {
   finalScore?: number;
   finalRating?: string;
   decisionValues?: AnnualDecisionValueInput[];
+  overrideReason?: string;
 }
 
 interface AnnualDecisionValueInput {
@@ -216,9 +341,22 @@ interface AnnualDecisionValueInput {
 export interface ReopenDecisionInput {
   reason: string;
 }
+export interface SaveFinalReviewInput {
+  decisionValues: AnnualDecisionValueInput[];
+}
+export interface ReassignFinalReviewerInput {
+  reviewerId: string;
+  reason: string;
+  reviewStage?: FinalReviewStage;
+}
 
 export interface OverrideFinalScoreInput {
   overrideScore: number;
+  reason: string;
+}
+
+export interface OverrideFinalRatingInput {
+  overrideRating: string;
   reason: string;
 }
 
@@ -242,6 +380,7 @@ export class AnnualDecisionService extends BaseService {
   async listAssignments(query: AnnualDecisionListQuery = {}): Promise<AnnualDecisionListItem[]> {
     const filter: Record<string, unknown> = { isDeleted: false };
     await this.applyScopedAssignmentFilter(filter);
+    const isAdminActor = normalizePmsRole(this.requireActor().actorRole) === PmsRole.ADMIN;
 
     if (query.cycleId?.trim()) {
       filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
@@ -360,8 +499,14 @@ export class AnnualDecisionService extends BaseService {
           managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
         },
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
-        availableActions: readiness.availableActions,
+        availableActions: isAdminActor ? readiness.availableActions : [],
         lockedReason: readiness.lockedReason,
+        finalReviewStatus: annualAssignment.finalReviewStatus,
+        finalReviewerId: annualAssignment.finalReviewerId?.toString(),
+        finalReviewerName: annualAssignment.finalReviewerSnapshot?.name,
+        directorReviewStatus: annualAssignment.directorReviewStatus,
+        directorReviewerId: annualAssignment.directorReviewerId?.toString(),
+        directorReviewerName: annualAssignment.directorReviewerSnapshot?.name,
       };
     }));
 
@@ -387,6 +532,9 @@ export class AnnualDecisionService extends BaseService {
       annualDecision,
       visibilityConfiguration,
       cycle,
+      employeeSubmission,
+      employeeSubmissions,
+      contextTemplateVersion,
     ] = await Promise.all([
       Objective.find({ termAssignmentId: { $in: termAssignmentIds } }),
       TermReview.find({ termAssignmentId: { $in: termAssignmentIds }, isDeleted: false }),
@@ -397,6 +545,19 @@ export class AnnualDecisionService extends BaseService {
       AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id }),
       VisibilityConfiguration.findOne({ annualAssignmentId: annualAssignment._id }),
       AnnualCycle.findById(annualAssignment.cycleId).lean(),
+      EmployeeAchievementSubmission.findOne({
+        annualAssignmentId: annualAssignment._id,
+        isDeleted: false,
+      }).lean(),
+      EmployeeAchievementSubmission.find({
+        termAssignmentId: { $in: termAssignmentIds },
+        isDeleted: false,
+      })
+        .sort({ assessmentTermCode: 1, createdAt: 1 })
+        .lean(),
+      annualAssignment.templateVersionId
+        ? PmsTemplateVersion.findById(annualAssignment.templateVersionId).select('sections').lean()
+        : null,
     ]);
     const termReviewIds = termReviews.map((review) => review._id);
     const termReviewValues = termReviewIds.length
@@ -416,7 +577,13 @@ export class AnnualDecisionService extends BaseService {
       bucket.push(value);
       termReviewValuesByReviewId.set(key, bucket);
     }
-    const calculatedFinalScore = await this.tryCalculateAnnualFinalScore(annualAssignment);
+    const calculatedFinalScore = RATING_ONLY_MANAGER_REVIEW
+      ? undefined
+      : await this.tryCalculateAnnualFinalScore(annualAssignment);
+    const proposedFinalRating = this.resolveProposedFinalRating(
+      annualAssignment,
+      termAssignments,
+    );
     const finalDecisionStatus =
       annualDecision?.decisionStatus ??
       annualAssignment.finalDecisionStatus ??
@@ -521,6 +688,9 @@ export class AnnualDecisionService extends BaseService {
     const latestFinalScoreOverride = correctionHistory.find(
       (entry) => entry.fieldKey === 'FINAL_SCORE_OVERRIDE',
     );
+    const latestFinalRatingOverride = correctionHistory.find(
+      (entry) => entry.fieldKey === 'FINAL_RATING_OVERRIDE',
+    );
     const maskedCorrectionHistory = this.maskCorrectionHistory(
       correctionHistory,
       visibilityConfiguration ?? annualAssignment.visibility,
@@ -529,13 +699,34 @@ export class AnnualDecisionService extends BaseService {
       preReopenSnapshots,
       visibilityConfiguration ?? annualAssignment.visibility,
     );
-    const finalScoreOverride = latestFinalScoreOverride
+    const finalScoreOverride = !RATING_ONLY_MANAGER_REVIEW && latestFinalScoreOverride
       ? this.buildFinalScoreOverrideSummary(
           latestFinalScoreOverride,
           visibilityConfiguration ?? annualAssignment.visibility,
         )
       : null;
-    const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(annualAssignment);
+    const finalRatingOverride = latestFinalRatingOverride
+      ? (
+          this.maskCorrectionHistory(
+            [latestFinalRatingOverride],
+            visibilityConfiguration ?? annualAssignment.visibility,
+          )[0] ?? null
+        )
+      : null;
+    const actor = this.requireActor();
+    const actorId = actor.actorId;
+    const isAdminActor =
+      normalizePmsRole(actor.actorRole) === PmsRole.ADMIN;
+    const isAssignedFinalReviewer =
+      annualAssignment.finalReviewerId?.toString() === actorId ||
+      annualAssignment.directorReviewerId?.toString() === actorId;
+    const actorMatrixMode: ObjectiveMatrixMode = isAssignedFinalReviewer
+      ? 'reviewer'
+      : this.objectiveMatrixModeForActor();
+    const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(
+      annualAssignment,
+      actorMatrixMode,
+    );
     const frozenMatrixSnapshot = preReopenSnapshots.find((snapshot) => {
       const finalSnapshot = snapshot.finalDecisionSnapshot as Record<string, unknown> | undefined;
       return finalSnapshot?.snapshotKind === 'ANNUAL_DECISION_FREEZE';
@@ -550,7 +741,92 @@ export class AnnualDecisionService extends BaseService {
     const frozenContentHash = activeOfficialFreeze && typeof frozenFinalSnapshot?.objectiveMatrixContentHash === 'string'
       ? frozenFinalSnapshot.objectiveMatrixContentHash
       : undefined;
-    const actorMatrixMode = this.objectiveMatrixModeForActor();
+    const allFinalReviewFields =
+      annualAssignment.finalReviewStatus !== FinalReviewStatus.NOT_REQUIRED
+        ? await this.finalReviewTemplateFields(annualAssignment)
+        : [];
+    const activeFinalReviewStage = this.resolveActorFinalReviewStage(annualAssignment, false);
+    const finalReviewFields = activeFinalReviewStage
+      ? allFinalReviewFields.filter((field) => field.reviewStage === activeFinalReviewStage)
+      : allFinalReviewFields;
+    const finalReviewValues = annualDecisionValues.filter(
+      (value) =>
+        value.roleCode === 'DIRECTOR' &&
+        finalReviewFields.some((field) => String(field.key) === value.fieldKey),
+    );
+    const activeFinalReviewStatus = activeFinalReviewStage === 'DIRECTOR'
+      ? annualAssignment.directorReviewStatus
+      : annualAssignment.finalReviewStatus;
+    const activeFinalReviewer = activeFinalReviewStage === 'DIRECTOR'
+      ? annualAssignment.directorReviewerSnapshot
+      : annualAssignment.finalReviewerSnapshot;
+    const activeFinalReviewStageReady =
+      activeFinalReviewStage === 'L2' ||
+      (
+        activeFinalReviewStage === 'DIRECTOR' &&
+        annualAssignment.finalReviewStatus === FinalReviewStatus.COMPLETED
+      );
+    const l2Fields = allFinalReviewFields.filter((field) => field.reviewStage === 'L2');
+    const l2FieldKeys = new Set(l2Fields.map((field) => String(field.key)));
+    const l2Values = annualDecisionValues.filter(
+      (value) => value.roleCode === 'DIRECTOR' && l2FieldKeys.has(value.fieldKey),
+    );
+    const directorFieldKeys = new Set(
+      allFinalReviewFields
+        .filter((field) => field.reviewStage === 'DIRECTOR')
+        .map((field) => String(field.key)),
+    );
+    const hideDirectorStageValuesFromL2 =
+      activeFinalReviewStage === 'L2' &&
+      annualAssignment.directorReviewerId?.toString() !== actorId;
+    const visibleAnnualDecisionValues = hideDirectorStageValuesFromL2
+      ? annualDecisionValues.filter(
+          (value) =>
+            !(
+              value.roleCode === 'DIRECTOR' &&
+              directorFieldKeys.has(value.fieldKey)
+            ),
+        )
+      : annualDecisionValues;
+    const l2EnteredById =
+      annualAssignment.finalReviewCompletedBy?.toString() ??
+      l2Values.find((value) => value.actorUserId)?.actorUserId?.toString();
+    const l2EnteredBy =
+      activeFinalReviewStage === 'DIRECTOR' && l2EnteredById
+        ? await User.findById(l2EnteredById)
+            .select('_id name employeeCode role specificRole')
+            .lean()
+        : null;
+    const l2PreviousStage =
+      activeFinalReviewStage === 'DIRECTOR'
+        ? {
+            stage: 'L2' as const,
+            label: 'L2 · ED / SVP Assessment',
+            status: annualAssignment.finalReviewStatus,
+            enteredBy: l2EnteredBy
+              ? {
+                  _id: l2EnteredBy._id.toString(),
+                  name: l2EnteredBy.name,
+                  employeeCode: l2EnteredBy.employeeCode,
+                  role: l2EnteredBy.role,
+                  specificRole: l2EnteredBy.specificRole,
+                }
+              : annualAssignment.finalReviewerSnapshot,
+            completedAt: annualAssignment.finalReviewCompletedAt?.toISOString(),
+            fields: l2Fields,
+            values: l2Values.map((value) => ({
+              templateFieldId: value.templateFieldId,
+              fieldKey: value.fieldKey,
+              sectionKey: value.sectionKey,
+              roleCode: value.roleCode,
+              actorUserId: value.actorUserId?.toString(),
+              valueJson: value.valueJson,
+              valueText: value.valueText,
+              valueNumber: value.valueNumber,
+              valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
+            })),
+          }
+        : undefined;
 
     return {
       annualAssignment: {
@@ -559,7 +835,8 @@ export class AnnualDecisionService extends BaseService {
         finalDecisionStatus,
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
         termProgress: readiness.termProgress,
-        availableActions: readiness.availableActions,
+        availableActions: isAdminActor ? readiness.availableActions : [],
+        availableAdminActions: isAdminActor ? readiness.availableActions : [],
         lockedReason: readiness.lockedReason,
       },
       termAssignments: effectiveTermAssignments.map((termAssignment) => {
@@ -648,7 +925,7 @@ export class AnnualDecisionService extends BaseService {
           })),
         };
       }),
-      annualDecisionValues: annualDecisionValues.map((value) => ({
+      annualDecisionValues: visibleAnnualDecisionValues.map((value) => ({
         templateFieldId: value.templateFieldId,
         fieldKey: value.fieldKey,
         sectionKey: value.sectionKey,
@@ -660,7 +937,9 @@ export class AnnualDecisionService extends BaseService {
         valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
       })),
       calculatedFinalScore,
+      proposedFinalRating,
       finalScoreOverride,
+      finalRatingOverride,
       visibilityConfiguration: visibilityConfiguration?.toObject() ?? null,
       annualDecision: annualDecision
         ? this.maskDecision(
@@ -679,7 +958,380 @@ export class AnnualDecisionService extends BaseService {
           ? { matchesFrozen: frozenContentHash === objectiveMatrix.contentHash }
           : {}),
       },
+      finalReview: {
+        status: activeFinalReviewStatus,
+        stage: activeFinalReviewStage,
+        stageLabel: activeFinalReviewStage === 'DIRECTOR'
+          ? 'Director · DIC Assessment'
+          : 'L2 · ED / SVP Assessment',
+        reviewer: activeFinalReviewer,
+        l2Status: annualAssignment.finalReviewStatus,
+        directorStatus: annualAssignment.directorReviewStatus,
+        previousStage: l2PreviousStage,
+        fields: finalReviewFields,
+        values: finalReviewValues,
+        availableActions:
+          Boolean(activeFinalReviewStage) &&
+          activeFinalReviewStageReady &&
+          annualAssignment.annualState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
+          [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(activeFinalReviewStatus as any)
+            ? ['SAVE', 'COMPLETE']
+            : [],
+      },
+      reviewContext: {
+        fieldCatalog: (contextTemplateVersion?.sections ?? []).flatMap((section: any) =>
+          (section.fields ?? []).map((field: any) => ({
+            fieldKey: field.fieldKey,
+            fieldLabel: field.fieldLabel,
+            fieldType: field.fieldType,
+            sectionKey: section.sectionKey,
+            sectionLabel: section.sectionLabel,
+            displayOrder: field.displayOrder,
+            options: field.options,
+            matrixConfig: field.matrixConfig,
+            gridConfig: field.gridConfig,
+          })),
+        ),
+        employeeSubmission: employeeSubmission
+          ? {
+              termAssignmentId: employeeSubmission.termAssignmentId?.toString(),
+              status: employeeSubmission.status,
+              assessmentTermCode: employeeSubmission.assessmentTermCode,
+              submittedAt: employeeSubmission.submittedAt
+                ? new Date(employeeSubmission.submittedAt).toISOString()
+                : undefined,
+              lockedAt: employeeSubmission.lockedAt
+                ? new Date(employeeSubmission.lockedAt).toISOString()
+                : undefined,
+              achievementItems: (employeeSubmission.achievementItems ?? []).map((item: any) => ({
+                itemId: item.itemId,
+                type: item.type,
+                subject: item.subject,
+                description: item.description,
+                employeeSelfRating: item.employeeSelfRating,
+                employeeSelfRatingComments: item.employeeSelfRatingComments,
+                outcome: item.outcome,
+                objectiveSnapshot: item.objectiveSnapshot,
+                relatedObjectiveSnapshot: item.relatedObjectiveSnapshot,
+                itemStatus: item.itemStatus,
+                submittedAt: item.submittedAt
+                  ? new Date(item.submittedAt).toISOString()
+                  : undefined,
+                attachments: (item.attachments ?? []).map((attachment: any) => ({
+                  fileName: attachment.fileName,
+                  fileType: attachment.fileType,
+                  fileSize: attachment.fileSize,
+                  documentId: attachment.documentId,
+                  uploadedAt: attachment.uploadedAt
+                    ? new Date(attachment.uploadedAt).toISOString()
+                    : undefined,
+                })),
+              })),
+              achievementValues: (employeeSubmission.achievementValues ?? []).map((value: any) => ({
+                templateFieldId: value.templateFieldId,
+                fieldKey: value.fieldKey,
+                sectionKey: value.sectionKey,
+                roleCode: value.roleCode,
+                workflowStage: value.workflowStage,
+                valueJson: value.valueJson,
+                valueText: value.valueText,
+                valueNumber: value.valueNumber,
+                valueDate: value.valueDate
+                  ? new Date(value.valueDate).toISOString()
+                  : undefined,
+              })),
+            }
+          : null,
+        employeeSubmissions: employeeSubmissions.map((submission) => ({
+          termAssignmentId: submission.termAssignmentId?.toString(),
+          assessmentTermCode: submission.assessmentTermCode,
+          achievementValues: (submission.achievementValues ?? []).map((value: any) => ({
+            templateFieldId: value.templateFieldId,
+            fieldKey: value.fieldKey,
+            sectionKey: value.sectionKey,
+            roleCode: value.roleCode,
+            workflowStage: value.workflowStage,
+            valueJson: value.valueJson,
+            valueText: value.valueText,
+            valueNumber: value.valueNumber,
+            valueDate: value.valueDate
+              ? new Date(value.valueDate).toISOString()
+              : undefined,
+          })),
+        })),
+      },
     };
+  }
+
+  async listMyFinalReviews(): Promise<Array<Record<string, unknown>>> {
+    const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const assignments = await AnnualAssignment.find({
+      $or: [
+        {
+          finalReviewerId: actorId,
+          finalReviewStatus: {
+            $in: [
+              FinalReviewStatus.PENDING,
+              FinalReviewStatus.IN_PROGRESS,
+              FinalReviewStatus.COMPLETED,
+            ],
+          },
+        },
+        {
+          directorReviewerId: actorId,
+          finalReviewStatus: FinalReviewStatus.COMPLETED,
+          directorReviewStatus: {
+            $in: [
+              FinalReviewStatus.PENDING,
+              FinalReviewStatus.IN_PROGRESS,
+              FinalReviewStatus.COMPLETED,
+            ],
+          },
+        },
+      ],
+      annualState: {
+        $in: [
+          AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+          AnnualWorkflowState.ANNUAL_FINALIZED,
+          AnnualWorkflowState.VISIBILITY_ENABLED,
+          AnnualWorkflowState.COMMUNICATION_READY,
+          AnnualWorkflowState.COMMUNICATION_SENT,
+          AnnualWorkflowState.CLOSED,
+          AnnualWorkflowState.ARCHIVED,
+        ],
+      },
+      isDeleted: false,
+    }).sort({ updatedAt: -1 }).lean();
+    const cycles = await AnnualCycle.find({
+      _id: { $in: assignments.map((item) => item.cycleId) },
+      isDeleted: false,
+    }).lean();
+    const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
+    return assignments.map((item) => {
+      const reviewStage = item.finalReviewerId?.toString() === actor.actorId &&
+        [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(item.finalReviewStatus as any)
+        ? 'L2'
+        : 'DIRECTOR';
+      return {
+        annualAssignmentId: item._id.toString(),
+        employeeId: item.employeeId.toString(),
+        employeeName: String(item.employeeSnapshot?.name ?? 'Employee'),
+        employeeCode: String(item.employeeSnapshot?.employeeCode ?? ''),
+        designation: String(item.employeeSnapshot?.specificRole ?? item.employeeSnapshot?.role ?? ''),
+        cycleName: cycleMap.get(item.cycleId.toString())?.name ?? 'Performance Cycle',
+        annualState: item.annualState,
+        reviewStage,
+        reviewStageLabel: reviewStage === 'L2' ? 'L2 · ED / SVP' : 'Director · DIC',
+        finalReviewStatus: reviewStage === 'L2'
+          ? item.finalReviewStatus
+          : item.directorReviewStatus,
+      };
+    });
+  }
+
+  async saveFinalReview(
+    annualAssignmentId: string,
+    input: SaveFinalReviewInput,
+  ): Promise<IAnnualAssignment> {
+    const { annualAssignment, reviewStage } =
+      await this.assertFinalReviewerAccess(annualAssignmentId);
+    const decision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    });
+    if (!decision || decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
+      throw new Error('Annual decision must be submitted before Final Review');
+    }
+    const fields = (await this.finalReviewTemplateFields(annualAssignment))
+      .filter((field) => field.reviewStage === reviewStage);
+    const allowed = new Map(fields.map((field) => [String(field.key), field]));
+    const actorId = this.actorIdObject()!;
+    for (const value of input.decisionValues ?? []) {
+      const field = allowed.get(value.fieldKey);
+      if (!field || value.sectionKey !== field.sectionKey) {
+        throw new Error(`Field ${value.fieldKey} does not belong to the Final Reviewer section`);
+      }
+      if (!isFinalReviewerFieldEditable(field)) {
+        throw new Error(`Field ${value.fieldKey} is not editable by the Final Reviewer`);
+      }
+      await AnnualDecisionValue.findOneAndUpdate(
+        {
+          annualDecisionId: decision._id,
+          fieldKey: value.fieldKey,
+          sectionKey: value.sectionKey,
+          roleCode: 'DIRECTOR',
+          isDeleted: false,
+        },
+        {
+          $set: {
+            annualAssignmentId: annualAssignment._id,
+            templateFieldId: value.templateFieldId,
+            actorUserId: actorId,
+            valueJson: value.valueJson,
+            valueText: value.valueText,
+            valueNumber: value.valueNumber,
+            valueDate: value.valueDate ? new Date(value.valueDate) : undefined,
+            updatedBy: actorId,
+          },
+          $setOnInsert: { createdBy: actorId },
+          $inc: { version: 1 },
+        },
+        { upsert: true, new: true, runValidators: true },
+      );
+    }
+    const currentStatus = reviewStage === 'L2'
+      ? annualAssignment.finalReviewStatus
+      : annualAssignment.directorReviewStatus;
+    if (currentStatus === FinalReviewStatus.PENDING) {
+      if (reviewStage === 'L2') {
+        annualAssignment.finalReviewStatus = FinalReviewStatus.IN_PROGRESS;
+      } else {
+        annualAssignment.directorReviewStatus = FinalReviewStatus.IN_PROGRESS;
+      }
+      annualAssignment.version += 1;
+      await annualAssignment.save();
+    }
+    await this.audit('PMS_FINAL_REVIEW_SAVED', 'ANNUAL_ASSIGNMENT', annualAssignmentId, undefined, {
+      reviewStage,
+      fieldKeys: (input.decisionValues ?? []).map((value) => value.fieldKey),
+    });
+    return annualAssignment;
+  }
+
+  async completeFinalReview(annualAssignmentId: string): Promise<IAnnualAssignment> {
+    const { annualAssignment, reviewStage } =
+      await this.assertFinalReviewerAccess(annualAssignmentId);
+    const decision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    });
+    if (!decision || decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
+      throw new Error('Annual decision must be submitted before Final Review');
+    }
+    const fields = (await this.finalReviewTemplateFields(annualAssignment))
+      .filter((field) => field.reviewStage === reviewStage);
+    const values = await AnnualDecisionValue.find({
+      annualDecisionId: decision._id,
+      roleCode: 'DIRECTOR',
+      isDeleted: false,
+    }).lean();
+    const byKey = new Map(values.map((value) => [value.fieldKey, value]));
+    for (const field of fields.filter((item) => item.required === true)) {
+      const value = byKey.get(String(field.key));
+      const meaningful = value && [value.valueJson, value.valueText, value.valueNumber, value.valueDate]
+        .some((entry) => entry !== undefined && entry !== null && String(entry).trim() !== '');
+      if (!meaningful) throw new Error(`${field.label ?? field.key} is required`);
+    }
+    const previous = annualAssignment.toObject();
+    if (reviewStage === 'L2') {
+      annualAssignment.finalReviewStatus = FinalReviewStatus.COMPLETED;
+      annualAssignment.finalReviewCompletedBy = this.actorIdObject();
+      annualAssignment.finalReviewCompletedAt = new Date();
+    } else {
+      annualAssignment.directorReviewStatus = FinalReviewStatus.COMPLETED;
+      annualAssignment.directorReviewCompletedBy = this.actorIdObject();
+      annualAssignment.directorReviewCompletedAt = new Date();
+    }
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+    await this.audit(
+      reviewStage === 'L2' ? 'PMS_L2_FINAL_REVIEW_COMPLETED' : 'PMS_DIRECTOR_REVIEW_COMPLETED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignmentId,
+      previous,
+      annualAssignment.toObject(),
+    );
+    return annualAssignment;
+  }
+
+  async reassignFinalReviewer(
+    annualAssignmentId: string,
+    input: ReassignFinalReviewerInput,
+  ): Promise<IAnnualAssignment> {
+    this.assertDecisionAdmin('annualDecision.finalReviewer.reassign');
+    if (!input.reason?.trim()) throw new Error('Reviewer reassignment reason is required');
+    const reviewStage: FinalReviewStage =
+      String(input.reviewStage ?? 'L2').toUpperCase() === 'DIRECTOR' ? 'DIRECTOR' : 'L2';
+    const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    if (annualAssignment.annualState === AnnualWorkflowState.ANNUAL_FINALIZED) {
+      throw new Error('Reopen the annual decision before reassigning the Final Reviewer');
+    }
+    const reviewerId = this.toObjectId(input.reviewerId, 'reviewerId');
+    const reviewer = await User.findById(reviewerId).select('name email employeeCode role specificRole active portalAccess').lean();
+    if (!reviewer || reviewer.active === false || reviewer.portalAccess === false) {
+      throw new Error('Final Reviewer must be an active portal-enabled user');
+    }
+    if (
+      reviewStage === 'DIRECTOR' &&
+      String(reviewer.role ?? '').trim().toLowerCase() !== 'director'
+    ) {
+      throw new Error('Director Assessment must be assigned to a Director portal user');
+    }
+    if (
+      reviewStage === 'L2' &&
+      [annualAssignment.employeeId, annualAssignment.assignedManagerId]
+        .some((id) => id.toString() === reviewerId.toString())
+    ) {
+      throw new Error('Employee or L1 Manager cannot be assigned as Final Reviewer');
+    }
+    const previous = annualAssignment.toObject();
+    const decision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    }).lean();
+    if (decision) {
+      const resetFields = (await this.finalReviewTemplateFields(annualAssignment))
+        .filter((field) => reviewStage === 'L2' || field.reviewStage === 'DIRECTOR')
+        .map((field) => String(field.key));
+      await AnnualDecisionValue.updateMany(
+        {
+          annualDecisionId: decision._id,
+          roleCode: 'DIRECTOR',
+          fieldKey: { $in: resetFields },
+          isDeleted: false,
+        },
+        { $set: { isDeleted: true, updatedBy: this.actorIdObject() }, $inc: { version: 1 } },
+      );
+    }
+    const reviewerSnapshot = {
+      employeeCode: reviewer.employeeCode,
+      name: reviewer.name,
+      email: reviewer.email,
+      role: reviewer.role,
+      specificRole: reviewer.specificRole,
+    };
+    if (reviewStage === 'L2') {
+      annualAssignment.finalReviewerId = reviewerId;
+      annualAssignment.finalReviewerSource = FinalReviewerSource.CYCLE_DEFAULT;
+      annualAssignment.finalReviewerSnapshot = reviewerSnapshot;
+      annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.finalReviewCompletedBy = undefined;
+      annualAssignment.finalReviewCompletedAt = undefined;
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.directorReviewCompletedBy = undefined;
+      annualAssignment.directorReviewCompletedAt = undefined;
+    } else {
+      annualAssignment.directorReviewerId = reviewerId;
+      annualAssignment.directorReviewerSource = FinalReviewerSource.CYCLE_DEFAULT;
+      annualAssignment.directorReviewerSnapshot = reviewerSnapshot;
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.directorReviewCompletedBy = undefined;
+      annualAssignment.directorReviewCompletedAt = undefined;
+    }
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+    await this.audit(
+      reviewStage === 'L2'
+        ? 'PMS_L2_FINAL_REVIEWER_REASSIGNED'
+        : 'PMS_DIRECTOR_REVIEWER_REASSIGNED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignmentId,
+      previous,
+      annualAssignment.toObject(),
+      input.reason.trim(),
+    );
+    return annualAssignment;
   }
 
   async saveDecisionDraft(
@@ -695,33 +1347,77 @@ export class AnnualDecisionService extends BaseService {
       throw new Error('Frozen annual decision cannot be edited');
     }
 
+    const isSubmittedOverride =
+      existingDecision?.decisionStatus === AnnualDecisionStatus.SUBMITTED;
+    const overrideReason = validateSubmittedDecisionOverrideReason(
+      existingDecision?.decisionStatus,
+      input.overrideReason,
+    );
+    const previousDecisionValues = isSubmittedOverride
+      ? await AnnualDecisionValue.find({
+          annualDecisionId: existingDecision!._id,
+          isDeleted: false,
+        }).lean()
+      : [];
+    let originalOverrideSnapshot: Record<string, unknown> | undefined;
+    let correctedOverrideSnapshot: Record<string, unknown> | undefined;
+
     await this.assertAnnualDecisionGate(
       annualAssignment,
       'SAVE_DRAFT',
       existingDecision?.decisionStatus ?? annualAssignment.finalDecisionStatus ?? AnnualDecisionStatus.DRAFT,
     );
 
-    const calculatedFinalScore = await this.calculateAnnualFinalScore(annualAssignment);
-    const effectiveFinalScore = await this.resolveEffectiveAnnualFinalScore(
-      existingDecision?._id,
-      calculatedFinalScore,
+    const effectiveFinalScore = RATING_ONLY_MANAGER_REVIEW
+      ? undefined
+      : await this.resolveEffectiveAnnualFinalScore(
+          existingDecision?._id,
+          await this.calculateAnnualFinalScore(annualAssignment),
+        );
+    const proposedFinalRating = await this.resolveProposedFinalRatingForAssignment(
+      annualAssignment,
     );
     const rawDecisionInput: SaveDecisionDraftInput = {
       ...input,
+      // Final-review values belong to L2/L3 and must never be rewritten by
+      // the Admin decision payload during a submitted-decision correction.
+      decisionValues: input.decisionValues?.filter(
+        (value) => !isFinalReviewerOwnedDecisionValue(value),
+      ),
       finalScore: effectiveFinalScore,
+      finalRating: RATING_ONLY_MANAGER_REVIEW
+        ? existingDecision?.finalRating?.trim() || proposedFinalRating
+        : input.finalRating?.trim() ||
+          existingDecision?.finalRating?.trim() ||
+          proposedFinalRating,
     };
     const sanitizedDecisionInput = await this.sanitizeAnnualDecisionInputForTemplate(
       annualAssignment,
       rawDecisionInput,
       existingDecision,
     );
-    const decisionInput = this.normalizeMeritRecommendationForDecision(sanitizedDecisionInput);
+    const normalizedDecisionInput =
+      this.normalizeMeritRecommendationForDecision(sanitizedDecisionInput);
+    const decisionInput = {
+      ...normalizedDecisionInput,
+      finalRating: await this.validateManagerOverallRating(
+        normalizedDecisionInput.finalRating,
+        false,
+      ),
+    };
     const appraisalOutcomeType = this.deriveOutcome(
       decisionInput.isGradeApplied,
       decisionInput.isMeritApplied,
     );
     this.validateDecisionInput(decisionInput, appraisalOutcomeType, false);
     await this.validateAnnualTemplateInput(annualAssignment, decisionInput, false);
+
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      annualAssignment._id,
+      EmployeeCareerProfileSnapshotTrigger.ANNUAL_DECISION_DRAFT,
+    );
 
     const payload = {
       annualAssignmentId: annualAssignment._id,
@@ -734,7 +1430,7 @@ export class AnnualDecisionService extends BaseService {
       meritDetails: decisionInput.meritDetails,
       nilReason: appraisalOutcomeType === AppraisalOutcomeType.NIL ? decisionInput.nilReason : undefined,
       managementRemarks: decisionInput.managementRemarks,
-      finalScore: effectiveFinalScore,
+      ...(RATING_ONLY_MANAGER_REVIEW ? {} : { finalScore: effectiveFinalScore }),
       finalRating: decisionInput.finalRating,
       decisionStatus: AnnualDecisionStatus.DRAFT,
       decidedBy: this.actorIdObject(),
@@ -745,6 +1441,7 @@ export class AnnualDecisionService extends BaseService {
     const decision = existingDecision
       ? await AnnualDecision.findByIdAndUpdate(existingDecision._id, {
         $set: payload,
+        ...(RATING_ONLY_MANAGER_REVIEW ? { $unset: { finalScore: 1 } } : {}),
         $inc: { version: 1 },
       }, {
         new: true,
@@ -758,17 +1455,52 @@ export class AnnualDecisionService extends BaseService {
 
     await this.persistAnnualDecisionValues(decision, annualAssignment, decisionInput);
 
+    if (isSubmittedOverride) {
+      const correctedDecisionValues = await AnnualDecisionValue.find({
+        annualDecisionId: decision._id,
+        isDeleted: false,
+      }).lean();
+      originalOverrideSnapshot = {
+        decision: existingDecision?.toObject(),
+        decisionValues: previousDecisionValues,
+      };
+      correctedOverrideSnapshot = {
+        decision: decision.toObject(),
+        decisionValues: correctedDecisionValues,
+      };
+
+      await CorrectionLayer.create({
+        entityType: 'ANNUAL_DECISION',
+        entityId: decision._id,
+        fieldKey: 'SUBMITTED_DECISION_OVERRIDE',
+        originalValue: originalOverrideSnapshot,
+        correctedValue: correctedOverrideSnapshot,
+        correctionReason: overrideReason!,
+        correctedBy: this.actorIdObject(),
+        correctedAt: new Date(),
+        createdBy: this.actorIdObject(),
+        updatedBy: this.actorIdObject(),
+      });
+    }
+
     annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.DRAFT;
     annualAssignment.version += 1;
     await annualAssignment.save();
 
     await this.audit(
-      'PMS_ANNUAL_DECISION_DRAFT_SAVED',
+      isSubmittedOverride
+        ? 'PMS_ANNUAL_DECISION_SUBMITTED_OVERRIDE_SAVED'
+        : 'PMS_ANNUAL_DECISION_DRAFT_SAVED',
       'ANNUAL_DECISION',
       decision._id.toString(),
-      existingDecision?.toObject(),
-      decision.toObject(),
+      isSubmittedOverride
+        ? originalOverrideSnapshot
+        : existingDecision?.toObject(),
+      isSubmittedOverride
+        ? correctedOverrideSnapshot
+        : decision.toObject(),
+      isSubmittedOverride ? overrideReason : undefined,
     );
 
     return decision;
@@ -798,14 +1530,23 @@ export class AnnualDecisionService extends BaseService {
       annualDecisionId: decision._id,
       isDeleted: false,
     }).lean();
-    const calculatedFinalScore = await this.calculateAnnualFinalScore(annualAssignment);
-    const effectiveFinalScore = await this.resolveEffectiveAnnualFinalScore(
-      decision._id,
-      calculatedFinalScore,
+    const effectiveFinalScore = RATING_ONLY_MANAGER_REVIEW
+      ? undefined
+      : await this.resolveEffectiveAnnualFinalScore(
+          decision._id,
+          await this.calculateAnnualFinalScore(annualAssignment),
+        );
+    const proposedFinalRating = await this.resolveProposedFinalRatingForAssignment(
+      annualAssignment,
+    );
+    const finalRating = await this.validateManagerOverallRating(
+      decision.finalRating?.trim() || proposedFinalRating,
+      true,
     );
     const decisionInput = {
       ...this.buildDecisionInputFromRecord(decision, annualDecisionValues),
       finalScore: effectiveFinalScore,
+      finalRating,
     };
     const appraisalOutcomeType = this.deriveOutcome(
       Boolean(decision.isGradeApplied),
@@ -816,13 +1557,19 @@ export class AnnualDecisionService extends BaseService {
 
     const previousValue = decision.toObject();
     decision.finalScore = effectiveFinalScore;
+    decision.finalRating = finalRating;
     decision.decisionStatus = AnnualDecisionStatus.SUBMITTED;
     decision.submittedBy = this.actorIdObject();
     decision.submittedAt = new Date();
     decision.updatedBy = this.actorIdObject();
     decision.version += 1;
     await decision.save();
-    await this.syncAnnualFinalScoreValue(decision, annualAssignment, effectiveFinalScore);
+    if (!RATING_ONLY_MANAGER_REVIEW && effectiveFinalScore !== undefined) {
+      await this.syncAnnualFinalScoreValue(decision, annualAssignment, effectiveFinalScore);
+    }
+    if (finalRating) {
+      await this.syncAnnualFinalRatingValue(decision, annualAssignment, finalRating);
+    }
 
     annualAssignment.annualState = AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED;
     annualAssignment.finalDecisionStatus = AnnualDecisionStatus.SUBMITTED;
@@ -859,6 +1606,10 @@ export class AnnualDecisionService extends BaseService {
     if (decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
       throw new Error('Annual decision must be submitted before freeze');
     }
+    assertFinalReviewFreezeAllowed(
+      annualAssignment.finalReviewStatus,
+      annualAssignment.directorReviewStatus,
+    );
     await this.assertAnnualDecisionGate(
       annualAssignment,
       'FREEZE',
@@ -867,6 +1618,12 @@ export class AnnualDecisionService extends BaseService {
     if (!annualAssignment.templateVersionId) {
       throw new Error('Locked template version is required before freezing annual decision');
     }
+    await new PmsEmployeeCareerProfileSnapshotService(
+      this.context,
+    ).freezeForAnnualAssignment(
+      annualAssignment._id,
+      EmployeeCareerProfileSnapshotTrigger.ANNUAL_FINALIZATION,
+    );
     const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(annualAssignment, 'admin');
     assertObjectiveMatrixFreezeIntegrity(objectiveMatrix);
     const matrixService = new ObjectiveMatrixService(this.context);
@@ -915,6 +1672,10 @@ export class AnnualDecisionService extends BaseService {
     annualAssignment.version += 1;
     await annualAssignment.save();
 
+    const annualDecisionValues = await AnnualDecisionValue.find({
+      annualDecisionId: decision._id,
+      isDeleted: false,
+    }).lean();
     const freezeSnapshotPayload = {
       annualSnapshot: annualAssignment.toObject(),
       termSnapshots: Object.fromEntries(
@@ -926,6 +1687,7 @@ export class AnnualDecisionService extends BaseService {
       finalDecisionSnapshot: {
         snapshotKind: 'ANNUAL_DECISION_FREEZE',
         decision: decision.toObject(),
+        annualDecisionValues,
         objectiveMatrix,
         objectiveMatricesByView: {
           employee: employeeMatrix,
@@ -936,6 +1698,7 @@ export class AnnualDecisionService extends BaseService {
         objectiveMatrixContentHash: objectiveMatrix?.contentHash,
         objectiveMatrixLayoutVersion: objectiveMatrix?.layoutVersion,
         objectiveMatrixContentVersion: objectiveMatrix?.contentVersion,
+        objectiveEvidenceManifest: buildObjectiveEvidenceSnapshotManifest(objectiveMatrix),
         reportMetadata: {
           cycle: cycle ? {
             _id: cycle._id,
@@ -1040,6 +1803,10 @@ export class AnnualDecisionService extends BaseService {
       termReviews.map((item) => [item.termAssignmentId.toString(), item]),
     );
 
+    const annualDecisionValues = await AnnualDecisionValue.find({
+      annualDecisionId: decision._id,
+      isDeleted: false,
+    }).lean();
     const snapshotPayload = {
       annualSnapshot: annualAssignment.toObject(),
       termSnapshots: Object.fromEntries(
@@ -1055,6 +1822,7 @@ export class AnnualDecisionService extends BaseService {
         snapshotKind: 'PRE_REOPEN',
         reopenReason: reason,
         decision: decision.toObject(),
+        annualDecisionValues,
         objectiveMatrix,
         objectiveMatrixContentHash: objectiveMatrix?.contentHash,
         objectiveMatrixLayoutVersion: objectiveMatrix?.layoutVersion,
@@ -1115,6 +1883,19 @@ export class AnnualDecisionService extends BaseService {
     decision.updatedBy = this.actorIdObject();
     decision.version += 1;
     await decision.save();
+
+    await AnnualDecisionValue.updateMany(
+      { annualDecisionId: decision._id, roleCode: 'DIRECTOR', isDeleted: false },
+      { $set: { isDeleted: true, updatedBy: this.actorIdObject() }, $inc: { version: 1 } },
+    );
+    if (annualAssignment.finalReviewStatus !== FinalReviewStatus.NOT_REQUIRED) {
+      annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.finalReviewCompletedBy = undefined;
+      annualAssignment.finalReviewCompletedAt = undefined;
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.directorReviewCompletedBy = undefined;
+      annualAssignment.directorReviewCompletedAt = undefined;
+    }
 
     if (visibilityConfiguration) {
       const previousVisibilityValue = visibilityConfiguration.toObject();
@@ -1249,6 +2030,83 @@ export class AnnualDecisionService extends BaseService {
 
     await this.audit(
       'PMS_ANNUAL_FINAL_SCORE_OVERRIDDEN',
+      'ANNUAL_DECISION',
+      decision._id.toString(),
+      previousValue,
+      decision.toObject(),
+      reason,
+    );
+
+    return decision;
+  }
+
+  async overrideFinalRating(
+    annualAssignmentId: string,
+    input: OverrideFinalRatingInput,
+  ): Promise<IAnnualDecision> {
+    this.assertDecisionAdmin('annualDecision.finalRating.override');
+    const reason = input.reason?.trim();
+    if (!reason) {
+      throw new Error('Final rating override reason is required');
+    }
+    const overrideRating = await this.validateManagerOverallRating(
+      input.overrideRating,
+      true,
+    );
+
+    const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    await this.assertAllQuartersComplete(annualAssignment._id);
+    await this.assertAppraisalWindowOpen(annualAssignment);
+
+    const decision = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    });
+    if (!decision) {
+      throw new Error('Annual decision draft must exist before final rating override');
+    }
+
+    if (
+      decision.frozenAt ||
+      decision.decisionStatus === AnnualDecisionStatus.FROZEN ||
+      decision.decisionStatus === AnnualDecisionStatus.VISIBILITY_ENABLED
+    ) {
+      throw new Error('Frozen annual decisions must be reopened before final rating override');
+    }
+
+    const proposedFinalRating = await this.resolveProposedFinalRatingForAssignment(
+      annualAssignment,
+    );
+    const previousValue = decision.toObject();
+
+    await CorrectionLayer.create({
+      entityType: 'ANNUAL_DECISION',
+      entityId: decision._id,
+      fieldKey: 'FINAL_RATING_OVERRIDE',
+      originalValue: {
+        proposedFinalRating,
+        previousEffectiveFinalRating: decision.finalRating,
+        decisionStatus: decision.decisionStatus,
+      },
+      correctedValue: {
+        overriddenFinalRating: overrideRating,
+        effectiveFinalRating: overrideRating,
+      },
+      correctionReason: reason,
+      correctedBy: this.actorIdObject(),
+      correctedAt: new Date(),
+      createdBy: this.actorIdObject(),
+      updatedBy: this.actorIdObject(),
+    });
+
+    decision.finalRating = overrideRating;
+    decision.updatedBy = this.actorIdObject();
+    decision.version += 1;
+    await decision.save();
+    await this.syncAnnualFinalRatingValue(decision, annualAssignment, overrideRating!);
+
+    await this.audit(
+      'PMS_ANNUAL_FINAL_RATING_OVERRIDDEN',
       'ANNUAL_DECISION',
       decision._id.toString(),
       previousValue,
@@ -1446,7 +2304,10 @@ export class AnnualDecisionService extends BaseService {
   }
 
   private async resolveAnnualDecisionReadiness(
-    annualAssignment: Pick<IAnnualAssignment, '_id' | 'cycleId' | 'applicableTerms' | 'annualState'>,
+    annualAssignment: Pick<
+      IAnnualAssignment,
+      '_id' | 'cycleId' | 'applicableTerms' | 'annualState' | 'finalReviewStatus' | 'directorReviewStatus'
+    >,
     termAssignments: Array<Pick<ITermAssignment, 'assessmentTermCode' | 'termState'>>,
     finalDecisionStatus: string,
     cycleOverride?: IAnnualCycle | null,
@@ -1473,6 +2334,8 @@ export class AnnualDecisionService extends BaseService {
     const availableActions = this.resolveAvailableActions({
       annualState,
       finalDecisionStatus,
+      finalReviewStatus: annualAssignment.finalReviewStatus,
+      directorReviewStatus: annualAssignment.directorReviewStatus,
       allTermsFinalized,
       isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
     });
@@ -1485,25 +2348,36 @@ export class AnnualDecisionService extends BaseService {
       },
       allTermsFinalized,
       availableActions,
-      lockedReason: this.resolveAnnualDecisionLockedReason({
-        annualState,
-        finalDecisionStatus,
-        allTermsFinalized,
-        isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
-        availableActions,
-      }),
+      lockedReason:
+        finalDecisionStatus === AnnualDecisionStatus.SUBMITTED &&
+        !this.areFinalReviewStagesComplete(
+          annualAssignment.finalReviewStatus,
+          annualAssignment.directorReviewStatus,
+        )
+          ? 'L2 and Director Assessments must be completed before finalisation'
+          : this.resolveAnnualDecisionLockedReason({
+              annualState,
+              finalDecisionStatus,
+              allTermsFinalized,
+              isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
+              availableActions,
+            }),
     };
   }
 
   private resolveAvailableActions(input: {
     annualState: string;
     finalDecisionStatus: string;
+    finalReviewStatus?: string;
+    directorReviewStatus?: string;
     allTermsFinalized: boolean;
     isAppraisalWindowOpen: boolean;
   }): AnnualDecisionAction[] {
     const {
       annualState,
       finalDecisionStatus,
+      finalReviewStatus,
+      directorReviewStatus,
       allTermsFinalized,
       isAppraisalWindowOpen,
     } = input;
@@ -1531,7 +2405,9 @@ export class AnnualDecisionService extends BaseService {
       ) {
         return [];
       }
-      return ['FREEZE'];
+      return this.areFinalReviewStagesComplete(finalReviewStatus, directorReviewStatus)
+        ? ['SAVE_DRAFT', 'SUBMIT', 'FREEZE']
+        : [];
     }
 
     if (
@@ -1546,6 +2422,17 @@ export class AnnualDecisionService extends BaseService {
     }
 
     return ['SAVE_DRAFT', 'SUBMIT'];
+  }
+
+  private areFinalReviewStagesComplete(
+    l2Status?: string,
+    directorStatus?: string,
+  ): boolean {
+    if (l2Status === FinalReviewStatus.NOT_REQUIRED) return true;
+    return (
+      l2Status === FinalReviewStatus.COMPLETED &&
+      directorStatus === FinalReviewStatus.COMPLETED
+    );
   }
 
   private resolveAnnualDecisionLockedReason(input: {
@@ -1758,6 +2645,12 @@ export class AnnualDecisionService extends BaseService {
           if (!field.required || field.editable !== true) {
             continue;
           }
+          if (
+            RATING_ONLY_MANAGER_REVIEW &&
+            this.isFinalScoreFieldKey(field.key)
+          ) {
+            continue;
+          }
 
           if (!this.hasMeaningfulAnnualTemplateFieldValue(field.key, field.type, values)) {
             missingFields.push(field.label || field.key);
@@ -1815,6 +2708,74 @@ export class AnnualDecisionService extends BaseService {
     }
 
     return this.roundAnnualScore(Number(score));
+  }
+
+  private resolveProposedFinalRating(
+    annualAssignment: IAnnualAssignment,
+    termAssignments: Array<Record<string, any> | ITermAssignment>,
+  ): string | undefined {
+    const ratingByTerm = new Map(
+      termAssignments
+        .map((termAssignment) => [
+          String(termAssignment.assessmentTermCode),
+          String(termAssignment.termRating ?? '').trim(),
+        ] as const)
+        .filter(([, rating]) => Boolean(rating)),
+    );
+
+    // Use the latest applicable assessment term rating as the annual proposal.
+    // The explicit annual rating override remains available for management.
+    const applicableTerms = [...(annualAssignment.applicableTerms ?? [])].reverse();
+    for (const termCode of applicableTerms) {
+      const rating = ratingByTerm.get(String(termCode));
+      if (rating) {
+        return rating;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async resolveProposedFinalRatingForAssignment(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<string | undefined> {
+    const termAssignments = await TermAssignment.find({
+      annualAssignmentId: annualAssignment._id,
+      assessmentTermCode: { $in: annualAssignment.applicableTerms },
+      isDeleted: false,
+    }).lean();
+    return this.resolveProposedFinalRating(annualAssignment, termAssignments);
+  }
+
+  private async validateManagerOverallRating(
+    rating: string | undefined,
+    required: boolean,
+  ): Promise<string | undefined> {
+    const normalizedRating = rating?.trim();
+    if (!normalizedRating) {
+      if (required) {
+        throw new Error('Final Rating is required');
+      }
+      return undefined;
+    }
+
+    const managerRatingLov = await LOV.findOne({ type: 'managerrating' })
+      .select('values')
+      .lean();
+    const activeOptions = managerRatingLov?.values?.filter(
+      (option) => option.isActive !== false,
+    ) ?? [];
+    const matchedOption = activeOptions.find(
+      (option) =>
+        option.value.trim().toLowerCase() === normalizedRating.toLowerCase() ||
+        option.label.trim().toLowerCase() === normalizedRating.toLowerCase(),
+    );
+
+    if (!matchedOption) {
+      throw new Error('Final Rating must be an active Manager Rating option');
+    }
+
+    return matchedOption.value.trim();
   }
 
   private async tryCalculateAnnualFinalScore(
@@ -2245,11 +3206,23 @@ export class AnnualDecisionService extends BaseService {
   private resolveAnnualDecisionTemplateWorkflowState(
     annualAssignment: IAnnualAssignment,
   ): string {
+    const submittedDecisionCanBeCorrected =
+      annualAssignment.finalDecisionStatus === AnnualDecisionStatus.SUBMITTED &&
+      annualAssignment.annualState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
+      this.areFinalReviewStagesComplete(
+        annualAssignment.finalReviewStatus,
+        annualAssignment.directorReviewStatus,
+      );
+
     if (
-      annualAssignment.finalDecisionStatus === AnnualDecisionStatus.DRAFT &&
+      (
+        annualAssignment.finalDecisionStatus === AnnualDecisionStatus.DRAFT ||
+        submittedDecisionCanBeCorrected
+      ) &&
       (
         annualAssignment.annualState === AnnualWorkflowState.ALL_TERMS_FINALIZED ||
-        annualAssignment.annualState === AnnualWorkflowState.APPRAISAL_WINDOW_OPEN
+        annualAssignment.annualState === AnnualWorkflowState.APPRAISAL_WINDOW_OPEN ||
+        annualAssignment.annualState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED
       )
     ) {
       return AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT;
@@ -2432,17 +3405,19 @@ export class AnnualDecisionService extends BaseService {
       managementRemarks: decision.managementRemarks,
       finalScore: decision.finalScore,
       finalRating: decision.finalRating,
-      decisionValues: annualDecisionValues.map((value) => ({
-        templateFieldId: value.templateFieldId,
-        fieldKey: value.fieldKey,
-        sectionKey: value.sectionKey,
-        roleCode: value.roleCode,
-        actorUserId: value.actorUserId?.toString(),
-        valueJson: value.valueJson,
-        valueText: value.valueText,
-        valueNumber: value.valueNumber,
-        valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
-      })),
+      decisionValues: annualDecisionValues
+        .filter((value) => !isFinalReviewerOwnedDecisionValue(value))
+        .map((value) => ({
+          templateFieldId: value.templateFieldId,
+          fieldKey: value.fieldKey,
+          sectionKey: value.sectionKey,
+          roleCode: value.roleCode,
+          actorUserId: value.actorUserId?.toString(),
+          valueJson: value.valueJson,
+          valueText: value.valueText,
+          valueNumber: value.valueNumber,
+          valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
+        })),
     };
   }
 
@@ -2678,6 +3653,7 @@ export class AnnualDecisionService extends BaseService {
     return decisionValues
       .filter((decisionValue) => decisionValue.fieldKey?.trim() && decisionValue.sectionKey?.trim())
       .filter((decisionValue) => !this.isFinalScoreFieldKey(decisionValue.fieldKey))
+      .filter((decisionValue) => !isFinalReviewerOwnedDecisionValue(decisionValue))
       .map((decisionValue) => ({
         ...baseValue,
         templateFieldId: decisionValue.templateFieldId,
@@ -2719,6 +3695,9 @@ export class AnnualDecisionService extends BaseService {
     return existingValues
       .filter((value) => {
         if (!value.fieldKey || !value.sectionKey || this.isFinalScoreFieldKey(value.fieldKey)) return false;
+        // L2/L3 reviewer values are a separate ownership boundary. Preserve
+        // them exactly even when the Admin form posts the same field keys.
+        if (isFinalReviewerOwnedDecisionValue(value)) return true;
         const resolvedField = resolvedFieldMap.get(value.fieldKey);
         if (resolvedField?.editable === true) return false;
         return !nextKeys.has(`${value.sectionKey}::${value.fieldKey}`);
@@ -3451,6 +4430,13 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
+    if (
+      annualAssignment.finalReviewerId?.toString() === actor.actorId ||
+      annualAssignment.directorReviewerId?.toString() === actor.actorId
+    ) {
+      return;
+    }
+
     if (mappedRole === PmsRole.DIRECTOR || mappedRole === PmsRole.MANAGEMENT || actor.actorScope === 'EXECUTIVE' || actor.actorScope === 'ALL') {
       return;
     }
@@ -3516,6 +4502,81 @@ export class AnnualDecisionService extends BaseService {
     }
 
     throw new Error(`Access denied for ${action}`);
+  }
+
+  private resolveActorFinalReviewStage(
+    annualAssignment: IAnnualAssignment,
+    requireEditable = true,
+  ): FinalReviewStage | undefined {
+    const actor = this.requireActor();
+    const editable = [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS];
+    const isL2 = annualAssignment.finalReviewerId?.toString() === actor.actorId;
+    const isDirector = annualAssignment.directorReviewerId?.toString() === actor.actorId;
+
+    if (isL2 && editable.includes(annualAssignment.finalReviewStatus as any)) {
+      return 'L2';
+    }
+    if (
+      isDirector &&
+      (!requireEditable || annualAssignment.finalReviewStatus === FinalReviewStatus.COMPLETED) &&
+      (!requireEditable || editable.includes(annualAssignment.directorReviewStatus as any))
+    ) {
+      return 'DIRECTOR';
+    }
+    if (!requireEditable && isL2) return 'L2';
+    return undefined;
+  }
+
+  private async assertFinalReviewerAccess(
+    annualAssignmentId: string,
+  ): Promise<{ annualAssignment: IAnnualAssignment; reviewStage: FinalReviewStage }> {
+    const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    if (annualAssignment.annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED) {
+      throw new Error('Final Review is available only after Management Decision submission');
+    }
+    const reviewStage = this.resolveActorFinalReviewStage(annualAssignment);
+    if (!reviewStage) {
+      const actor = this.requireActor();
+      const waitingForL2 =
+        annualAssignment.directorReviewerId?.toString() === actor.actorId &&
+        annualAssignment.finalReviewStatus !== FinalReviewStatus.COMPLETED;
+      throw new Error(
+        waitingForL2
+          ? 'Director Assessment is available only after the L2 Assessment is completed'
+          : 'Access denied: this Final Review stage is not assigned to you or is not editable',
+      );
+    }
+    return { annualAssignment, reviewStage };
+  }
+
+  private async finalReviewTemplateFields(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<Array<Record<string, any>>> {
+    if (!annualAssignment.templateVersionId) throw new Error('Locked template version is required');
+    const template = await PmsTemplateVersion.findById(annualAssignment.templateVersionId)
+      .select('sections')
+      .lean();
+    const sections = (template?.sections ?? []).filter(
+      (section: any) => section.metadata?.finalReviewSection === true,
+    );
+    if (sections.length !== 1) throw new Error('Exactly one Final Reviewer Assessment section is required');
+    const section: any = sections[0];
+    return (section.fields ?? []).map((field: any) => ({
+      ...field,
+      key: field.key ?? field.fieldKey,
+      label: field.label ?? field.fieldLabel,
+      type: field.type ?? field.fieldType,
+      required:
+        field.required === true ||
+        field.isRequired === true ||
+        field.mandatory === true,
+      sectionKey: section.key ?? section.sectionKey,
+      reviewStage:
+        String(field.metadata?.finalReviewStage ?? '').toUpperCase() === 'L2' ||
+        String(field.key ?? field.fieldKey).toLowerCase() === 'ed_svp_assessment'
+          ? 'L2'
+          : 'DIRECTOR',
+    }));
   }
 
   private async getAnnualAssignment(annualAssignmentId: string): Promise<IAnnualAssignment> {

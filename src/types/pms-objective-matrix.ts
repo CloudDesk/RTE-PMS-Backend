@@ -71,6 +71,29 @@ export interface ObjectiveMatrixSibling {
   version: number;
 }
 
+export interface ObjectiveEvidenceAttachmentSummary {
+  id: string;
+  documentId: string;
+  fileName: string;
+  fileType?: string;
+  fileSize?: number;
+  uploadedAt: string;
+  uploadedByName?: string;
+  previewAvailable: boolean;
+  downloadAvailable: boolean;
+}
+
+export interface ObjectiveTermEvidenceSummary {
+  evidenceId?: string;
+  objectiveId: string;
+  termAssignmentId: string;
+  termCode: AssessmentTermCode;
+  version: number;
+  editable: boolean;
+  denialReason?: ObjectiveMatrixCellDenialReason;
+  attachment?: ObjectiveEvidenceAttachmentSummary;
+}
+
 export interface ObjectiveMatrixRowActions {
   canEdit: boolean;
   canDelete: boolean;
@@ -92,6 +115,7 @@ export interface ObjectiveMatrixRow {
   siblings: ObjectiveMatrixSibling[];
   sharedCells: ObjectiveMatrixCell[];
   termCells: Partial<Record<AssessmentTermCode, ObjectiveMatrixCell[]>>;
+  evidenceByTerm: Partial<Record<AssessmentTermCode, ObjectiveTermEvidenceSummary>>;
   actions: ObjectiveMatrixRowActions;
 }
 
@@ -110,6 +134,7 @@ export interface AnnualObjectiveMatrixResponse {
   columns: ITemplateObjectiveTableColumn[];
   columnGroups: ITemplateObjectiveColumnGroup[];
   termPolicies: ITemplateObjectiveColumnTermPolicy[];
+  rowGroupColumnLabel?: string;
   dynamicRowPolicy: ITemplateObjectiveTableLayout['dynamicRowPolicy'];
   showRowGroups: boolean;
   rowGroups: ITemplateObjectiveRowGroup[];

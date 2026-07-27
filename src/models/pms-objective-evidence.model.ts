@@ -88,7 +88,17 @@ const objectiveEvidenceSchema = new Schema<IObjectiveEvidence>(
   },
 );
 
-objectiveEvidenceSchema.index({ objectiveId: 1 });
+objectiveEvidenceSchema.index(
+  { objectiveId: 1, evidenceType: 1 },
+  {
+    unique: true,
+    name: 'idx_unique_active_objective_term_evidence',
+    partialFilterExpression: {
+      isDeleted: false,
+      evidenceType: 'TERM_SUPPORTING_DOCUMENT',
+    },
+  },
+);
 objectiveEvidenceSchema.index({ termAssignmentId: 1, createdAt: -1 });
 objectiveEvidenceSchema.index({ cycleId: 1, employeeId: 1 });
 

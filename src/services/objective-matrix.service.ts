@@ -16,6 +16,8 @@ import type {
   AssessmentTermType as AssessmentTermTypeType,
 } from '../constants/pms.enums';
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
+import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
+import { ObjectiveEvidence } from '../models/pms-objective-evidence.model';
 import { Objective } from '../models/pms-objective.model';
 import { ObjectiveValue } from '../models/pms-objective-value.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
@@ -33,6 +35,7 @@ import type {
   ObjectiveMatrixMode,
   ObjectiveMatrixReadQuery,
   ObjectiveMatrixRow,
+  ObjectiveTermEvidenceSummary,
 } from '../types/pms-objective-matrix';
 import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
 import { accessService } from './access.service';
@@ -146,6 +149,32 @@ export interface ObjectiveMatrixCellPermissionInput {
   rowSource: string;
 }
 
+export function resolveObjectiveTermEvidencePermission(input: {
+  role: string;
+  workflowState: string;
+  termPosition: 'PAST' | 'CURRENT' | 'FUTURE';
+  windowOpen: boolean;
+  explicitEditable: boolean;
+}): Pick<ObjectiveTermEvidenceSummary, 'editable' | 'denialReason'> {
+  if ([TermWorkflowState.TERM_FINALIZED, TermWorkflowState.CLOSED_BY_ADMIN]
+    .includes(input.workflowState as any)) {
+    return { editable: false, denialReason: 'TERM_FINALIZED' };
+  }
+  if (input.termPosition !== 'CURRENT' || input.workflowState === TermWorkflowState.NOT_STARTED) {
+    return { editable: false, denialReason: 'TERM_NOT_OPEN' };
+  }
+  if (!input.windowOpen) {
+    return { editable: false, denialReason: 'WINDOW_CLOSED' };
+  }
+  if (input.role !== PmsRole.EMPLOYEE) {
+    return { editable: false, denialReason: 'ROLE_READ_ONLY' };
+  }
+  if (!input.explicitEditable) {
+    return { editable: false, denialReason: 'COLUMN_READ_ONLY' };
+  }
+  return { editable: true };
+}
+
 export function validateObjectiveMatrixRowForSubmit(
   matrix: AnnualObjectiveMatrixResponse,
   input: {
@@ -196,6 +225,11 @@ export function resolveObjectiveMatrixCellPermission(
 ): ObjectiveMatrixCellPermission {
   if (input.explicitVisibility === 'HIDDEN') {
     return { visible: false, editable: false, required: false, denialReason: 'COLUMN_HIDDEN' };
+  }
+  if (input.columnType === 'OBJECTIVE_EVIDENCE') {
+    // Evidence uses its dedicated upload/replace lifecycle, never generic
+    // objective_values matrix-cell persistence.
+    return { visible: true, editable: false, required: false, denialReason: 'COLUMN_READ_ONLY' };
   }
   if (input.columnType === 'FORMULA' || input.columnType === 'SYSTEM_DISPLAY' || input.columnFillOwner === 'SYSTEM') {
     return { visible: true, editable: false, required: false, denialReason: 'SYSTEM_CALCULATED' };
@@ -265,6 +299,10 @@ function objectiveCoreValue(objective: LeanRecord, fieldKey: string): unknown {
   return values[fieldKey];
 }
 
+export function isGlobalDirectorObjectiveRead(role: string | undefined): boolean {
+  return normalizePmsRole(role ?? '') === PmsRole.DIRECTOR;
+}
+
 function typedStoredValue(value?: LeanRecord): unknown {
   if (!value) return undefined;
   if (value.valueNumber !== undefined) return value.valueNumber;
@@ -287,9 +325,16 @@ export class ObjectiveMatrixService {
       isDeleted: false,
     }).lean();
     if (!annualAssignment) throw new Error('Annual assignment not found');
-    await this.assertAccess(actor, annualAssignment);
+    await this.assertAccess(actor, annualAssignment, query.mode);
 
-    const { mode, viewRole } = this.resolveView(actor, query.mode);
+    const isAssignedFinalReviewer =
+      annualAssignment.finalReviewerId?.toString() === actor.actorId ||
+      annualAssignment.directorReviewerId?.toString() === actor.actorId;
+    const { mode, viewRole, permissionRole } = this.resolveView(
+      actor,
+      query.mode,
+      isAssignedFinalReviewer,
+    );
     const includeAudit = query.includeAudit === true || query.includeAudit === 'true';
     if (includeAudit && normalizePmsRole(actor.actorRole) !== PmsRole.ADMIN) {
       throw new Error('Matrix audit details require Admin access');
@@ -357,7 +402,11 @@ export class ObjectiveMatrixService {
       .filter((column) => this.columnAccess(column, viewRole).visible)
       .map((column) => ({
         ...column,
-        access: column.access?.filter((entry) => entry.role === viewRole),
+        access: column.access
+          ?.filter((entry) => entry.role === viewRole)
+          .map((entry) => permissionRole === PmsRole.DIRECTOR
+            ? { ...entry, editable: false, required: false }
+            : entry),
       }))
       .sort((left, right) => left.displayOrder - right.displayOrder);
     const visibleColumnIds = new Set(visibleColumns.map((column) => column.columnId));
@@ -366,6 +415,29 @@ export class ObjectiveMatrixService {
       .filter((group) => group.columnIds.length > 0)
       .sort((left, right) => left.displayOrder - right.displayOrder);
     const termPolicies = layout.termPolicies.filter((policy) => visibleColumnIds.has(policy.columnId));
+    const evidenceColumn = visibleColumns.find((column) => column.type === 'OBJECTIVE_EVIDENCE');
+    const evidenceRecords = evidenceColumn && visibleObjectives.length > 0
+      ? await ObjectiveEvidence.find({
+          objectiveId: { $in: visibleObjectives.map((objective) => objective._id) },
+          evidenceType: 'TERM_SUPPORTING_DOCUMENT',
+          isDeleted: false,
+        }).lean()
+      : [];
+    const evidenceByObjective = new Map<string, LeanRecord>();
+    for (const evidence of evidenceRecords) {
+      evidenceByObjective.set(evidence.objectiveId.toString(), evidence);
+    }
+    const activeAttachmentIds = evidenceRecords.flatMap((evidence) => evidence.attachmentIds ?? []);
+    const attachments = activeAttachmentIds.length > 0
+      ? await ObjectiveAttachment.find({
+          _id: { $in: activeAttachmentIds },
+          objectiveId: { $in: visibleObjectives.map((objective) => objective._id) },
+          isDeleted: false,
+        }).lean()
+      : [];
+    const attachmentById = new Map(
+      attachments.map((attachment) => [attachment._id.toString(), attachment]),
+    );
 
     const grouped = new Map<string, LeanRecord[]>();
     for (const objective of visibleObjectives) {
@@ -380,12 +452,16 @@ export class ObjectiveMatrixService {
       allColumns: layout.columns,
       visibleColumnIds,
       valuesByObjective,
+      evidenceColumn,
+      evidenceByObjective,
+      attachmentById,
       assignmentByTerm,
       termCycleById,
       annualAssignment,
       termOrder,
       currentTermCode,
       viewRole,
+      permissionRole,
       includeAudit,
       formulaSourceCells,
     }));
@@ -427,6 +503,7 @@ export class ObjectiveMatrixService {
       columns: visibleColumns,
       columnGroups,
       termPolicies,
+      rowGroupColumnLabel: layout.rowGroupColumnLabel,
       dynamicRowPolicy: layout.dynamicRowPolicy,
       showRowGroups,
       rowGroups,
@@ -449,6 +526,7 @@ export class ObjectiveMatrixService {
       columns: visibleColumns,
       columnGroups,
       termPolicies,
+      rowGroupColumnLabel: layout.rowGroupColumnLabel,
       dynamicRowPolicy: layout.dynamicRowPolicy,
       showRowGroups,
       rowGroups,
@@ -462,6 +540,8 @@ export class ObjectiveMatrixService {
         ...termAssignments.map((term) => term.version ?? 1),
         ...visibleObjectives.map((objective) => objective.version ?? 1),
         ...objectiveValues.map((value) => value.version ?? 1),
+        ...evidenceRecords.map((evidence) => evidence.version ?? 1),
+        ...attachments.map((attachment) => attachment.version ?? 1),
       ),
       contentHash: createHash('sha256').update(canonicalJson(hashPayload)).digest('hex'),
     };
@@ -474,12 +554,16 @@ export class ObjectiveMatrixService {
     allColumns: ITemplateObjectiveTableColumn[];
     visibleColumnIds: Set<string>;
     valuesByObjective: Map<string, LeanRecord[]>;
+    evidenceColumn?: ITemplateObjectiveTableColumn;
+    evidenceByObjective: Map<string, LeanRecord>;
+    attachmentById: Map<string, LeanRecord>;
     assignmentByTerm: Map<AssessmentTermCodeType, LeanRecord>;
     termCycleById: Map<string, LeanRecord>;
     annualAssignment: LeanRecord;
     termOrder: AssessmentTermCodeType[];
     currentTermCode?: AssessmentTermCodeType;
     viewRole: string;
+    permissionRole: string;
     includeAudit: boolean;
     formulaSourceCells: ObjectiveMatrixFormulaSourceCell[];
   }): ObjectiveMatrixRow {
@@ -523,7 +607,61 @@ export class ObjectiveMatrixService {
         else termCells[termCode] = [...(termCells[termCode] ?? []), cell];
       }
     }
-    const role = input.viewRole;
+    const role = input.permissionRole;
+    const evidenceByTerm: Partial<Record<AssessmentTermCodeType, ObjectiveTermEvidenceSummary>> = {};
+    if (input.evidenceColumn) {
+      const evidenceAccess = this.columnAccess(input.evidenceColumn, input.viewRole);
+      const evidenceConfig = input.evidenceColumn.evidenceConfig;
+      for (const termCode of coverage) {
+        const sibling = siblingByTerm.get(termCode)!;
+        const assignment = input.assignmentByTerm.get(termCode)!;
+        const cycle = assignment.cycleTermId
+          ? input.termCycleById.get(assignment.cycleTermId.toString())
+          : undefined;
+        const permission = resolveObjectiveTermEvidencePermission({
+          role,
+          workflowState: assignment.termState,
+          termPosition: this.termPosition(termCode, input.currentTermCode, input.termOrder),
+          windowOpen: this.stageWindowOpen(
+            'EMPLOYEE_ACHIEVEMENT',
+            assignment,
+            cycle,
+            input.annualAssignment,
+          ),
+          explicitEditable: evidenceAccess.editable,
+        });
+        const evidence = input.evidenceByObjective.get(sibling._id.toString());
+        const attachmentId = evidence?.attachmentIds?.[0]?.toString();
+        const attachmentCandidate = attachmentId
+          ? input.attachmentById.get(attachmentId)
+          : undefined;
+        const attachment = attachmentCandidate?.objectiveId?.toString() === sibling._id.toString()
+          ? attachmentCandidate
+          : undefined;
+        evidenceByTerm[termCode] = {
+          ...(evidence ? { evidenceId: evidence._id.toString() } : {}),
+          objectiveId: sibling._id.toString(),
+          termAssignmentId: sibling.termAssignmentId.toString(),
+          termCode,
+          version: evidence?.version ?? 0,
+          ...permission,
+          ...(attachment ? {
+            attachment: {
+              id: attachment._id.toString(),
+              documentId: attachment.documentId ?? '',
+              fileName: attachment.fileName ?? '',
+              ...(attachment.fileType ? { fileType: attachment.fileType } : {}),
+              ...(attachment.fileSize !== undefined ? { fileSize: attachment.fileSize } : {}),
+              uploadedAt: new Date(
+                attachment.uploadedAt ?? attachment.createdAt,
+              ).toISOString(),
+              previewAvailable: evidenceConfig?.allowPreview === true,
+              downloadAvailable: evidenceConfig?.allowDownload === true,
+            },
+          } : {}),
+        };
+      }
+    }
     const ownDraft = role === PmsRole.EMPLOYEE && first.source === ObjectiveSource.EMPLOYEE_CREATED &&
       input.siblings.some((sibling) => sibling.status === ObjectiveStatus.OBJECTIVE_DRAFT);
     const ownRevision = role === PmsRole.EMPLOYEE && first.source === ObjectiveSource.EMPLOYEE_CREATED &&
@@ -556,7 +694,7 @@ export class ObjectiveMatrixService {
     const actionCycle = actionAssignment?.cycleTermId
       ? input.termCycleById.get(actionAssignment.cycleTermId.toString())
       : undefined;
-    const titleAccess = titleColumn ? this.columnAccess(titleColumn, role) : undefined;
+    const titleAccess = titleColumn ? this.columnAccess(titleColumn, input.viewRole) : undefined;
     const objectiveSettingEditable = Boolean(titleColumn && actionAssignment &&
       resolveObjectiveMatrixCellPermission({
         role,
@@ -595,6 +733,7 @@ export class ObjectiveMatrixService {
       }),
       sharedCells,
       termCells,
+      evidenceByTerm,
       actions: {
         canEdit: (ownDraft || ownRevision) && objectiveSettingEditable,
         canDelete: ownDraft && objectiveSettingEditable,
@@ -619,6 +758,7 @@ export class ObjectiveMatrixService {
     termOrder: AssessmentTermCodeType[];
     currentTermCode?: AssessmentTermCodeType;
     viewRole: string;
+    permissionRole: string;
     includeAudit: boolean;
   }): ObjectiveMatrixCell {
     const objectiveValues = input.valuesByObjective.get(input.objective._id.toString()) ?? [];
@@ -641,7 +781,7 @@ export class ObjectiveMatrixService {
     );
     const access = this.columnAccess(input.column, input.viewRole);
     const resolvedPermission = resolveObjectiveMatrixCellPermission({
-      role: input.viewRole,
+      role: input.permissionRole,
       workflowState: assignment.termState,
       termPosition: position,
       windowOpen,
@@ -776,7 +916,11 @@ export class ObjectiveMatrixService {
     return AssessmentTermType.QUARTERLY;
   }
 
-  private resolveView(actor: MatrixActor, requested?: ObjectiveMatrixMode) {
+  private resolveView(
+    actor: MatrixActor,
+    requested?: ObjectiveMatrixMode,
+    isAssignedFinalReviewer = false,
+  ) {
     const role = normalizePmsRole(actor.actorRole);
     if (!role) throw new Error(`Role ${actor.actorRole} is not mapped for PMS access`);
     if (requested && !['employee', 'manager', 'reviewer', 'admin'].includes(requested)) {
@@ -797,13 +941,49 @@ export class ObjectiveMatrixService {
         : mode === 'admin'
           ? PmsRole.ADMIN
           : role === PmsRole.MANAGEMENT ? PmsRole.MANAGEMENT : PmsRole.DIRECTOR;
-    if (role !== PmsRole.ADMIN && requestedRole !== role) {
+    const isFinalReviewerPerspective =
+      isAssignedFinalReviewer && mode === 'reviewer';
+    const canReadCrossPerspective =
+      role === PmsRole.ADMIN || role === PmsRole.DIRECTOR || isFinalReviewerPerspective;
+    if (!canReadCrossPerspective && requestedRole !== role) {
       throw new Error(`Matrix mode ${mode} is not permitted for role ${actor.actorRole}`);
     }
-    return { mode, viewRole: role === PmsRole.ADMIN ? requestedRole : role };
+    const viewRole = canReadCrossPerspective ? requestedRole : role;
+    return {
+      mode,
+      viewRole,
+      // Director can inspect another perspective's configured columns, but all
+      // permission and row-action calculations must remain Director read-only.
+      permissionRole:
+        role === PmsRole.DIRECTOR || isFinalReviewerPerspective
+          ? PmsRole.DIRECTOR
+          : viewRole,
+    };
   }
 
-  private async assertAccess(actor: MatrixActor, annualAssignment: LeanRecord): Promise<void> {
+  private async assertAccess(
+    actor: MatrixActor,
+    annualAssignment: LeanRecord,
+    requestedMode?: ObjectiveMatrixMode,
+  ): Promise<void> {
+    // Director matrix access is global and read-only. Cell/action permissions
+    // still prevent Director edits; this bypass only keeps matrix-enabled
+    // assignments readable from management performance summaries.
+    if (normalizePmsRole(actor.actorRole) === PmsRole.DIRECTOR) {
+      return;
+    }
+    // A reporting-hierarchy reviewer may still have the functional MANAGER role.
+    // Their access is limited to the assignment explicitly resolved to them.
+    if (
+      requestedMode === 'reviewer' &&
+      (
+        annualAssignment.finalReviewerId?.toString() === actor.actorId ||
+        annualAssignment.directorReviewerId?.toString() === actor.actorId
+      )
+    ) {
+      return;
+    }
+
     const access = await accessService.canPerform({
       actor,
       action: 'objective.view',

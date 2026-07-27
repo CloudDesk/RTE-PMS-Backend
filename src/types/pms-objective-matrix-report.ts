@@ -15,6 +15,7 @@ export interface ObjectiveMatrixReportHeaderGroup {
 export interface ObjectiveMatrixReportColumn {
   key: string;
   columnId: string;
+  columnType: string;
   label: string;
   groupLabel: string;
   termCode?: string;
