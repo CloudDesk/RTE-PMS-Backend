@@ -53,6 +53,66 @@ import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type { ITermReview } from '../models/pms-term-review.model';
 import type { ITemplateField, ITemplateSection } from '../models/pms-template-version.model';
 
+type ManagerReviewResolvedSection = {
+  key?: string;
+  title?: string;
+  metadata?: Record<string, unknown>;
+  fields: ResolvedTemplateField[];
+};
+
+function normalizedManagerReviewIdentity(...values: unknown[]): string {
+  return values
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isCareerProgressionPastSection(
+  section: ManagerReviewResolvedSection,
+): boolean {
+  return (
+    section.metadata?.employeeCareerProfileSection === true ||
+    section.fields.some((field) => {
+      const bindingKey = String(
+        field.metadata?.bindingKey ?? field.key ?? '',
+      ).trim();
+      return bindingKey === 'employeeProfile.careerProgressionPast';
+    }) ||
+    normalizedManagerReviewIdentity(section.key, section.title).includes(
+      'career progression past',
+    )
+  );
+}
+
+function isOverviewOwnedManagerReviewField(
+  field: ResolvedTemplateField,
+): boolean {
+  const fieldKey = String(field.key ?? '').trim().toLowerCase();
+  const semanticRole = String(field.semanticRole ?? '').trim().toUpperCase();
+  const label = String(field.label ?? '').trim().toLowerCase();
+
+  return (
+    ['manager_comments', 'manager_comment', 'manager_rating'].includes(fieldKey) ||
+    ['MANAGER_COMMENT', 'MANAGER_RATING'].includes(semanticRole) ||
+    ['manager comments', 'manager comment', 'manager rating'].includes(label)
+  );
+}
+
+export function normalizeManagerReviewValidationFields(
+  sections: ManagerReviewResolvedSection[],
+): ResolvedTemplateField[] {
+  return sections.flatMap((section) =>
+    section.fields.map((field) =>
+      isCareerProgressionPastSection(section) &&
+      isOverviewOwnedManagerReviewField(field)
+        ? { ...field, required: false }
+        : field,
+    ),
+  );
+}
+
 interface TermReviewRatingInput {
   objectiveId?: string;
   rating?: number;
@@ -1622,7 +1682,7 @@ export class TermReviewService extends BaseService {
       },
     );
 
-    return resolved.sections.flatMap((section) => section.fields);
+    return normalizeManagerReviewValidationFields(resolved.sections);
   }
 
   private buildReviewResolveValues(reviewValues: TermReviewValueInput[]): Record<string, unknown> {
