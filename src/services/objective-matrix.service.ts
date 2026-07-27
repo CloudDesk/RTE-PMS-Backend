@@ -328,7 +328,8 @@ export class ObjectiveMatrixService {
     await this.assertAccess(actor, annualAssignment, query.mode);
 
     const isAssignedFinalReviewer =
-      annualAssignment.finalReviewerId?.toString() === actor.actorId;
+      annualAssignment.finalReviewerId?.toString() === actor.actorId ||
+      annualAssignment.directorReviewerId?.toString() === actor.actorId;
     const { mode, viewRole, permissionRole } = this.resolveView(
       actor,
       query.mode,
@@ -975,7 +976,10 @@ export class ObjectiveMatrixService {
     // Their access is limited to the assignment explicitly resolved to them.
     if (
       requestedMode === 'reviewer' &&
-      annualAssignment.finalReviewerId?.toString() === actor.actorId
+      (
+        annualAssignment.finalReviewerId?.toString() === actor.actorId ||
+        annualAssignment.directorReviewerId?.toString() === actor.actorId
+      )
     ) {
       return;
     }

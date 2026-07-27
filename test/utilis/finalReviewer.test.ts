@@ -9,6 +9,7 @@ import {
 const employeeId = new Types.ObjectId();
 const l1Id = new Types.ObjectId();
 const l2Id = new Types.ObjectId();
+const directorId = new Types.ObjectId();
 const fallbackId = new Types.ObjectId();
 
 function finder(users: FinalReviewerUser[]) {
@@ -25,7 +26,10 @@ describe('Final Reviewer resolution', () => {
         finalReviewRequired: false,
         findUserById: finder([]),
       }),
-    ).resolves.toEqual({ finalReviewStatus: FinalReviewStatus.NOT_REQUIRED });
+    ).resolves.toEqual({
+      finalReviewStatus: FinalReviewStatus.NOT_REQUIRED,
+      directorReviewStatus: FinalReviewStatus.NOT_REQUIRED,
+    });
   });
 
   it('uses the assigned L1 manager manager as the L2 Final Reviewer', async () => {
@@ -48,6 +52,14 @@ describe('Final Reviewer resolution', () => {
           name: 'SVP',
           role: 'manager',
           specificRole: 'SVP',
+          managerId: directorId,
+          active: true,
+          portalAccess: true,
+        },
+        {
+          _id: directorId,
+          name: 'Director',
+          role: 'director',
           active: true,
           portalAccess: true,
         },
@@ -57,6 +69,7 @@ describe('Final Reviewer resolution', () => {
     expect(result.finalReviewStatus).toBe(FinalReviewStatus.PENDING);
     expect(result.finalReviewerId?.toString()).toBe(l2Id.toString());
     expect(result.finalReviewerSource).toBe(FinalReviewerSource.REPORTING_L2);
+    expect(result.directorReviewerId?.toString()).toBe(directorId.toString());
   });
 
   it('uses the optional cycle fallback only when L2 is missing', async () => {
@@ -85,6 +98,7 @@ describe('Final Reviewer resolution', () => {
 
     expect(result.finalReviewerId?.toString()).toBe(fallbackId.toString());
     expect(result.finalReviewerSource).toBe(FinalReviewerSource.CYCLE_DEFAULT);
+    expect(result.directorReviewerId?.toString()).toBe(fallbackId.toString());
   });
 
   it('uses the same top Director for Final Review when Director is the assigned L1', async () => {
@@ -106,6 +120,37 @@ describe('Final Reviewer resolution', () => {
     expect(result.finalReviewStatus).toBe(FinalReviewStatus.PENDING);
     expect(result.finalReviewerId?.toString()).toBe(l1Id.toString());
     expect(result.finalReviewerSource).toBe(FinalReviewerSource.L1_DIRECTOR);
+    expect(result.directorReviewerId?.toString()).toBe(l1Id.toString());
+  });
+
+  it('keeps two sequential stages when the resolved L2 is also the Director', async () => {
+    const result = await resolveFinalReviewer({
+      employeeId,
+      assignedManagerId: l1Id,
+      finalReviewRequired: true,
+      findUserById: finder([
+        {
+          _id: l1Id,
+          name: 'Plant Manager',
+          role: 'manager',
+          managerId: directorId,
+          active: true,
+          portalAccess: true,
+        },
+        {
+          _id: directorId,
+          name: 'Director',
+          role: 'director',
+          active: true,
+          portalAccess: true,
+        },
+      ]),
+    });
+
+    expect(result.finalReviewerId?.toString()).toBe(directorId.toString());
+    expect(result.directorReviewerId?.toString()).toBe(directorId.toString());
+    expect(result.finalReviewStatus).toBe(FinalReviewStatus.PENDING);
+    expect(result.directorReviewStatus).toBe(FinalReviewStatus.PENDING);
   });
 
   it('rejects an inactive reviewer', async () => {

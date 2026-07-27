@@ -13,6 +13,7 @@ export type FinalReviewStatus =
 
 export const FinalReviewerSource = {
   REPORTING_L2: 'REPORTING_L2',
+  REPORTING_DIRECTOR: 'REPORTING_DIRECTOR',
   L1_DIRECTOR: 'L1_DIRECTOR',
   CYCLE_DEFAULT: 'CYCLE_DEFAULT',
 } as const;
@@ -43,6 +44,16 @@ export interface FinalReviewerResolution {
     role: string;
     specificRole?: string;
   };
+  directorReviewerId?: Types.ObjectId;
+  directorReviewerSource?: FinalReviewerSource;
+  directorReviewerSnapshot?: {
+    employeeCode?: string;
+    name: string;
+    email?: string;
+    role: string;
+    specificRole?: string;
+  };
+  directorReviewStatus: FinalReviewStatus;
 }
 
 export interface ResolveFinalReviewerInput {
@@ -110,7 +121,10 @@ export async function resolveFinalReviewer(
   input: ResolveFinalReviewerInput,
 ): Promise<FinalReviewerResolution> {
   if (!input.finalReviewRequired) {
-    return { finalReviewStatus: FinalReviewStatus.NOT_REQUIRED };
+    return {
+      finalReviewStatus: FinalReviewStatus.NOT_REQUIRED,
+      directorReviewStatus: FinalReviewStatus.NOT_REQUIRED,
+    };
   }
 
   const employeeId = objectIdString(input.employeeId);
@@ -131,32 +145,84 @@ export async function resolveFinalReviewer(
   const reportingL2Id = objectIdString(l1.managerId);
   const l1DirectorIsFinalReviewer = isDirectorRole(l1.role) && !reportingL2Id;
 
-  const candidateId =
+  const l2CandidateId =
     reportingL2Id ??
     (l1DirectorIsFinalReviewer ? assignedManagerId : objectIdString(input.defaultFinalReviewerId));
-  const source = reportingL2Id
+  const l2Source = reportingL2Id
     ? FinalReviewerSource.REPORTING_L2
     : l1DirectorIsFinalReviewer
       ? FinalReviewerSource.L1_DIRECTOR
       : FinalReviewerSource.CYCLE_DEFAULT;
 
-  if (!candidateId) {
+  if (!l2CandidateId) {
     throw new Error(
       'Final Reviewer could not be resolved from L2 and no default Director is configured',
     );
   }
 
-  const reviewer = validateReviewer(
-    await findUserById(candidateId),
+  const l2Reviewer = validateReviewer(
+    await findUserById(l2CandidateId),
     employeeId,
     assignedManagerId,
     l1DirectorIsFinalReviewer,
   );
 
+  let directorReviewer: FinalReviewerUser | null = isDirectorRole(l2Reviewer.role)
+    ? l2Reviewer
+    : null;
+  let directorSource: FinalReviewerSource = isDirectorRole(l2Reviewer.role)
+    ? l2Source
+    : FinalReviewerSource.REPORTING_DIRECTOR;
+  let nextId = objectIdString(l2Reviewer.managerId);
+  const visited = new Set<string>([assignedManagerId, l2Reviewer._id.toString()]);
+
+  for (let depth = 0; !directorReviewer && nextId && depth < 20; depth += 1) {
+    if (visited.has(nextId)) {
+      throw new Error('Reporting hierarchy contains a cycle while resolving the Director Reviewer');
+    }
+    visited.add(nextId);
+    const candidate = validateReviewer(
+      await findUserById(nextId),
+      employeeId,
+      assignedManagerId,
+      true,
+    );
+    if (isDirectorRole(candidate.role)) {
+      directorReviewer = candidate;
+      break;
+    }
+    nextId = objectIdString(candidate.managerId);
+  }
+
+  if (!directorReviewer) {
+    const defaultDirectorId = objectIdString(input.defaultFinalReviewerId);
+    if (defaultDirectorId) {
+      const candidate = validateReviewer(
+        await findUserById(defaultDirectorId),
+        employeeId,
+        assignedManagerId,
+        true,
+      );
+      if (!isDirectorRole(candidate.role)) {
+        throw new Error('Default Director Reviewer must have Director portal access');
+      }
+      directorReviewer = candidate;
+      directorSource = FinalReviewerSource.CYCLE_DEFAULT;
+    }
+  }
+
+  if (!directorReviewer) {
+    throw new Error('Director Reviewer could not be resolved from the reporting hierarchy');
+  }
+
   return {
     finalReviewStatus: FinalReviewStatus.PENDING,
-    finalReviewerId: reviewer._id,
-    finalReviewerSource: source,
-    finalReviewerSnapshot: snapshotReviewer(reviewer),
+    finalReviewerId: l2Reviewer._id,
+    finalReviewerSource: l2Source,
+    finalReviewerSnapshot: snapshotReviewer(l2Reviewer),
+    directorReviewerId: directorReviewer._id,
+    directorReviewerSource: directorSource,
+    directorReviewerSnapshot: snapshotReviewer(directorReviewer),
+    directorReviewStatus: FinalReviewStatus.PENDING,
   };
 }

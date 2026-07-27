@@ -17,9 +17,11 @@ describe('Final Review Phase 3 guards', () => {
     expect(() => assertFinalReviewFreezeAllowed('COMPLETED')).not.toThrow();
     expect(() => assertFinalReviewFreezeAllowed('NOT_REQUIRED')).not.toThrow();
     expect(() => assertFinalReviewFreezeAllowed('PENDING')).toThrow(
-      'Final reviewer assessment must be completed before finalisation',
+      'L2 and Director assessments must be completed before finalisation',
     );
     expect(() => assertFinalReviewFreezeAllowed('IN_PROGRESS')).toThrow();
+    expect(() => assertFinalReviewFreezeAllowed('COMPLETED', 'PENDING')).toThrow();
+    expect(() => assertFinalReviewFreezeAllowed('COMPLETED', 'COMPLETED')).not.toThrow();
   });
 
   it('accepts only the canonical Director submitted-state editable behavior', () => {

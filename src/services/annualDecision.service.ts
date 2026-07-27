@@ -79,10 +79,16 @@ type AppraisalWindowConfigInput = {
 
 type AnnualDecisionAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY' | 'REOPEN';
 type AnnualDecisionGateAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE';
+type FinalReviewStage = 'L2' | 'DIRECTOR';
 
-export function assertFinalReviewFreezeAllowed(status: string): void {
-  if (status !== FinalReviewStatus.NOT_REQUIRED && status !== FinalReviewStatus.COMPLETED) {
-    throw new Error('Final reviewer assessment must be completed before finalisation');
+export function assertFinalReviewFreezeAllowed(
+  l2Status: string,
+  directorStatus: string = FinalReviewStatus.NOT_REQUIRED,
+): void {
+  const completed = (status: string) =>
+    status === FinalReviewStatus.NOT_REQUIRED || status === FinalReviewStatus.COMPLETED;
+  if (!completed(l2Status) || !completed(directorStatus)) {
+    throw new Error('L2 and Director assessments must be completed before finalisation');
   }
 }
 
@@ -143,7 +149,20 @@ export interface AnnualSummaryResult {
   };
   finalReview?: {
     status: string;
+    stage?: FinalReviewStage;
+    stageLabel?: string;
     reviewer?: Record<string, unknown>;
+    l2Status?: string;
+    directorStatus?: string;
+    previousStage?: {
+      stage: 'L2';
+      label: string;
+      status: string;
+      enteredBy?: Record<string, unknown>;
+      completedAt?: string;
+      fields: Array<Record<string, unknown>>;
+      values: Array<Record<string, unknown>>;
+    };
     fields: Array<Record<string, unknown>>;
     values: Array<Record<string, unknown>>;
     availableActions: Array<'SAVE' | 'COMPLETE'>;
@@ -268,6 +287,9 @@ export interface AnnualDecisionListItem {
   finalReviewStatus: string;
   finalReviewerId?: string;
   finalReviewerName?: string;
+  directorReviewStatus?: string;
+  directorReviewerId?: string;
+  directorReviewerName?: string;
 }
 
 export interface SaveDecisionDraftInput {
@@ -303,6 +325,7 @@ export interface SaveFinalReviewInput {
 export interface ReassignFinalReviewerInput {
   reviewerId: string;
   reason: string;
+  reviewStage?: FinalReviewStage;
 }
 
 export interface OverrideFinalScoreInput {
@@ -459,6 +482,9 @@ export class AnnualDecisionService extends BaseService {
         finalReviewStatus: annualAssignment.finalReviewStatus,
         finalReviewerId: annualAssignment.finalReviewerId?.toString(),
         finalReviewerName: annualAssignment.finalReviewerSnapshot?.name,
+        directorReviewStatus: annualAssignment.directorReviewStatus,
+        directorReviewerId: annualAssignment.directorReviewerId?.toString(),
+        directorReviewerName: annualAssignment.directorReviewerSnapshot?.name,
       };
     }));
 
@@ -663,7 +689,8 @@ export class AnnualDecisionService extends BaseService {
     const isAdminActor =
       normalizePmsRole(actor.actorRole) === PmsRole.ADMIN;
     const isAssignedFinalReviewer =
-      annualAssignment.finalReviewerId?.toString() === actorId;
+      annualAssignment.finalReviewerId?.toString() === actorId ||
+      annualAssignment.directorReviewerId?.toString() === actorId;
     const actorMatrixMode: ObjectiveMatrixMode = isAssignedFinalReviewer
       ? 'reviewer'
       : this.objectiveMatrixModeForActor();
@@ -685,13 +712,75 @@ export class AnnualDecisionService extends BaseService {
     const frozenContentHash = activeOfficialFreeze && typeof frozenFinalSnapshot?.objectiveMatrixContentHash === 'string'
       ? frozenFinalSnapshot.objectiveMatrixContentHash
       : undefined;
-    const finalReviewFields =
+    const allFinalReviewFields =
       annualAssignment.finalReviewStatus !== FinalReviewStatus.NOT_REQUIRED
         ? await this.finalReviewTemplateFields(annualAssignment)
         : [];
+    const activeFinalReviewStage = this.resolveActorFinalReviewStage(annualAssignment, false);
+    const finalReviewFields = activeFinalReviewStage
+      ? allFinalReviewFields.filter((field) => field.reviewStage === activeFinalReviewStage)
+      : allFinalReviewFields;
     const finalReviewValues = annualDecisionValues.filter(
-      (value) => value.roleCode === 'DIRECTOR',
+      (value) =>
+        value.roleCode === 'DIRECTOR' &&
+        finalReviewFields.some((field) => String(field.key) === value.fieldKey),
     );
+    const activeFinalReviewStatus = activeFinalReviewStage === 'DIRECTOR'
+      ? annualAssignment.directorReviewStatus
+      : annualAssignment.finalReviewStatus;
+    const activeFinalReviewer = activeFinalReviewStage === 'DIRECTOR'
+      ? annualAssignment.directorReviewerSnapshot
+      : annualAssignment.finalReviewerSnapshot;
+    const activeFinalReviewStageReady =
+      activeFinalReviewStage === 'L2' ||
+      (
+        activeFinalReviewStage === 'DIRECTOR' &&
+        annualAssignment.finalReviewStatus === FinalReviewStatus.COMPLETED
+      );
+    const l2Fields = allFinalReviewFields.filter((field) => field.reviewStage === 'L2');
+    const l2FieldKeys = new Set(l2Fields.map((field) => String(field.key)));
+    const l2Values = annualDecisionValues.filter(
+      (value) => value.roleCode === 'DIRECTOR' && l2FieldKeys.has(value.fieldKey),
+    );
+    const l2EnteredById =
+      annualAssignment.finalReviewCompletedBy?.toString() ??
+      l2Values.find((value) => value.actorUserId)?.actorUserId?.toString();
+    const l2EnteredBy =
+      activeFinalReviewStage === 'DIRECTOR' && l2EnteredById
+        ? await User.findById(l2EnteredById)
+            .select('_id name employeeCode role specificRole')
+            .lean()
+        : null;
+    const l2PreviousStage =
+      activeFinalReviewStage === 'DIRECTOR'
+        ? {
+            stage: 'L2' as const,
+            label: 'L2 · ED / SVP Assessment',
+            status: annualAssignment.finalReviewStatus,
+            enteredBy: l2EnteredBy
+              ? {
+                  _id: l2EnteredBy._id.toString(),
+                  name: l2EnteredBy.name,
+                  employeeCode: l2EnteredBy.employeeCode,
+                  role: l2EnteredBy.role,
+                  specificRole: l2EnteredBy.specificRole,
+                }
+              : annualAssignment.finalReviewerSnapshot,
+            completedAt: annualAssignment.finalReviewCompletedAt?.toISOString(),
+            fields: l2Fields,
+            values: l2Values.map((value) => ({
+              templateFieldId: value.templateFieldId,
+              fieldKey: value.fieldKey,
+              sectionKey: value.sectionKey,
+              roleCode: value.roleCode,
+              actorUserId: value.actorUserId?.toString(),
+              valueJson: value.valueJson,
+              valueText: value.valueText,
+              valueNumber: value.valueNumber,
+              valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
+            })),
+          }
+        : undefined;
 
     return {
       annualAssignment: {
@@ -824,14 +913,22 @@ export class AnnualDecisionService extends BaseService {
           : {}),
       },
       finalReview: {
-        status: annualAssignment.finalReviewStatus,
-        reviewer: annualAssignment.finalReviewerSnapshot,
+        status: activeFinalReviewStatus,
+        stage: activeFinalReviewStage,
+        stageLabel: activeFinalReviewStage === 'DIRECTOR'
+          ? 'Director · DIC Assessment'
+          : 'L2 · ED / SVP Assessment',
+        reviewer: activeFinalReviewer,
+        l2Status: annualAssignment.finalReviewStatus,
+        directorStatus: annualAssignment.directorReviewStatus,
+        previousStage: l2PreviousStage,
         fields: finalReviewFields,
         values: finalReviewValues,
         availableActions:
-          isAssignedFinalReviewer &&
+          Boolean(activeFinalReviewStage) &&
+          activeFinalReviewStageReady &&
           annualAssignment.annualState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
-          [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(annualAssignment.finalReviewStatus as any)
+          [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(activeFinalReviewStatus as any)
             ? ['SAVE', 'COMPLETE']
             : [],
       },
@@ -904,9 +1001,19 @@ export class AnnualDecisionService extends BaseService {
 
   async listMyFinalReviews(): Promise<Array<Record<string, unknown>>> {
     const actor = this.requireActor();
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
     const assignments = await AnnualAssignment.find({
-      finalReviewerId: this.toObjectId(actor.actorId, 'actorId'),
-      finalReviewStatus: { $in: [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS] },
+      $or: [
+        {
+          finalReviewerId: actorId,
+          finalReviewStatus: { $in: [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS] },
+        },
+        {
+          directorReviewerId: actorId,
+          finalReviewStatus: FinalReviewStatus.COMPLETED,
+          directorReviewStatus: { $in: [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS] },
+        },
+      ],
       annualState: AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
       isDeleted: false,
     }).sort({ updatedAt: -1 }).lean();
@@ -915,23 +1022,34 @@ export class AnnualDecisionService extends BaseService {
       isDeleted: false,
     }).lean();
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
-    return assignments.map((item) => ({
-      annualAssignmentId: item._id.toString(),
-      employeeId: item.employeeId.toString(),
-      employeeName: String(item.employeeSnapshot?.name ?? 'Employee'),
-      employeeCode: String(item.employeeSnapshot?.employeeCode ?? ''),
-      designation: String(item.employeeSnapshot?.specificRole ?? item.employeeSnapshot?.role ?? ''),
-      cycleName: cycleMap.get(item.cycleId.toString())?.name ?? 'Performance Cycle',
-      annualState: item.annualState,
-      finalReviewStatus: item.finalReviewStatus,
-    }));
+    return assignments.map((item) => {
+      const reviewStage = item.finalReviewerId?.toString() === actor.actorId &&
+        [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(item.finalReviewStatus as any)
+        ? 'L2'
+        : 'DIRECTOR';
+      return {
+        annualAssignmentId: item._id.toString(),
+        employeeId: item.employeeId.toString(),
+        employeeName: String(item.employeeSnapshot?.name ?? 'Employee'),
+        employeeCode: String(item.employeeSnapshot?.employeeCode ?? ''),
+        designation: String(item.employeeSnapshot?.specificRole ?? item.employeeSnapshot?.role ?? ''),
+        cycleName: cycleMap.get(item.cycleId.toString())?.name ?? 'Performance Cycle',
+        annualState: item.annualState,
+        reviewStage,
+        reviewStageLabel: reviewStage === 'L2' ? 'L2 · ED / SVP' : 'Director · DIC',
+        finalReviewStatus: reviewStage === 'L2'
+          ? item.finalReviewStatus
+          : item.directorReviewStatus,
+      };
+    });
   }
 
   async saveFinalReview(
     annualAssignmentId: string,
     input: SaveFinalReviewInput,
   ): Promise<IAnnualAssignment> {
-    const annualAssignment = await this.assertFinalReviewerAccess(annualAssignmentId);
+    const { annualAssignment, reviewStage } =
+      await this.assertFinalReviewerAccess(annualAssignmentId);
     const decision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
@@ -939,7 +1057,8 @@ export class AnnualDecisionService extends BaseService {
     if (!decision || decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
       throw new Error('Annual decision must be submitted before Final Review');
     }
-    const fields = await this.finalReviewTemplateFields(annualAssignment);
+    const fields = (await this.finalReviewTemplateFields(annualAssignment))
+      .filter((field) => field.reviewStage === reviewStage);
     const allowed = new Map(fields.map((field) => [String(field.key), field]));
     const actorId = this.actorIdObject()!;
     for (const value of input.decisionValues ?? []) {
@@ -975,19 +1094,28 @@ export class AnnualDecisionService extends BaseService {
         { upsert: true, new: true, runValidators: true },
       );
     }
-    if (annualAssignment.finalReviewStatus === FinalReviewStatus.PENDING) {
-      annualAssignment.finalReviewStatus = FinalReviewStatus.IN_PROGRESS;
+    const currentStatus = reviewStage === 'L2'
+      ? annualAssignment.finalReviewStatus
+      : annualAssignment.directorReviewStatus;
+    if (currentStatus === FinalReviewStatus.PENDING) {
+      if (reviewStage === 'L2') {
+        annualAssignment.finalReviewStatus = FinalReviewStatus.IN_PROGRESS;
+      } else {
+        annualAssignment.directorReviewStatus = FinalReviewStatus.IN_PROGRESS;
+      }
       annualAssignment.version += 1;
       await annualAssignment.save();
     }
     await this.audit('PMS_FINAL_REVIEW_SAVED', 'ANNUAL_ASSIGNMENT', annualAssignmentId, undefined, {
+      reviewStage,
       fieldKeys: (input.decisionValues ?? []).map((value) => value.fieldKey),
     });
     return annualAssignment;
   }
 
   async completeFinalReview(annualAssignmentId: string): Promise<IAnnualAssignment> {
-    const annualAssignment = await this.assertFinalReviewerAccess(annualAssignmentId);
+    const { annualAssignment, reviewStage } =
+      await this.assertFinalReviewerAccess(annualAssignmentId);
     const decision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
@@ -995,7 +1123,8 @@ export class AnnualDecisionService extends BaseService {
     if (!decision || decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
       throw new Error('Annual decision must be submitted before Final Review');
     }
-    const fields = await this.finalReviewTemplateFields(annualAssignment);
+    const fields = (await this.finalReviewTemplateFields(annualAssignment))
+      .filter((field) => field.reviewStage === reviewStage);
     const values = await AnnualDecisionValue.find({
       annualDecisionId: decision._id,
       roleCode: 'DIRECTOR',
@@ -1009,12 +1138,24 @@ export class AnnualDecisionService extends BaseService {
       if (!meaningful) throw new Error(`${field.label ?? field.key} is required`);
     }
     const previous = annualAssignment.toObject();
-    annualAssignment.finalReviewStatus = FinalReviewStatus.COMPLETED;
-    annualAssignment.finalReviewCompletedBy = this.actorIdObject();
-    annualAssignment.finalReviewCompletedAt = new Date();
+    if (reviewStage === 'L2') {
+      annualAssignment.finalReviewStatus = FinalReviewStatus.COMPLETED;
+      annualAssignment.finalReviewCompletedBy = this.actorIdObject();
+      annualAssignment.finalReviewCompletedAt = new Date();
+    } else {
+      annualAssignment.directorReviewStatus = FinalReviewStatus.COMPLETED;
+      annualAssignment.directorReviewCompletedBy = this.actorIdObject();
+      annualAssignment.directorReviewCompletedAt = new Date();
+    }
     annualAssignment.version += 1;
     await annualAssignment.save();
-    await this.audit('PMS_FINAL_REVIEW_COMPLETED', 'ANNUAL_ASSIGNMENT', annualAssignmentId, previous, annualAssignment.toObject());
+    await this.audit(
+      reviewStage === 'L2' ? 'PMS_L2_FINAL_REVIEW_COMPLETED' : 'PMS_DIRECTOR_REVIEW_COMPLETED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignmentId,
+      previous,
+      annualAssignment.toObject(),
+    );
     return annualAssignment;
   }
 
@@ -1024,6 +1165,8 @@ export class AnnualDecisionService extends BaseService {
   ): Promise<IAnnualAssignment> {
     this.assertDecisionAdmin('annualDecision.finalReviewer.reassign');
     if (!input.reason?.trim()) throw new Error('Reviewer reassignment reason is required');
+    const reviewStage: FinalReviewStage =
+      String(input.reviewStage ?? 'L2').toUpperCase() === 'DIRECTOR' ? 'DIRECTOR' : 'L2';
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
     if (annualAssignment.annualState === AnnualWorkflowState.ANNUAL_FINALIZED) {
       throw new Error('Reopen the annual decision before reassigning the Final Reviewer');
@@ -1033,7 +1176,17 @@ export class AnnualDecisionService extends BaseService {
     if (!reviewer || reviewer.active === false || reviewer.portalAccess === false) {
       throw new Error('Final Reviewer must be an active portal-enabled user');
     }
-    if ([annualAssignment.employeeId, annualAssignment.assignedManagerId].some((id) => id.toString() === reviewerId.toString())) {
+    if (
+      reviewStage === 'DIRECTOR' &&
+      String(reviewer.role ?? '').trim().toLowerCase() !== 'director'
+    ) {
+      throw new Error('Director Assessment must be assigned to a Director portal user');
+    }
+    if (
+      reviewStage === 'L2' &&
+      [annualAssignment.employeeId, annualAssignment.assignedManagerId]
+        .some((id) => id.toString() === reviewerId.toString())
+    ) {
       throw new Error('Employee or L1 Manager cannot be assigned as Final Reviewer');
     }
     const previous = annualAssignment.toObject();
@@ -1042,26 +1195,56 @@ export class AnnualDecisionService extends BaseService {
       isDeleted: false,
     }).lean();
     if (decision) {
+      const resetFields = (await this.finalReviewTemplateFields(annualAssignment))
+        .filter((field) => reviewStage === 'L2' || field.reviewStage === 'DIRECTOR')
+        .map((field) => String(field.key));
       await AnnualDecisionValue.updateMany(
-        { annualDecisionId: decision._id, roleCode: 'DIRECTOR', isDeleted: false },
+        {
+          annualDecisionId: decision._id,
+          roleCode: 'DIRECTOR',
+          fieldKey: { $in: resetFields },
+          isDeleted: false,
+        },
         { $set: { isDeleted: true, updatedBy: this.actorIdObject() }, $inc: { version: 1 } },
       );
     }
-    annualAssignment.finalReviewerId = reviewerId;
-    annualAssignment.finalReviewerSource = FinalReviewerSource.CYCLE_DEFAULT;
-    annualAssignment.finalReviewerSnapshot = {
+    const reviewerSnapshot = {
       employeeCode: reviewer.employeeCode,
       name: reviewer.name,
       email: reviewer.email,
       role: reviewer.role,
       specificRole: reviewer.specificRole,
     };
-    annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
-    annualAssignment.finalReviewCompletedBy = undefined;
-    annualAssignment.finalReviewCompletedAt = undefined;
+    if (reviewStage === 'L2') {
+      annualAssignment.finalReviewerId = reviewerId;
+      annualAssignment.finalReviewerSource = FinalReviewerSource.CYCLE_DEFAULT;
+      annualAssignment.finalReviewerSnapshot = reviewerSnapshot;
+      annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.finalReviewCompletedBy = undefined;
+      annualAssignment.finalReviewCompletedAt = undefined;
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.directorReviewCompletedBy = undefined;
+      annualAssignment.directorReviewCompletedAt = undefined;
+    } else {
+      annualAssignment.directorReviewerId = reviewerId;
+      annualAssignment.directorReviewerSource = FinalReviewerSource.CYCLE_DEFAULT;
+      annualAssignment.directorReviewerSnapshot = reviewerSnapshot;
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.directorReviewCompletedBy = undefined;
+      annualAssignment.directorReviewCompletedAt = undefined;
+    }
     annualAssignment.version += 1;
     await annualAssignment.save();
-    await this.audit('PMS_FINAL_REVIEWER_REASSIGNED', 'ANNUAL_ASSIGNMENT', annualAssignmentId, previous, annualAssignment.toObject(), input.reason.trim());
+    await this.audit(
+      reviewStage === 'L2'
+        ? 'PMS_L2_FINAL_REVIEWER_REASSIGNED'
+        : 'PMS_DIRECTOR_REVIEWER_REASSIGNED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignmentId,
+      previous,
+      annualAssignment.toObject(),
+      input.reason.trim(),
+    );
     return annualAssignment;
   }
 
@@ -1282,7 +1465,10 @@ export class AnnualDecisionService extends BaseService {
     if (decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
       throw new Error('Annual decision must be submitted before freeze');
     }
-    assertFinalReviewFreezeAllowed(annualAssignment.finalReviewStatus);
+    assertFinalReviewFreezeAllowed(
+      annualAssignment.finalReviewStatus,
+      annualAssignment.directorReviewStatus,
+    );
     await this.assertAnnualDecisionGate(
       annualAssignment,
       'FREEZE',
@@ -1565,6 +1751,9 @@ export class AnnualDecisionService extends BaseService {
       annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
       annualAssignment.finalReviewCompletedBy = undefined;
       annualAssignment.finalReviewCompletedAt = undefined;
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      annualAssignment.directorReviewCompletedBy = undefined;
+      annualAssignment.directorReviewCompletedAt = undefined;
     }
 
     if (visibilityConfiguration) {
@@ -1974,7 +2163,10 @@ export class AnnualDecisionService extends BaseService {
   }
 
   private async resolveAnnualDecisionReadiness(
-    annualAssignment: Pick<IAnnualAssignment, '_id' | 'cycleId' | 'applicableTerms' | 'annualState' | 'finalReviewStatus'>,
+    annualAssignment: Pick<
+      IAnnualAssignment,
+      '_id' | 'cycleId' | 'applicableTerms' | 'annualState' | 'finalReviewStatus' | 'directorReviewStatus'
+    >,
     termAssignments: Array<Pick<ITermAssignment, 'assessmentTermCode' | 'termState'>>,
     finalDecisionStatus: string,
     cycleOverride?: IAnnualCycle | null,
@@ -2002,6 +2194,7 @@ export class AnnualDecisionService extends BaseService {
       annualState,
       finalDecisionStatus,
       finalReviewStatus: annualAssignment.finalReviewStatus,
+      directorReviewStatus: annualAssignment.directorReviewStatus,
       allTermsFinalized,
       isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
     });
@@ -2016,9 +2209,11 @@ export class AnnualDecisionService extends BaseService {
       availableActions,
       lockedReason:
         finalDecisionStatus === AnnualDecisionStatus.SUBMITTED &&
-        annualAssignment.finalReviewStatus !== FinalReviewStatus.NOT_REQUIRED &&
-        annualAssignment.finalReviewStatus !== FinalReviewStatus.COMPLETED
-          ? 'Final Reviewer Assessment must be completed before finalisation'
+        !this.areFinalReviewStagesComplete(
+          annualAssignment.finalReviewStatus,
+          annualAssignment.directorReviewStatus,
+        )
+          ? 'L2 and Director Assessments must be completed before finalisation'
           : this.resolveAnnualDecisionLockedReason({
               annualState,
               finalDecisionStatus,
@@ -2033,6 +2228,7 @@ export class AnnualDecisionService extends BaseService {
     annualState: string;
     finalDecisionStatus: string;
     finalReviewStatus?: string;
+    directorReviewStatus?: string;
     allTermsFinalized: boolean;
     isAppraisalWindowOpen: boolean;
   }): AnnualDecisionAction[] {
@@ -2040,6 +2236,7 @@ export class AnnualDecisionService extends BaseService {
       annualState,
       finalDecisionStatus,
       finalReviewStatus,
+      directorReviewStatus,
       allTermsFinalized,
       isAppraisalWindowOpen,
     } = input;
@@ -2067,8 +2264,7 @@ export class AnnualDecisionService extends BaseService {
       ) {
         return [];
       }
-      return finalReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
-        finalReviewStatus === FinalReviewStatus.COMPLETED
+      return this.areFinalReviewStagesComplete(finalReviewStatus, directorReviewStatus)
         ? ['FREEZE']
         : [];
     }
@@ -2085,6 +2281,17 @@ export class AnnualDecisionService extends BaseService {
     }
 
     return ['SAVE_DRAFT', 'SUBMIT'];
+  }
+
+  private areFinalReviewStagesComplete(
+    l2Status?: string,
+    directorStatus?: string,
+  ): boolean {
+    if (l2Status === FinalReviewStatus.NOT_REQUIRED) return true;
+    return (
+      l2Status === FinalReviewStatus.COMPLETED &&
+      directorStatus === FinalReviewStatus.COMPLETED
+    );
   }
 
   private resolveAnnualDecisionLockedReason(input: {
@@ -4064,7 +4271,10 @@ export class AnnualDecisionService extends BaseService {
       return;
     }
 
-    if (annualAssignment.finalReviewerId?.toString() === actor.actorId) {
+    if (
+      annualAssignment.finalReviewerId?.toString() === actor.actorId ||
+      annualAssignment.directorReviewerId?.toString() === actor.actorId
+    ) {
       return;
     }
 
@@ -4135,19 +4345,49 @@ export class AnnualDecisionService extends BaseService {
     throw new Error(`Access denied for ${action}`);
   }
 
-  private async assertFinalReviewerAccess(annualAssignmentId: string): Promise<IAnnualAssignment> {
+  private resolveActorFinalReviewStage(
+    annualAssignment: IAnnualAssignment,
+    requireEditable = true,
+  ): FinalReviewStage | undefined {
     const actor = this.requireActor();
+    const editable = [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS];
+    const isL2 = annualAssignment.finalReviewerId?.toString() === actor.actorId;
+    const isDirector = annualAssignment.directorReviewerId?.toString() === actor.actorId;
+
+    if (isL2 && editable.includes(annualAssignment.finalReviewStatus as any)) {
+      return 'L2';
+    }
+    if (
+      isDirector &&
+      (!requireEditable || annualAssignment.finalReviewStatus === FinalReviewStatus.COMPLETED) &&
+      (!requireEditable || editable.includes(annualAssignment.directorReviewStatus as any))
+    ) {
+      return 'DIRECTOR';
+    }
+    if (!requireEditable && isL2) return 'L2';
+    return undefined;
+  }
+
+  private async assertFinalReviewerAccess(
+    annualAssignmentId: string,
+  ): Promise<{ annualAssignment: IAnnualAssignment; reviewStage: FinalReviewStage }> {
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
-    if (annualAssignment.finalReviewerId?.toString() !== actor.actorId) {
-      throw new Error('Access denied: you are not the assigned Final Reviewer');
-    }
-    if (![FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(annualAssignment.finalReviewStatus as any)) {
-      throw new Error('Final Review is not editable');
-    }
     if (annualAssignment.annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED) {
       throw new Error('Final Review is available only after Management Decision submission');
     }
-    return annualAssignment;
+    const reviewStage = this.resolveActorFinalReviewStage(annualAssignment);
+    if (!reviewStage) {
+      const actor = this.requireActor();
+      const waitingForL2 =
+        annualAssignment.directorReviewerId?.toString() === actor.actorId &&
+        annualAssignment.finalReviewStatus !== FinalReviewStatus.COMPLETED;
+      throw new Error(
+        waitingForL2
+          ? 'Director Assessment is available only after the L2 Assessment is completed'
+          : 'Access denied: this Final Review stage is not assigned to you or is not editable',
+      );
+    }
+    return { annualAssignment, reviewStage };
   }
 
   private async finalReviewTemplateFields(
@@ -4167,8 +4407,16 @@ export class AnnualDecisionService extends BaseService {
       key: field.key ?? field.fieldKey,
       label: field.label ?? field.fieldLabel,
       type: field.type ?? field.fieldType,
-      required: field.required === true || field.mandatory === true,
+      required:
+        field.required === true ||
+        field.isRequired === true ||
+        field.mandatory === true,
       sectionKey: section.key ?? section.sectionKey,
+      reviewStage:
+        String(field.metadata?.finalReviewStage ?? '').toUpperCase() === 'L2' ||
+        String(field.key ?? field.fieldKey).toLowerCase() === 'ed_svp_assessment'
+          ? 'L2'
+          : 'DIRECTOR',
     }));
   }
 
