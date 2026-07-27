@@ -78,12 +78,45 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { termAssignmentId } = request.params as { termAssignmentId: string };
-        const values =
-          await request.container!.employeeAchievementSubmissionService.saveAssignedFormValues(
+        const input = request.body as SaveAssignedFormValuesInput;
+        const values = input.values ?? [];
+        const objectiveValues = values.filter(
+          (value) =>
+            value.sectionKey === 'personal_development_2_objectives' &&
+            value.fieldKey === 'performance_analysis',
+        );
+        const achievementValues = values.filter(
+          (value) =>
+            value.sectionKey === 'personal_development_2_employee_term_inputs' &&
+            [
+              'special_achievements_and_improvements',
+              'contribution_to_cfts',
+              'appraisee_response',
+            ].includes(value.fieldKey),
+        );
+        if (objectiveValues.length + achievementValues.length !== values.length) {
+          throw new Error('Assigned form contains an unsupported field');
+        }
+
+        const savedObjectiveValues = objectiveValues.length > 0
+          ? await request.container!.objectiveService.saveAssignmentTemplateValues(
             termAssignmentId,
-            request.body as SaveAssignedFormValuesInput,
-          );
-        return reply.send(successResponse('Assigned form saved successfully', values));
+            { objectiveValues },
+          )
+          : [];
+        const savedAchievementValues = achievementValues.length > 0
+          ? await request.container!.employeeAchievementSubmissionService.saveAssignedFormValues(
+            termAssignmentId,
+            { values: achievementValues },
+          )
+          : { achievementValues: [] };
+
+        return reply.send(
+          successResponse('Assigned form saved successfully', {
+            objectiveValues: savedObjectiveValues,
+            achievementValues: savedAchievementValues.achievementValues,
+          }),
+        );
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }

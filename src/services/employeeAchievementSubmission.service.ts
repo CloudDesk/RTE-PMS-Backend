@@ -626,10 +626,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Assigned form contains an unsupported field');
     }
 
-    if (termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
-      throw new Error('Achievement fields are not editable during Objective Setting');
-    }
-
     await this.assertEmployeeEditAccess(termAssignment);
     const annualAssignment = await this.getAnnualAssignment(
       termAssignment.annualAssignmentId.toString(),
@@ -2778,6 +2774,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     const actor = this.requireActor();
     const role = normalizePmsRole(actor.actorRole);
     if (!role) return false;
+    // Admin assignment workspaces intentionally render employee forms as
+    // read-only decision context. Admin access has already been authorized by
+    // assertViewAccess, so permit the supporting evidence without granting any
+    // upload, replace, or delete capability.
+    if (role === PmsRole.ADMIN) return true;
     const permissionOverride = configured.field.metadata?.permissionOverride as
       | Record<string, string>
       | undefined;
