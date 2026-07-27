@@ -315,6 +315,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
         ? [
             { collection: 'objective_values', filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
             { collection: 'employee_achievement_submissions', filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
+            { collection: 'pms_template_field_attachments', filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
             { collection: naming.reviewValueCollection, filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
             { collection: naming.reviewCollection, filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
             { collection: 'pms_documents', filter: { [naming.assignmentIdField]: idIn(termAssignmentIds) } },
@@ -326,6 +327,7 @@ export async function publicPmsCleanupRoutes(fastify: FastifyInstance) {
             { collection: 'objective_comments', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'objective_evidence', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'employee_achievement_submissions', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
+            { collection: 'pms_template_field_attachments', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: naming.reviewValueCollection, filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'annual_decision_values', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
             { collection: 'annual_decisions', filter: { annualAssignmentId: idIn(annualAssignmentIds) } },
