@@ -2018,7 +2018,7 @@ export class UserService extends BaseService {
     try {
       // Application URL - adjust based on your environment
       const appUrl = process.env.APP_URL || 'http://localhost:5173';
-      let companyName = process.env.COMPANY_NAME || 'CloudDesk HRMS';
+      let companyName = process.env.COMPANY_NAME || 'RTE PMS';
 
       const emailData: any = {
         userName: user.name,
