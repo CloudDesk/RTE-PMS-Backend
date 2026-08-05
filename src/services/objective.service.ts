@@ -3380,6 +3380,60 @@ export class ObjectiveService extends BaseService {
     return nextValue;
   }
 
+  async searchObjectiveEmployeeAssignmentShareCandidates(
+    assignmentId: string,
+    search: string,
+    requestedLimit = 8,
+  ): Promise<Array<{
+    _id: string;
+    name?: string;
+    employeeCode?: string;
+    role?: string;
+    specificRole?: string;
+    departmentId?: string;
+  }>> {
+    const actor = this.requireActor();
+    const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    if (this.objectiveAssignmentReferenceId(assignment.employeeId) !== actor.actorId) {
+      throw new Error('Only the assigned employee can search for sharing candidates');
+    }
+    if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
+      throw new Error('Submitted or closed objective assignments cannot be shared');
+    }
+
+    const normalizedSearch = String(search ?? '').trim();
+    if (normalizedSearch.length < 2) {
+      throw new Error('Enter at least 2 characters to search employees');
+    }
+    if (normalizedSearch.length > 100) {
+      throw new Error('Employee search cannot exceed 100 characters');
+    }
+    const limit = Math.min(Math.max(Number(requestedLimit) || 8, 1), 20);
+    const escapedSearch = normalizedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const actorId = this.toObjectId(actor.actorId, 'actorId');
+    const users = await User.find({
+      _id: { $ne: actorId },
+      active: { $ne: false },
+      $or: [
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { employeeCode: { $regex: escapedSearch, $options: 'i' } },
+      ],
+    })
+      .select('_id name employeeCode role specificRole departmentId')
+      .sort({ name: 1, employeeCode: 1 })
+      .limit(limit)
+      .lean();
+
+    return users.map((user: any) => ({
+      _id: user._id.toString(),
+      name: user.name,
+      employeeCode: user.employeeCode,
+      role: user.role,
+      specificRole: user.specificRole,
+      departmentId: user.departmentId,
+    }));
+  }
+
   async revokeObjectiveEmployeeAssignmentShare(
     assignmentId: string,
     input: RevokeObjectiveEmployeeAssignmentShareInput,
@@ -11447,12 +11501,19 @@ export class ObjectiveService extends BaseService {
     const terms = (assignment.sharedAccess ?? [])
       .filter((access: any) =>
         access?.status === 'ACTIVE' &&
-        access?.sharedWithEmployeeId?.toString?.() === actorId,
+        this.objectiveAssignmentReferenceId(access?.sharedWithEmployeeId) === actorId,
       )
       .flatMap((access: any) => Array.isArray(access.terms) ? access.terms : [])
       .map((term: unknown) => String(term ?? '').trim())
       .filter(Boolean);
     return Array.from(new Set(terms));
+  }
+
+  private objectiveAssignmentReferenceId(reference: any): string {
+    const value = reference && typeof reference === 'object' && reference._id
+      ? reference._id
+      : reference;
+    return value?.toString?.() ?? '';
   }
 
   private objectiveAssignmentActiveSharedAccessForTerm(assignment: any, term: string): any | undefined {
@@ -11473,9 +11534,9 @@ export class ObjectiveService extends BaseService {
     const activeSharedAccess = this.objectiveAssignmentActiveSharedAccessForTerm(assignment, term);
     if (activeSharedAccess) {
       if (activeSharedAccess._sharingConflict) return false;
-      return activeSharedAccess.sharedWithEmployeeId?.toString?.() === actorId;
+      return this.objectiveAssignmentReferenceId(activeSharedAccess.sharedWithEmployeeId) === actorId;
     }
-    return assignment.employeeId?.toString?.() === actorId;
+    return this.objectiveAssignmentReferenceId(assignment.employeeId) === actorId;
   }
 
   private resolveObjectiveEmployeeAssignmentEditableTermsForActor(assignment: any, period?: any): string[] {
@@ -11491,8 +11552,8 @@ export class ObjectiveService extends BaseService {
 
   private resolveObjectiveAssignmentEntryActor(assignment: any): ObjectiveAssignmentEntryActor {
     const actor = this.requireActor();
-    if (assignment.employeeId?.toString?.() === actor.actorId) return 'EMPLOYEE';
-    if (assignment.managerId?.toString?.() === actor.actorId) return 'MANAGER';
+    if (this.objectiveAssignmentReferenceId(assignment.employeeId) === actor.actorId) return 'EMPLOYEE';
+    if (this.objectiveAssignmentReferenceId(assignment.managerId) === actor.actorId) return 'MANAGER';
     if (this.objectiveAssignmentSharedTermsForActor(assignment, actor.actorId).length) return 'EMPLOYEE';
     throw new Error('Only the assigned employee or manager can edit objective values');
   }
@@ -12154,9 +12215,9 @@ export class ObjectiveService extends BaseService {
 
   private resolveObjectiveFinalRecordViewActor(assignment: any): ObjectiveFinalRecordViewActor {
     const actor = this.requireActor();
-    if (assignment.employeeId?.toString?.() === actor.actorId) return 'EMPLOYEE';
+    if (this.objectiveAssignmentReferenceId(assignment.employeeId) === actor.actorId) return 'EMPLOYEE';
     if (this.objectiveAssignmentSharedTermsForActor(assignment, actor.actorId).length) return 'EMPLOYEE';
-    if (assignment.managerId?.toString?.() === actor.actorId) return 'MANAGER';
+    if (this.objectiveAssignmentReferenceId(assignment.managerId) === actor.actorId) return 'MANAGER';
     const mappedRole = accessService.mapRole(actor.actorRole);
     if (mappedRole === PmsRole.ADMIN || mappedRole === PmsRole.MANAGEMENT) return 'ADMIN';
     if (mappedRole === PmsRole.DIRECTOR) return 'REVIEWER';
@@ -12436,7 +12497,7 @@ export class ObjectiveService extends BaseService {
   ): boolean {
     if (isOriginalAssignee) return true;
     const actor = this.requireActor();
-    if (assignment.managerId?.toString?.() === actor.actorId) return true;
+    if (this.objectiveAssignmentReferenceId(assignment.managerId) === actor.actorId) return true;
     const mappedRole = accessService.mapRole(actor.actorRole);
     return [PmsRole.ADMIN, PmsRole.MANAGEMENT, PmsRole.DIRECTOR].includes(mappedRole as any);
   }

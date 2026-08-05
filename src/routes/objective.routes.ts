@@ -854,6 +854,25 @@ export const objectiveRoutes: RouteHandler = async (
     },
   );
 
+  fastify.get(
+    '/employee-assignments/:assignmentId/share-candidates',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },
+    async (request, reply) => {
+      try {
+        const { assignmentId } = request.params as { assignmentId: string };
+        const { search, limit } = request.query as { search?: string; limit?: string | number };
+        const candidates = await request.container!.objectiveService.searchObjectiveEmployeeAssignmentShareCandidates(
+          assignmentId,
+          search ?? '',
+          Number(limit) || 8,
+        );
+        return reply.send(successResponse('Objective assignment sharing candidates fetched successfully', candidates));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
   fastify.post(
     '/employee-assignments/:assignmentId/share/revoke',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Employee Assignments'] } },

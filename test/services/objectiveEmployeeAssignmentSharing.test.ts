@@ -126,6 +126,80 @@ describe('ObjectiveService - objective assignment sharing', () => {
     expect(sharedService.canActorEditObjectiveEmployeeAssignmentTerm(value, 'Q4')).toBe(false);
   });
 
+  it('recognizes populated employee references when resolving edit access', () => {
+    const ownerService = serviceFor(ownerId);
+    const sharedService = serviceFor(sharedEmployeeId);
+    const value = assignment({
+      employeeId: { _id: ownerId, name: 'Owner' },
+      sharedAccess: [{
+        sharedWithEmployeeId: { _id: sharedEmployeeId, name: 'Contributor' },
+        terms: ['Q2'],
+        status: 'ACTIVE',
+      }],
+    });
+
+    expect(ownerService.canActorEditObjectiveEmployeeAssignmentTerm(value, 'Q1')).toBe(true);
+    expect(ownerService.resolveObjectiveAssignmentEntryActor(value)).toBe('EMPLOYEE');
+    expect(ownerService.resolveObjectiveEmployeeAssignmentEditableTermsForActor(value, period))
+      .toEqual(['Q1', 'Q3', 'Q4']);
+    expect(sharedService.canActorEditObjectiveEmployeeAssignmentTerm(value, 'Q2')).toBe(true);
+    expect(sharedService.resolveObjectiveAssignmentEntryActor(value)).toBe('EMPLOYEE');
+    expect(sharedService.resolveObjectiveEmployeeAssignmentEditableTermsForActor(value, period))
+      .toEqual(['Q2']);
+  });
+
+  it('lets the assignment owner search active sharing candidates without using user-list scope', async () => {
+    const service = serviceFor(ownerId);
+    const candidate = {
+      _id: sharedEmployeeId,
+      name: 'Amuthan',
+      employeeCode: '4232',
+      role: 'STAFF',
+      departmentId: 'quality',
+    };
+    jest.spyOn(service, 'loadObjectiveEmployeeAssignment').mockResolvedValue(assignment());
+    const query = {
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([candidate]),
+    };
+    const find = jest.spyOn(User, 'find').mockReturnValue(query as any);
+
+    await expect(service.searchObjectiveEmployeeAssignmentShareCandidates(
+      assignmentId.toString(),
+      'amu',
+      8,
+    )).resolves.toEqual([{
+      _id: sharedEmployeeId.toString(),
+      name: 'Amuthan',
+      employeeCode: '4232',
+      role: 'STAFF',
+      specificRole: undefined,
+      departmentId: 'quality',
+    }]);
+    expect(find).toHaveBeenCalledWith(expect.objectContaining({
+      _id: { $ne: ownerId },
+      active: { $ne: false },
+      $or: expect.any(Array),
+    }));
+    expect(query.select).toHaveBeenCalledWith('_id name employeeCode role specificRole departmentId');
+    expect(query.limit).toHaveBeenCalledWith(8);
+  });
+
+  it('does not expose sharing candidates to an employee who does not own the assignment', async () => {
+    const service = serviceFor(sharedEmployeeId);
+    jest.spyOn(service, 'loadObjectiveEmployeeAssignment').mockResolvedValue(assignment());
+    const find = jest.spyOn(User, 'find');
+
+    await expect(service.searchObjectiveEmployeeAssignmentShareCandidates(
+      assignmentId.toString(),
+      'amu',
+      8,
+    )).rejects.toThrow('Only the assigned employee can search for sharing candidates');
+    expect(find).not.toHaveBeenCalled();
+  });
+
   it('fails closed when corrupted data contains two active fillers for one term', async () => {
     const secondSharedEmployeeId = new Types.ObjectId();
     const service = serviceFor(sharedEmployeeId);
