@@ -11,12 +11,10 @@
 - Introduce a separate **Trainee Employee** tab.
 - Display only trainee employees in this tab.
 - Remove trainee employees from the regular **Employee** page.
-- Assign **Mahesh** as the default **L2** for all trainee employees.
-- Allow the default L2 assignment to be changed when required.
+- Allow HR users to select and manage the **L2** mapping.
 
 ## 3. Employee Manager Mapping
 
-- Currently, **L2** and **L3** are mapped automatically based on **L1**.
 - Allow HR users to select and manage the **L2** and **L3** mappings.
 
 ## 4. HR Login
@@ -98,4 +96,3 @@ HR users will manage the following areas:
   - Values entered by L2
   - Values entered by L3
   - The final Annual Decision made by L3
-

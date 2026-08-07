@@ -175,6 +175,10 @@ const userResponseSchema = {
     departmentId: { type: 'string' },
     managerId: { type: 'string' },
     managerName: { type: 'string' },
+    l2ManagerId: { type: 'string' },
+    l2ManagerName: { type: 'string' },
+    l3ManagerId: { type: 'string' },
+    l3ManagerName: { type: 'string' },
     costCenter: { type: 'string' },
     gender: { type: 'string' },
     currentCompanyExperience: {
@@ -336,6 +340,61 @@ export const userRoutes: RouteHandler = async (
   );
 
   fastify.get(
+    '/reviewer-candidates',
+    {
+      onRequest: [authenticate],
+      schema: {
+        tags: ['User Management'],
+        summary: 'Get active reviewer candidates for HR manager mapping',
+        querystring: {
+          type: 'object',
+          properties: {
+            employeeId: { type: 'string' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    _id: { type: 'string' },
+                    name: { type: 'string' },
+                    email: { type: 'string' },
+                    employeeCode: { type: 'string' },
+                    role: { type: 'string' },
+                    specificRole: { type: 'string' },
+                    departmentId: { type: 'string' },
+                    active: { type: 'boolean' },
+                    portalAccess: { type: 'boolean' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const authenticatedRole = String(request.user?.role || '').trim().toLowerCase();
+      if (authenticatedRole !== 'admin') {
+        return reply.status(403).send({
+          success: false,
+          error: { message: 'Only HR administrators can manage reviewer mappings' },
+        });
+      }
+
+      const { employeeId } = request.query as { employeeId?: string };
+      const candidates = await request.container!.userService.getReviewerCandidates(employeeId);
+      return reply.send({ success: true, data: candidates });
+    },
+  );
+
+  fastify.get(
     '/:id/reporting-hierarchy',
     {
       onRequest: [authenticate],
@@ -488,6 +547,11 @@ export const userRoutes: RouteHandler = async (
               type: 'boolean',
               description: 'Filter by intern status'
             },
+            employeeType: {
+              type: 'string',
+              enum: ['regular', 'trainee'],
+              description: 'Scope the employee-management list to regular or trainee employees'
+            },
             // Sorting
             sort: {
               type: 'string',
@@ -574,6 +638,7 @@ export const userRoutes: RouteHandler = async (
           portalAccess?: boolean;
           isConsultancy?: boolean;
           isIntern?: boolean;
+          employeeType?: 'regular' | 'trainee';
           sort?: string;
           sortOrder?: 'asc' | 'desc';
           select?: string;
@@ -818,6 +883,14 @@ export const userRoutes: RouteHandler = async (
             managerId: {
               type: 'string',
               description: 'Manager ID'
+            },
+            l2ManagerId: {
+              type: 'string',
+              description: 'Saved L2 manager mapping'
+            },
+            l3ManagerId: {
+              type: 'string',
+              description: 'Saved L3 manager mapping'
             },
             costCenter: {
               type: 'string',
@@ -1107,6 +1180,8 @@ export const userRoutes: RouteHandler = async (
             specificRole: { type: 'string' },
             departmentId: { type: 'string' },
             managerId: { type: 'string' },
+            l2ManagerId: { type: 'string' },
+            l3ManagerId: { type: 'string' },
             employeeCode: { type: 'string', maxLength: 50 },
             biometricId: { type: 'string', maxLength: 20 },
             active: {
@@ -1926,6 +2001,7 @@ export const userRoutes: RouteHandler = async (
           sort,
           sortOrder,
           limit,
+          employeeType,
         } = request.query as {
           search?: string;
           role?: string;
@@ -1938,6 +2014,7 @@ export const userRoutes: RouteHandler = async (
           sort?: string;
           sortOrder?: 'asc' | 'desc';
           limit?: string | number;
+          employeeType?: 'regular' | 'trainee';
         };
         const parseBoolean = (value: string | boolean | undefined): boolean | undefined => {
           if (typeof value === 'boolean') return value;
@@ -1960,7 +2037,8 @@ export const userRoutes: RouteHandler = async (
           sort: sort || 'name',
           sortOrder: sortOrder === 'desc' ? 'desc' : 'asc',
           page: 1,
-          limit: Number(limit) || 10000 // Get all matching users
+          limit: Number(limit) || 10000, // Get all matching users
+          employeeType,
         }, authenticatedUser);
 
         const departmentLov = await request.container!.lovService.findByType('department');
