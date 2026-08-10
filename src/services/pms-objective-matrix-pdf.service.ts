@@ -158,7 +158,8 @@ export async function renderObjectiveMatrixReportPdf(
     page.setDefaultTimeout(runtime.defaultTimeoutMs);
     page.setDefaultNavigationTimeout(runtime.navigationTimeoutMs);
     await page.emulateMediaType('print');
-    await page.setContent(renderObjectiveMatrixReportHtml(viewModel), { waitUntil: 'networkidle0' });
+    await page.setContent(renderObjectiveMatrixReportHtml(viewModel), { waitUntil: 'load' });
+    await page.waitForNetworkIdle({ concurrency: 0 });
     let timeout: NodeJS.Timeout | undefined;
     const pdf = await Promise.race([
       page.pdf({
