@@ -65,6 +65,7 @@ export const delegationRoutes: RouteHandler = async (
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {
+  reply.log.error({ err: error }, 'Route handler error');
   const message = error instanceof Error ? error.message : 'Unexpected error';
   return reply.status(400).send(errorResponse('PMS_DELEGATION_ERROR', message));
 }

@@ -80,6 +80,7 @@ export const pmsAccessRoutes: RouteHandler = async (
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {
+  reply.log.error({ err: error }, 'Route handler error');
   const message = error instanceof Error ? error.message : 'Request failed';
   return reply.status(400).send(errorResponse('PMS_ACCESS_FAILED', message));
 }

@@ -11,7 +11,7 @@ const DB_CONNECT_RETRY_DELAY_MS = Math.max(
 );
 const DB_SERVER_SELECTION_TIMEOUT_MS = Math.max(
   1000,
-  Number(process.env.DB_SERVER_SELECTION_TIMEOUT_MS || 5000),
+  Number(process.env.DB_SERVER_SELECTION_TIMEOUT_MS || 30000),
 );
 const DB_CONNECT_TIMEOUT_MS = Math.max(
   1000,
@@ -21,6 +21,21 @@ const DB_SOCKET_TIMEOUT_MS = Math.max(
   1000,
   Number(process.env.DB_SOCKET_TIMEOUT_MS || 45000),
 );
+// Pool sizing is per replica. With Container Apps scaling to N replicas the
+// cluster sees up to N * DB_MAX_POOL_SIZE connections, so keep the ceiling well
+// under the cluster's connection limit.
+const DB_MAX_POOL_SIZE = Math.max(1, Number(process.env.DB_MAX_POOL_SIZE || 50));
+// A warm floor means a scaled-out replica does not pay TCP + TLS + SCRAM on its
+// first requests, which is where the burst latency was coming from.
+const DB_MIN_POOL_SIZE = Math.max(0, Number(process.env.DB_MIN_POOL_SIZE || 10));
+// Long enough that a lull between bursts does not reap the warm pool.
+const DB_MAX_IDLE_TIME_MS = Math.max(0, Number(process.env.DB_MAX_IDLE_TIME_MS || 600000));
+// Index creation belongs to deploy (npm run db:migrate:startup), not to boot.
+// Leaving this on makes every replica issue createIndexes for ~182 declared
+// indexes while it is also trying to serve the traffic that triggered scale-out.
+const DB_AUTO_INDEX = process.env.DB_AUTO_INDEX
+  ? process.env.DB_AUTO_INDEX === 'true'
+  : process.env.NODE_ENV !== 'production';
 
 let connectionListenersRegistered = false;
 let connectionPromise: Promise<void> | null = null;
@@ -204,6 +219,18 @@ async function migrateEmployeeAchievementSubmissionIndexesIfNeeded(): Promise<vo
   }
 }
 
+/**
+ * One-shot data/index migrations. Previously these ran inside connectDB on every
+ * process start, so every Container Apps replica re-ran them — including on
+ * scale-out under peak load. They are now invoked from the deploy step only
+ * (npm run db:migrate:startup).
+ */
+export async function runStartupMigrations(): Promise<void> {
+  await migrateEmailIndexIfNeeded();
+  await migrateTemplateStatusesIfNeeded();
+  await migrateEmployeeAchievementSubmissionIndexesIfNeeded();
+}
+
 export const connectDB = async (): Promise<void> => {
   if (mongoose.connection.readyState === 1) {
     return;
@@ -220,21 +247,27 @@ export const connectDB = async (): Promise<void> => {
     for (let attempt = 1; attempt <= DB_CONNECT_MAX_RETRIES; attempt += 1) {
       try {
         console.log(
-          `[DB] Connecting to MongoDB (attempt ${attempt}/${DB_CONNECT_MAX_RETRIES}, serverSelectionTimeoutMS=${DB_SERVER_SELECTION_TIMEOUT_MS}, connectTimeoutMS=${DB_CONNECT_TIMEOUT_MS})...`,
+          `[DB] Connecting to MongoDB (attempt ${attempt}/${DB_CONNECT_MAX_RETRIES}, serverSelectionTimeoutMS=${DB_SERVER_SELECTION_TIMEOUT_MS}, connectTimeoutMS=${DB_CONNECT_TIMEOUT_MS}, maxPoolSize=${DB_MAX_POOL_SIZE}, minPoolSize=${DB_MIN_POOL_SIZE}, autoIndex=${DB_AUTO_INDEX})...`,
         );
         await mongoose.connect(config.mongoUri, {
           serverSelectionTimeoutMS: DB_SERVER_SELECTION_TIMEOUT_MS,
           connectTimeoutMS: DB_CONNECT_TIMEOUT_MS,
           socketTimeoutMS: DB_SOCKET_TIMEOUT_MS,
+          maxPoolSize: DB_MAX_POOL_SIZE,
+          minPoolSize: DB_MIN_POOL_SIZE,
+          maxIdleTimeMS: DB_MAX_IDLE_TIME_MS,
+          autoIndex: DB_AUTO_INDEX,
+          autoCreate: DB_AUTO_INDEX,
         });
         console.log(
           `[DB] MongoDB connected successfully in ${Date.now() - startedAt}ms`,
         );
 
-        await migrateEmailIndexIfNeeded();
-        await migrateTemplateStatusesIfNeeded();
-        await migrateEmployeeAchievementSubmissionIndexesIfNeeded();
-        
+        // Migrations deliberately do NOT run here. They are writes, and running
+        // them on every replica boot means a scale-out event fires DDL and
+        // updateMany at the database exactly when it is busiest.
+        // Run them from deploy instead: npm run db:migrate:startup
+
         try {
           const { accessService } = await import('../services/access.service');
           await accessService.initialize();
