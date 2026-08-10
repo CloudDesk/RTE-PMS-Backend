@@ -20,6 +20,10 @@ interface JWTPayload {
   currency: string;
   licenseType: string;
   portalAccess: boolean;
+  scope?: string;
+  priority?: number;
+  managerId?: string;
+  managerName?: string;
 }
 
 interface RequestWithCookies extends FastifyRequest {
@@ -207,6 +211,7 @@ export const authenticate = async (
         currency: decoded.currency,
         licenseType: decoded.licenseType,
         portalAccess: decoded.portalAccess,
+        scope: decoded.scope,
       };
 
       // Set user in request for compatibility

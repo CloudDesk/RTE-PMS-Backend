@@ -4440,13 +4440,21 @@ export class PmsEmployeeProfileImportService extends BaseService {
     return Number(years.toFixed(1));
   }
 
+  private isEmployeeProfileAdministrator(role: unknown) {
+    const rawRole = String(role ?? '').trim().replace(/[ /-]/g, '_').toUpperCase();
+    return (
+      normalizePmsRole(rawRole) === PmsRole.ADMIN ||
+      ['HR', 'HR_ADMIN', 'HRADMIN'].includes(rawRole)
+    );
+  }
+
   private assertAdminActor() {
     const user = this.context.user;
     if (!user) {
       throw new Error('Authentication required');
     }
-    if (normalizePmsRole(user.role) !== PmsRole.ADMIN) {
-      throw new Error('Access denied. Admin role is required for employee profile imports.');
+    if (!this.isEmployeeProfileAdministrator(user.role)) {
+      throw new Error('Access denied. Administrative role is required for employee profile imports.');
     }
     const actorId = user._id.toString();
     if (!Types.ObjectId.isValid(actorId)) {
@@ -4468,7 +4476,7 @@ export class PmsEmployeeProfileImportService extends BaseService {
 
     const role = normalizePmsRole(user.role);
     const hasGlobalManagementAccess =
-      role === PmsRole.ADMIN ||
+      this.isEmployeeProfileAdministrator(user.role) ||
       role === PmsRole.MANAGEMENT ||
       user.scope === 'EXECUTIVE' ||
       user.scope === 'ALL';

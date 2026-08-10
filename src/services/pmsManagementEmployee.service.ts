@@ -491,7 +491,10 @@ export class PmsManagementEmployeeService extends BaseService {
     }
 
     const mappedRole = normalizePmsRole(user.role);
-    const hasScopeAccess = user.scope === 'EXECUTIVE' || user.scope === 'ALL';
+    const rawRole = String(user.role || '').trim().toUpperCase();
+    const hasScopeAccess =
+      rawRole !== 'HR' &&
+      (user.scope === 'EXECUTIVE' || user.scope === 'ALL');
 
     if (
       mappedRole === PmsRole.ADMIN ||

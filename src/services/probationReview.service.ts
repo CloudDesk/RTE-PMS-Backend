@@ -1855,7 +1855,7 @@ Probation end date: ${probationEndDate}`,
 
   private isPrivilegedActor() {
     const role = String(this.context.user?.role || this.context.reqRole || '').toLowerCase();
-    return role === 'admin' || role === 'management' || role === 'director';
+    return role === 'admin' || role === 'hr' || role === 'management' || role === 'director';
   }
 
   private sameObjectId(left: Types.ObjectId, right: unknown) {

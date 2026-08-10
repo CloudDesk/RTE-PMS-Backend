@@ -667,7 +667,7 @@ export class UserService extends BaseService {
       // Apply role-based access control
       if (this.context.reqRole === 'MANAGER') {
         filter.managerId = this.context.user?._id;
-      } else if (!['ADMIN', 'MANAGEMENT', 'DIRECTOR'].includes(this.context.reqRole)) {
+      } else if (!['ADMIN', 'HR', 'MANAGEMENT', 'DIRECTOR'].includes(this.context.reqRole)) {
         filter._id = this.context.user?._id;
       }
     }
@@ -869,7 +869,7 @@ export class UserService extends BaseService {
 
     if (this.context.reqRole === 'MANAGER') {
       filter.managerId = this.context.user?._id;
-    } else if (this.context.reqRole !== 'ADMIN') {
+    } else if (!['ADMIN', 'HR'].includes(this.context.reqRole)) {
       filter._id = this.context.user?._id;
     }
 
@@ -1051,7 +1051,7 @@ export class UserService extends BaseService {
     }
     if (this.context.reqRole === 'MANAGER') {
       filter.managerId = this.context.user?._id;
-    } else if (this.context.reqRole !== 'ADMIN') {
+    } else if (!['ADMIN', 'HR'].includes(this.context.reqRole)) {
       filter._id = this.context.user?._id;
     }
     const [users, total] = await Promise.all([
@@ -1269,7 +1269,7 @@ export class UserService extends BaseService {
     console.log('📋 Data keys:', Object.keys(data || {}));
 
     if (
-      this.context.reqRole !== 'ADMIN' &&
+      !['ADMIN', 'HR'].includes(this.context.reqRole) &&
       (data.l2ManagerId !== undefined || data.l3ManagerId !== undefined)
     ) {
       throw new Error('Only HR/Admin can manage L2 and L3 mappings');
@@ -1478,7 +1478,7 @@ export class UserService extends BaseService {
     console.log('🔍 EmergencyContact in update data:', data.emergencyContact, '(type:', typeof data.emergencyContact, ')');
     console.log('🆔 User ID:', id);
 
-    if (this.context.reqRole !== 'ADMIN') {
+    if (!['ADMIN', 'HR'].includes(this.context.reqRole)) {
       delete data.l2ManagerId;
       delete data.l2ManagerName;
       delete data.l3ManagerId;

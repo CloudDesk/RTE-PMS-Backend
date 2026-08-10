@@ -3293,6 +3293,10 @@ export class PmsTemplateService extends BaseService {
       throw new Error('Authentication required');
     }
 
+    if (String(user.role).trim().toUpperCase() === 'HR') {
+      return;
+    }
+
     const access = await accessService.canPerform({
       actor: {
         actorId: user._id.toString(),

@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth';
 import * as ExcelJS from 'exceljs';
 import { messaging } from '../config/firebase/firebaseConfig';
 import { filesUpload } from '../config/multer';
+import { User } from '../models/user.model';
 // import { IAcademicDetails, IExperienceDetails } from '../models';
 
 const shiftAssignmentDataSchema = {
@@ -381,10 +382,10 @@ export const userRoutes: RouteHandler = async (
     },
     async (request, reply) => {
       const authenticatedRole = String(request.user?.role || '').trim().toLowerCase();
-      if (authenticatedRole !== 'admin') {
+      if (!['admin', 'hr'].includes(authenticatedRole)) {
         return reply.status(403).send({
           success: false,
-          error: { message: 'Only HR administrators can manage reviewer mappings' },
+          error: { message: 'Only Admin or HR users can manage reviewer mappings' },
         });
       }
 
@@ -685,6 +686,29 @@ export const userRoutes: RouteHandler = async (
         });
       }
     }
+  );
+
+  // Current user's composable navigation capabilities. A person is a manager
+  // only when at least one active employee reports to them.
+  fastify.get(
+    '/me/capabilities',
+    { onRequest: [authenticate] },
+    async (request, reply) => {
+      try {
+        const isPeopleManager = Boolean(
+          await User.exists({ managerId: request.user._id, active: true }),
+        );
+        return reply.send({
+          success: true,
+          data: { isPeopleManager },
+        });
+      } catch (error: any) {
+        return reply.status(400).send({
+          success: false,
+          error: { message: error.message },
+        });
+      }
+    },
   );
 
   // Get user by ID (keep this separate for specific user lookup)
@@ -1982,10 +2006,10 @@ export const userRoutes: RouteHandler = async (
       try {
         // Check if user has permission to export data
         const authenticatedUser = request.user;
-        if (!['admin', 'manager'].includes(authenticatedUser.role.toLowerCase())) {
+        if (!['admin', 'manager', 'hr'].includes(authenticatedUser.role.toLowerCase())) {
           return reply.status(403).send({
             success: false,
-            error: { message: 'Access denied: Only admins and managers can export user data' }
+            error: { message: 'Access denied: Only admins, HR, and managers can export user data' }
           });
         }
 
