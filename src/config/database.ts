@@ -220,6 +220,67 @@ async function migrateEmployeeAchievementSubmissionIndexesIfNeeded(): Promise<vo
 }
 
 /**
+ * Career profile employee codes are now stored upper-cased, with a plain unique
+ * index instead of one carrying a collation — Cosmos DB for MongoDB rejects
+ * createIndex.collation ("not implemented yet"), which failed the index build.
+ *
+ * Normalises any legacy mixed-case values, then drops the old collation index so
+ * the index sync can recreate it without one. Aborts loudly if normalising would
+ * collide two existing profiles, rather than letting the unique build fail later
+ * with a less obvious error.
+ */
+async function migrateCareerProfileEmployeeCodeIndex(): Promise<void> {
+  const INDEX_NAME = 'uq_pms_employee_career_profile_employee_code';
+  const coll = mongoose.connection.collection('pms_employee_career_profiles');
+
+  const documents = await coll
+    .find({}, { projection: { employeeCode: 1 } })
+    .toArray();
+
+  const needsNormalising = documents.filter((document) => {
+    const code = String(document.employeeCode ?? '');
+    return code !== code.trim().toUpperCase();
+  });
+
+  if (needsNormalising.length > 0) {
+    const seen = new Map<string, unknown>();
+    const collisions: string[] = [];
+    for (const document of documents) {
+      const key = String(document.employeeCode ?? '').trim().toUpperCase();
+      if (seen.has(key)) {
+        collisions.push(key);
+      } else {
+        seen.set(key, document._id);
+      }
+    }
+    if (collisions.length > 0) {
+      throw new Error(
+        `Cannot normalise career profile employeeCode: upper-casing would create duplicates for [${[
+          ...new Set(collisions),
+        ].join(', ')}]. Resolve these profiles before deploying.`,
+      );
+    }
+
+    for (const document of needsNormalising) {
+      await coll.updateOne(
+        { _id: document._id },
+        { $set: { employeeCode: String(document.employeeCode ?? '').trim().toUpperCase() } },
+      );
+    }
+    console.log(
+      `[DB] Normalised ${needsNormalising.length} career profile employeeCode value(s) to upper case.`,
+    );
+  }
+
+  const indexes = (await coll.indexes()) as Array<{ name: string; collation?: unknown }>;
+  const legacy = indexes.find((index) => index.name === INDEX_NAME && index.collation);
+  if (legacy) {
+    await coll.dropIndex(INDEX_NAME);
+    console.log(`[DB] Dropped legacy collation index ${INDEX_NAME}; it will be rebuilt without one.`);
+  }
+}
+
+/**
  * One-shot data/index migrations. Previously these ran inside connectDB on every
  * process start, so every Container Apps replica re-ran them — including on
  * scale-out under peak load. They are now invoked from the deploy step only
@@ -229,6 +290,7 @@ export async function runStartupMigrations(): Promise<void> {
   await migrateEmailIndexIfNeeded();
   await migrateTemplateStatusesIfNeeded();
   await migrateEmployeeAchievementSubmissionIndexesIfNeeded();
+  await migrateCareerProfileEmployeeCodeIndex();
 }
 
 export const connectDB = async (): Promise<void> => {
