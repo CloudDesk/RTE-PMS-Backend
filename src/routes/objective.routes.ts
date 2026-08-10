@@ -56,6 +56,31 @@ const MAX_OBJECTIVE_ATTACHMENT_BYTES = 1024 * 1024;
 export const objectiveRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
+  // QS is an Objective Library administrator, not a general PMS administrator.
+  // Keep employee objectives, assignments, reports, and filled values outside
+  // the QS API surface even if a URL is called directly.
+  fastify.addHook('preHandler', async (request, reply) => {
+    const role = String(request.user?.role ?? '').trim().toUpperCase();
+    if (role !== 'QS') return;
+
+    const path = request.url.split('?')[0];
+    const isObjectiveLibraryRequest =
+      /\/masters$/.test(path) ||
+      /\/masters\/[^/]+$/.test(path) ||
+      /\/masters\/[^/]+\/versions$/.test(path) ||
+      /\/master-versions\/[^/]+$/.test(path) ||
+      /\/master-versions\/[^/]+\/(activate|deactivate|archive)$/.test(path);
+
+    if (!isObjectiveLibraryRequest) {
+      return reply.status(403).send(
+        errorResponse(
+          'PMS_QS_OBJECTIVE_LIBRARY_ONLY',
+          'QS access is limited to Objective Library management.',
+        ),
+      );
+    }
+  });
+
   fastify.post(
     '/',
     { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },

@@ -49,6 +49,24 @@ describe('EmployeeRolesResponsibilitiesService viewer access', () => {
     });
   });
 
+  it('shows HR only submitted and visible rows without requiring direct-manager access', async () => {
+    mockRolesRecord([
+      entry('Visible submitted row', 'SUBMITTED', true),
+      entry('Hidden submitted row', 'SUBMITTED', false),
+      entry('Private draft row', 'DRAFT', false),
+    ]);
+    const userLookup = jest.spyOn(User, 'findById');
+
+    const result = await serviceFor(managerId, 'HR').getForEmployee(
+      employeeId.toString(),
+    );
+
+    expect(userLookup).not.toHaveBeenCalled();
+    expect(result?.entries.map((item) => item.description)).toEqual([
+      'Visible submitted row',
+    ]);
+  });
+
   it('returns no viewer data when all submitted rows are hidden', async () => {
     mockEmployeeManager(managerId.toString());
     mockRolesRecord([entry('Hidden row', 'SUBMITTED', false)]);

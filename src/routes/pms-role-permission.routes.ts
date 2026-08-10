@@ -16,6 +16,11 @@ export const pmsRolePermissionRoutes: RouteHandler = async (
       ['HR', 'HR_ADMIN', 'HRADMIN'].includes(rawRole)
     );
   };
+
+  const normalizePermissionRole = (role: unknown) => {
+    const rawRole = String(role ?? '').trim().replace(/[ /-]/g, '_').toUpperCase();
+    return ['HR', 'QS'].includes(rawRole) ? rawRole : normalizePmsRole(rawRole);
+  };
   
   // List all permissions
   fastify.get(
@@ -43,7 +48,7 @@ export const pmsRolePermissionRoutes: RouteHandler = async (
         }
 
         const data = request.body as any;
-        data.role = normalizePmsRole(data.role); // Standardize the role string
+        data.role = normalizePermissionRole(data.role); // Standardize without collapsing scoped roles
         const newPermission = await PmsRolePermission.create(data);
         
         // Reload access engine
@@ -69,7 +74,7 @@ export const pmsRolePermissionRoutes: RouteHandler = async (
 
         const { id } = request.params as { id: string };
         const data = request.body as any;
-        if (data.role) data.role = normalizePmsRole(data.role);
+        if (data.role) data.role = normalizePermissionRole(data.role);
 
         const updated = await PmsRolePermission.findByIdAndUpdate(id, data, { new: true });
         if (!updated) {

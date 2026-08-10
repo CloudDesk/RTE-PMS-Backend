@@ -2245,7 +2245,9 @@ export class UserService extends BaseService {
 
     type GovernmentIdFieldWithDoc = 'pan' | 'aadhaar' | 'passport' | 'voterId' | 'drivingLicense';
 
-    const isAdminUpload = (this.context.user?.role || '').toLowerCase() === 'admin';
+    const isAdminUpload = ['admin', 'hr'].includes(
+      (this.context.user?.role || '').toLowerCase(),
+    );
     const resolvedStatus: 'Pending' | 'Verified' | 'Rejected' =
       verificationStatus || (isAdminUpload ? 'Verified' : 'Pending');
 
@@ -2554,7 +2556,9 @@ export class UserService extends BaseService {
     }
 
     const academicDetail = user.academicDetails[academicDetailIndex] as any;
-    const isAdminUpload = (this.context.user?.role || '').toLowerCase() === 'admin';
+    const isAdminUpload = ['admin', 'hr'].includes(
+      (this.context.user?.role || '').toLowerCase(),
+    );
     const resolvedStatus: 'Pending' | 'Verified' | 'Rejected' =
       verificationStatus || (isAdminUpload ? 'Verified' : 'Pending');
 
@@ -2665,7 +2669,9 @@ export class UserService extends BaseService {
     }
 
     const experienceDetail = user.experienceDetails[experienceDetailIndex] as any;
-    const isAdminUpload = (this.context.user?.role || '').toLowerCase() === 'admin';
+    const isAdminUpload = ['admin', 'hr'].includes(
+      (this.context.user?.role || '').toLowerCase(),
+    );
     const resolvedStatus: 'Pending' | 'Verified' | 'Rejected' =
       verificationStatus || (isAdminUpload ? 'Verified' : 'Pending');
 

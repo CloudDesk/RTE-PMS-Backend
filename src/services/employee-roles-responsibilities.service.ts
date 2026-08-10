@@ -41,6 +41,7 @@ const ADMIN_ROLES = new Set([
   'admin',
   'superadmin',
   'super_admin',
+  'hr',
   'hr_admin',
   'hradmin',
 ]);

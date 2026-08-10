@@ -8039,8 +8039,9 @@ export class ObjectiveService extends BaseService {
   ): Promise<boolean> {
     const actor = this.requireActor();
     const mappedRole = accessService.mapRole(actor.actorRole);
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
 
-    if (mappedRole === PmsRole.ADMIN) {
+    if (mappedRole === PmsRole.ADMIN || rawRole === 'QS') {
       return true;
     }
 
