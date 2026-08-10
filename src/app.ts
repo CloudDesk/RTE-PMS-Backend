@@ -6,7 +6,16 @@ import dns from "node:dns";
 // const parentDir = path.resolve(__dirname, '../../api-server');
 // const uploadsDir = path.join(parentDir, 'uploads');
 // console.log(parentDir, uploadsDir, ' uploadsDir in INdex')
-dns.setServers(["1.1.1.1", "8.8.8.8"]);
+
+// Never override DNS in a hosted environment. Doing so sends mongodb+srv SRV/TXT
+// lookups to public resolvers, which cannot see Azure Private DNS zones — the
+// driver then resolves the database to its public IP and traffic leaves the VNet
+// even when the app and database sit in the same region. Let the platform's
+// /etc/resolv.conf apply. Opt in locally with DNS_OVERRIDE_SERVERS if a dev
+// network has a broken resolver.
+if (process.env.DNS_OVERRIDE_SERVERS && process.env.NODE_ENV !== 'production') {
+  dns.setServers(process.env.DNS_OVERRIDE_SERVERS.split(',').map((s) => s.trim()).filter(Boolean));
+}
 
 dotenv.config();
 
@@ -27,8 +36,7 @@ import { config } from './config';
 import fastifyMultipart from '@fastify/multipart';
 import { fileURLToPath } from 'url';
 import path, { join } from "path";
- 
-dns.setServers(["1.1.1.1", "8.8.8.8"]);
+
 const currentFileUrl = fileURLToPath((require('url').pathToFileURL(__filename)).toString());
 const currentDir = path.dirname(currentFileUrl);
 

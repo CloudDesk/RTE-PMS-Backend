@@ -411,6 +411,7 @@ export const pmsEmployeeProfileRoutes: RouteHandler = async (
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {
+  reply.log.error({ err: error }, 'Route handler error');
   const message = error instanceof Error ? error.message : 'Unexpected error';
   const normalized = message.toLowerCase();
   const status = normalized.includes('access denied')

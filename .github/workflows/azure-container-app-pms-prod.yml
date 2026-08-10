@@ -63,6 +63,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Runs the one-shot migrations and builds schema indexes once, from the
+      # freshly built production image, before the new revision serves traffic.
+      # The API no longer does this at boot: doing it per replica meant every
+      # scale-out fired DDL and updateMany at the database under peak load.
+      - name: Run database migrations and index sync
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: |
+          docker pull "$IMAGE_SHA"
+          docker run --rm \
+            -e MONGODB_URI \
+            -e NODE_ENV=production \
+            "$IMAGE_SHA" \
+            npm run db:migrate:startup:built
+
       - name: Update Container App image
         run: |
           az containerapp update \
