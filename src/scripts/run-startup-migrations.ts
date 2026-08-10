@@ -31,10 +31,23 @@ async function buildIndexes(): Promise<number> {
       console.log(`[migrate] indexes ok: ${modelName} (${Date.now() - startedAt}ms)`);
     } catch (error) {
       failed += 1;
-      console.error(
-        `[migrate] indexes FAILED: ${modelName} —`,
-        error instanceof Error ? error.message : error,
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[migrate] indexes FAILED: ${modelName} — ${message}`);
+
+      const code = (error as { code?: number })?.code;
+      if (code === 85 || code === 86 || /already exists with different options/i.test(message)) {
+        console.error(
+          `[migrate]   ^ an index of this name already exists with different options. ` +
+            `Drop the old one in a migration (see migrateCareerProfileEmployeeCodeIndex) ` +
+            `so it can be rebuilt from the current schema.`,
+        );
+      }
+      if (/collation is not implemented/i.test(message)) {
+        console.error(
+          `[migrate]   ^ this engine does not support index collations. Normalise the ` +
+            `field's casing in the schema and drop the collation from the index instead.`,
+        );
+      }
     }
   }
 
