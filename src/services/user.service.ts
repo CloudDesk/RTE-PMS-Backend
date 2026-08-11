@@ -579,6 +579,7 @@ export class UserService extends BaseService {
     isConsultancy?: boolean;
     isIntern?: boolean;
     employeeType?: 'regular' | 'trainee';
+    objectiveAssignmentCandidates?: boolean | string;
     sort?: string;
     sortOrder?: 'asc' | 'desc';
     select?: string;
@@ -603,6 +604,7 @@ export class UserService extends BaseService {
       isConsultancy,
       isIntern,
       employeeType,
+      objectiveAssignmentCandidates,
       sort = 'name',
       sortOrder = 'asc',
       select
@@ -620,6 +622,10 @@ export class UserService extends BaseService {
           : undefined;
     const includeAllActiveStates =
       typeof rawActive === 'string' && rawActive.toLowerCase() === 'all';
+    const isObjectiveAssignmentCandidateLookup =
+      this.context.reqRole === 'QS' &&
+      (objectiveAssignmentCandidates === true ||
+        String(objectiveAssignmentCandidates).toLowerCase() === 'true');
 
     // Set limit to 1000 if role is specified (for dropdowns)
     // Override the default limit of 10 when role filter is used
@@ -667,7 +673,10 @@ export class UserService extends BaseService {
       // Apply role-based access control
       if (this.context.reqRole === 'MANAGER') {
         filter.managerId = this.context.user?._id;
-      } else if (!['ADMIN', 'HR', 'MANAGEMENT', 'DIRECTOR'].includes(this.context.reqRole)) {
+      } else if (
+        !isObjectiveAssignmentCandidateLookup &&
+        !['ADMIN', 'HR', 'MANAGEMENT', 'DIRECTOR'].includes(this.context.reqRole)
+      ) {
         filter._id = this.context.user?._id;
       }
     }

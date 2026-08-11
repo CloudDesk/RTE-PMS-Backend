@@ -553,6 +553,10 @@ export const userRoutes: RouteHandler = async (
               enum: ['regular', 'trainee'],
               description: 'Scope the employee-management list to regular or trainee employees'
             },
+            objectiveAssignmentCandidates: {
+              type: 'boolean',
+              description: 'Allow QS Objective Library assignment candidate lookup'
+            },
             // Sorting
             sort: {
               type: 'string',
@@ -640,6 +644,7 @@ export const userRoutes: RouteHandler = async (
           isConsultancy?: boolean;
           isIntern?: boolean;
           employeeType?: 'regular' | 'trainee';
+          objectiveAssignmentCandidates?: boolean | 'true' | 'false';
           sort?: string;
           sortOrder?: 'asc' | 'desc';
           select?: string;

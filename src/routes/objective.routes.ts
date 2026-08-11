@@ -69,7 +69,16 @@ export const objectiveRoutes: RouteHandler = async (
       /\/masters\/[^/]+$/.test(path) ||
       /\/masters\/[^/]+\/versions$/.test(path) ||
       /\/master-versions\/[^/]+$/.test(path) ||
-      /\/master-versions\/[^/]+\/(activate|deactivate|archive)$/.test(path);
+      /\/master-versions\/[^/]+\/(activate|deactivate|archive)$/.test(path) ||
+      /\/assignment-rules\/(preview|apply)$/.test(path) ||
+      /\/assignment-periods$/.test(path) ||
+      /\/assignment-periods\/[^/]+$/.test(path) ||
+      /\/assignment-periods\/[^/]+\/(activate|preview|apply)$/.test(path) ||
+      /\/assignment-period-reports$/.test(path) ||
+      /\/dashboard-statuses$/.test(path) ||
+      /\/employee-assignments$/.test(path) ||
+      /\/employee-assignments\/sync-term-states$/.test(path) ||
+      /\/employee-assignments\/[^/]+\/activity$/.test(path);
 
     if (!isObjectiveLibraryRequest) {
       return reply.status(403).send(

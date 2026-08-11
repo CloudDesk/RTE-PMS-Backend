@@ -3854,13 +3854,14 @@ export class ObjectiveService extends BaseService {
   ): Promise<ObjectiveDashboardStatusRecord[]> {
     const actor = this.requireActor();
     const mappedRole = accessService.mapRole(actor.actorRole);
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
     const filter = this.buildObjectiveReportingFilter(query);
 
     if (mappedRole === PmsRole.EMPLOYEE) {
       filter.employeeId = this.toObjectId(actor.actorId, 'actorId');
     } else if (mappedRole === PmsRole.MANAGER) {
       filter.assignedManagerId = this.toObjectId(actor.actorId, 'actorId');
-    } else if (mappedRole !== PmsRole.ADMIN && mappedRole !== PmsRole.MANAGEMENT && mappedRole !== PmsRole.DIRECTOR) {
+    } else if (rawRole !== 'QS' && mappedRole !== PmsRole.ADMIN && mappedRole !== PmsRole.MANAGEMENT && mappedRole !== PmsRole.DIRECTOR) {
       throw new Error('PMS access denied');
     }
 
@@ -3954,6 +3955,7 @@ export class ObjectiveService extends BaseService {
   ): void {
     const actor = this.requireActor();
     const mappedRole = accessService.mapRole(actor.actorRole);
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
     const allowedRoles = new Set<string>([
       PmsRole.EMPLOYEE,
       PmsRole.MANAGER,
@@ -3961,7 +3963,7 @@ export class ObjectiveService extends BaseService {
       PmsRole.MANAGEMENT,
       PmsRole.DIRECTOR,
     ]);
-    if (!allowedRoles.has(mappedRole)) {
+    if (rawRole !== 'QS' && !allowedRoles.has(mappedRole)) {
       throw new Error('PMS access denied');
     }
 
@@ -3993,6 +3995,10 @@ export class ObjectiveService extends BaseService {
         throw new Error('PMS team access denied');
       }
       filter.managerId = actorId;
+      return;
+    }
+
+    if (rawRole === 'QS') {
       return;
     }
 
@@ -9958,8 +9964,27 @@ export class ObjectiveService extends BaseService {
   }
 
   private async requireAdminForObjectiveAssignment(action: string): Promise<void> {
+    const actor = this.requireActor();
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
+    const qsAllowedActions = new Set([
+      'objectiveAssignment.preview',
+      'objectiveAssignment.apply',
+      'objectiveAssignmentPeriod.create',
+      'objectiveAssignmentPeriod.list',
+      'objectiveAssignmentPeriod.get',
+      'objectiveAssignmentPeriod.update',
+      'objectiveAssignmentPeriod.activate',
+      'objectiveAssignmentPeriod.close',
+      'objectiveAssignmentPeriod.preview',
+      'objectiveAssignmentPeriod.apply',
+      'objectiveEmployeeAssignment.sync',
+    ]);
+    if (rawRole === 'QS' && qsAllowedActions.has(action)) {
+      return;
+    }
+
     const access = await accessService.canPerform({
-      actor: this.requireActor(),
+      actor,
       action,
       requiresAdmin: true,
     });
@@ -9969,8 +9994,12 @@ export class ObjectiveService extends BaseService {
   }
 
   private async requireAdminForObjectiveReporting(action: string): Promise<void> {
+    const actor = this.requireActor();
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
+    if (rawRole === 'QS') return;
+
     const access = await accessService.canPerform({
-      actor: this.requireActor(),
+      actor,
       action,
       requiresAdmin: true,
     });
