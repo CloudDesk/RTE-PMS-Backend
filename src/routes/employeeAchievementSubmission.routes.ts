@@ -80,6 +80,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         const { termAssignmentId } = request.params as { termAssignmentId: string };
         const input = request.body as SaveAssignedFormValuesInput;
         const values = input.values ?? [];
+        const performanceFilling = input.performanceFilling === true;
         const objectiveValues = values.filter(
           (value) =>
             value.sectionKey === 'personal_development_2_objectives' &&
@@ -101,13 +102,19 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         const savedObjectiveValues = objectiveValues.length > 0
           ? await request.container!.objectiveService.saveAssignmentTemplateValues(
             termAssignmentId,
-            { objectiveValues },
+            {
+              objectiveValues,
+              ...(performanceFilling ? { performanceFilling: true } : {}),
+            },
           )
           : [];
         const savedAchievementValues = achievementValues.length > 0
           ? await request.container!.employeeAchievementSubmissionService.saveAssignedFormValues(
             termAssignmentId,
-            { values: achievementValues },
+            {
+              values: achievementValues,
+              ...(performanceFilling ? { performanceFilling: true } : {}),
+            },
           )
           : { achievementValues: [] };
 

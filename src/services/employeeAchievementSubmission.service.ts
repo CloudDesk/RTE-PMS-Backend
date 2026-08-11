@@ -111,6 +111,7 @@ export interface SaveAchievementDraftInput {
 
 export interface SaveAssignedFormValuesInput {
   values?: AchievementValueInput[];
+  performanceFilling?: boolean;
 }
 
 export interface SavedAssignedFormValues {
@@ -626,7 +627,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Assigned form contains an unsupported field');
     }
 
-    await this.assertEmployeeEditAccess(termAssignment);
+    if (input.performanceFilling === true) {
+      await this.assertPerformanceFillingAssignedFormAccess(termAssignment);
+    } else {
+      await this.assertEmployeeEditAccess(termAssignment);
+    }
     const annualAssignment = await this.getAnnualAssignment(
       termAssignment.annualAssignmentId.toString(),
     );
@@ -3168,6 +3173,113 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
     if (!editPolicy.canEdit) {
       throw new Error(editPolicy.reason || 'Employee Achievement is read-only.');
+    }
+  }
+
+  private async assertPerformanceFillingAssignedFormAccess(termAssignment: any): Promise<void> {
+    await this.assertAchievementWorkflowAllowed(termAssignment);
+
+    const actor = this.requireActor();
+    if (actor.actorId !== termAssignment.employeeId.toString()) {
+      throw new Error('Employee can edit only own assigned form');
+    }
+
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const closedAnnualStates = new Set<string>([
+      AnnualWorkflowState.ALL_TERMS_FINALIZED,
+      AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+      AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+      AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+      AnnualWorkflowState.ANNUAL_FINALIZED,
+      AnnualWorkflowState.VISIBILITY_ENABLED,
+      AnnualWorkflowState.COMMUNICATION_READY,
+      AnnualWorkflowState.COMMUNICATION_SENT,
+      AnnualWorkflowState.CLOSED,
+      AnnualWorkflowState.ARCHIVED,
+      AnnualWorkflowState.CANCELLED,
+    ]);
+    if (closedAnnualStates.has(String(annualAssignment.annualState))) {
+      throw new Error('Performance Filling is read-only because the annual cycle is finalized.');
+    }
+
+    const assessmentTermType = await this.resolveAssessmentTermType(termAssignment);
+    const assessmentTerms = getAssessmentTerms(assessmentTermType) as AssessmentTermCodeType[];
+    const configuredTerms = new Set<AssessmentTermCodeType>(
+      (annualAssignment.applicableTerms ?? []) as AssessmentTermCodeType[],
+    );
+    const includedTerms = assessmentTerms.filter(
+      (term) => configuredTerms.size === 0 || configuredTerms.has(term),
+    );
+    const firstTermCode = includedTerms[0] ?? assessmentTerms[0];
+    const finalTermCode = includedTerms[includedTerms.length - 1] ?? assessmentTerms[assessmentTerms.length - 1];
+
+    const [firstTermAssignment, finalTermAssignment] = await Promise.all([
+      TermAssignment.findOne({
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        assessmentTermCode: firstTermCode,
+        isDeleted: false,
+      }).lean(),
+      TermAssignment.findOne({
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        assessmentTermCode: finalTermCode,
+        isDeleted: false,
+      }).lean(),
+    ]);
+
+    const finalTerm = finalTermAssignment ?? termAssignment;
+    if (
+      finalTerm.termState === TermWorkflowState.TERM_FINALIZED ||
+      finalTerm.termState === TermWorkflowState.CLOSED_BY_ADMIN
+    ) {
+      throw new Error('Performance Filling is read-only because the final assessment term is finalized.');
+    }
+
+    const [firstTermCycle, finalTermCycle] = await Promise.all([
+      firstTermAssignment?.cycleTermId
+        ? TermCycle.findById(firstTermAssignment.cycleTermId).lean()
+        : TermCycle.findOne({
+            cycleId: termAssignment.cycleId,
+            assessmentTermCode: firstTermCode,
+            isDeleted: false,
+          }).lean(),
+      finalTerm.cycleTermId
+        ? TermCycle.findById(finalTerm.cycleTermId).lean()
+        : TermCycle.findOne({
+            cycleId: termAssignment.cycleId,
+            assessmentTermCode: finalTermCode,
+            isDeleted: false,
+          }).lean(),
+    ]);
+
+    const firstWindows = resolveEffectiveTermWindows(
+      firstTermAssignment ?? { assessmentTermCode: firstTermCode },
+      firstTermCycle,
+      annualAssignment,
+    );
+    const finalWindows = resolveEffectiveTermWindows(
+      finalTerm,
+      finalTermCycle,
+      annualAssignment,
+    );
+    const startDate =
+      firstTermCycle?.startDate ||
+      firstWindows.objectiveSettingWindow?.startDate;
+    const endDate =
+      finalTermCycle?.endDate ||
+      finalWindows.managerReviewWindow?.endDate ||
+      finalWindows.termFinalizationWindow?.endDate ||
+      finalWindows.achievementSubmissionWindow?.endDate;
+    if (!startDate || !endDate) {
+      throw new Error('Performance Filling window is not configured.');
+    }
+
+    const today = this.toDateOnlyValue(this.getCurrentDate());
+    const start = this.toDateOnlyValue(startDate);
+    const end = this.toDateOnlyValue(endDate);
+    if (today < start || today > end) {
+      throw new Error('Performance Filling is available only within the configured annual cycle window.');
     }
   }
 
