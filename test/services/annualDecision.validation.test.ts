@@ -19,18 +19,18 @@ describe('Final Review Phase 3 guards', () => {
     expect(() => assertFinalReviewFreezeAllowed('COMPLETED')).not.toThrow();
     expect(() => assertFinalReviewFreezeAllowed('NOT_REQUIRED')).not.toThrow();
     expect(() => assertFinalReviewFreezeAllowed('PENDING')).toThrow(
-      'L2 and Director assessments must be completed before finalisation',
+      'L2 and L3 assessments must be completed before finalisation',
     );
     expect(() => assertFinalReviewFreezeAllowed('IN_PROGRESS')).toThrow();
     expect(() => assertFinalReviewFreezeAllowed('COMPLETED', 'PENDING')).toThrow();
     expect(() => assertFinalReviewFreezeAllowed('COMPLETED', 'COMPLETED')).not.toThrow();
   });
 
-  it('accepts only the canonical Director submitted-state editable behavior', () => {
+  it('accepts the legacy Director field behavior throughout the L2/L3 review sequence', () => {
     expect(isFinalReviewerFieldEditable({
       behaviors: [{
         role: 'DIRECTOR',
-        workflowState: 'MANAGEMENT_DECISION_SUBMITTED',
+        workflowState: 'ALL_TERMS_FINALIZED',
         visibility: 'VISIBLE',
         editability: 'EDITABLE',
       }],
@@ -291,14 +291,104 @@ describe('Submitted annual decision corrections', () => {
     expect(actions).toEqual([]);
   });
 
-  it('keeps L2/L3 values outside the Admin decision ownership boundary', () => {
+  it('allows the assigned L3 owner to start a draft after both review stages complete', () => {
+    const actions = (service as unknown as {
+      resolveAvailableActions: (input: Record<string, unknown>) => string[];
+    }).resolveAvailableActions({
+      annualState: 'ALL_TERMS_FINALIZED',
+      finalDecisionStatus: 'DRAFT',
+      finalReviewStatus: 'COMPLETED',
+      directorReviewStatus: 'COMPLETED',
+      allTermsFinalized: true,
+      isAppraisalWindowOpen: true,
+    });
+
+    expect(actions).toEqual(['SAVE_DRAFT', 'SUBMIT']);
+  });
+
+  it('keeps a draft locked until the assigned L3 assessment is completed', () => {
+    const actions = (service as unknown as {
+      resolveAvailableActions: (input: Record<string, unknown>) => string[];
+    }).resolveAvailableActions({
+      annualState: 'ALL_TERMS_FINALIZED',
+      finalDecisionStatus: 'DRAFT',
+      finalReviewStatus: 'COMPLETED',
+      directorReviewStatus: 'PENDING',
+      allTermsFinalized: true,
+      isAppraisalWindowOpen: true,
+    });
+
+    expect(actions).toEqual([]);
+  });
+
+  it('authorizes the annual decision by selected L3 user id, not by a hardcoded role', () => {
+    const guard = (service as unknown as {
+      assertAssignedL3DecisionOwner: (
+        assignment: Record<string, unknown>,
+        action: string,
+      ) => void;
+      requireActor: () => Record<string, unknown>;
+    });
+    const assignment = {
+      directorReviewerId: { toString: () => 'selected-l3' },
+    };
+
+    guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'MANAGER' });
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).not.toThrow();
+
+    guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'DIRECTOR' });
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).not.toThrow();
+
+    guard.requireActor = () => ({ actorId: 'another-user', actorRole: 'MANAGER' });
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).toThrow(
+      'only the assigned L3 reviewer can perform this action',
+    );
+
+    guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'ADMIN' });
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).toThrow(
+      'only the assigned L3 reviewer can perform this action',
+    );
+
+    guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'STAFF' });
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).toThrow(
+      'only the assigned L3 reviewer can perform this action',
+    );
+  });
+
+  it('keeps L2 and L3 sequential when the same user owns both stages', () => {
+    const resolver = service as unknown as {
+      resolveActorFinalReviewStage: (
+        assignment: Record<string, unknown>,
+        requireEditable?: boolean,
+      ) => string | undefined;
+      requireActor: () => Record<string, unknown>;
+    };
+    resolver.requireActor = () => ({ actorId: 'same-reviewer', actorRole: 'MANAGER' });
+    const reviewerId = { toString: () => 'same-reviewer' };
+
+    expect(resolver.resolveActorFinalReviewStage({
+      finalReviewerId: reviewerId,
+      directorReviewerId: reviewerId,
+      finalReviewStatus: 'PENDING',
+      directorReviewStatus: 'PENDING',
+    })).toBe('L2');
+
+    expect(resolver.resolveActorFinalReviewStage({
+      finalReviewerId: reviewerId,
+      directorReviewerId: reviewerId,
+      finalReviewStatus: 'COMPLETED',
+      directorReviewStatus: 'PENDING',
+    })).toBe('DIRECTOR');
+  });
+
+  it('keeps L2/L3 assessment values outside the annual decision ownership boundary', () => {
     expect(isFinalReviewerOwnedDecisionValue({ roleCode: 'DIRECTOR' })).toBe(true);
     expect(isFinalReviewerOwnedDecisionValue({ roleCode: 'director' })).toBe(true);
     expect(isFinalReviewerOwnedDecisionValue({ roleCode: 'ADMIN' })).toBe(false);
     expect(isFinalReviewerOwnedDecisionValue({})).toBe(false);
   });
 
-  it('does not validate stored L2/L3 values as Admin values during resubmit', () => {
+  it('does not validate stored L2/L3 assessment values as decision values during resubmit', () => {
     const input = (service as unknown as {
       buildDecisionInputFromRecord: (
         decision: Record<string, unknown>,
