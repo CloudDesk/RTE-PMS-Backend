@@ -9975,6 +9975,13 @@ export class ObjectiveService extends BaseService {
   private async requireAdminForObjectiveAssignment(action: string): Promise<void> {
     const actor = this.requireActor();
     const rawRole = String(actor.actorRole || '').trim().toUpperCase();
+    const hrAllowedActions = new Set([
+      'objectiveAssignment.applyOnLaunch',
+    ]);
+    if (rawRole === 'HR' && hrAllowedActions.has(action)) {
+      return;
+    }
+
     const qsAllowedActions = new Set([
       'objectiveAssignment.preview',
       'objectiveAssignment.apply',

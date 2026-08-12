@@ -716,6 +716,8 @@ export class ObjectiveMatrixService {
     return {
       objectiveRowKey: input.rowKey,
       source: first.source,
+      matrixCode: first.matrixCode,
+      matrixLabel: first.matrixLabel,
       title: first.title ?? '',
       rowOriginTermCode: origin,
       rowCoverage: coverage,

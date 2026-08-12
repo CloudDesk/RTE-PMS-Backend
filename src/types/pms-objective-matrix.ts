@@ -107,6 +107,8 @@ export interface ObjectiveMatrixRowActions {
 export interface ObjectiveMatrixRow {
   objectiveRowKey: string;
   source: string;
+  matrixCode?: string;
+  matrixLabel?: string;
   title: string;
   rowOriginTermCode?: AssessmentTermCode;
   rowCoverage: AssessmentTermCode[];
@@ -171,6 +173,8 @@ export interface ObjectiveMatrixWriteResult {
 
 export interface ObjectiveMatrixCreateRowInput {
   source: 'EMPLOYEE_CREATED' | 'MANAGER_CREATED';
+  matrixCode: string;
+  matrixLabel?: string;
   currentTermCode: AssessmentTermCode;
   selectedTermCoverage?: AssessmentTermCode[];
   rowGroupKey?: string;

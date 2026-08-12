@@ -58,7 +58,7 @@ import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '
 import { PmsTemplate } from '../models/pms-template.model';
 import { LOV } from '../models/lov.model';
 import { User } from '../models/user.model';
-import { FinalReviewStatus, FinalReviewerSource } from '../utilis/finalReviewer';
+import { FinalReviewStatus, FinalReviewerSource, resolveFinalReviewer } from '../utilis/finalReviewer';
 
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
@@ -80,6 +80,32 @@ type AppraisalWindowConfigInput = {
 type AnnualDecisionAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBILITY' | 'REOPEN';
 type AnnualDecisionGateAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE';
 type FinalReviewStage = 'L2' | 'DIRECTOR';
+
+const FINAL_REVIEW_QUEUE_STATES: AnnualWorkflowState[] = [
+  AnnualWorkflowState.ALL_TERMS_FINALIZED,
+  AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+  AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+  AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+  AnnualWorkflowState.ANNUAL_FINALIZED,
+  AnnualWorkflowState.VISIBILITY_ENABLED,
+  AnnualWorkflowState.COMMUNICATION_READY,
+  AnnualWorkflowState.COMMUNICATION_SENT,
+  AnnualWorkflowState.CLOSED,
+  AnnualWorkflowState.ARCHIVED,
+];
+
+const FINAL_REVIEW_ROLLUP_CANDIDATE_STATES: AnnualWorkflowState[] = [
+  AnnualWorkflowState.DRAFT,
+  AnnualWorkflowState.SCHEDULED,
+  AnnualWorkflowState.ACTIVE,
+  AnnualWorkflowState.IN_PROGRESS,
+];
+
+const FINAL_REVIEW_VISIBLE_STATUSES = [
+  FinalReviewStatus.PENDING,
+  FinalReviewStatus.IN_PROGRESS,
+  FinalReviewStatus.COMPLETED,
+];
 
 export function assertFinalReviewFreezeAllowed(
   l2Status: string,
@@ -1075,47 +1101,337 @@ export class AnnualDecisionService extends BaseService {
     };
   }
 
+  private async ensureFinalReviewRouting(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<IAnnualAssignment> {
+    const previousValue = annualAssignment.toObject();
+    const declaredApplicableTerms = annualAssignment.applicableTerms ?? [];
+    const termAssignmentQuery: Record<string, unknown> = {
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    };
+    if (declaredApplicableTerms.length > 0) {
+      termAssignmentQuery.assessmentTermCode = { $in: declaredApplicableTerms };
+    }
+
+    const termAssignments = await TermAssignment.find(termAssignmentQuery).select(
+      'assessmentTermCode termState',
+    );
+    const termByCode = new Map(
+      termAssignments.map((termAssignment) => [
+        termAssignment.assessmentTermCode,
+        termAssignment,
+      ]),
+    );
+    const applicableTerms =
+      declaredApplicableTerms.length > 0
+        ? declaredApplicableTerms
+        : termAssignments.map((termAssignment) => termAssignment.assessmentTermCode);
+    const allTermsFinalized =
+      applicableTerms.length > 0 &&
+      applicableTerms.every((termCode) => {
+        const termAssignment = termByCode.get(termCode);
+        return termAssignment ? isTermFinalized(termAssignment.termState) : false;
+      });
+
+    if (
+      allTermsFinalized &&
+      FINAL_REVIEW_ROLLUP_CANDIDATE_STATES.includes(annualAssignment.annualState)
+    ) {
+      annualAssignment.annualState = AnnualWorkflowState.ALL_TERMS_FINALIZED;
+    }
+
+    if (
+      !allTermsFinalized &&
+      !FINAL_REVIEW_QUEUE_STATES.includes(annualAssignment.annualState)
+    ) {
+      return annualAssignment;
+    }
+
+    const cycle = await AnnualCycle.findById(annualAssignment.cycleId)
+      .select('finalReviewRequired defaultFinalReviewerId')
+      .lean();
+
+    const employeeHierarchy = await User.findById(annualAssignment.employeeId)
+      .select('l2ManagerId l3ManagerId')
+      .lean();
+
+    let finalReviewRequired = cycle?.finalReviewRequired === true;
+    if (!finalReviewRequired && allTermsFinalized) {
+      finalReviewRequired = Boolean(
+        employeeHierarchy?.l2ManagerId || employeeHierarchy?.l3ManagerId,
+      );
+    }
+
+    if (!finalReviewRequired) {
+      if (annualAssignment.isModified()) {
+        annualAssignment.updatedBy = this.actorIdObject();
+        annualAssignment.version += 1;
+        await annualAssignment.save();
+      }
+      return annualAssignment;
+    }
+
+    const resolution = await resolveFinalReviewer({
+      employeeId: annualAssignment.employeeId,
+      assignedManagerId: annualAssignment.assignedManagerId,
+      defaultFinalReviewerId: cycle?.defaultFinalReviewerId,
+      finalReviewRequired: true,
+    });
+
+    const explicitReviewerProjection =
+      '_id employeeCode name email role specificRole active portalAccess';
+    const employeeIdString = annualAssignment.employeeId.toString();
+    const assignedManagerIdString = annualAssignment.assignedManagerId.toString();
+
+    if (employeeHierarchy?.l2ManagerId) {
+      const explicitL2 = await User.findById(employeeHierarchy.l2ManagerId)
+        .select(explicitReviewerProjection)
+        .lean();
+      const explicitL2Id = explicitL2?._id?.toString();
+      if (
+        explicitL2 &&
+        explicitL2Id &&
+        explicitL2.active !== false &&
+        explicitL2.portalAccess !== false &&
+        explicitL2Id !== employeeIdString &&
+        explicitL2Id !== assignedManagerIdString
+      ) {
+        resolution.finalReviewerId = explicitL2._id as Types.ObjectId;
+        resolution.finalReviewerSource = FinalReviewerSource.EMPLOYEE_L2_MAPPING;
+        resolution.finalReviewerSnapshot = {
+          employeeCode: explicitL2.employeeCode,
+          name: explicitL2.name,
+          email: explicitL2.email,
+          role: explicitL2.role,
+          specificRole: explicitL2.specificRole,
+        };
+      }
+    }
+
+    if (employeeHierarchy?.l3ManagerId) {
+      const explicitL3 = await User.findById(employeeHierarchy.l3ManagerId)
+        .select(explicitReviewerProjection)
+        .lean();
+      const explicitL3Id = explicitL3?._id?.toString();
+      if (
+        explicitL3 &&
+        explicitL3Id &&
+        explicitL3.active !== false &&
+        explicitL3.portalAccess !== false &&
+        explicitL3Id !== employeeIdString
+      ) {
+        resolution.directorReviewerId = explicitL3._id as Types.ObjectId;
+        resolution.directorReviewerSource = FinalReviewerSource.EMPLOYEE_L3_MAPPING;
+        resolution.directorReviewerSnapshot = {
+          employeeCode: explicitL3.employeeCode,
+          name: explicitL3.name,
+          email: explicitL3.email,
+          role: explicitL3.role,
+          specificRole: explicitL3.specificRole,
+        };
+      }
+    }
+
+    const canRealignL2 =
+      !annualAssignment.finalReviewCompletedBy &&
+      !annualAssignment.finalReviewCompletedAt &&
+      [
+        undefined,
+        FinalReviewStatus.NOT_REQUIRED,
+        FinalReviewStatus.PENDING,
+      ].includes(annualAssignment.finalReviewStatus as any);
+    const canRealignL3 =
+      !annualAssignment.directorReviewCompletedBy &&
+      !annualAssignment.directorReviewCompletedAt &&
+      [
+        undefined,
+        FinalReviewStatus.NOT_REQUIRED,
+        FinalReviewStatus.PENDING,
+      ].includes(annualAssignment.directorReviewStatus as any);
+
+    const needsRouting =
+      !annualAssignment.finalReviewerId ||
+      !annualAssignment.directorReviewerId ||
+      !annualAssignment.finalReviewStatus ||
+      !annualAssignment.directorReviewStatus ||
+      annualAssignment.finalReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      annualAssignment.directorReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      (
+        canRealignL2 &&
+        resolution.finalReviewerId &&
+        annualAssignment.finalReviewerId?.toString() !== resolution.finalReviewerId.toString()
+      ) ||
+      (
+        canRealignL3 &&
+        resolution.directorReviewerId &&
+        annualAssignment.directorReviewerId?.toString() !== resolution.directorReviewerId.toString()
+      ) ||
+      annualAssignment.isModified();
+
+    if (!needsRouting) {
+      return annualAssignment;
+    }
+
+    let changed = annualAssignment.isModified();
+    if (
+      !annualAssignment.finalReviewerId ||
+      annualAssignment.finalReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      (
+        canRealignL2 &&
+        resolution.finalReviewerId &&
+        annualAssignment.finalReviewerId?.toString() !== resolution.finalReviewerId.toString()
+      )
+    ) {
+      annualAssignment.finalReviewerId = resolution.finalReviewerId;
+      annualAssignment.finalReviewerSource = resolution.finalReviewerSource;
+      annualAssignment.finalReviewerSnapshot = resolution.finalReviewerSnapshot;
+      changed = true;
+    } else if (!annualAssignment.finalReviewerSnapshot && resolution.finalReviewerSnapshot) {
+      annualAssignment.finalReviewerSnapshot = resolution.finalReviewerSnapshot;
+      changed = true;
+    }
+
+    if (
+      !annualAssignment.directorReviewerId ||
+      annualAssignment.directorReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      (
+        canRealignL3 &&
+        resolution.directorReviewerId &&
+        annualAssignment.directorReviewerId?.toString() !== resolution.directorReviewerId.toString()
+      )
+    ) {
+      annualAssignment.directorReviewerId = resolution.directorReviewerId;
+      annualAssignment.directorReviewerSource = resolution.directorReviewerSource;
+      annualAssignment.directorReviewerSnapshot = resolution.directorReviewerSnapshot;
+      changed = true;
+    } else if (!annualAssignment.directorReviewerSnapshot && resolution.directorReviewerSnapshot) {
+      annualAssignment.directorReviewerSnapshot = resolution.directorReviewerSnapshot;
+      changed = true;
+    }
+
+    if (
+      !annualAssignment.finalReviewStatus ||
+      annualAssignment.finalReviewStatus === FinalReviewStatus.NOT_REQUIRED
+    ) {
+      annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
+      changed = true;
+    }
+    if (
+      !annualAssignment.directorReviewStatus ||
+      annualAssignment.directorReviewStatus === FinalReviewStatus.NOT_REQUIRED
+    ) {
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      changed = true;
+    }
+
+    if (!changed) {
+      return annualAssignment;
+    }
+
+    annualAssignment.updatedBy = this.actorIdObject();
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+    await this.audit(
+      'PMS_FINAL_REVIEW_ROUTING_RESOLVED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignment._id.toString(),
+      {
+        finalReviewerId: previousValue.finalReviewerId,
+        finalReviewerSource: previousValue.finalReviewerSource,
+        finalReviewStatus: previousValue.finalReviewStatus,
+        directorReviewerId: previousValue.directorReviewerId,
+        directorReviewerSource: previousValue.directorReviewerSource,
+        directorReviewStatus: previousValue.directorReviewStatus,
+      },
+      {
+        finalReviewerId: annualAssignment.finalReviewerId,
+        finalReviewerSource: annualAssignment.finalReviewerSource,
+        finalReviewStatus: annualAssignment.finalReviewStatus,
+        directorReviewerId: annualAssignment.directorReviewerId,
+        directorReviewerSource: annualAssignment.directorReviewerSource,
+        directorReviewStatus: annualAssignment.directorReviewStatus,
+      },
+    );
+
+    return annualAssignment;
+  }
+
+  private async ensureFinalReviewRoutingForActor(actorId: Types.ObjectId): Promise<void> {
+    const hierarchyEmployeeIds = await User.distinct('_id', {
+      isDeleted: { $ne: true },
+      $or: [
+        { l2ManagerId: actorId },
+        { l3ManagerId: actorId },
+      ],
+    });
+
+    const routingClauses: Record<string, unknown>[] = [
+      { finalReviewerId: actorId },
+      { directorReviewerId: actorId },
+      { finalReviewerId: { $exists: false } },
+      { finalReviewerId: null },
+      { directorReviewerId: { $exists: false } },
+      { directorReviewerId: null },
+      { finalReviewStatus: FinalReviewStatus.NOT_REQUIRED },
+      { directorReviewStatus: FinalReviewStatus.NOT_REQUIRED },
+    ];
+
+    const candidateStates = [
+      ...FINAL_REVIEW_QUEUE_STATES,
+      ...FINAL_REVIEW_ROLLUP_CANDIDATE_STATES,
+    ];
+
+    const candidateOrClauses: Record<string, unknown>[] = [
+      {
+        annualState: { $in: candidateStates },
+        $or: routingClauses,
+      },
+    ];
+
+    if (hierarchyEmployeeIds.length > 0) {
+      candidateOrClauses.push({
+        employeeId: { $in: hierarchyEmployeeIds },
+        annualState: { $ne: AnnualWorkflowState.CANCELLED },
+      });
+    }
+
+    const candidates = await AnnualAssignment.find({
+      isDeleted: false,
+      $or: candidateOrClauses,
+    });
+
+    for (const assignment of candidates) {
+      try {
+        await this.ensureFinalReviewRouting(assignment);
+      } catch (error) {
+        console.warn(
+          '[PMS] Final review routing repair skipped',
+          assignment._id.toString(),
+          error instanceof Error ? error.message : String(error),
+        );
+        // Keep one legacy routing issue from hiding other final reviews in the queue.
+      }
+    }
+  }
+
   async listMyFinalReviews(): Promise<Array<Record<string, unknown>>> {
     const actor = this.requireActor();
     const actorId = this.toObjectId(actor.actorId, 'actorId');
+    await this.ensureFinalReviewRoutingForActor(actorId);
+
     const assignments = await AnnualAssignment.find({
       $or: [
         {
           finalReviewerId: actorId,
-          finalReviewStatus: {
-            $in: [
-              FinalReviewStatus.PENDING,
-              FinalReviewStatus.IN_PROGRESS,
-              FinalReviewStatus.COMPLETED,
-            ],
-          },
+          finalReviewStatus: { $in: FINAL_REVIEW_VISIBLE_STATUSES },
         },
         {
           directorReviewerId: actorId,
-          finalReviewStatus: FinalReviewStatus.COMPLETED,
-          directorReviewStatus: {
-            $in: [
-              FinalReviewStatus.PENDING,
-              FinalReviewStatus.IN_PROGRESS,
-              FinalReviewStatus.COMPLETED,
-            ],
-          },
+          directorReviewStatus: { $in: FINAL_REVIEW_VISIBLE_STATUSES },
         },
       ],
-      annualState: {
-        $in: [
-          AnnualWorkflowState.ALL_TERMS_FINALIZED,
-          AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
-          AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
-          AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
-          AnnualWorkflowState.ANNUAL_FINALIZED,
-          AnnualWorkflowState.VISIBILITY_ENABLED,
-          AnnualWorkflowState.COMMUNICATION_READY,
-          AnnualWorkflowState.COMMUNICATION_SENT,
-          AnnualWorkflowState.CLOSED,
-          AnnualWorkflowState.ARCHIVED,
-        ],
-      },
+      annualState: { $in: FINAL_REVIEW_QUEUE_STATES },
       isDeleted: false,
     }).sort({ updatedAt: -1 }).lean();
     const cycles = await AnnualCycle.find({
@@ -1124,10 +1440,12 @@ export class AnnualDecisionService extends BaseService {
     }).lean();
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
     return assignments.map((item) => {
-      const reviewStage = item.finalReviewerId?.toString() === actor.actorId &&
-        [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(item.finalReviewStatus as any)
+      const reviewStage = item.finalReviewerId?.toString() === actor.actorId
         ? 'L2'
         : 'DIRECTOR';
+      const isWaitingForL2 =
+        reviewStage === 'DIRECTOR' &&
+        item.finalReviewStatus !== FinalReviewStatus.COMPLETED;
       return {
         annualAssignmentId: item._id.toString(),
         employeeId: item.employeeId.toString(),
@@ -1137,10 +1455,11 @@ export class AnnualDecisionService extends BaseService {
         cycleName: cycleMap.get(item.cycleId.toString())?.name ?? 'Performance Cycle',
         annualState: item.annualState,
         reviewStage,
-        reviewStageLabel: reviewStage === 'L2' ? 'L2 · ED / SVP' : 'L3 · Final Reviewer',
+        reviewStageLabel: reviewStage === 'L2' ? 'L2 - ED / SVP' : 'L3 - Final Reviewer',
         finalReviewStatus: reviewStage === 'L2'
           ? item.finalReviewStatus
           : item.directorReviewStatus,
+        isWaitingForL2,
       };
     });
   }
