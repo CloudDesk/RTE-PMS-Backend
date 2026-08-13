@@ -943,8 +943,10 @@ export class ObjectiveMatrixService {
         : mode === 'admin'
           ? PmsRole.ADMIN
           : role === PmsRole.MANAGEMENT ? PmsRole.MANAGEMENT : PmsRole.DIRECTOR;
-    const isFinalReviewerPerspective =
-      isAssignedFinalReviewer && mode === 'reviewer';
+    // Freeze captures all configured matrix perspectives. An assigned final
+    // reviewer may read those perspectives for the same assignment, while the
+    // permission role remains DIRECTOR so no matrix edit capability is granted.
+    const isFinalReviewerPerspective = isAssignedFinalReviewer;
     const canReadCrossPerspective =
       role === PmsRole.ADMIN || role === PmsRole.DIRECTOR || isFinalReviewerPerspective;
     if (!canReadCrossPerspective && requestedRole !== role) {
@@ -966,7 +968,7 @@ export class ObjectiveMatrixService {
   private async assertAccess(
     actor: MatrixActor,
     annualAssignment: LeanRecord,
-    requestedMode?: ObjectiveMatrixMode,
+    _requestedMode?: ObjectiveMatrixMode,
   ): Promise<void> {
     // Director matrix access is global and read-only. Cell/action permissions
     // still prevent Director edits; this bypass only keeps matrix-enabled
@@ -975,9 +977,10 @@ export class ObjectiveMatrixService {
       return;
     }
     // A reporting-hierarchy reviewer may still have the functional MANAGER role.
-    // Their access is limited to the assignment explicitly resolved to them.
+    // Their access is limited to the assignment explicitly resolved to them. Allow
+    // every read-only perspective because annual-decision freeze captures the
+    // employee, manager, and reviewer matrices in one immutable snapshot.
     if (
-      requestedMode === 'reviewer' &&
       (
         annualAssignment.finalReviewerId?.toString() === actor.actorId ||
         annualAssignment.directorReviewerId?.toString() === actor.actorId

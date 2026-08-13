@@ -48,6 +48,37 @@ describe('PMS template runtime access delegation', () => {
     });
   });
 
+  it('allows an assigned L3 reviewer to resolve employee and manager context templates', async () => {
+    const reviewerId = new Types.ObjectId();
+    const service = new PmsTemplateService(context(reviewerId)) as unknown as {
+      assertRuntimeTemplateAccess(
+        annualAssignment: Record<string, unknown>,
+        termAssignment: Record<string, unknown> | null,
+        input: Record<string, unknown>,
+      ): Promise<void>;
+    };
+
+    await expect(
+      service.assertRuntimeTemplateAccess(
+        {
+          _id: new Types.ObjectId(),
+          cycleId: new Types.ObjectId(),
+          employeeId: new Types.ObjectId(),
+          assignedManagerId: new Types.ObjectId(),
+          directorReviewerId: reviewerId,
+        },
+        null,
+        {
+          role: 'EMPLOYEE',
+          workflowState: 'OBJECTIVE_SETTING_OPEN',
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(accessService.canPerform).not.toHaveBeenCalled();
+    expect(Delegation.findOne).not.toHaveBeenCalled();
+  });
+
   it('allows delegated review template resolve using the PMS tester date', async () => {
     const delegateUserId = new Types.ObjectId();
     const delegatorUserId = new Types.ObjectId();

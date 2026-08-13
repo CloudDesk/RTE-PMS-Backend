@@ -409,8 +409,6 @@ export class AnnualDecisionService extends BaseService {
     const actorId = actor.actorId;
     const actorRole = normalizePmsRole(actor.actorRole);
     const isAdminActor = actorRole === PmsRole.ADMIN;
-    const isEligibleL3DecisionOwnerRole =
-      actorRole === PmsRole.MANAGER || actorRole === PmsRole.DIRECTOR;
 
     if (query.cycleId?.trim()) {
       filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
@@ -531,7 +529,6 @@ export class AnnualDecisionService extends BaseService {
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
         availableActions:
           !isAdminActor &&
-          isEligibleL3DecisionOwnerRole &&
           annualAssignment.directorReviewerId?.toString() === actorId
             ? readiness.availableActions
             : [],
@@ -750,9 +747,7 @@ export class AnnualDecisionService extends BaseService {
       : null;
     const actor = this.requireActor();
     const actorId = actor.actorId;
-    const actorRole = normalizePmsRole(actor.actorRole);
     const isAssignedL3DecisionOwner =
-      (actorRole === PmsRole.MANAGER || actorRole === PmsRole.DIRECTOR) &&
       annualAssignment.directorReviewerId?.toString() === actorId;
     const isAssignedFinalReviewer =
       annualAssignment.finalReviewerId?.toString() === actorId ||
@@ -1011,7 +1006,6 @@ export class AnnualDecisionService extends BaseService {
           Boolean(activeFinalReviewStage) &&
           activeFinalReviewStageReady &&
           readiness.allTermsFinalized &&
-          readiness.isAppraisalWindowOpen &&
           [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(activeFinalReviewStatus as any)
             ? ['SAVE', 'COMPLETE']
             : [],
@@ -2208,18 +2202,10 @@ export class AnnualDecisionService extends BaseService {
     decision.version += 1;
     await decision.save();
 
-    await AnnualDecisionValue.updateMany(
-      { annualDecisionId: decision._id, roleCode: 'DIRECTOR', isDeleted: false },
-      { $set: { isDeleted: true, updatedBy: this.actorIdObject() }, $inc: { version: 1 } },
-    );
-    if (annualAssignment.finalReviewStatus !== FinalReviewStatus.NOT_REQUIRED) {
-      annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
-      annualAssignment.finalReviewCompletedBy = undefined;
-      annualAssignment.finalReviewCompletedAt = undefined;
-      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
-      annualAssignment.directorReviewCompletedBy = undefined;
-      annualAssignment.directorReviewCompletedAt = undefined;
-    }
+    // Reopening corrects only the annual management decision. The completed L2
+    // and L3 assessments are immutable decision inputs and must remain completed
+    // and visible; resetting them would incorrectly force the review chain to run
+    // again before the reopened draft could be edited.
 
     if (visibilityConfiguration) {
       const previousVisibilityValue = visibilityConfiguration.toObject();
@@ -3400,7 +3386,7 @@ export class AnnualDecisionService extends BaseService {
       return null;
     }
 
-    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const role = this.resolveAnnualDecisionTemplateRole(annualAssignment);
     const templateService = new PmsTemplateService(this.context);
 
     return templateService.resolveTemplateVersion(
@@ -3423,7 +3409,7 @@ export class AnnualDecisionService extends BaseService {
     const fieldMap = new Map(
       primaryTemplate.sections.flatMap((section) => section.fields).map((field) => [field.key, field]),
     );
-    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const role = this.resolveAnnualDecisionTemplateRole(annualAssignment);
     if (role !== PmsRole.ADMIN) {
       return fieldMap;
     }
@@ -3444,7 +3430,7 @@ export class AnnualDecisionService extends BaseService {
     for (const decisionValue of input.decisionValues ?? []) {
       if (
         !decisionValue.fieldKey?.trim() ||
-        fieldMap.has(decisionValue.fieldKey) ||
+        fieldMap.get(decisionValue.fieldKey)?.editable === true ||
         this.isStandardAnnualDecisionFieldKey(decisionValue.fieldKey)
       ) {
         continue;
@@ -3486,7 +3472,7 @@ export class AnnualDecisionService extends BaseService {
     ]
       .map((value) => this.normalizeAnnualFieldKey(value ?? ''))
       .filter(Boolean);
-    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const role = this.resolveAnnualDecisionTemplateRole(annualAssignment);
     const workflowState = this.resolveAnnualDecisionTemplateWorkflowState(annualAssignment);
 
     for (const section of templateVersion.sections ?? []) {
@@ -3503,7 +3489,17 @@ export class AnnualDecisionService extends BaseService {
       const fieldWorkflowState = this.isAnnualDecisionCommunicationSection(section)
         ? AnnualWorkflowState.COMMUNICATION_READY
         : workflowState;
-      if (!field || !this.isRawAnnualDecisionFieldEditable(field, section, role, fieldWorkflowState)) {
+      if (!field) {
+        return null;
+      }
+
+      const assignedL3OwnsCommunicationField =
+        this.isAnnualDecisionCommunicationSection(section) &&
+        annualAssignment.directorReviewerId?.toString() === this.context.user?._id?.toString();
+      if (
+        !assignedL3OwnsCommunicationField &&
+        !this.isRawAnnualDecisionFieldEditable(field, section, role, fieldWorkflowState)
+      ) {
         return null;
       }
 
@@ -3511,6 +3507,18 @@ export class AnnualDecisionService extends BaseService {
     }
 
     return null;
+  }
+
+  private resolveAnnualDecisionTemplateRole(
+    annualAssignment: Pick<IAnnualAssignment, 'directorReviewerId'>,
+  ): string {
+    const actorId = this.context.user?._id?.toString();
+    if (actorId && annualAssignment.directorReviewerId?.toString() === actorId) {
+      // The selected L3 owns the same Annual Decision form and governed fields
+      // that Admin configures, while write authorization remains ID-scoped.
+      return PmsRole.ADMIN;
+    }
+    return normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
   }
 
   private isAnnualDecisionTemplateSection(section: ITemplateSection): boolean {
@@ -4850,13 +4858,7 @@ export class AnnualDecisionService extends BaseService {
     action: string,
   ): void {
     const actor = this.requireActor();
-    const actorRole = normalizePmsRole(actor.actorRole);
-    const isEligibleL3Role =
-      actorRole === PmsRole.MANAGER || actorRole === PmsRole.DIRECTOR;
-    if (
-      isEligibleL3Role &&
-      annualAssignment.directorReviewerId?.toString() === actor.actorId
-    ) {
+    if (annualAssignment.directorReviewerId?.toString() === actor.actorId) {
       return;
     }
 
@@ -4910,7 +4912,6 @@ export class AnnualDecisionService extends BaseService {
   ): Promise<{ annualAssignment: IAnnualAssignment; reviewStage: FinalReviewStage }> {
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
     await this.assertAllQuartersComplete(annualAssignment._id);
-    await this.assertAppraisalWindowOpen(annualAssignment);
     const reviewStage = this.resolveActorFinalReviewStage(annualAssignment);
     if (!reviewStage) {
       const actor = this.requireActor();

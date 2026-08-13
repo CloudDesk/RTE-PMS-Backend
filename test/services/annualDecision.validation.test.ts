@@ -321,7 +321,7 @@ describe('Submitted annual decision corrections', () => {
     expect(actions).toEqual([]);
   });
 
-  it('authorizes the annual decision by selected L3 user id, not by a hardcoded role', () => {
+  it('authorizes the annual decision solely by the selected L3 user id', () => {
     const guard = (service as unknown as {
       assertAssignedL3DecisionOwner: (
         assignment: Record<string, unknown>,
@@ -339,20 +339,19 @@ describe('Submitted annual decision corrections', () => {
     guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'DIRECTOR' });
     expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).not.toThrow();
 
+    guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'MANAGEMENT' });
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).not.toThrow();
+
+    guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'STAFF' });
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).not.toThrow();
+
     guard.requireActor = () => ({ actorId: 'another-user', actorRole: 'MANAGER' });
     expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).toThrow(
       'only the assigned L3 reviewer can perform this action',
     );
 
     guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'ADMIN' });
-    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).toThrow(
-      'only the assigned L3 reviewer can perform this action',
-    );
-
-    guard.requireActor = () => ({ actorId: 'selected-l3', actorRole: 'STAFF' });
-    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).toThrow(
-      'only the assigned L3 reviewer can perform this action',
-    );
+    expect(() => guard.assertAssignedL3DecisionOwner(assignment, 'test')).not.toThrow();
   });
 
   it('keeps L2 and L3 sequential when the same user owns both stages', () => {
@@ -379,6 +378,28 @@ describe('Submitted annual decision corrections', () => {
       finalReviewStatus: 'COMPLETED',
       directorReviewStatus: 'PENDING',
     })).toBe('DIRECTOR');
+  });
+
+  it('allows the assigned final reviewer after terms finalize without requiring the appraisal window', async () => {
+    const assignment = {
+      _id: 'annual-assignment',
+      finalReviewerId: { toString: () => 'selected-l2' },
+      finalReviewStatus: 'PENDING',
+      directorReviewStatus: 'PENDING',
+    };
+    const appraisalWindowGuard = jest.fn();
+    const guard = service as any;
+    guard.getAnnualAssignment = jest.fn().mockResolvedValue(assignment);
+    guard.assertAllQuartersComplete = jest.fn().mockResolvedValue(undefined);
+    guard.assertAppraisalWindowOpen = appraisalWindowGuard;
+    guard.requireActor = () => ({ actorId: 'selected-l2', actorRole: 'MANAGER' });
+
+    await expect(guard.assertFinalReviewerAccess('annual-assignment')).resolves.toEqual({
+      annualAssignment: assignment,
+      reviewStage: 'L2',
+    });
+    expect(guard.assertAllQuartersComplete).toHaveBeenCalledWith(assignment._id);
+    expect(appraisalWindowGuard).not.toHaveBeenCalled();
   });
 
   it('keeps L2/L3 assessment values outside the annual decision ownership boundary', () => {
