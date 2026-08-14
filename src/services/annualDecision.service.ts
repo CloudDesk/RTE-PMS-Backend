@@ -153,6 +153,8 @@ const RATING_ONLY_MANAGER_REVIEW = true;
 
 interface AnnualDecisionReadiness {
   isAppraisalWindowOpen: boolean;
+  appraisalWindowStart?: string;
+  appraisalWindowEnd?: string;
   termProgress: {
     total: number;
     completed: number;
@@ -527,6 +529,8 @@ export class AnnualDecisionService extends BaseService {
           managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
         },
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
+        appraisalWindowStart: readiness.appraisalWindowStart,
+        appraisalWindowEnd: readiness.appraisalWindowEnd,
         availableActions:
           !isAdminActor &&
           annualAssignment.directorReviewerId?.toString() === actorId
@@ -866,6 +870,8 @@ export class AnnualDecisionService extends BaseService {
         annualState: effectiveAnnualState,
         finalDecisionStatus,
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
+        appraisalWindowStart: readiness.appraisalWindowStart,
+        appraisalWindowEnd: readiness.appraisalWindowEnd,
         termProgress: readiness.termProgress,
         availableActions: isAssignedL3DecisionOwner ? readiness.availableActions : [],
         availableAdminActions: [],
@@ -2652,6 +2658,8 @@ export class AnnualDecisionService extends BaseService {
 
     return {
       isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
+      appraisalWindowStart: appraisalWindowStatus.start,
+      appraisalWindowEnd: appraisalWindowStatus.end,
       termProgress: {
         total: applicableTerms.length,
         completed: completedTerms,
@@ -4225,7 +4233,7 @@ export class AnnualDecisionService extends BaseService {
   private async getAppraisalWindowStatus(
     annualAssignment: IAnnualAssignment,
     cycleOverride?: IAnnualCycle | null,
-  ): Promise<{ isOpen: boolean }> {
+  ): Promise<{ isOpen: boolean; start?: string; end?: string }> {
     const cycle =
       cycleOverride ??
       await AnnualCycle.findById(annualAssignment.cycleId).lean();
@@ -4259,9 +4267,32 @@ export class AnnualDecisionService extends BaseService {
       allQuartersCompletedAt,
     );
 
+    const range = this.resolveAppraisalWindowRange(config, relativeBaseDate);
     return {
       isOpen: this.isWithinAppraisalWindow(config, relativeBaseDate, this.getCurrentDate()),
+      start: range?.start.toISOString(),
+      end: range?.end.toISOString(),
     };
+  }
+
+  private resolveAppraisalWindowRange(
+    config: AppraisalWindowConfigInput,
+    relativeBaseDate: Date | string,
+  ): { start: Date; end: Date } | null {
+    if (config.type === 'FIXED_DATE' || config.type === 'FIXED_RANGE') {
+      const start = this.normalizeStartDate(config.startDate ?? config.date);
+      const end = this.normalizeEndDate(config.endDate ?? config.date);
+      return start && end ? { start, end } : null;
+    }
+
+    if (config.type !== 'RELATIVE_OFFSET') return null;
+    const start = this.normalizeStartDate(relativeBaseDate);
+    if (!start) return null;
+    start.setDate(start.getDate() + (config.offsetDays ?? 0));
+    const end = new Date(start);
+    end.setDate(end.getDate() + Math.max((config.durationDays ?? 1) - 1, 0));
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
   }
 
   private normalizeAppraisalWindowConfig(
