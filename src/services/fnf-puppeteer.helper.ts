@@ -192,7 +192,8 @@ export async function generateFNFLetter(settlement: any, employee: any): Promise
         browser = await puppeteer.launch(getPuppeteerLaunchOptions());
 
         const page = await browser.newPage();
-        await page.setContent(html, { waitUntil: 'networkidle0' });
+        await page.setContent(html, { waitUntil: 'load' });
+        await page.waitForNetworkIdle({ concurrency: 0 });
 
         const pdfBuffer = await page.pdf({
             format: 'A4',
