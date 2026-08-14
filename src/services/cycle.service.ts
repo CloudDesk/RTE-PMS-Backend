@@ -2085,6 +2085,8 @@ export class CycleService extends BaseService {
       throw new Error('Authentication required');
     }
 
+    if (String(user.role).trim().toUpperCase() === 'HR') return;
+
     const mappedRole = accessService.mapRole(user.role);
     const allowedRoles: string[] = [
       PmsRole.ADMIN,
@@ -2104,6 +2106,8 @@ export class CycleService extends BaseService {
     if (!user) {
       throw new Error('Authentication required');
     }
+
+    if (String(user.role).trim().toUpperCase() === 'HR') return;
 
     const mappedRole = accessService.mapRole(user.role);
     if (
@@ -2126,6 +2130,8 @@ export class CycleService extends BaseService {
     if (!user) {
       throw new Error('Authentication required');
     }
+
+    if (String(user.role).trim().toUpperCase() === 'HR') return undefined;
 
     const mappedRole = accessService.mapRole(user.role);
     if (
@@ -2158,6 +2164,10 @@ export class CycleService extends BaseService {
     const user = this.context.user;
     if (!user) {
       throw new Error('Authentication required');
+    }
+
+    if (String(user.role).trim().toUpperCase() === 'HR') {
+      return;
     }
 
     const access = await accessService.canPerform({

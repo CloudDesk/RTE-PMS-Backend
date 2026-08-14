@@ -72,8 +72,18 @@ export class PmsCommunicationService extends BaseService {
   async sendCommunication(
     input: SendPmsCommunicationInput,
   ): Promise<ICommunicationDispatch> {
-    await this.assertAdmin('pmsCommunication.send');
+    const actor = this.requireActor();
     const actorId = this.actorIdObject();
+
+    const annualAssignment = await AnnualAssignment.findById(input.annualAssignmentId);
+    if (!annualAssignment) throw new Error('Annual assignment not found');
+
+    const isAssignedL3SubmittedDecisionDispatch =
+      input.allowSubmittedDecisionDispatch === true &&
+      annualAssignment.directorReviewerId?.toString() === actor.actorId;
+    if (!isAssignedL3SubmittedDecisionDispatch) {
+      await this.assertAdmin('pmsCommunication.send');
+    }
 
     const existingSent = await CommunicationDispatch.findOne({
       annualAssignmentId: input.annualAssignmentId,
@@ -83,9 +93,6 @@ export class PmsCommunicationService extends BaseService {
     if (existingSent && !input.resendOf && !input.allowSubmittedDecisionDispatch) {
       throw new Error('Communication already processed for this annual assignment');
     }
-
-    const annualAssignment = await AnnualAssignment.findById(input.annualAssignmentId);
-    if (!annualAssignment) throw new Error('Annual assignment not found');
 
     const annualDecision = await AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id });
     if (!annualDecision) throw new Error('Annual decision not found');

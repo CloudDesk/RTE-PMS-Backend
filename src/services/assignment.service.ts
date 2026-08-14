@@ -295,11 +295,14 @@ export class AssignmentService extends BaseService {
     );
 
     const actorRole = this.context.user?.role ?? 'employee';
-    const hasVisibilityOverride = this.context.user ? (await accessService.canPerform({
-      actor: { actorId: this.context.user._id.toString(), actorRole: this.context.user.role },
-      action: 'assignment.visibility.override',
-      requiresAdmin: true
-    })).allowed : false;
+    const hasVisibilityOverride = this.context.user
+      ? String(this.context.user.role || '').trim().toUpperCase() === 'HR' ||
+        (await accessService.canPerform({
+          actor: { actorId: this.context.user._id.toString(), actorRole: this.context.user.role },
+          action: 'assignment.visibility.override',
+          requiresAdmin: true
+        })).allowed
+      : false;
 
     const maskedItems = items.map((item) => {
       const visConfig = visConfigMap.get(item._id.toString());
@@ -2337,7 +2340,10 @@ export class AssignmentService extends BaseService {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
 
-    if (mappedRole === PmsRole.ADMIN) {
+    if (
+      mappedRole === PmsRole.ADMIN ||
+      String(actor.actorRole || '').trim().toUpperCase() === 'HR'
+    ) {
       return;
     }
 
@@ -2456,8 +2462,12 @@ export class AssignmentService extends BaseService {
   }
 
   private async assertAdmin(action: string): Promise<void> {
+    const actor = this.requireActor();
+    if (String(actor.actorRole || '').trim().toUpperCase() === 'HR') {
+      return;
+    }
     const access = await accessService.canPerform({
-      actor: this.requireActor(),
+      actor,
       action,
       requiresAdmin: true,
     });

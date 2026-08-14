@@ -60,8 +60,14 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { termAssignmentId } = request.params as { termAssignmentId: string };
+        const performanceFilling =
+          (request.query as { performanceFilling?: string | boolean } | undefined)
+            ?.performanceFilling === true ||
+          (request.query as { performanceFilling?: string | boolean } | undefined)
+            ?.performanceFilling === 'true';
         const submission = await request.container!.employeeAchievementSubmissionService.getSubmission(
           termAssignmentId,
+          performanceFilling,
         );
         return reply.send(
           successResponse('Employee achievement submission fetched successfully', submission),
@@ -80,6 +86,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         const { termAssignmentId } = request.params as { termAssignmentId: string };
         const input = request.body as SaveAssignedFormValuesInput;
         const values = input.values ?? [];
+        const performanceFilling = input.performanceFilling === true;
         const objectiveValues = values.filter(
           (value) =>
             value.sectionKey === 'personal_development_2_objectives' &&
@@ -96,6 +103,21 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         );
         if (objectiveValues.length + achievementValues.length !== values.length) {
           throw new Error('Assigned form contains an unsupported field');
+        }
+
+        // Performance Filling is one Assigned Form for the whole annual assignment.
+        // Keep the legacy split for the existing term workflow, but persist every
+        // Performance Filling field in the annual submission record.
+        if (performanceFilling) {
+          const savedValues = await request.container!.employeeAchievementSubmissionService
+            .saveAssignedFormValues(termAssignmentId, {
+              values,
+              performanceFilling: true,
+            });
+
+          return reply.send(
+            successResponse('Assigned form saved successfully', savedValues),
+          );
         }
 
         const savedObjectiveValues = objectiveValues.length > 0

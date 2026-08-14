@@ -58,7 +58,7 @@ import { PmsTemplateVersion, type ITemplateField, type ITemplateSection } from '
 import { PmsTemplate } from '../models/pms-template.model';
 import { LOV } from '../models/lov.model';
 import { User } from '../models/user.model';
-import { FinalReviewStatus, FinalReviewerSource } from '../utilis/finalReviewer';
+import { FinalReviewStatus, FinalReviewerSource, resolveFinalReviewer } from '../utilis/finalReviewer';
 
 type AppraisalWindowType = 'FIXED_DATE' | 'FIXED_RANGE' | 'RELATIVE_OFFSET';
 type AppraisalWindowBase =
@@ -81,6 +81,32 @@ type AnnualDecisionAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE' | 'UPDATE_VISIBIL
 type AnnualDecisionGateAction = 'SAVE_DRAFT' | 'SUBMIT' | 'FREEZE';
 type FinalReviewStage = 'L2' | 'DIRECTOR';
 
+const FINAL_REVIEW_QUEUE_STATES: AnnualWorkflowState[] = [
+  AnnualWorkflowState.ALL_TERMS_FINALIZED,
+  AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+  AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+  AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+  AnnualWorkflowState.ANNUAL_FINALIZED,
+  AnnualWorkflowState.VISIBILITY_ENABLED,
+  AnnualWorkflowState.COMMUNICATION_READY,
+  AnnualWorkflowState.COMMUNICATION_SENT,
+  AnnualWorkflowState.CLOSED,
+  AnnualWorkflowState.ARCHIVED,
+];
+
+const FINAL_REVIEW_ROLLUP_CANDIDATE_STATES: AnnualWorkflowState[] = [
+  AnnualWorkflowState.DRAFT,
+  AnnualWorkflowState.SCHEDULED,
+  AnnualWorkflowState.ACTIVE,
+  AnnualWorkflowState.IN_PROGRESS,
+];
+
+const FINAL_REVIEW_VISIBLE_STATUSES = [
+  FinalReviewStatus.PENDING,
+  FinalReviewStatus.IN_PROGRESS,
+  FinalReviewStatus.COMPLETED,
+];
+
 export function assertFinalReviewFreezeAllowed(
   l2Status: string,
   directorStatus: string = FinalReviewStatus.NOT_REQUIRED,
@@ -88,7 +114,7 @@ export function assertFinalReviewFreezeAllowed(
   const completed = (status: string) =>
     status === FinalReviewStatus.NOT_REQUIRED || status === FinalReviewStatus.COMPLETED;
   if (!completed(l2Status) || !completed(directorStatus)) {
-    throw new Error('L2 and Director assessments must be completed before finalisation');
+    throw new Error('L2 and L3 assessments must be completed before finalisation');
   }
 }
 
@@ -96,7 +122,6 @@ export function isFinalReviewerFieldEditable(field: Record<string, any>): boolea
   return (field.behaviors ?? []).some(
     (behavior: Record<string, unknown>) =>
       behavior.role === 'DIRECTOR' &&
-      behavior.workflowState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
       behavior.visibility === 'VISIBLE' &&
       behavior.editability === 'EDITABLE',
   );
@@ -380,7 +405,10 @@ export class AnnualDecisionService extends BaseService {
   async listAssignments(query: AnnualDecisionListQuery = {}): Promise<AnnualDecisionListItem[]> {
     const filter: Record<string, unknown> = { isDeleted: false };
     await this.applyScopedAssignmentFilter(filter);
-    const isAdminActor = normalizePmsRole(this.requireActor().actorRole) === PmsRole.ADMIN;
+    const actor = this.requireActor();
+    const actorId = actor.actorId;
+    const actorRole = normalizePmsRole(actor.actorRole);
+    const isAdminActor = actorRole === PmsRole.ADMIN;
 
     if (query.cycleId?.trim()) {
       filter.cycleId = this.toObjectId(query.cycleId, 'cycleId');
@@ -499,7 +527,11 @@ export class AnnualDecisionService extends BaseService {
           managerMeritVisible: annualAssignment.visibility.managerMeritVisible,
         },
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
-        availableActions: isAdminActor ? readiness.availableActions : [],
+        availableActions:
+          !isAdminActor &&
+          annualAssignment.directorReviewerId?.toString() === actorId
+            ? readiness.availableActions
+            : [],
         lockedReason: readiness.lockedReason,
         finalReviewStatus: annualAssignment.finalReviewStatus,
         finalReviewerId: annualAssignment.finalReviewerId?.toString(),
@@ -715,8 +747,8 @@ export class AnnualDecisionService extends BaseService {
       : null;
     const actor = this.requireActor();
     const actorId = actor.actorId;
-    const isAdminActor =
-      normalizePmsRole(actor.actorRole) === PmsRole.ADMIN;
+    const isAssignedL3DecisionOwner =
+      annualAssignment.directorReviewerId?.toString() === actorId;
     const isAssignedFinalReviewer =
       annualAssignment.finalReviewerId?.toString() === actorId ||
       annualAssignment.directorReviewerId?.toString() === actorId;
@@ -835,8 +867,8 @@ export class AnnualDecisionService extends BaseService {
         finalDecisionStatus,
         isAppraisalWindowOpen: readiness.isAppraisalWindowOpen,
         termProgress: readiness.termProgress,
-        availableActions: isAdminActor ? readiness.availableActions : [],
-        availableAdminActions: isAdminActor ? readiness.availableActions : [],
+        availableActions: isAssignedL3DecisionOwner ? readiness.availableActions : [],
+        availableAdminActions: [],
         lockedReason: readiness.lockedReason,
       },
       termAssignments: effectiveTermAssignments.map((termAssignment) => {
@@ -962,7 +994,7 @@ export class AnnualDecisionService extends BaseService {
         status: activeFinalReviewStatus,
         stage: activeFinalReviewStage,
         stageLabel: activeFinalReviewStage === 'DIRECTOR'
-          ? 'Director · DIC Assessment'
+          ? 'L3 · Final Reviewer Assessment'
           : 'L2 · ED / SVP Assessment',
         reviewer: activeFinalReviewer,
         l2Status: annualAssignment.finalReviewStatus,
@@ -973,7 +1005,7 @@ export class AnnualDecisionService extends BaseService {
         availableActions:
           Boolean(activeFinalReviewStage) &&
           activeFinalReviewStageReady &&
-          annualAssignment.annualState === AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED &&
+          readiness.allTermsFinalized &&
           [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(activeFinalReviewStatus as any)
             ? ['SAVE', 'COMPLETE']
             : [],
@@ -1063,44 +1095,337 @@ export class AnnualDecisionService extends BaseService {
     };
   }
 
+  private async ensureFinalReviewRouting(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<IAnnualAssignment> {
+    const previousValue = annualAssignment.toObject();
+    const declaredApplicableTerms = annualAssignment.applicableTerms ?? [];
+    const termAssignmentQuery: Record<string, unknown> = {
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    };
+    if (declaredApplicableTerms.length > 0) {
+      termAssignmentQuery.assessmentTermCode = { $in: declaredApplicableTerms };
+    }
+
+    const termAssignments = await TermAssignment.find(termAssignmentQuery).select(
+      'assessmentTermCode termState',
+    );
+    const termByCode = new Map(
+      termAssignments.map((termAssignment) => [
+        termAssignment.assessmentTermCode,
+        termAssignment,
+      ]),
+    );
+    const applicableTerms =
+      declaredApplicableTerms.length > 0
+        ? declaredApplicableTerms
+        : termAssignments.map((termAssignment) => termAssignment.assessmentTermCode);
+    const allTermsFinalized =
+      applicableTerms.length > 0 &&
+      applicableTerms.every((termCode) => {
+        const termAssignment = termByCode.get(termCode);
+        return termAssignment ? isTermFinalized(termAssignment.termState) : false;
+      });
+
+    if (
+      allTermsFinalized &&
+      FINAL_REVIEW_ROLLUP_CANDIDATE_STATES.includes(annualAssignment.annualState)
+    ) {
+      annualAssignment.annualState = AnnualWorkflowState.ALL_TERMS_FINALIZED;
+    }
+
+    if (
+      !allTermsFinalized &&
+      !FINAL_REVIEW_QUEUE_STATES.includes(annualAssignment.annualState)
+    ) {
+      return annualAssignment;
+    }
+
+    const cycle = await AnnualCycle.findById(annualAssignment.cycleId)
+      .select('finalReviewRequired defaultFinalReviewerId')
+      .lean();
+
+    const employeeHierarchy = await User.findById(annualAssignment.employeeId)
+      .select('l2ManagerId l3ManagerId')
+      .lean();
+
+    let finalReviewRequired = cycle?.finalReviewRequired === true;
+    if (!finalReviewRequired && allTermsFinalized) {
+      finalReviewRequired = Boolean(
+        employeeHierarchy?.l2ManagerId || employeeHierarchy?.l3ManagerId,
+      );
+    }
+
+    if (!finalReviewRequired) {
+      if (annualAssignment.isModified()) {
+        annualAssignment.updatedBy = this.actorIdObject();
+        annualAssignment.version += 1;
+        await annualAssignment.save();
+      }
+      return annualAssignment;
+    }
+
+    const resolution = await resolveFinalReviewer({
+      employeeId: annualAssignment.employeeId,
+      assignedManagerId: annualAssignment.assignedManagerId,
+      defaultFinalReviewerId: cycle?.defaultFinalReviewerId,
+      finalReviewRequired: true,
+    });
+
+    const explicitReviewerProjection =
+      '_id employeeCode name email role specificRole active portalAccess';
+    const employeeIdString = annualAssignment.employeeId.toString();
+    const assignedManagerIdString = annualAssignment.assignedManagerId.toString();
+
+    if (employeeHierarchy?.l2ManagerId) {
+      const explicitL2 = await User.findById(employeeHierarchy.l2ManagerId)
+        .select(explicitReviewerProjection)
+        .lean();
+      const explicitL2Id = explicitL2?._id?.toString();
+      if (
+        explicitL2 &&
+        explicitL2Id &&
+        explicitL2.active !== false &&
+        explicitL2.portalAccess !== false &&
+        explicitL2Id !== employeeIdString &&
+        explicitL2Id !== assignedManagerIdString
+      ) {
+        resolution.finalReviewerId = explicitL2._id as Types.ObjectId;
+        resolution.finalReviewerSource = FinalReviewerSource.EMPLOYEE_L2_MAPPING;
+        resolution.finalReviewerSnapshot = {
+          employeeCode: explicitL2.employeeCode,
+          name: explicitL2.name,
+          email: explicitL2.email,
+          role: explicitL2.role,
+          specificRole: explicitL2.specificRole,
+        };
+      }
+    }
+
+    if (employeeHierarchy?.l3ManagerId) {
+      const explicitL3 = await User.findById(employeeHierarchy.l3ManagerId)
+        .select(explicitReviewerProjection)
+        .lean();
+      const explicitL3Id = explicitL3?._id?.toString();
+      if (
+        explicitL3 &&
+        explicitL3Id &&
+        explicitL3.active !== false &&
+        explicitL3.portalAccess !== false &&
+        explicitL3Id !== employeeIdString
+      ) {
+        resolution.directorReviewerId = explicitL3._id as Types.ObjectId;
+        resolution.directorReviewerSource = FinalReviewerSource.EMPLOYEE_L3_MAPPING;
+        resolution.directorReviewerSnapshot = {
+          employeeCode: explicitL3.employeeCode,
+          name: explicitL3.name,
+          email: explicitL3.email,
+          role: explicitL3.role,
+          specificRole: explicitL3.specificRole,
+        };
+      }
+    }
+
+    const canRealignL2 =
+      !annualAssignment.finalReviewCompletedBy &&
+      !annualAssignment.finalReviewCompletedAt &&
+      [
+        undefined,
+        FinalReviewStatus.NOT_REQUIRED,
+        FinalReviewStatus.PENDING,
+      ].includes(annualAssignment.finalReviewStatus as any);
+    const canRealignL3 =
+      !annualAssignment.directorReviewCompletedBy &&
+      !annualAssignment.directorReviewCompletedAt &&
+      [
+        undefined,
+        FinalReviewStatus.NOT_REQUIRED,
+        FinalReviewStatus.PENDING,
+      ].includes(annualAssignment.directorReviewStatus as any);
+
+    const needsRouting =
+      !annualAssignment.finalReviewerId ||
+      !annualAssignment.directorReviewerId ||
+      !annualAssignment.finalReviewStatus ||
+      !annualAssignment.directorReviewStatus ||
+      annualAssignment.finalReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      annualAssignment.directorReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      (
+        canRealignL2 &&
+        resolution.finalReviewerId &&
+        annualAssignment.finalReviewerId?.toString() !== resolution.finalReviewerId.toString()
+      ) ||
+      (
+        canRealignL3 &&
+        resolution.directorReviewerId &&
+        annualAssignment.directorReviewerId?.toString() !== resolution.directorReviewerId.toString()
+      ) ||
+      annualAssignment.isModified();
+
+    if (!needsRouting) {
+      return annualAssignment;
+    }
+
+    let changed = annualAssignment.isModified();
+    if (
+      !annualAssignment.finalReviewerId ||
+      annualAssignment.finalReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      (
+        canRealignL2 &&
+        resolution.finalReviewerId &&
+        annualAssignment.finalReviewerId?.toString() !== resolution.finalReviewerId.toString()
+      )
+    ) {
+      annualAssignment.finalReviewerId = resolution.finalReviewerId;
+      annualAssignment.finalReviewerSource = resolution.finalReviewerSource;
+      annualAssignment.finalReviewerSnapshot = resolution.finalReviewerSnapshot;
+      changed = true;
+    } else if (!annualAssignment.finalReviewerSnapshot && resolution.finalReviewerSnapshot) {
+      annualAssignment.finalReviewerSnapshot = resolution.finalReviewerSnapshot;
+      changed = true;
+    }
+
+    if (
+      !annualAssignment.directorReviewerId ||
+      annualAssignment.directorReviewStatus === FinalReviewStatus.NOT_REQUIRED ||
+      (
+        canRealignL3 &&
+        resolution.directorReviewerId &&
+        annualAssignment.directorReviewerId?.toString() !== resolution.directorReviewerId.toString()
+      )
+    ) {
+      annualAssignment.directorReviewerId = resolution.directorReviewerId;
+      annualAssignment.directorReviewerSource = resolution.directorReviewerSource;
+      annualAssignment.directorReviewerSnapshot = resolution.directorReviewerSnapshot;
+      changed = true;
+    } else if (!annualAssignment.directorReviewerSnapshot && resolution.directorReviewerSnapshot) {
+      annualAssignment.directorReviewerSnapshot = resolution.directorReviewerSnapshot;
+      changed = true;
+    }
+
+    if (
+      !annualAssignment.finalReviewStatus ||
+      annualAssignment.finalReviewStatus === FinalReviewStatus.NOT_REQUIRED
+    ) {
+      annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
+      changed = true;
+    }
+    if (
+      !annualAssignment.directorReviewStatus ||
+      annualAssignment.directorReviewStatus === FinalReviewStatus.NOT_REQUIRED
+    ) {
+      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
+      changed = true;
+    }
+
+    if (!changed) {
+      return annualAssignment;
+    }
+
+    annualAssignment.updatedBy = this.actorIdObject();
+    annualAssignment.version += 1;
+    await annualAssignment.save();
+    await this.audit(
+      'PMS_FINAL_REVIEW_ROUTING_RESOLVED',
+      'ANNUAL_ASSIGNMENT',
+      annualAssignment._id.toString(),
+      {
+        finalReviewerId: previousValue.finalReviewerId,
+        finalReviewerSource: previousValue.finalReviewerSource,
+        finalReviewStatus: previousValue.finalReviewStatus,
+        directorReviewerId: previousValue.directorReviewerId,
+        directorReviewerSource: previousValue.directorReviewerSource,
+        directorReviewStatus: previousValue.directorReviewStatus,
+      },
+      {
+        finalReviewerId: annualAssignment.finalReviewerId,
+        finalReviewerSource: annualAssignment.finalReviewerSource,
+        finalReviewStatus: annualAssignment.finalReviewStatus,
+        directorReviewerId: annualAssignment.directorReviewerId,
+        directorReviewerSource: annualAssignment.directorReviewerSource,
+        directorReviewStatus: annualAssignment.directorReviewStatus,
+      },
+    );
+
+    return annualAssignment;
+  }
+
+  private async ensureFinalReviewRoutingForActor(actorId: Types.ObjectId): Promise<void> {
+    const hierarchyEmployeeIds = await User.distinct('_id', {
+      isDeleted: { $ne: true },
+      $or: [
+        { l2ManagerId: actorId },
+        { l3ManagerId: actorId },
+      ],
+    });
+
+    const routingClauses: Record<string, unknown>[] = [
+      { finalReviewerId: actorId },
+      { directorReviewerId: actorId },
+      { finalReviewerId: { $exists: false } },
+      { finalReviewerId: null },
+      { directorReviewerId: { $exists: false } },
+      { directorReviewerId: null },
+      { finalReviewStatus: FinalReviewStatus.NOT_REQUIRED },
+      { directorReviewStatus: FinalReviewStatus.NOT_REQUIRED },
+    ];
+
+    const candidateStates = [
+      ...FINAL_REVIEW_QUEUE_STATES,
+      ...FINAL_REVIEW_ROLLUP_CANDIDATE_STATES,
+    ];
+
+    const candidateOrClauses: Record<string, unknown>[] = [
+      {
+        annualState: { $in: candidateStates },
+        $or: routingClauses,
+      },
+    ];
+
+    if (hierarchyEmployeeIds.length > 0) {
+      candidateOrClauses.push({
+        employeeId: { $in: hierarchyEmployeeIds },
+        annualState: { $ne: AnnualWorkflowState.CANCELLED },
+      });
+    }
+
+    const candidates = await AnnualAssignment.find({
+      isDeleted: false,
+      $or: candidateOrClauses,
+    });
+
+    for (const assignment of candidates) {
+      try {
+        await this.ensureFinalReviewRouting(assignment);
+      } catch (error) {
+        console.warn(
+          '[PMS] Final review routing repair skipped',
+          assignment._id.toString(),
+          error instanceof Error ? error.message : String(error),
+        );
+        // Keep one legacy routing issue from hiding other final reviews in the queue.
+      }
+    }
+  }
+
   async listMyFinalReviews(): Promise<Array<Record<string, unknown>>> {
     const actor = this.requireActor();
     const actorId = this.toObjectId(actor.actorId, 'actorId');
+    await this.ensureFinalReviewRoutingForActor(actorId);
+
     const assignments = await AnnualAssignment.find({
       $or: [
         {
           finalReviewerId: actorId,
-          finalReviewStatus: {
-            $in: [
-              FinalReviewStatus.PENDING,
-              FinalReviewStatus.IN_PROGRESS,
-              FinalReviewStatus.COMPLETED,
-            ],
-          },
+          finalReviewStatus: { $in: FINAL_REVIEW_VISIBLE_STATUSES },
         },
         {
           directorReviewerId: actorId,
-          finalReviewStatus: FinalReviewStatus.COMPLETED,
-          directorReviewStatus: {
-            $in: [
-              FinalReviewStatus.PENDING,
-              FinalReviewStatus.IN_PROGRESS,
-              FinalReviewStatus.COMPLETED,
-            ],
-          },
+          directorReviewStatus: { $in: FINAL_REVIEW_VISIBLE_STATUSES },
         },
       ],
-      annualState: {
-        $in: [
-          AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
-          AnnualWorkflowState.ANNUAL_FINALIZED,
-          AnnualWorkflowState.VISIBILITY_ENABLED,
-          AnnualWorkflowState.COMMUNICATION_READY,
-          AnnualWorkflowState.COMMUNICATION_SENT,
-          AnnualWorkflowState.CLOSED,
-          AnnualWorkflowState.ARCHIVED,
-        ],
-      },
+      annualState: { $in: FINAL_REVIEW_QUEUE_STATES },
       isDeleted: false,
     }).sort({ updatedAt: -1 }).lean();
     const cycles = await AnnualCycle.find({
@@ -1109,10 +1434,12 @@ export class AnnualDecisionService extends BaseService {
     }).lean();
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
     return assignments.map((item) => {
-      const reviewStage = item.finalReviewerId?.toString() === actor.actorId &&
-        [FinalReviewStatus.PENDING, FinalReviewStatus.IN_PROGRESS].includes(item.finalReviewStatus as any)
+      const reviewStage = item.finalReviewerId?.toString() === actor.actorId
         ? 'L2'
         : 'DIRECTOR';
+      const isWaitingForL2 =
+        reviewStage === 'DIRECTOR' &&
+        item.finalReviewStatus !== FinalReviewStatus.COMPLETED;
       return {
         annualAssignmentId: item._id.toString(),
         employeeId: item.employeeId.toString(),
@@ -1122,10 +1449,11 @@ export class AnnualDecisionService extends BaseService {
         cycleName: cycleMap.get(item.cycleId.toString())?.name ?? 'Performance Cycle',
         annualState: item.annualState,
         reviewStage,
-        reviewStageLabel: reviewStage === 'L2' ? 'L2 · ED / SVP' : 'Director · DIC',
+        reviewStageLabel: reviewStage === 'L2' ? 'L2 - ED / SVP' : 'L3 - Final Reviewer',
         finalReviewStatus: reviewStage === 'L2'
           ? item.finalReviewStatus
           : item.directorReviewStatus,
+        isWaitingForL2,
       };
     });
   }
@@ -1136,13 +1464,7 @@ export class AnnualDecisionService extends BaseService {
   ): Promise<IAnnualAssignment> {
     const { annualAssignment, reviewStage } =
       await this.assertFinalReviewerAccess(annualAssignmentId);
-    const decision = await AnnualDecision.findOne({
-      annualAssignmentId: annualAssignment._id,
-      isDeleted: false,
-    });
-    if (!decision || decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
-      throw new Error('Annual decision must be submitted before Final Review');
-    }
+    const decision = await this.getOrCreateFinalReviewDecisionShell(annualAssignment);
     const fields = (await this.finalReviewTemplateFields(annualAssignment))
       .filter((field) => field.reviewStage === reviewStage);
     const allowed = new Map(fields.map((field) => [String(field.key), field]));
@@ -1202,13 +1524,7 @@ export class AnnualDecisionService extends BaseService {
   async completeFinalReview(annualAssignmentId: string): Promise<IAnnualAssignment> {
     const { annualAssignment, reviewStage } =
       await this.assertFinalReviewerAccess(annualAssignmentId);
-    const decision = await AnnualDecision.findOne({
-      annualAssignmentId: annualAssignment._id,
-      isDeleted: false,
-    });
-    if (!decision || decision.decisionStatus !== AnnualDecisionStatus.SUBMITTED) {
-      throw new Error('Annual decision must be submitted before Final Review');
-    }
+    const decision = await this.getOrCreateFinalReviewDecisionShell(annualAssignment);
     const fields = (await this.finalReviewTemplateFields(annualAssignment))
       .filter((field) => field.reviewStage === reviewStage);
     const values = await AnnualDecisionValue.find({
@@ -1262,11 +1578,13 @@ export class AnnualDecisionService extends BaseService {
     if (!reviewer || reviewer.active === false || reviewer.portalAccess === false) {
       throw new Error('Final Reviewer must be an active portal-enabled user');
     }
+    const reviewerRole = normalizePmsRole(String(reviewer.role ?? ''));
     if (
       reviewStage === 'DIRECTOR' &&
-      String(reviewer.role ?? '').trim().toLowerCase() !== 'director'
+      reviewerRole !== PmsRole.MANAGER &&
+      reviewerRole !== PmsRole.DIRECTOR
     ) {
-      throw new Error('Director Assessment must be assigned to a Director portal user');
+      throw new Error('L3 reviewer must be a Manager or Director');
     }
     if (
       reviewStage === 'L2' &&
@@ -1338,8 +1656,8 @@ export class AnnualDecisionService extends BaseService {
     annualAssignmentId: string,
     input: SaveDecisionDraftInput,
   ): Promise<IAnnualDecision> {
-    this.assertDecisionAdmin('annualDecision.draft');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    this.assertAssignedL3DecisionOwner(annualAssignment, 'annualDecision.draft');
     const existingDecision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
     });
@@ -1380,7 +1698,7 @@ export class AnnualDecisionService extends BaseService {
     const rawDecisionInput: SaveDecisionDraftInput = {
       ...input,
       // Final-review values belong to L2/L3 and must never be rewritten by
-      // the Admin decision payload during a submitted-decision correction.
+      // the L3 annual-decision payload during a submitted-decision correction.
       decisionValues: input.decisionValues?.filter(
         (value) => !isFinalReviewerOwnedDecisionValue(value),
       ),
@@ -1507,8 +1825,8 @@ export class AnnualDecisionService extends BaseService {
   }
 
   async submitDecision(annualAssignmentId: string): Promise<IAnnualDecision> {
-    this.assertDecisionAdmin('annualDecision.submit');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    this.assertAssignedL3DecisionOwner(annualAssignment, 'annualDecision.submit');
     const decision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
     });
@@ -1588,8 +1906,8 @@ export class AnnualDecisionService extends BaseService {
   }
 
   async freezeDecision(annualAssignmentId: string): Promise<IAnnualDecision> {
-    this.assertDecisionAdmin('annualDecision.freeze');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    this.assertAssignedL3DecisionOwner(annualAssignment, 'annualDecision.freeze');
 
     const decision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
@@ -1753,13 +2071,13 @@ export class AnnualDecisionService extends BaseService {
     annualAssignmentId: string,
     input: ReopenDecisionInput,
   ): Promise<IAnnualDecision> {
-    this.assertDecisionAdmin('annualDecision.reopen');
     const reason = input.reason?.trim();
     if (!reason) {
       throw new Error('Reopen reason is required');
     }
 
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    this.assertAssignedL3DecisionOwner(annualAssignment, 'annualDecision.reopen');
     const decision = await AnnualDecision.findOne({
       annualAssignmentId: annualAssignment._id,
       isDeleted: false,
@@ -1884,18 +2202,10 @@ export class AnnualDecisionService extends BaseService {
     decision.version += 1;
     await decision.save();
 
-    await AnnualDecisionValue.updateMany(
-      { annualDecisionId: decision._id, roleCode: 'DIRECTOR', isDeleted: false },
-      { $set: { isDeleted: true, updatedBy: this.actorIdObject() }, $inc: { version: 1 } },
-    );
-    if (annualAssignment.finalReviewStatus !== FinalReviewStatus.NOT_REQUIRED) {
-      annualAssignment.finalReviewStatus = FinalReviewStatus.PENDING;
-      annualAssignment.finalReviewCompletedBy = undefined;
-      annualAssignment.finalReviewCompletedAt = undefined;
-      annualAssignment.directorReviewStatus = FinalReviewStatus.PENDING;
-      annualAssignment.directorReviewCompletedBy = undefined;
-      annualAssignment.directorReviewCompletedAt = undefined;
-    }
+    // Reopening corrects only the annual management decision. The completed L2
+    // and L3 assessments are immutable decision inputs and must remain completed
+    // and visible; resetting them would incorrectly force the review chain to run
+    // again before the reopened draft could be edited.
 
     if (visibilityConfiguration) {
       const previousVisibilityValue = visibilityConfiguration.toObject();
@@ -1956,7 +2266,6 @@ export class AnnualDecisionService extends BaseService {
     annualAssignmentId: string,
     input: OverrideFinalScoreInput,
   ): Promise<IAnnualDecision> {
-    this.assertDecisionAdmin('annualDecision.finalScore.override');
     const reason = input.reason?.trim();
     if (!reason) {
       throw new Error('Final score override reason is required');
@@ -1968,6 +2277,7 @@ export class AnnualDecisionService extends BaseService {
     }
 
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    this.assertAssignedL3DecisionOwner(annualAssignment, 'annualDecision.finalScore.override');
     await this.assertAllQuartersComplete(annualAssignment._id);
     await this.assertAppraisalWindowOpen(annualAssignment);
 
@@ -2044,7 +2354,6 @@ export class AnnualDecisionService extends BaseService {
     annualAssignmentId: string,
     input: OverrideFinalRatingInput,
   ): Promise<IAnnualDecision> {
-    this.assertDecisionAdmin('annualDecision.finalRating.override');
     const reason = input.reason?.trim();
     if (!reason) {
       throw new Error('Final rating override reason is required');
@@ -2055,6 +2364,7 @@ export class AnnualDecisionService extends BaseService {
     );
 
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    this.assertAssignedL3DecisionOwner(annualAssignment, 'annualDecision.finalRating.override');
     await this.assertAllQuartersComplete(annualAssignment._id);
     await this.assertAppraisalWindowOpen(annualAssignment);
 
@@ -2121,8 +2431,8 @@ export class AnnualDecisionService extends BaseService {
     annualAssignmentId: string,
     input: UpdateVisibilityInput,
   ): Promise<IAnnualAssignment> {
-    this.assertDecisionAdmin('annualDecision.visibility');
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
+    this.assertAssignedL3DecisionOwner(annualAssignment, 'annualDecision.visibility');
     const decision = await AnnualDecision.findOne({ annualAssignmentId: annualAssignment._id });
     if (
       !decision ||
@@ -2354,10 +2664,12 @@ export class AnnualDecisionService extends BaseService {
           annualAssignment.finalReviewStatus,
           annualAssignment.directorReviewStatus,
         )
-          ? 'L2 and Director Assessments must be completed before finalisation'
+          ? 'L2 and L3 assessments must be completed before finalisation'
           : this.resolveAnnualDecisionLockedReason({
               annualState,
               finalDecisionStatus,
+              finalReviewStatus: annualAssignment.finalReviewStatus,
+              directorReviewStatus: annualAssignment.directorReviewStatus,
               allTermsFinalized,
               isAppraisalWindowOpen: appraisalWindowStatus.isOpen,
               availableActions,
@@ -2421,7 +2733,9 @@ export class AnnualDecisionService extends BaseService {
       return [];
     }
 
-    return ['SAVE_DRAFT', 'SUBMIT'];
+    return this.areFinalReviewStagesComplete(finalReviewStatus, directorReviewStatus)
+      ? ['SAVE_DRAFT', 'SUBMIT']
+      : [];
   }
 
   private areFinalReviewStagesComplete(
@@ -2438,6 +2752,8 @@ export class AnnualDecisionService extends BaseService {
   private resolveAnnualDecisionLockedReason(input: {
     annualState: string;
     finalDecisionStatus: string;
+    finalReviewStatus?: string;
+    directorReviewStatus?: string;
     allTermsFinalized: boolean;
     isAppraisalWindowOpen: boolean;
     availableActions: AnnualDecisionAction[];
@@ -2445,6 +2761,8 @@ export class AnnualDecisionService extends BaseService {
     const {
       annualState,
       finalDecisionStatus,
+      finalReviewStatus,
+      directorReviewStatus,
       allTermsFinalized,
       isAppraisalWindowOpen,
       availableActions,
@@ -2460,6 +2778,15 @@ export class AnnualDecisionService extends BaseService {
 
     if (!isAppraisalWindowOpen && finalDecisionStatus !== AnnualDecisionStatus.FROZEN) {
       return 'All terms are finalized. Appraisal window is not open.';
+    }
+
+    if (
+      !this.areFinalReviewStagesComplete(
+        finalReviewStatus,
+        directorReviewStatus,
+      )
+    ) {
+      return 'L2 and L3 assessments must be completed before the annual decision.';
     }
 
     if (finalDecisionStatus === AnnualDecisionStatus.SUBMITTED) {
@@ -3059,7 +3386,7 @@ export class AnnualDecisionService extends BaseService {
       return null;
     }
 
-    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const role = this.resolveAnnualDecisionTemplateRole(annualAssignment);
     const templateService = new PmsTemplateService(this.context);
 
     return templateService.resolveTemplateVersion(
@@ -3082,7 +3409,7 @@ export class AnnualDecisionService extends BaseService {
     const fieldMap = new Map(
       primaryTemplate.sections.flatMap((section) => section.fields).map((field) => [field.key, field]),
     );
-    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const role = this.resolveAnnualDecisionTemplateRole(annualAssignment);
     if (role !== PmsRole.ADMIN) {
       return fieldMap;
     }
@@ -3103,7 +3430,7 @@ export class AnnualDecisionService extends BaseService {
     for (const decisionValue of input.decisionValues ?? []) {
       if (
         !decisionValue.fieldKey?.trim() ||
-        fieldMap.has(decisionValue.fieldKey) ||
+        fieldMap.get(decisionValue.fieldKey)?.editable === true ||
         this.isStandardAnnualDecisionFieldKey(decisionValue.fieldKey)
       ) {
         continue;
@@ -3145,7 +3472,7 @@ export class AnnualDecisionService extends BaseService {
     ]
       .map((value) => this.normalizeAnnualFieldKey(value ?? ''))
       .filter(Boolean);
-    const role = normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
+    const role = this.resolveAnnualDecisionTemplateRole(annualAssignment);
     const workflowState = this.resolveAnnualDecisionTemplateWorkflowState(annualAssignment);
 
     for (const section of templateVersion.sections ?? []) {
@@ -3162,7 +3489,17 @@ export class AnnualDecisionService extends BaseService {
       const fieldWorkflowState = this.isAnnualDecisionCommunicationSection(section)
         ? AnnualWorkflowState.COMMUNICATION_READY
         : workflowState;
-      if (!field || !this.isRawAnnualDecisionFieldEditable(field, section, role, fieldWorkflowState)) {
+      if (!field) {
+        return null;
+      }
+
+      const assignedL3OwnsCommunicationField =
+        this.isAnnualDecisionCommunicationSection(section) &&
+        annualAssignment.directorReviewerId?.toString() === this.context.user?._id?.toString();
+      if (
+        !assignedL3OwnsCommunicationField &&
+        !this.isRawAnnualDecisionFieldEditable(field, section, role, fieldWorkflowState)
+      ) {
         return null;
       }
 
@@ -3170,6 +3507,18 @@ export class AnnualDecisionService extends BaseService {
     }
 
     return null;
+  }
+
+  private resolveAnnualDecisionTemplateRole(
+    annualAssignment: Pick<IAnnualAssignment, 'directorReviewerId'>,
+  ): string {
+    const actorId = this.context.user?._id?.toString();
+    if (actorId && annualAssignment.directorReviewerId?.toString() === actorId) {
+      // The selected L3 owns the same Annual Decision form and governed fields
+      // that Admin configures, while write authorization remains ID-scoped.
+      return PmsRole.ADMIN;
+    }
+    return normalizePmsRole(this.context.reqRole) ?? PmsRole.ADMIN;
   }
 
   private isAnnualDecisionTemplateSection(section: ITemplateSection): boolean {
@@ -4504,6 +4853,37 @@ export class AnnualDecisionService extends BaseService {
     throw new Error(`Access denied for ${action}`);
   }
 
+  private assertAssignedL3DecisionOwner(
+    annualAssignment: IAnnualAssignment,
+    action: string,
+  ): void {
+    const actor = this.requireActor();
+    if (annualAssignment.directorReviewerId?.toString() === actor.actorId) {
+      return;
+    }
+
+    throw new Error(`Access denied for ${action}: only the assigned L3 reviewer can perform this action`);
+  }
+
+  private async getOrCreateFinalReviewDecisionShell(
+    annualAssignment: IAnnualAssignment,
+  ): Promise<IAnnualDecision> {
+    const existing = await AnnualDecision.findOne({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    });
+    if (existing) return existing;
+
+    return AnnualDecision.create({
+      annualAssignmentId: annualAssignment._id,
+      cycleId: annualAssignment.cycleId,
+      employeeId: annualAssignment.employeeId,
+      decisionStatus: AnnualDecisionStatus.DRAFT,
+      createdBy: this.actorIdObject(),
+      updatedBy: this.actorIdObject(),
+    });
+  }
+
   private resolveActorFinalReviewStage(
     annualAssignment: IAnnualAssignment,
     requireEditable = true,
@@ -4531,9 +4911,7 @@ export class AnnualDecisionService extends BaseService {
     annualAssignmentId: string,
   ): Promise<{ annualAssignment: IAnnualAssignment; reviewStage: FinalReviewStage }> {
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
-    if (annualAssignment.annualState !== AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED) {
-      throw new Error('Final Review is available only after Management Decision submission');
-    }
+    await this.assertAllQuartersComplete(annualAssignment._id);
     const reviewStage = this.resolveActorFinalReviewStage(annualAssignment);
     if (!reviewStage) {
       const actor = this.requireActor();
@@ -4542,7 +4920,7 @@ export class AnnualDecisionService extends BaseService {
         annualAssignment.finalReviewStatus !== FinalReviewStatus.COMPLETED;
       throw new Error(
         waitingForL2
-          ? 'Director Assessment is available only after the L2 Assessment is completed'
+          ? 'L3 Assessment is available only after the L2 Assessment is completed'
           : 'Access denied: this Final Review stage is not assigned to you or is not editable',
       );
     }

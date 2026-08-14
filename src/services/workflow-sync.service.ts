@@ -1144,6 +1144,9 @@ export class WorkflowSyncService extends BaseService {
 
   private async assertAdmin(action: string): Promise<void> {
     const actor = this.requireActor();
+    if (String(actor.actorRole || '').trim().toUpperCase() === 'HR') {
+      return;
+    }
     const access = await accessService.canPerform({
       actor,
       action,

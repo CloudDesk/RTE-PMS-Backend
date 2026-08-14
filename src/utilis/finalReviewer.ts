@@ -16,6 +16,8 @@ export const FinalReviewerSource = {
   REPORTING_DIRECTOR: 'REPORTING_DIRECTOR',
   L1_DIRECTOR: 'L1_DIRECTOR',
   CYCLE_DEFAULT: 'CYCLE_DEFAULT',
+  EMPLOYEE_L2_MAPPING: 'EMPLOYEE_L2_MAPPING',
+  EMPLOYEE_L3_MAPPING: 'EMPLOYEE_L3_MAPPING',
 } as const;
 
 export type FinalReviewerSource =
@@ -29,6 +31,8 @@ export interface FinalReviewerUser {
   role: string;
   specificRole?: string;
   managerId?: Types.ObjectId;
+  l2ManagerId?: Types.ObjectId;
+  l3ManagerId?: Types.ObjectId;
   active?: boolean;
   portalAccess?: boolean;
 }
@@ -112,7 +116,7 @@ function validateReviewer(
 
 async function defaultFindUserById(id: string): Promise<FinalReviewerUser | null> {
   const user = await User.findById(id)
-    .select('_id employeeCode name email role specificRole managerId active portalAccess')
+    .select('_id employeeCode name email role specificRole managerId l2ManagerId l3ManagerId active portalAccess')
     .lean();
   return user as FinalReviewerUser | null;
 }
@@ -136,20 +140,25 @@ export async function resolveFinalReviewer(
 
   const findUserById = input.findUserById ?? defaultFindUserById;
   const l1 = await findUserById(assignedManagerId);
+  const employee = await findUserById(employeeId);
   if (!l1) throw new Error('Assigned L1 Manager was not found');
   if (l1.active === false) throw new Error('Assigned L1 Manager must be active');
   if (l1.portalAccess === false) {
     throw new Error('Assigned L1 Manager must have portal access');
   }
 
+  const explicitL2Id = objectIdString(employee?.l2ManagerId);
+  const explicitL3Id = objectIdString(employee?.l3ManagerId);
   const reportingL2Id = objectIdString(l1.managerId);
   const l1DirectorIsFinalReviewer = isDirectorRole(l1.role) && !reportingL2Id;
 
   const l2CandidateId =
-    reportingL2Id ??
+    explicitL2Id ?? reportingL2Id ??
     (l1DirectorIsFinalReviewer ? assignedManagerId : objectIdString(input.defaultFinalReviewerId));
-  const l2Source = reportingL2Id
-    ? FinalReviewerSource.REPORTING_L2
+  const l2Source = explicitL2Id
+    ? FinalReviewerSource.EMPLOYEE_L2_MAPPING
+    : reportingL2Id
+      ? FinalReviewerSource.REPORTING_L2
     : l1DirectorIsFinalReviewer
       ? FinalReviewerSource.L1_DIRECTOR
       : FinalReviewerSource.CYCLE_DEFAULT;
@@ -167,12 +176,16 @@ export async function resolveFinalReviewer(
     l1DirectorIsFinalReviewer,
   );
 
-  let directorReviewer: FinalReviewerUser | null = isDirectorRole(l2Reviewer.role)
-    ? l2Reviewer
-    : null;
-  let directorSource: FinalReviewerSource = isDirectorRole(l2Reviewer.role)
-    ? l2Source
-    : FinalReviewerSource.REPORTING_DIRECTOR;
+  let directorReviewer: FinalReviewerUser | null = explicitL3Id
+    ? validateReviewer(await findUserById(explicitL3Id), employeeId, assignedManagerId, true)
+    : isDirectorRole(l2Reviewer.role)
+      ? l2Reviewer
+      : null;
+  let directorSource: FinalReviewerSource = explicitL3Id
+    ? FinalReviewerSource.EMPLOYEE_L3_MAPPING
+    : isDirectorRole(l2Reviewer.role)
+      ? l2Source
+      : FinalReviewerSource.REPORTING_DIRECTOR;
   let nextId = objectIdString(l2Reviewer.managerId);
   const visited = new Set<string>([assignedManagerId, l2Reviewer._id.toString()]);
 

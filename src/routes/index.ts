@@ -25,6 +25,7 @@ import { probationReviewRoutes } from "./probationReview.routes";
 import { publicPmsCleanupRoutes } from "./public-pms-cleanup.routes";
 import { managerReviewPeriodRoutes } from "./managerReviewPeriod.routes";
 import { pmsEmployeeProfileRoutes } from "./pmsEmployeeProfile.routes";
+import { employeeRolesResponsibilitiesRoutes } from "./employee-roles-responsibilities.routes";
 import mongoose from "mongoose";
 
 export async function routes(fastify: FastifyInstance) {
@@ -54,6 +55,7 @@ export async function routes(fastify: FastifyInstance) {
   fastify.register(managerReviewPeriodRoutes, { prefix: "/pms/manager-review-periods" });
   fastify.register(probationReviewRoutes, { prefix: "/pms/probation-reviews" });
   fastify.register(pmsEmployeeProfileRoutes, { prefix: "/pms/employee-profiles" });
+  fastify.register(employeeRolesResponsibilitiesRoutes, { prefix: "/pms/roles-responsibilities" });
   fastify.register(publicPmsCleanupRoutes, { prefix: "/public/pms" });
   fastify.get("/test", async (_request, reply) => {
     // Removed verbose logging - use request.log instead if needed

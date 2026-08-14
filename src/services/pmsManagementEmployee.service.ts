@@ -3,7 +3,7 @@ import { BaseService } from './base.service';
 import { AnnualDecisionService } from './annualDecision.service';
 import { EmployeeAchievementSubmissionService } from './employeeAchievementSubmission.service';
 import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
-import { AnnualAssignment, AnnualDecision, User } from '../models';
+import { AnnualAssignment, AnnualCycle, AnnualDecision, TermReviewValue, User } from '../models';
 
 export interface ManagementEmployeeListQuery {
   page?: number;
@@ -207,6 +207,89 @@ export class PmsManagementEmployeeService extends BaseService {
       achievementsByTermAssignment,
       achievementErrorsByTermAssignment,
     };
+  }
+
+  async getEmployeeTrainingIdentification(employeeId: string) {
+    this.assertTrainingIdentificationAccess();
+    if (!Types.ObjectId.isValid(employeeId)) throw new Error('Invalid employee id');
+
+    const employeeObjectId = new Types.ObjectId(employeeId);
+    const [employee, assignments] = await Promise.all([
+      User.findById(employeeObjectId)
+        .select('_id name employeeCode departmentId departmentName')
+        .lean(),
+      AnnualAssignment.find({ employeeId: employeeObjectId, isDeleted: false })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .lean(),
+    ]);
+    if (!employee && assignments.length === 0) throw new Error('Employee not found');
+
+    const cycleIds = assignments.map((item) => item.cycleId).filter(Boolean);
+    const cycles = await AnnualCycle.find({ _id: { $in: cycleIds }, isDeleted: false })
+      .select('_id name code appraisalYear startDate endDate')
+      .lean();
+    const cycleMap = new Map(cycles.map((cycle) => [cycle._id.toString(), cycle]));
+    const assignmentIds = assignments.map((item) => item._id);
+    const trainingKeys = [
+      'competency_mapping_gap',
+      'function_domain_training',
+      'soft_skills_training',
+    ];
+    const values = await TermReviewValue.find({
+      annualAssignmentId: { $in: assignmentIds },
+      employeeId: employeeObjectId,
+      roleCode: 'MANAGER',
+      fieldKey: { $in: trainingKeys },
+      valueStatus: 'ACTIVE',
+      submittedAt: { $exists: true, $ne: null },
+      isDeleted: false,
+    })
+      .sort({ submittedAt: -1, updatedAt: -1 })
+      .lean();
+    const valuesByAssignment = new Map<string, Map<string, any>>();
+    for (const value of values) {
+      const assignmentKey = value.annualAssignmentId.toString();
+      const fieldMap = valuesByAssignment.get(assignmentKey) ?? new Map<string, any>();
+      if (!fieldMap.has(value.fieldKey)) fieldMap.set(value.fieldKey, value);
+      valuesByAssignment.set(assignmentKey, fieldMap);
+    }
+    const serializedValue = (value?: any) => {
+      if (!value) return '';
+      if (value.valueText !== undefined) return value.valueText;
+      if (value.valueNumber !== undefined) return value.valueNumber;
+      if (value.valueDate) return new Date(value.valueDate).toISOString();
+      return value.valueJson ?? '';
+    };
+
+    return assignments.map((assignment) => {
+      const cycle = cycleMap.get(assignment.cycleId.toString());
+      const fieldMap = valuesByAssignment.get(assignment._id.toString()) ?? new Map();
+      const ready = assignment.directorReviewStatus === 'COMPLETED';
+      const snapshot = assignment.employeeSnapshot ?? {};
+      return {
+        annualAssignmentId: assignment._id.toString(),
+        cycleId: assignment.cycleId.toString(),
+        cycleName: cycle?.name ?? cycle?.code ?? 'PMS Cycle',
+        assessmentYear: cycle?.appraisalYear ?? new Date(cycle?.endDate ?? assignment.updatedAt).getFullYear(),
+        status: ready ? 'AVAILABLE' : 'MANAGEMENT_DECISION_PENDING',
+        finalReviewStatus: assignment.finalReviewStatus,
+        directorReviewStatus: assignment.directorReviewStatus,
+        completedAt: assignment.directorReviewCompletedAt?.toISOString?.(),
+        employee: {
+          name: String(employee?.name ?? snapshot.name ?? ''),
+          employeeCode: String(employee?.employeeCode ?? snapshot.employeeCode ?? ''),
+          department: String(
+            (employee as any)?.departmentName ?? employee?.departmentId ??
+            snapshot.departmentName ?? snapshot.department ?? snapshot.departmentId ?? '',
+          ),
+        },
+        values: ready ? {
+          competencyMappingGap: serializedValue(fieldMap.get('competency_mapping_gap')),
+          functionDomainTraining: serializedValue(fieldMap.get('function_domain_training')),
+          softSkillsTraining: serializedValue(fieldMap.get('soft_skills_training')),
+        } : undefined,
+      };
+    });
   }
 
   private async findEmployee(employeeId: string): Promise<ManagementEmployeeRecord | null> {
@@ -491,7 +574,10 @@ export class PmsManagementEmployeeService extends BaseService {
     }
 
     const mappedRole = normalizePmsRole(user.role);
-    const hasScopeAccess = user.scope === 'EXECUTIVE' || user.scope === 'ALL';
+    const rawRole = String(user.role || '').trim().toUpperCase();
+    const hasScopeAccess =
+      rawRole !== 'HR' &&
+      (user.scope === 'EXECUTIVE' || user.scope === 'ALL');
 
     if (
       mappedRole === PmsRole.ADMIN ||
@@ -503,6 +589,15 @@ export class PmsManagementEmployeeService extends BaseService {
     }
 
     throw new Error(`Access denied for ${action}`);
+  }
+
+  private assertTrainingIdentificationAccess(): void {
+    const user = this.context.user;
+    if (!user) throw new Error('Authentication required');
+    const rawRole = String(user.role || '').trim().toUpperCase();
+    const mappedRole = normalizePmsRole(user.role);
+    if (['HR', 'HR_ADMIN', 'HRADMIN'].includes(rawRole) || mappedRole === PmsRole.ADMIN) return;
+    throw new Error('Only HR/Admin can view Training Identification');
   }
 
   private positiveNumber(value: unknown, fallback: number): number {

@@ -46,7 +46,23 @@ export async function rollupAnnualAssignmentIfAllTermsFinalized(
     };
   }
 
-  const applicableTerms = annualAssignment.applicableTerms ?? [];
+  const declaredApplicableTerms = annualAssignment.applicableTerms ?? [];
+  const termAssignmentQuery: Record<string, unknown> = {
+    annualAssignmentId: annualAssignment._id,
+    isDeleted: false,
+  };
+  if (declaredApplicableTerms.length > 0) {
+    termAssignmentQuery.assessmentTermCode = { $in: declaredApplicableTerms };
+  }
+
+  const termAssignments = await TermAssignment.find(termAssignmentQuery).select(
+    'assessmentTermCode termState',
+  );
+  const applicableTerms =
+    declaredApplicableTerms.length > 0
+      ? declaredApplicableTerms
+      : termAssignments.map((assignment) => assignment.assessmentTermCode);
+
   if (applicableTerms.length === 0) {
     return {
       allTermsFinalized: false,
@@ -55,12 +71,6 @@ export async function rollupAnnualAssignmentIfAllTermsFinalized(
       totalTerms: 0,
     };
   }
-
-  const termAssignments = await TermAssignment.find({
-    annualAssignmentId: annualAssignment._id,
-    assessmentTermCode: { $in: applicableTerms },
-    isDeleted: false,
-  }).select('assessmentTermCode termState');
 
   const termByCode = new Map(
     termAssignments.map((assignment) => [assignment.assessmentTermCode, assignment]),

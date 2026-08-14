@@ -9,6 +9,18 @@ import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
 export const pmsRolePermissionRoutes: RouteHandler = async (
   fastify: FastifyInstance,
 ): Promise<void> => {
+  const canManagePermissions = (role: unknown) => {
+    const rawRole = String(role ?? '').trim().replace(/[ /-]/g, '_').toUpperCase();
+    return (
+      normalizePmsRole(rawRole) === PmsRole.ADMIN ||
+      ['HR', 'HR_ADMIN', 'HRADMIN'].includes(rawRole)
+    );
+  };
+
+  const normalizePermissionRole = (role: unknown) => {
+    const rawRole = String(role ?? '').trim().replace(/[ /-]/g, '_').toUpperCase();
+    return ['HR', 'QS'].includes(rawRole) ? rawRole : normalizePmsRole(rawRole);
+  };
   
   // List all permissions
   fastify.get(
@@ -31,13 +43,12 @@ export const pmsRolePermissionRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const user = (request as any).user;
-        const actorRole = normalizePmsRole(user?.role ?? '');
-        if (actorRole !== PmsRole.ADMIN) {
-          return reply.status(403).send(errorResponse('FORBIDDEN', 'Only Admins can manage permissions.'));
+        if (!canManagePermissions(user?.role)) {
+          return reply.status(403).send(errorResponse('FORBIDDEN', 'Only Admin or HR users can manage permissions.'));
         }
 
         const data = request.body as any;
-        data.role = normalizePmsRole(data.role); // Standardize the role string
+        data.role = normalizePermissionRole(data.role); // Standardize without collapsing scoped roles
         const newPermission = await PmsRolePermission.create(data);
         
         // Reload access engine
@@ -57,14 +68,13 @@ export const pmsRolePermissionRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const user = (request as any).user;
-        const actorRole = normalizePmsRole(user?.role ?? '');
-        if (actorRole !== PmsRole.ADMIN) {
-          return reply.status(403).send(errorResponse('FORBIDDEN', 'Only Admins can manage permissions.'));
+        if (!canManagePermissions(user?.role)) {
+          return reply.status(403).send(errorResponse('FORBIDDEN', 'Only Admin or HR users can manage permissions.'));
         }
 
         const { id } = request.params as { id: string };
         const data = request.body as any;
-        if (data.role) data.role = normalizePmsRole(data.role);
+        if (data.role) data.role = normalizePermissionRole(data.role);
 
         const updated = await PmsRolePermission.findByIdAndUpdate(id, data, { new: true });
         if (!updated) {

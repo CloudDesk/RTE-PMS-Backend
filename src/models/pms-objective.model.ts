@@ -75,6 +75,8 @@ export interface IObjective extends Document {
   replacementObjectiveId?: Types.ObjectId;
   objectiveNo?: number;
   source: ObjectiveSourceType;
+  matrixCode?: string;
+  matrixLabel?: string;
   templateObjectiveKey?: string;
   objectiveRowKey?: string;
   rowOriginTermCode?: AssessmentTermCodeType;
@@ -295,6 +297,8 @@ const objectiveSchema = new Schema<IObjective>(
       default: false,
       index: true,
     },
+    matrixCode: { type: String, trim: true, index: true },
+    matrixLabel: { type: String, trim: true },
     title: {
       type: String,
       required: true,

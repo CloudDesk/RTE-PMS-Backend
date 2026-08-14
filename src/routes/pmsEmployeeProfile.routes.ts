@@ -17,7 +17,7 @@ export const pmsEmployeeProfileRoutes: RouteHandler = async (
 ): Promise<void> => {
   const ensureAdmin = async (request: any, reply: FastifyReply) => {
     const role = String(request.user?.role ?? '').trim().toLowerCase();
-    if (!['admin', 'hr_admin', 'hradmin'].includes(role)) {
+    if (!['admin', 'hr', 'hr_admin', 'hradmin'].includes(role)) {
       return reply
         .status(403)
         .send(

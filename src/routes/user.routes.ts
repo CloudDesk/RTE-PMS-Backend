@@ -4,6 +4,7 @@ import { authenticate } from '../middleware/auth';
 import * as ExcelJS from 'exceljs';
 import { messaging } from '../config/firebase/firebaseConfig';
 import { filesUpload } from '../config/multer';
+import { User } from '../models/user.model';
 // import { IAcademicDetails, IExperienceDetails } from '../models';
 
 const shiftAssignmentDataSchema = {
@@ -175,6 +176,10 @@ const userResponseSchema = {
     departmentId: { type: 'string' },
     managerId: { type: 'string' },
     managerName: { type: 'string' },
+    l2ManagerId: { type: 'string' },
+    l2ManagerName: { type: 'string' },
+    l3ManagerId: { type: 'string' },
+    l3ManagerName: { type: 'string' },
     costCenter: { type: 'string' },
     gender: { type: 'string' },
     currentCompanyExperience: {
@@ -336,6 +341,61 @@ export const userRoutes: RouteHandler = async (
   );
 
   fastify.get(
+    '/reviewer-candidates',
+    {
+      onRequest: [authenticate],
+      schema: {
+        tags: ['User Management'],
+        summary: 'Get active reviewer candidates for HR manager mapping',
+        querystring: {
+          type: 'object',
+          properties: {
+            employeeId: { type: 'string' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    _id: { type: 'string' },
+                    name: { type: 'string' },
+                    email: { type: 'string' },
+                    employeeCode: { type: 'string' },
+                    role: { type: 'string' },
+                    specificRole: { type: 'string' },
+                    departmentId: { type: 'string' },
+                    active: { type: 'boolean' },
+                    portalAccess: { type: 'boolean' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const authenticatedRole = String(request.user?.role || '').trim().toLowerCase();
+      if (!['admin', 'hr'].includes(authenticatedRole)) {
+        return reply.status(403).send({
+          success: false,
+          error: { message: 'Only Admin or HR users can manage reviewer mappings' },
+        });
+      }
+
+      const { employeeId } = request.query as { employeeId?: string };
+      const candidates = await request.container!.userService.getReviewerCandidates(employeeId);
+      return reply.send({ success: true, data: candidates });
+    },
+  );
+
+  fastify.get(
     '/:id/reporting-hierarchy',
     {
       onRequest: [authenticate],
@@ -488,6 +548,15 @@ export const userRoutes: RouteHandler = async (
               type: 'boolean',
               description: 'Filter by intern status'
             },
+            employeeType: {
+              type: 'string',
+              enum: ['regular', 'trainee'],
+              description: 'Scope the employee-management list to regular or trainee employees'
+            },
+            objectiveAssignmentCandidates: {
+              type: 'boolean',
+              description: 'Allow QS Objective Library assignment candidate lookup'
+            },
             // Sorting
             sort: {
               type: 'string',
@@ -574,6 +643,8 @@ export const userRoutes: RouteHandler = async (
           portalAccess?: boolean;
           isConsultancy?: boolean;
           isIntern?: boolean;
+          employeeType?: 'regular' | 'trainee';
+          objectiveAssignmentCandidates?: boolean | 'true' | 'false';
           sort?: string;
           sortOrder?: 'asc' | 'desc';
           select?: string;
@@ -620,6 +691,29 @@ export const userRoutes: RouteHandler = async (
         });
       }
     }
+  );
+
+  // Current user's composable navigation capabilities. A person is a manager
+  // only when at least one active employee reports to them.
+  fastify.get(
+    '/me/capabilities',
+    { onRequest: [authenticate] },
+    async (request, reply) => {
+      try {
+        const isPeopleManager = Boolean(
+          await User.exists({ managerId: request.user._id, active: true }),
+        );
+        return reply.send({
+          success: true,
+          data: { isPeopleManager },
+        });
+      } catch (error: any) {
+        return reply.status(400).send({
+          success: false,
+          error: { message: error.message },
+        });
+      }
+    },
   );
 
   // Get user by ID (keep this separate for specific user lookup)
@@ -818,6 +912,14 @@ export const userRoutes: RouteHandler = async (
             managerId: {
               type: 'string',
               description: 'Manager ID'
+            },
+            l2ManagerId: {
+              type: 'string',
+              description: 'Saved L2 manager mapping'
+            },
+            l3ManagerId: {
+              type: 'string',
+              description: 'Saved L3 manager mapping'
             },
             costCenter: {
               type: 'string',
@@ -1107,6 +1209,8 @@ export const userRoutes: RouteHandler = async (
             specificRole: { type: 'string' },
             departmentId: { type: 'string' },
             managerId: { type: 'string' },
+            l2ManagerId: { type: 'string' },
+            l3ManagerId: { type: 'string' },
             employeeCode: { type: 'string', maxLength: 50 },
             biometricId: { type: 'string', maxLength: 20 },
             active: {
@@ -1907,10 +2011,10 @@ export const userRoutes: RouteHandler = async (
       try {
         // Check if user has permission to export data
         const authenticatedUser = request.user;
-        if (!['admin', 'manager'].includes(authenticatedUser.role.toLowerCase())) {
+        if (!['admin', 'manager', 'hr'].includes(authenticatedUser.role.toLowerCase())) {
           return reply.status(403).send({
             success: false,
-            error: { message: 'Access denied: Only admins and managers can export user data' }
+            error: { message: 'Access denied: Only admins, HR, and managers can export user data' }
           });
         }
 
@@ -1926,6 +2030,7 @@ export const userRoutes: RouteHandler = async (
           sort,
           sortOrder,
           limit,
+          employeeType,
         } = request.query as {
           search?: string;
           role?: string;
@@ -1938,6 +2043,7 @@ export const userRoutes: RouteHandler = async (
           sort?: string;
           sortOrder?: 'asc' | 'desc';
           limit?: string | number;
+          employeeType?: 'regular' | 'trainee';
         };
         const parseBoolean = (value: string | boolean | undefined): boolean | undefined => {
           if (typeof value === 'boolean') return value;
@@ -1960,7 +2066,8 @@ export const userRoutes: RouteHandler = async (
           sort: sort || 'name',
           sortOrder: sortOrder === 'desc' ? 'desc' : 'asc',
           page: 1,
-          limit: Number(limit) || 10000 // Get all matching users
+          limit: Number(limit) || 10000, // Get all matching users
+          employeeType,
         }, authenticatedUser);
 
         const departmentLov = await request.container!.lovService.findByType('department');
