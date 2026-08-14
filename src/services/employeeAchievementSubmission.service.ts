@@ -3217,6 +3217,21 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       return;
     }
 
+    // Final-review workspaces use the employee achievement submission as
+    // read-only decision context. Permit only the reviewers explicitly
+    // assigned on this annual appraisal; unrelated managers remain blocked.
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const finalReviewerId = annualAssignment.finalReviewerId?.toString?.() ?? '';
+    const directorReviewerId = annualAssignment.directorReviewerId?.toString?.() ?? '';
+    if (
+      actor.actorId === finalReviewerId ||
+      actor.actorId === directorReviewerId
+    ) {
+      return;
+    }
+
     const delegation = await this.getReviewDelegation(
       actor.actorId,
       termAssignment.assignedManagerId.toString(),
