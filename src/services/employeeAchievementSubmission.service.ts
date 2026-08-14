@@ -359,6 +359,9 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   private static readonly FIELD_KEY = 'achievement_items';
   private static readonly ASSIGNED_FORM_ACHIEVEMENT_FIELDS = new Set([
     'personal_development_2_employee_term_inputs::special_achievements_and_improvements',
+    'personal_development_2_appraisee_response::appraisee_response',
+    // Retain compatibility with assignments created before Appraisee Response
+    // was moved into its own template section.
     'personal_development_2_employee_term_inputs::appraisee_response',
     'personal_development_2_employee_term_inputs::contribution_to_cfts',
   ]);
@@ -647,19 +650,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       }));
 
     const isPerformanceFilling = input.performanceFilling === true;
-    const allowedFields = isPerformanceFilling
-      ? new Set([
-        ...EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS,
-        ...EmployeeAchievementSubmissionService.PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS,
-      ])
-      : EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS;
-    const assignedFormValues = normalizedInput.filter((value) =>
-      allowedFields.has(`${value.sectionKey}::${value.fieldKey}`),
-    );
-    if (assignedFormValues.length !== normalizedInput.length) {
-      throw new Error('Assigned form contains an unsupported field');
-    }
-
     if (isPerformanceFilling) {
       await this.assertPerformanceFillingAssignedFormAccess(termAssignment);
     } else {
@@ -672,6 +662,26 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     });
+    const existingAchievementValues = (existingSubmission?.achievementValues ?? [])
+      .map((value: any) => value.toObject ? value.toObject() : { ...value });
+    const allowedFields = isPerformanceFilling
+      ? new Set([
+        ...EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS,
+        ...EmployeeAchievementSubmissionService.PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS,
+        ...await this.resolvePerformanceFillingEditableFieldKeys(
+          annualAssignment,
+          termAssignment,
+          existingAchievementValues,
+        ),
+      ])
+      : EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS;
+    const assignedFormValues = normalizedInput.filter((value) =>
+      allowedFields.has(`${value.sectionKey}::${value.fieldKey}`),
+    );
+    if (assignedFormValues.length !== normalizedInput.length) {
+      throw new Error('Assigned form contains an unsupported field');
+    }
+
     if (
       !isPerformanceFilling &&
       existingSubmission?.status === EmployeeAchievementSubmissionStatus.LOCKED
@@ -679,8 +689,6 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Submitted employee achievement is locked and cannot be edited');
     }
 
-    const existingAchievementValues = (existingSubmission?.achievementValues ?? [])
-      .map((value: any) => value.toObject ? value.toObject() : { ...value });
     const updatedKeys = new Set(
       assignedFormValues.map((value) => `${value.sectionKey}::${value.fieldKey}`),
     );
@@ -745,9 +753,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         ),
       ),
       achievementValues: savedValues.filter((value: any) =>
-        EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS.has(
-          `${value.sectionKey}::${value.fieldKey}`,
-        ),
+        isPerformanceFilling
+          ? !EmployeeAchievementSubmissionService.PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS.has(
+            `${value.sectionKey}::${value.fieldKey}`,
+          )
+          : EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS.has(
+            `${value.sectionKey}::${value.fieldKey}`,
+          ),
       ),
     };
   }
@@ -2885,17 +2897,18 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('This field attachment is read-only');
     }
 
-    if (configured.config.entryStage === 'OBJECTIVE_SETTING') {
-      if (termAssignment.termState !== TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
-        throw new Error(
-          'This field attachment is read-only because Objective Setting is closed.',
-        );
-      }
+    if (
+      configured.config.entryStage === 'OBJECTIVE_SETTING' &&
+      termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN
+    ) {
       await this.assertObjectiveSettingAttachmentWindow(termAssignment);
       return;
     }
 
-    await this.assertEmployeeEditAccess(termAssignment);
+    // After Objective Setting, this evidence control belongs to Performance
+    // Filling. Its annual policy enforces employee ownership, configured dates,
+    // and the final-term/annual-finalization locks.
+    await this.assertPerformanceFillingAssignedFormAccess(termAssignment);
   }
 
   private async assertObjectiveSettingAttachmentWindow(
@@ -3104,6 +3117,38 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
 
     return resolved.sections.flatMap((section) => section.fields);
+  }
+
+  private async resolvePerformanceFillingEditableFieldKeys(
+    annualAssignment: any,
+    termAssignment: any,
+    existingValues: Array<Record<string, any>>,
+  ): Promise<Set<string>> {
+    if (!annualAssignment.templateVersionId) return new Set();
+
+    const templateService = new PmsTemplateService(this.context);
+    const resolved = await templateService.resolveTemplateVersion(
+      annualAssignment.templateVersionId.toString(),
+      {
+        role: PmsRole.EMPLOYEE,
+        workflowState: TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        hierarchyScope: 'self',
+        quarter: termAssignment.assessmentTermCode,
+        annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+        termAssignmentId: termAssignment._id.toString(),
+        values: this.buildAchievementResolveValues(existingValues),
+      },
+    );
+
+    const keys = new Set<string>();
+    for (const section of resolved.sections) {
+      for (const field of section.fields) {
+        if (field.visible === false || field.editable !== true) continue;
+        keys.add(`${section.key}::${field.key}`);
+        if (field.id) keys.add(`${section.key}::${field.id}`);
+      }
+    }
+    return keys;
   }
 
   private buildAchievementResolveValues(
