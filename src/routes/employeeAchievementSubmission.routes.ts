@@ -94,14 +94,27 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         );
         const achievementValues = values.filter(
           (value) =>
-            value.sectionKey === 'personal_development_2_employee_term_inputs' &&
-            [
-              'special_achievements_and_improvements',
-              'contribution_to_cfts',
-              'appraisee_response',
-            ].includes(value.fieldKey),
+            (
+              value.sectionKey === 'personal_development_2_employee_term_inputs' &&
+              [
+                'special_achievements_and_improvements',
+                'contribution_to_cfts',
+                'appraisee_response',
+              ].includes(value.fieldKey)
+            ) ||
+            (
+              value.sectionKey === 'personal_development_2_appraisee_response' &&
+              value.fieldKey === 'appraisee_response'
+            ),
         );
-        if (objectiveValues.length + achievementValues.length !== values.length) {
+        // Performance Filling can contain additional employee-editable fields
+        // configured by the assigned template. The service resolves and
+        // authorizes those fields dynamically; retain the strict legacy list
+        // for the normal achievement-submission flow.
+        if (
+          !performanceFilling &&
+          objectiveValues.length + achievementValues.length !== values.length
+        ) {
           throw new Error('Assigned form contains an unsupported field');
         }
 
