@@ -182,7 +182,8 @@ export async function generateHikeLetterPDF(data: {
 
         browser = await puppeteer.launch(getPuppeteerLaunchOptions());
         const page = await browser.newPage();
-        await page.setContent(finalHtml, { waitUntil: 'networkidle0' });
+        await page.setContent(finalHtml, { waitUntil: 'load' });
+        await page.waitForNetworkIdle({ concurrency: 0 });
 
         const footerTemplate = `
             <div style="width: 100%; font-family: Arial, sans-serif; font-size: 10px; color: #777; position: relative; height: 60px; -webkit-print-color-adjust: exact;">

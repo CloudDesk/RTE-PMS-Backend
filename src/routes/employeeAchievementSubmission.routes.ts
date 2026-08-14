@@ -491,6 +491,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {
+  reply.log.error({ err: error }, 'Route handler error');
   const message = error instanceof Error ? error.message : 'Unexpected error';
   if (/less than 1 MB|file too large/i.test(message)) {
     return reply.status(413).send(

@@ -94,6 +94,11 @@ const pmsEmployeeCareerProfileSchema = new Schema<IPmsEmployeeCareerProfile>(
       type: String,
       required: true,
       trim: true,
+      // Stored canonically in upper case so the unique index below enforces
+      // case-insensitive uniqueness without needing an index collation, which
+      // Azure Cosmos DB for MongoDB does not implement. Mongoose applies this
+      // to query filters too, so lookups stay case-insensitive.
+      uppercase: true,
       maxlength: 50,
     },
     qualification: { type: String, trim: true, maxlength: 250 },
@@ -148,12 +153,14 @@ pmsEmployeeCareerProfileSchema.index(
     name: 'uq_pms_employee_career_profile_employee',
   },
 );
+// No collation here: employeeCode is normalised to upper case by the schema, so
+// a plain unique index gives the same case-insensitive guarantee and builds on
+// every engine (Cosmos DB for MongoDB rejects createIndex.collation).
 pmsEmployeeCareerProfileSchema.index(
   { employeeCode: 1 },
   {
     unique: true,
     name: 'uq_pms_employee_career_profile_employee_code',
-    collation: { locale: 'en', strength: 2 },
   },
 );
 pmsEmployeeCareerProfileSchema.index({ currentGrade: 1, asOfDate: -1 });
