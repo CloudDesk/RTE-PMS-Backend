@@ -24,12 +24,13 @@ const DB_SOCKET_TIMEOUT_MS = Math.max(
 // Pool sizing is per replica. With Container Apps scaling to N replicas the
 // cluster sees up to N * DB_MAX_POOL_SIZE connections, so keep the ceiling well
 // under the cluster's connection limit.
-const DB_MAX_POOL_SIZE = Math.max(1, Number(process.env.DB_MAX_POOL_SIZE || 50));
-// A warm floor means a scaled-out replica does not pay TCP + TLS + SCRAM on its
-// first requests, which is where the burst latency was coming from.
-const DB_MIN_POOL_SIZE = Math.max(0, Number(process.env.DB_MIN_POOL_SIZE || 10));
-// Long enough that a lull between bursts does not reap the warm pool.
-const DB_MAX_IDLE_TIME_MS = Math.max(0, Number(process.env.DB_MAX_IDLE_TIME_MS || 600000));
+const DB_MAX_POOL_SIZE = Math.max(1, Number(process.env.DB_MAX_POOL_SIZE || 20));
+// Do not reserve idle connections on every scaled-out replica. Keeping a warm
+// floor here can exhaust the database's worker-node connection quota.
+const DB_MIN_POOL_SIZE = Math.max(0, Number(process.env.DB_MIN_POOL_SIZE || 0));
+// Retire inactive sockets before the Azure MongoDB endpoint's idle timeout and
+// return their capacity to the cluster promptly.
+const DB_MAX_IDLE_TIME_MS = Math.max(0, Number(process.env.DB_MAX_IDLE_TIME_MS || 120000));
 // Index creation belongs to deploy (npm run db:migrate:startup), not to boot.
 // Leaving this on makes every replica issue createIndexes for ~182 declared
 // indexes while it is also trying to serve the traffic that triggered scale-out.
@@ -65,23 +66,38 @@ function registerConnectionListeners(): void {
 }
 
 /**
- * One-time migration: drop old global unique index on users.email so duplicate email
- * (allowDuplicateEmail) can work. Only drops the index; no user data is deleted.
- * Safe to run on live DB: existing documents are unchanged.
+ * One-time migration: drop the old global unique index on users.email so duplicate
+ * email (allowDuplicateEmail) can work. Once the desired partial index exists, leave
+ * it in place on subsequent deploys.
  */
 async function migrateEmailIndexIfNeeded(): Promise<void> {
-  try {
-    const coll = mongoose.connection.collection('users');
-    const indexes = await coll.indexes();
-    const emailIndex = (indexes as { name: string }[]).find((i) => i.name === 'email_1');
-    if (!emailIndex) return;
-    // Drop only the old global unique index; partial index is created by User model
+  const coll = mongoose.connection.collection('users');
+  const indexes = await coll.indexes();
+  const emailIndex = indexes.find((index) => index.name === 'email_1');
+
+  const isDesiredPartialIndex =
+    emailIndex?.unique === true &&
+    emailIndex.key?.email === 1 &&
+    emailIndex.partialFilterExpression?.portalAccess === true;
+  if (isDesiredPartialIndex) return;
+
+  if (emailIndex) {
+    // Remove only a legacy or incorrectly configured index.
     await coll.dropIndex('email_1');
-    console.log('[DB] Dropped old email_1 index; app will use partial unique index (portalAccess: true). No data removed.');
-  } catch (err: any) {
-    if (err.codeName === 'IndexNotFound' || err.message?.includes('index not found')) return;
-    console.warn('[DB] migrateEmailIndexIfNeeded:', err.message);
+    console.log('[DB] Dropped legacy email_1 index. No data removed.');
   }
+
+  // Restore the required constraint immediately instead of leaving users.email
+  // unprotected until the User model is reached near the end of index syncing.
+  await coll.createIndex(
+    { email: 1 },
+    {
+      name: 'email_1',
+      unique: true,
+      partialFilterExpression: { portalAccess: true },
+    },
+  );
+  console.log('[DB] Ensured partial unique email_1 index (portalAccess: true).');
 }
 
 /**
