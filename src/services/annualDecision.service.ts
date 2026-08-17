@@ -210,6 +210,22 @@ export interface AnnualSummaryResult {
       fields: Array<Record<string, unknown>>;
       values: Array<Record<string, unknown>>;
     };
+    stages?: {
+      l2: {
+        status: string;
+        reviewer?: Record<string, unknown>;
+        completedAt?: string;
+        fields: Array<Record<string, unknown>>;
+        values: Array<Record<string, unknown>>;
+      };
+      director: {
+        status: string;
+        reviewer?: Record<string, unknown>;
+        completedAt?: string;
+        fields: Array<Record<string, unknown>>;
+        values: Array<Record<string, unknown>>;
+      };
+    };
     fields: Array<Record<string, unknown>>;
     values: Array<Record<string, unknown>>;
     availableActions: Array<'SAVE' | 'COMPLETE'>;
@@ -649,12 +665,13 @@ export class AnnualDecisionService extends BaseService {
       cycle ?? undefined,
     );
 
-    const annualDecisionValues = annualDecision
-      ? await AnnualDecisionValue.find({
-          annualDecisionId: annualDecision._id,
-          isDeleted: false,
-        }).lean()
-      : [];
+    // Final-review values are owned by the annual assignment.  Reading them
+    // through the decision shell can hide valid L2/L3 submissions when that
+    // shell was recreated or its reference changed during the workflow.
+    const annualDecisionValues = await AnnualDecisionValue.find({
+      annualAssignmentId: annualAssignment._id,
+      isDeleted: false,
+    }).lean();
     const termAssignmentIdsNeedingTemplateValueFallback = effectiveTermAssignments
       .filter((termAssignment) => {
         const termAssignmentObject =
@@ -805,13 +822,60 @@ export class AnnualDecisionService extends BaseService {
     const l2Fields = allFinalReviewFields.filter((field) => field.reviewStage === 'L2');
     const l2FieldKeys = new Set(l2Fields.map((field) => String(field.key)));
     const l2Values = annualDecisionValues.filter(
-      (value) => value.roleCode === 'DIRECTOR' && l2FieldKeys.has(value.fieldKey),
+      (value) => l2FieldKeys.has(value.fieldKey),
     );
     const directorFieldKeys = new Set(
       allFinalReviewFields
         .filter((field) => field.reviewStage === 'DIRECTOR')
         .map((field) => String(field.key)),
     );
+    const directorFields = allFinalReviewFields.filter(
+      (field) => field.reviewStage === 'DIRECTOR',
+    );
+    const directorValues = annualDecisionValues.filter(
+      (value) => directorFieldKeys.has(value.fieldKey),
+    );
+    const l2ReviewerIds = new Set(
+      [
+        annualAssignment.finalReviewerId?.toString(),
+        annualAssignment.finalReviewCompletedBy?.toString(),
+      ].filter(Boolean),
+    );
+    const directorReviewerIds = new Set(
+      [
+        annualAssignment.directorReviewerId?.toString(),
+        annualAssignment.directorReviewCompletedBy?.toString(),
+      ].filter(Boolean),
+    );
+    const l2StageValues = l2Values.length > 0
+      ? l2Values
+      : annualDecisionValues.filter(
+          (value) =>
+            Boolean(value.actorUserId) &&
+            l2ReviewerIds.has(value.actorUserId!.toString()),
+        );
+    const directorStageValues = directorValues.length > 0
+      ? directorValues
+      : annualDecisionValues.filter(
+          (value) =>
+            Boolean(value.actorUserId) &&
+            directorReviewerIds.has(value.actorUserId!.toString()),
+        );
+    const displayFieldsForValues = (
+      fields: Array<Record<string, any>>,
+      values: Array<Record<string, any>>,
+      reviewStage: FinalReviewStage,
+    ) => fields.length > 0
+      ? fields
+      : values.map((value) => ({
+          key: value.fieldKey,
+          label: String(value.fieldKey ?? '')
+            .replace(/([a-z])([A-Z])/g, '$1 $2')
+            .replace(/[_-]+/g, ' ')
+            .replace(/\b\w/g, (letter) => letter.toUpperCase()),
+          sectionKey: value.sectionKey,
+          reviewStage,
+        }));
     const hideDirectorStageValuesFromL2 =
       activeFinalReviewStage === 'L2' &&
       annualAssignment.directorReviewerId?.toString() !== actorId;
@@ -1006,6 +1070,42 @@ export class AnnualDecisionService extends BaseService {
         l2Status: annualAssignment.finalReviewStatus,
         directorStatus: annualAssignment.directorReviewStatus,
         previousStage: l2PreviousStage,
+        stages: {
+          l2: {
+            status: annualAssignment.finalReviewStatus,
+            reviewer: annualAssignment.finalReviewerSnapshot,
+            completedAt: annualAssignment.finalReviewCompletedAt?.toISOString(),
+            fields: displayFieldsForValues(l2Fields, l2StageValues, 'L2'),
+            values: l2StageValues.map((value) => ({
+              templateFieldId: value.templateFieldId,
+              fieldKey: value.fieldKey,
+              sectionKey: value.sectionKey,
+              roleCode: value.roleCode,
+              actorUserId: value.actorUserId?.toString(),
+              valueJson: value.valueJson,
+              valueText: value.valueText,
+              valueNumber: value.valueNumber,
+              valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
+            })),
+          },
+          director: {
+            status: annualAssignment.directorReviewStatus,
+            reviewer: annualAssignment.directorReviewerSnapshot,
+            completedAt: annualAssignment.directorReviewCompletedAt?.toISOString(),
+            fields: displayFieldsForValues(directorFields, directorStageValues, 'DIRECTOR'),
+            values: directorStageValues.map((value) => ({
+              templateFieldId: value.templateFieldId,
+              fieldKey: value.fieldKey,
+              sectionKey: value.sectionKey,
+              roleCode: value.roleCode,
+              actorUserId: value.actorUserId?.toString(),
+              valueJson: value.valueJson,
+              valueText: value.valueText,
+              valueNumber: value.valueNumber,
+              valueDate: value.valueDate ? value.valueDate.toISOString() : undefined,
+            })),
+          },
+        },
         fields: finalReviewFields,
         values: finalReviewValues,
         availableActions:
