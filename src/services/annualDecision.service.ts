@@ -1540,9 +1540,10 @@ export class AnnualDecisionService extends BaseService {
     }).lean();
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
     return assignments.map((item) => {
-      const reviewStage = item.finalReviewerId?.toString() === actor.actorId
-        ? 'L2'
-        : 'DIRECTOR';
+      // A terminal Director may own both sequential stages. Resolve from the
+      // statuses as well as the actor ID so the queue advances to L3 after L2.
+      const reviewStage = this.resolveActorFinalReviewStage(item as IAnnualAssignment, false)
+        ?? 'DIRECTOR';
       const isWaitingForL2 =
         reviewStage === 'DIRECTOR' &&
         item.finalReviewStatus !== FinalReviewStatus.COMPLETED;
