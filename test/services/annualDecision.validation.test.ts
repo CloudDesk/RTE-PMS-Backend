@@ -378,6 +378,13 @@ describe('Submitted annual decision corrections', () => {
       finalReviewStatus: 'COMPLETED',
       directorReviewStatus: 'PENDING',
     })).toBe('DIRECTOR');
+
+    expect(resolver.resolveActorFinalReviewStage({
+      finalReviewerId: reviewerId,
+      directorReviewerId: reviewerId,
+      finalReviewStatus: 'COMPLETED',
+      directorReviewStatus: 'PENDING',
+    }, false)).toBe('DIRECTOR');
   });
 
   it('allows the assigned final reviewer after terms finalize without requiring the appraisal window', async () => {
