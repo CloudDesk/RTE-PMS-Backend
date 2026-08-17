@@ -10,6 +10,10 @@ import { generateEmailTemplate } from '../emails/templates';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
 import { uploadFileToGCP } from '../utilis/gcpStorage';
 import { getAllowedPmsReportingRoles } from '../utilis/reportingHierarchyRules';
+import {
+  canonicalizeTerminalDirectorMapping,
+  isDirectorRole,
+} from '../utilis/reviewerMappingRules';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -1296,21 +1300,49 @@ export class UserService extends BaseService {
       delete data.l3ManagerId;
       delete data.l3ManagerName;
     } else if (data.managerId) {
-      await this.validateReportingManager(data.role, data.managerId);
-    }
-    const mappedIds = [data.managerId, data.l2ManagerId, data.l3ManagerId].filter(Boolean);
-    if (new Set(mappedIds).size !== mappedIds.length) {
-      throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
-    }
-    if (data.l2ManagerId) {
-      await this.validateMappedReviewer(data.l2ManagerId, 'L2 Manager');
-    }
-    if (data.l3ManagerId) {
-      if (String(data.role || '').trim().toLowerCase() === 'trainee') {
+      const reportingManager = await this.validateReportingManager(data.role, data.managerId);
+      const l2Manager = !isDirectorRole(reportingManager.role) && data.l2ManagerId
+        ? await this.validateMappedReviewer(data.l2ManagerId, 'L2 Manager')
+        : undefined;
+      const canonicalMapping = canonicalizeTerminalDirectorMapping({
+        managerId: data.managerId,
+        managerRole: reportingManager.role,
+        l2ManagerId: data.l2ManagerId,
+        l2ManagerRole: l2Manager?.role,
+        l3ManagerId: data.l3ManagerId,
+      });
+
+      if (!canonicalMapping.l2ManagerId) {
+        delete data.l2ManagerId;
+        delete data.l2ManagerName;
+      }
+      if (!canonicalMapping.l3ManagerId) {
         delete data.l3ManagerId;
         delete data.l3ManagerName;
-      } else {
-        await this.validateMappedReviewer(data.l3ManagerId, 'L3 Manager');
+      }
+
+      const mappedIds = [
+        canonicalMapping.managerId,
+        canonicalMapping.l2ManagerId,
+        canonicalMapping.l3ManagerId,
+      ].filter(Boolean);
+      if (new Set(mappedIds).size !== mappedIds.length) {
+        throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
+      }
+
+      if (canonicalMapping.l3ManagerId) {
+        if (String(data.role || '').trim().toLowerCase() === 'trainee') {
+          delete data.l3ManagerId;
+          delete data.l3ManagerName;
+        } else {
+          const l3Manager = await this.validateMappedReviewer(
+            canonicalMapping.l3ManagerId,
+            'L3 Manager',
+          );
+          if (!isDirectorRole(l3Manager.role)) {
+            throw new Error('L3 Manager must have the Director role');
+          }
+        }
       }
     }
     if (!data.joiningDate) {
@@ -1532,39 +1564,74 @@ export class UserService extends BaseService {
       user.l2ManagerName = undefined;
       user.l3ManagerId = undefined;
       user.l3ManagerName = undefined;
-    } else if (nextManagerId && (roleChanged || managerChanged)) {
-      await this.validateReportingManager(nextRole, nextManagerId, id);
-      data.managerId = nextManagerId;
     }
     if (!isTopLevelRole(nextRole)) {
-      const nextL2ManagerId = data.l2ManagerId !== undefined
-        ? data.l2ManagerId
-        : user.l2ManagerId?.toString();
-      const nextL3ManagerId = data.l3ManagerId !== undefined
-        ? data.l3ManagerId
-        : user.l3ManagerId?.toString();
-      const mappedIds = [nextManagerId, nextL2ManagerId, nextL3ManagerId].filter(Boolean);
-      if (new Set(mappedIds).size !== mappedIds.length) {
-        throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
-      }
-      if (data.l2ManagerId) {
-        await this.validateMappedReviewer(data.l2ManagerId, 'L2 Manager', id);
-      } else if (data.l2ManagerId === '') {
-        user.l2ManagerId = undefined;
-        user.l2ManagerName = undefined;
-        delete data.l2ManagerId;
-      }
-      if (String(nextRole || '').trim().toLowerCase() === 'trainee') {
-        delete data.l3ManagerId;
-        delete data.l3ManagerName;
-        user.l3ManagerId = undefined;
-        user.l3ManagerName = undefined;
-      } else if (data.l3ManagerId) {
-        await this.validateMappedReviewer(data.l3ManagerId, 'L3 Manager', id);
-      } else if (data.l3ManagerId === '') {
-        user.l3ManagerId = undefined;
-        user.l3ManagerName = undefined;
-        delete data.l3ManagerId;
+      const hierarchyMappingChanged =
+        roleChanged ||
+        managerChanged ||
+        data.l2ManagerId !== undefined ||
+        data.l3ManagerId !== undefined;
+
+      if (hierarchyMappingChanged && nextManagerId) {
+        const reportingManager = await this.validateReportingManager(nextRole, nextManagerId, id);
+        data.managerId = nextManagerId;
+
+        const nextL2ManagerId = data.l2ManagerId !== undefined
+          ? data.l2ManagerId || undefined
+          : user.l2ManagerId?.toString();
+        const nextL3ManagerId = data.l3ManagerId !== undefined
+          ? data.l3ManagerId || undefined
+          : user.l3ManagerId?.toString();
+        const l2Manager = !isDirectorRole(reportingManager.role) && nextL2ManagerId
+          ? await this.validateMappedReviewer(nextL2ManagerId, 'L2 Manager', id)
+          : undefined;
+        const canonicalMapping = canonicalizeTerminalDirectorMapping({
+          managerId: nextManagerId,
+          managerRole: reportingManager.role,
+          l2ManagerId: nextL2ManagerId,
+          l2ManagerRole: l2Manager?.role,
+          l3ManagerId: nextL3ManagerId,
+        });
+
+        if (!canonicalMapping.l2ManagerId) {
+          user.l2ManagerId = undefined;
+          user.l2ManagerName = undefined;
+          delete data.l2ManagerId;
+          delete data.l2ManagerName;
+        } else {
+          data.l2ManagerId = canonicalMapping.l2ManagerId;
+        }
+
+        if (
+          String(nextRole || '').trim().toLowerCase() === 'trainee' ||
+          !canonicalMapping.l3ManagerId
+        ) {
+          user.l3ManagerId = undefined;
+          user.l3ManagerName = undefined;
+          delete data.l3ManagerId;
+          delete data.l3ManagerName;
+        } else {
+          const l3Manager = await this.validateMappedReviewer(
+            canonicalMapping.l3ManagerId,
+            'L3 Manager',
+            id,
+          );
+          if (!isDirectorRole(l3Manager.role)) {
+            throw new Error('L3 Manager must have the Director role');
+          }
+          data.l3ManagerId = canonicalMapping.l3ManagerId;
+        }
+
+        const mappedIds = [
+          canonicalMapping.managerId,
+          canonicalMapping.l2ManagerId,
+          String(nextRole || '').trim().toLowerCase() === 'trainee'
+            ? undefined
+            : canonicalMapping.l3ManagerId,
+        ].filter(Boolean);
+        if (new Set(mappedIds).size !== mappedIds.length) {
+          throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
+        }
       }
     }
     if (data.joiningDate !== undefined && !data.joiningDate) {
