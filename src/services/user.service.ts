@@ -66,6 +66,10 @@ interface IUserCreate {
   departmentId: string;
   managerId?: string;
   managerName?: string;
+  l2ManagerId?: string;
+  l2ManagerName?: string;
+  l3ManagerId?: string;
+  l3ManagerName?: string;
   employeeCode: string;
   biometricId?: string | null;
   active?: boolean;
@@ -135,6 +139,10 @@ interface IUserUpdate {
   departmentId?: string;
   managerId?: string;
   managerName?: string;
+  l2ManagerId?: string;
+  l2ManagerName?: string;
+  l3ManagerId?: string;
+  l3ManagerName?: string;
   employeeCode?: string;
   biometricId?: string | null;
   active?: boolean;
@@ -195,8 +203,9 @@ interface IUserUpdate {
   experienceDetails?: IExperienceDetails[];
 }
 
-function isDirectorRole(role?: string) {
-  return (role || '').trim().toLowerCase() === 'director';
+function isTopLevelRole(role?: string) {
+  const normalized = (role || '').trim().toLowerCase();
+  return normalized === 'director' || normalized === 'admin' || normalized === 'superadmin';
 }
 
 interface IResignationState {
@@ -302,6 +311,28 @@ export class UserService extends BaseService {
         : undefined;
     }
 
+    return manager;
+  }
+
+  private async validateMappedReviewer(
+    managerId: string,
+    label: 'L2 Manager' | 'L3 Manager',
+    employeeId?: string,
+  ) {
+    if (!Types.ObjectId.isValid(managerId)) {
+      throw new Error(`Valid ${label} is required`);
+    }
+    if (employeeId && managerId === employeeId) {
+      throw new Error(`Employee cannot be their own ${label}`);
+    }
+    const manager = await User.findById(managerId)
+      .select('_id name role active portalAccess managerId')
+      .lean();
+    if (!manager) throw new Error(`${label} not found`);
+    if (!manager.active) throw new Error(`${label} must be active`);
+    if (manager.portalAccess === false) {
+      throw new Error(`${label} must have portal access`);
+    }
     return manager;
   }
 
@@ -443,6 +474,27 @@ export class UserService extends BaseService {
     }
   }
 
+  async getReviewerCandidates(employeeId?: string): Promise<any[]> {
+    return User.find({
+      active: true,
+      portalAccess: { $ne: false },
+      role: {
+        $nin: [
+          this.exactCaseInsensitiveRegex('trainee'),
+          this.exactCaseInsensitiveRegex('staff'),
+        ],
+      },
+      ...(employeeId && Types.ObjectId.isValid(employeeId)
+        ? { _id: { $ne: new Types.ObjectId(employeeId) } }
+        : {}),
+    })
+      .select(
+        '_id name email employeeCode role specificRole departmentId active portalAccess',
+      )
+      .sort({ name: 1 })
+      .lean();
+  }
+
   async getReportingHierarchy(
     userId: string,
     includeSelf: boolean = false,
@@ -453,7 +505,7 @@ export class UserService extends BaseService {
     }
 
     const subject = await User.findById(userId)
-      .select('_id managerId')
+      .select('_id role managerId l2ManagerId l3ManagerId')
       .lean();
     if (!subject) {
       throw new Error('User not found');
@@ -472,7 +524,6 @@ export class UserService extends BaseService {
     let currentId: Types.ObjectId | undefined = includeSelf
       ? subject._id
       : subject.managerId;
-
     while (currentId && hierarchy.length < maxLevels) {
       const currentIdString = currentId.toString();
       if (visited.has(currentIdString)) {
@@ -494,9 +545,17 @@ export class UserService extends BaseService {
         specificRole: current.specificRole,
         managerId: current.managerId?.toString(),
       });
-      currentId = current.managerId
-        ? new Types.ObjectId(current.managerId)
-        : undefined;
+      const explicitNextId =
+        !includeSelf && hierarchy.length === 1
+          ? subject.l2ManagerId
+          : !includeSelf && hierarchy.length === 2
+            ? subject.l3ManagerId
+            : undefined;
+      currentId = explicitNextId
+        ? new Types.ObjectId(explicitNextId)
+        : current.managerId
+          ? new Types.ObjectId(current.managerId)
+          : undefined;
     }
 
     return hierarchy;
@@ -519,6 +578,8 @@ export class UserService extends BaseService {
     portalAccess?: boolean;
     isConsultancy?: boolean;
     isIntern?: boolean;
+    employeeType?: 'regular' | 'trainee';
+    objectiveAssignmentCandidates?: boolean | string;
     sort?: string;
     sortOrder?: 'asc' | 'desc';
     select?: string;
@@ -542,6 +603,8 @@ export class UserService extends BaseService {
       portalAccess,
       isConsultancy,
       isIntern,
+      employeeType,
+      objectiveAssignmentCandidates,
       sort = 'name',
       sortOrder = 'asc',
       select
@@ -559,6 +622,10 @@ export class UserService extends BaseService {
           : undefined;
     const includeAllActiveStates =
       typeof rawActive === 'string' && rawActive.toLowerCase() === 'all';
+    const isObjectiveAssignmentCandidateLookup =
+      this.context.reqRole === 'QS' &&
+      (objectiveAssignmentCandidates === true ||
+        String(objectiveAssignmentCandidates).toLowerCase() === 'true');
 
     // Set limit to 1000 if role is specified (for dropdowns)
     // Override the default limit of 10 when role filter is used
@@ -606,7 +673,10 @@ export class UserService extends BaseService {
       // Apply role-based access control
       if (this.context.reqRole === 'MANAGER') {
         filter.managerId = this.context.user?._id;
-      } else if (!['ADMIN', 'MANAGEMENT', 'DIRECTOR'].includes(this.context.reqRole)) {
+      } else if (
+        !isObjectiveAssignmentCandidateLookup &&
+        !['ADMIN', 'HR', 'MANAGEMENT', 'DIRECTOR'].includes(this.context.reqRole)
+      ) {
         filter._id = this.context.user?._id;
       }
     }
@@ -711,12 +781,21 @@ export class UserService extends BaseService {
       filter.isIntern = isIntern;
     }
 
+    if (employeeType === 'trainee') {
+      filter.role = { $regex: this.exactCaseInsensitiveRegex('trainee') };
+    } else if (employeeType === 'regular') {
+      filter.$and = [
+        ...(filter.$and || []),
+        { role: { $not: this.exactCaseInsensitiveRegex('trainee') } },
+      ];
+    }
+
     // Build sort object
     const sortObj: any = {};
     sortObj[sort] = sortOrder === 'desc' ? -1 : 1;
 
     // Build select string
-    const selectFields = (select || 'name email role specificRole departmentId active joiningDate probationStartDate probationEndDate probationDate managerId managerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId holidayCalendarHistory weekendId createdAt updatedAt country currency licenseType portalAccess visaDetails isConsultancy isIntern')
+    const selectFields = (select || 'name email role specificRole departmentId active joiningDate probationStartDate probationEndDate probationDate managerId managerName l2ManagerId l2ManagerName l3ManagerId l3ManagerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId holidayCalendarHistory weekendId createdAt updatedAt country currency licenseType portalAccess visaDetails isConsultancy isIntern')
       .replace(/,/g, ' ');
 
     console.log('Unified getUsers query:', { filter, page, limit, sort: sortObj, select: selectFields });
@@ -764,7 +843,7 @@ export class UserService extends BaseService {
       reportingToId,
       id,
       sort = 'name',
-      select = 'name email role specificRole departmentId active joiningDate managerId managerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId holidayCalendarHistory weekendId createdAt updatedAt visaDetails',
+      select = 'name email role specificRole departmentId active joiningDate managerId managerName l2ManagerId l2ManagerName l3ManagerId l3ManagerName employeeCode checkinId biometricId location phone emergencyContact address bloodGroup upcomingShiftAssignmentData currentShiftAssignmentData upcomingShiftAssignment currentShiftAssignment dateOfBirth holidayCalendarId holidayCalendarHistory weekendId createdAt updatedAt visaDetails',
     } = query;
 
     const skip = (page - 1) * limit;
@@ -799,7 +878,7 @@ export class UserService extends BaseService {
 
     if (this.context.reqRole === 'MANAGER') {
       filter.managerId = this.context.user?._id;
-    } else if (this.context.reqRole !== 'ADMIN') {
+    } else if (!['ADMIN', 'HR'].includes(this.context.reqRole)) {
       filter._id = this.context.user?._id;
     }
 
@@ -981,7 +1060,7 @@ export class UserService extends BaseService {
     }
     if (this.context.reqRole === 'MANAGER') {
       filter.managerId = this.context.user?._id;
-    } else if (this.context.reqRole !== 'ADMIN') {
+    } else if (!['ADMIN', 'HR'].includes(this.context.reqRole)) {
       filter._id = this.context.user?._id;
     }
     const [users, total] = await Promise.all([
@@ -1198,15 +1277,41 @@ export class UserService extends BaseService {
     console.log('📋 Data type:', typeof data);
     console.log('📋 Data keys:', Object.keys(data || {}));
 
+    if (
+      !['ADMIN', 'HR'].includes(this.context.reqRole) &&
+      (data.l2ManagerId !== undefined || data.l3ManagerId !== undefined)
+    ) {
+      throw new Error('Only HR/Admin can manage L2 and L3 mappings');
+    }
+
     // Validate required fields
-    if (!isDirectorRole(data.role) && !data.managerId) {
+    if (!isTopLevelRole(data.role) && !data.managerId) {
       throw new Error('Manager ID is required');
     }
-    if (isDirectorRole(data.role)) {
+    if (isTopLevelRole(data.role)) {
       delete data.managerId;
       delete data.managerName;
+      delete data.l2ManagerId;
+      delete data.l2ManagerName;
+      delete data.l3ManagerId;
+      delete data.l3ManagerName;
     } else if (data.managerId) {
       await this.validateReportingManager(data.role, data.managerId);
+    }
+    const mappedIds = [data.managerId, data.l2ManagerId, data.l3ManagerId].filter(Boolean);
+    if (new Set(mappedIds).size !== mappedIds.length) {
+      throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
+    }
+    if (data.l2ManagerId) {
+      await this.validateMappedReviewer(data.l2ManagerId, 'L2 Manager');
+    }
+    if (data.l3ManagerId) {
+      if (String(data.role || '').trim().toLowerCase() === 'trainee') {
+        delete data.l3ManagerId;
+        delete data.l3ManagerName;
+      } else {
+        await this.validateMappedReviewer(data.l3ManagerId, 'L3 Manager');
+      }
     }
     if (!data.joiningDate) {
       throw new Error('Joining date is required');
@@ -1382,6 +1487,13 @@ export class UserService extends BaseService {
     console.log('🔍 EmergencyContact in update data:', data.emergencyContact, '(type:', typeof data.emergencyContact, ')');
     console.log('🆔 User ID:', id);
 
+    if (!['ADMIN', 'HR'].includes(this.context.reqRole)) {
+      delete data.l2ManagerId;
+      delete data.l2ManagerName;
+      delete data.l3ManagerId;
+      delete data.l3ManagerName;
+    }
+
     const user = await User.findById(id);
     if (!user) {
       throw new Error('User not found');
@@ -1404,17 +1516,56 @@ export class UserService extends BaseService {
       data.managerId !== undefined
         ? data.managerId
         : user.managerId?.toString();
-    if (!isDirectorRole(nextRole) && !nextManagerId) {
+    if (!isTopLevelRole(nextRole) && !nextManagerId) {
       throw new Error('Manager ID is required');
     }
-    if (isDirectorRole(nextRole)) {
+    if (isTopLevelRole(nextRole)) {
       delete data.managerId;
       delete data.managerName;
+      delete data.l2ManagerId;
+      delete data.l2ManagerName;
+      delete data.l3ManagerId;
+      delete data.l3ManagerName;
       user.managerId = undefined;
       user.managerName = undefined;
+      user.l2ManagerId = undefined;
+      user.l2ManagerName = undefined;
+      user.l3ManagerId = undefined;
+      user.l3ManagerName = undefined;
     } else if (nextManagerId && (roleChanged || managerChanged)) {
       await this.validateReportingManager(nextRole, nextManagerId, id);
       data.managerId = nextManagerId;
+    }
+    if (!isTopLevelRole(nextRole)) {
+      const nextL2ManagerId = data.l2ManagerId !== undefined
+        ? data.l2ManagerId
+        : user.l2ManagerId?.toString();
+      const nextL3ManagerId = data.l3ManagerId !== undefined
+        ? data.l3ManagerId
+        : user.l3ManagerId?.toString();
+      const mappedIds = [nextManagerId, nextL2ManagerId, nextL3ManagerId].filter(Boolean);
+      if (new Set(mappedIds).size !== mappedIds.length) {
+        throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
+      }
+      if (data.l2ManagerId) {
+        await this.validateMappedReviewer(data.l2ManagerId, 'L2 Manager', id);
+      } else if (data.l2ManagerId === '') {
+        user.l2ManagerId = undefined;
+        user.l2ManagerName = undefined;
+        delete data.l2ManagerId;
+      }
+      if (String(nextRole || '').trim().toLowerCase() === 'trainee') {
+        delete data.l3ManagerId;
+        delete data.l3ManagerName;
+        user.l3ManagerId = undefined;
+        user.l3ManagerName = undefined;
+      } else if (data.l3ManagerId) {
+        await this.validateMappedReviewer(data.l3ManagerId, 'L3 Manager', id);
+      } else if (data.l3ManagerId === '') {
+        user.l3ManagerId = undefined;
+        user.l3ManagerName = undefined;
+        delete data.l3ManagerId;
+      }
     }
     if (data.joiningDate !== undefined && !data.joiningDate) {
       throw new Error('Joining date is required');
@@ -2103,7 +2254,9 @@ export class UserService extends BaseService {
 
     type GovernmentIdFieldWithDoc = 'pan' | 'aadhaar' | 'passport' | 'voterId' | 'drivingLicense';
 
-    const isAdminUpload = (this.context.user?.role || '').toLowerCase() === 'admin';
+    const isAdminUpload = ['admin', 'hr'].includes(
+      (this.context.user?.role || '').toLowerCase(),
+    );
     const resolvedStatus: 'Pending' | 'Verified' | 'Rejected' =
       verificationStatus || (isAdminUpload ? 'Verified' : 'Pending');
 
@@ -2412,7 +2565,9 @@ export class UserService extends BaseService {
     }
 
     const academicDetail = user.academicDetails[academicDetailIndex] as any;
-    const isAdminUpload = (this.context.user?.role || '').toLowerCase() === 'admin';
+    const isAdminUpload = ['admin', 'hr'].includes(
+      (this.context.user?.role || '').toLowerCase(),
+    );
     const resolvedStatus: 'Pending' | 'Verified' | 'Rejected' =
       verificationStatus || (isAdminUpload ? 'Verified' : 'Pending');
 
@@ -2523,7 +2678,9 @@ export class UserService extends BaseService {
     }
 
     const experienceDetail = user.experienceDetails[experienceDetailIndex] as any;
-    const isAdminUpload = (this.context.user?.role || '').toLowerCase() === 'admin';
+    const isAdminUpload = ['admin', 'hr'].includes(
+      (this.context.user?.role || '').toLowerCase(),
+    );
     const resolvedStatus: 'Pending' | 'Verified' | 'Rejected' =
       verificationStatus || (isAdminUpload ? 'Verified' : 'Pending');
 

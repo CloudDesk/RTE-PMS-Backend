@@ -43,3 +43,4 @@ export * from './pms-employee-profile-import.model';
 export * from './pms-employee-profile-import-row.model';
 export * from './pms-employee-profile-import-file.model';
 export * from './pms-employee-career-profile-change.model';
+export * from './employee-roles-responsibilities.model';

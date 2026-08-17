@@ -3175,6 +3175,16 @@ export class PmsTemplateService extends BaseService {
       return;
     }
 
+    // Assigned final reviewers need read-only cross-perspective template
+    // context for this annual assignment even when they are not the line manager.
+    const actorId = actor._id.toString();
+    if (
+      annualAssignment.finalReviewerId?.toString() === actorId ||
+      annualAssignment.directorReviewerId?.toString() === actorId
+    ) {
+      return;
+    }
+
     const access = await accessService.canPerform({
       actor: {
         actorId: actor._id.toString(),
@@ -3291,6 +3301,10 @@ export class PmsTemplateService extends BaseService {
     const user = this.context.user;
     if (!user) {
       throw new Error('Authentication required');
+    }
+
+    if (String(user.role).trim().toUpperCase() === 'HR') {
+      return;
     }
 
     const access = await accessService.canPerform({

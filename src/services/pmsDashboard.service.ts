@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { BaseService } from './base.service';
 import {
   AnnualAssignment,
+  AnnualCycle,
   AnnualDecision,
   VisibilityConfiguration,
   TermAssignment,
@@ -23,6 +24,12 @@ import {
 } from '../models/pms-probation-review-assignment.model';
 
 export class PmsDashboardService extends BaseService {
+  async getTraineeDashboard(managerId?: string): Promise<any> {
+    return this.getTraineeReviewSummary(
+      managerId ? new Types.ObjectId(managerId) : undefined,
+    );
+  }
+
   /**
    * Get PMS Employee Dashboard Data
    */
@@ -266,8 +273,37 @@ export class PmsDashboardService extends BaseService {
       query.cycleId = cycleObjectId;
     }
 
-    const assignedAnnuals = await AnnualAssignment.find(query).select('_id employeeId cycleId').lean();
-    const employeeIds = assignedAnnuals.map((a) => a.employeeId);
+    const reviewerQuery: Record<string, any> = {
+      isDeleted: false,
+      $or: [
+        { assignedManagerId: managerObjectId },
+        { finalReviewerId: managerObjectId },
+        { directorReviewerId: managerObjectId },
+      ],
+    };
+    if (cycleObjectId) reviewerQuery.cycleId = cycleObjectId;
+    const assignedAnnuals = await AnnualAssignment.find(reviewerQuery)
+      .select('_id employeeId cycleId assignedManagerId finalReviewerId directorReviewerId finalReviewStatus directorReviewStatus annualState finalDecisionStatus updatedAt')
+      .populate('employeeId', 'name email employeeCode')
+      .populate('cycleId', 'name code status startDate endDate appraisalWindowConfig')
+      .populate('assignedManagerId', 'name employeeCode')
+      .populate('finalReviewerId', 'name employeeCode')
+      .populate('directorReviewerId', 'name employeeCode')
+      .lean();
+    const employeeIds = assignedAnnuals
+      .filter((assignment: any) => String(assignment.assignedManagerId?._id || assignment.assignedManagerId) === managerObjectId.toString())
+      .map((assignment) => assignment.employeeId);
+    const directEligibleEmployees = await User.find({
+      managerId: managerObjectId,
+      active: true,
+      isIntern: { $ne: true },
+    }).select('_id').lean();
+    const directEligibleIds = new Set(directEligibleEmployees.map((employee) => employee._id.toString()));
+    const directAssignedIds = new Set(
+      employeeIds
+        .map((employee: any) => String(employee?._id || employee))
+        .filter((employeeId) => directEligibleIds.has(employeeId)),
+    );
     const annualAssignmentIds = assignedAnnuals.map((a) => a._id);
     const managerTermAssignmentQuery = {
       assignedManagerId: managerObjectId,
@@ -276,8 +312,10 @@ export class PmsDashboardService extends BaseService {
     };
 
     const managerTermAssignments = await TermAssignment.find(managerTermAssignmentQuery)
-      .select('_id annualAssignmentId employeeId assignedManagerId cycleId assessmentTermCode assessmentTermType termCode termLabel termState updatedAt')
+      .select('_id annualAssignmentId employeeId assignedManagerId cycleId cycleTermId assessmentTermCode assessmentTermType termCode termLabel termState lastTransitionAt updatedAt')
       .populate('employeeId', 'name email employeeCode')
+      .populate('cycleId', 'name code status startDate endDate')
+      .populate('cycleTermId', 'assessmentTermCode termLabel startDate endDate objectiveSettingWindow objectiveApprovalWindow achievementSubmissionWindow managerReviewWindow termFinalizationWindow')
       .sort({ updatedAt: -1, assessmentTermCode: 1 })
       .lean();
     const managerTermAssignmentIds = managerTermAssignments.map((item) => item._id);
@@ -439,11 +477,17 @@ export class PmsDashboardService extends BaseService {
       };
     });
 
-    const traineeReviews = await this.getTraineeReviewSummary(managerObjectId);
+    const pendingWorkflow = this.buildPendingWorkflowRows(
+      assignedAnnuals,
+      managerTermAssignments,
+      managerObjectId.toString(),
+    );
 
     return {
       teamStats: {
-        totalDirectReports: employeeIds.length,
+        totalDirectReports: directEligibleEmployees.length,
+        assignedEmployeesCount: directAssignedIds.size,
+        notAssignedEmployeesCount: Math.max(0, directEligibleEmployees.length - directAssignedIds.size),
         totalTermAssignmentsCount,
         finalizedQuartersCount,
         pendingApprovalsCount: pendingObjectives.length,
@@ -459,7 +503,8 @@ export class PmsDashboardService extends BaseService {
         recentReassignments,
       },
       releasedOutcomes,
-      traineeReviews,
+      pendingWorkflow,
+      myWorkflowActions: pendingWorkflow.rows.filter((row: any) => row.isActorResponsible),
     };
   }
 
@@ -475,8 +520,58 @@ export class PmsDashboardService extends BaseService {
       qaQuery.cycleId = cycleObjectId;
     }
 
-    const annualAssignments = await AnnualAssignment.find(query).select('_id').lean();
+    const [selectedCycle, annualAssignments] = await Promise.all([
+      cycleObjectId
+        ? AnnualCycle.findOne({ _id: cycleObjectId, isDeleted: false })
+            .select('_id name code status startDate endDate appraisalWindowConfig')
+            .lean()
+        : Promise.resolve(null),
+      AnnualAssignment.find(query)
+      .select('_id employeeId cycleId assignedManagerId finalReviewerId directorReviewerId finalReviewStatus directorReviewStatus annualState finalDecisionStatus updatedAt')
+      .populate('employeeId', 'name email employeeCode')
+      .populate('cycleId', 'name code status startDate endDate appraisalWindowConfig')
+      .populate('assignedManagerId', 'name employeeCode')
+      .populate('finalReviewerId', 'name employeeCode')
+      .populate('directorReviewerId', 'name employeeCode')
+      .lean(),
+    ]);
     const annualAssignmentIds = annualAssignments.map((item) => item._id);
+
+    const eligibilityFilter: Record<string, any> = {
+      active: true,
+      isIntern: { $ne: true },
+      role: { $not: /^(admin|hr|hr_admin|hradmin|director|management|external)$/i },
+    };
+    const eligibleEmployees = await User.find(eligibilityFilter)
+      .select('_id name employeeCode managerId managerName departmentId role specificRole')
+      .lean();
+    const eligibleEmployeeIds = new Set(eligibleEmployees.map((employee) => employee._id.toString()));
+    const assignedEmployeeIds = new Set(
+      annualAssignments
+        .map((assignment: any) => String(assignment.employeeId?._id || assignment.employeeId))
+        .filter((employeeId) => eligibleEmployeeIds.has(employeeId)),
+    );
+    const unassignedEmployees = eligibleEmployees
+      .filter((employee) => !assignedEmployeeIds.has(employee._id.toString()))
+      .map((employee) => ({
+        _id: employee._id,
+        name: employee.name,
+        employeeCode: employee.employeeCode,
+        managerId: employee.managerId,
+        managerName: employee.managerName,
+        departmentId: employee.departmentId,
+        role: employee.role,
+        specificRole: employee.specificRole,
+      }));
+    const completedAnnualStates = new Set([
+      'ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'COMMUNICATION_READY',
+      'COMMUNICATION_SENT', 'CLOSED', 'ARCHIVED',
+    ]);
+    const completedDecisionStates = new Set(['FROZEN', 'VISIBILITY_ENABLED', 'CLOSED']);
+    const completedAssignments = annualAssignments.filter((assignment: any) =>
+      completedAnnualStates.has(String(assignment.annualState)) ||
+      completedDecisionStates.has(String(assignment.finalDecisionStatus)),
+    ).length;
 
     // 1. Cycle Progress (Counts by annual assignment states)
     const annualProgress = await AnnualAssignment.aggregate([
@@ -635,7 +730,111 @@ export class PmsDashboardService extends BaseService {
         .lean(),
     ]);
 
-    const traineeReviews = await this.getTraineeReviewSummary();
+    const pendingTerms = await TermAssignment.find({
+      ...qaQuery,
+      termState: { $ne: 'TERM_FINALIZED' },
+    })
+      .select('_id annualAssignmentId employeeId assignedManagerId cycleId cycleTermId assessmentTermCode termLabel termState lastTransitionAt updatedAt')
+      .populate('employeeId', 'name email employeeCode')
+      .populate('assignedManagerId', 'name employeeCode')
+      .populate('cycleId', 'name code status startDate endDate')
+      .populate('cycleTermId', 'assessmentTermCode termLabel startDate endDate objectiveSettingWindow objectiveApprovalWindow achievementSubmissionWindow managerReviewWindow termFinalizationWindow')
+      .sort({ updatedAt: -1 })
+      .lean();
+    const pendingWorkflow = this.buildPendingWorkflowRows(annualAssignments, pendingTerms);
+    const termSummaryMap = new Map<string, { term: string; assigned: number; completed: number; pending: number }>();
+    const allTerms = await TermAssignment.find(qaQuery)
+      .select('annualAssignmentId assessmentTermCode termLabel termState updatedAt')
+      .lean();
+    for (const term of allTerms) {
+      const label = String(term.termLabel || term.assessmentTermCode || 'Term');
+      const summary = termSummaryMap.get(label) || { term: label, assigned: 0, completed: 0, pending: 0 };
+      summary.assigned += 1;
+      if (['TERM_FINALIZED', 'CLOSED_BY_ADMIN'].includes(String(term.termState))) summary.completed += 1;
+      else summary.pending += 1;
+      termSummaryMap.set(label, summary);
+    }
+
+    const departmentEmployees = new Map<string, any[]>();
+    for (const employee of eligibleEmployees as any[]) {
+      const department = String(employee.departmentId || 'Unassigned department');
+      const list = departmentEmployees.get(department) || [];
+      list.push({
+        _id: employee._id,
+        name: employee.name,
+        employeeCode: employee.employeeCode,
+        managerName: employee.managerName,
+        assigned: assignedEmployeeIds.has(employee._id.toString()),
+      });
+      departmentEmployees.set(department, list);
+    }
+
+    const termsByAssignment = new Map<string, any[]>();
+    for (const term of allTerms) {
+      const assignmentId = String(term.annualAssignmentId);
+      const terms = termsByAssignment.get(assignmentId) || [];
+      terms.push(term);
+      termsByAssignment.set(assignmentId, terms);
+    }
+    const assignedEmployees = annualAssignments.map((assignment: any) => {
+      const terms = termsByAssignment.get(String(assignment._id)) || [];
+      const currentTerm = terms.find((term) => !['TERM_FINALIZED', 'CLOSED_BY_ADMIN'].includes(String(term.termState))) || terms.at(-1);
+      let currentStage = String(currentTerm?.termState || assignment.annualState || 'NOT_STARTED');
+      if (terms.length > 0 && terms.every((term) => ['TERM_FINALIZED', 'CLOSED_BY_ADMIN'].includes(String(term.termState)))) {
+        if (assignment.finalReviewerId && assignment.finalReviewStatus !== 'COMPLETED') currentStage = 'L2_REVIEW_PENDING';
+        else if (assignment.directorReviewerId && assignment.directorReviewStatus !== 'COMPLETED') currentStage = 'L3_REVIEW_PENDING';
+        else if (!['FROZEN', 'VISIBILITY_ENABLED', 'CLOSED'].includes(String(assignment.finalDecisionStatus))) currentStage = 'ANNUAL_DECISION_PENDING';
+      }
+      const completed = completedAnnualStates.has(String(assignment.annualState)) || completedDecisionStates.has(String(assignment.finalDecisionStatus));
+      return {
+        assignmentId: assignment._id,
+        employee: assignment.employeeId,
+        manager: assignment.assignedManagerId,
+        l2Reviewer: assignment.finalReviewerId,
+        l3Reviewer: assignment.directorReviewerId,
+        cycle: assignment.cycleId,
+        term: currentTerm?.termLabel || currentTerm?.assessmentTermCode || 'Annual',
+        currentStage,
+        annualState: assignment.annualState,
+        finalReviewStatus: assignment.finalReviewStatus,
+        directorReviewStatus: assignment.directorReviewStatus,
+        finalDecisionStatus: assignment.finalDecisionStatus || 'DRAFT',
+        completed,
+        updatedAt: currentTerm?.updatedAt || assignment.updatedAt,
+      };
+    });
+
+    const employeeSummary = {
+      cycle: selectedCycle,
+      totalEmployees: eligibleEmployees.length,
+      totalEligible: eligibleEmployees.length,
+      assigned: assignedEmployeeIds.size,
+      notAssigned: Math.max(0, eligibleEmployees.length - assignedEmployeeIds.size),
+      completed: completedAssignments,
+      pending: pendingWorkflow.total,
+      overdue: pendingWorkflow.rows.filter((row: any) => row.overdue).length,
+      termSummaries: [...termSummaryMap.values()],
+      assignedEmployees,
+      unassignedEmployees,
+      departmentSummaries: [...eligibleEmployees.reduce((departments, employee: any) => {
+        const department = String(employee.departmentId || 'Unassigned department');
+        const existing = departments.get(department) || { department, eligible: 0, assigned: 0, notAssigned: 0, pending: 0, completed: 0 };
+        const employeeId = employee._id.toString();
+        existing.eligible += 1;
+        if (assignedEmployeeIds.has(employeeId)) existing.assigned += 1;
+        else existing.notAssigned += 1;
+        const assignment = annualAssignments.find((item: any) => String(item.employeeId?._id || item.employeeId) === employeeId);
+        if (assignment) {
+          const isComplete = completedAnnualStates.has(String(assignment.annualState)) || completedDecisionStates.has(String(assignment.finalDecisionStatus));
+          if (isComplete) existing.completed += 1;
+          else existing.pending += 1;
+        }
+        departments.set(department, existing);
+        return departments;
+      }, new Map<string, any>()).values()]
+        .map((summary) => ({ ...summary, employees: departmentEmployees.get(summary.department) || [] }))
+        .sort((left, right) => right.eligible - left.eligible),
+    };
 
     return {
       annualProgress,
@@ -652,7 +851,8 @@ export class PmsDashboardService extends BaseService {
       reassignmentMetrics: {
         recent: recentReassignments,
       },
-      traineeReviews,
+      employeeSummary,
+      pendingWorkflow,
     };
   }
 
@@ -827,8 +1027,6 @@ export class PmsDashboardService extends BaseService {
       ? Math.round((finalizedOrVisibleCount / totalAssignments) * 100) 
       : 0;
 
-    const traineeReviews = await this.getTraineeReviewSummary();
-
     return {
       appraisalStates,
       gradeDistribution,
@@ -850,7 +1048,117 @@ export class PmsDashboardService extends BaseService {
       reassignmentMetrics: {
         reopens: reopenCount,
       },
-      traineeReviews,
+    };
+  }
+
+  private buildPendingWorkflowRows(
+    annualAssignments: any[],
+    termAssignments: any[],
+    actorId?: string,
+  ) {
+    const rows: any[] = [];
+    const incompleteTerms = new Set<string>();
+    const now = new Date();
+    const validDate = (value: unknown): Date | undefined => {
+      if (!value) return undefined;
+      const date = new Date(value as string | Date);
+      return Number.isNaN(date.getTime()) ? undefined : date;
+    };
+    for (const term of termAssignments) {
+      if (['TERM_FINALIZED', 'CLOSED_BY_ADMIN'].includes(String(term.termState))) continue;
+      incompleteTerms.add(String(term.annualAssignmentId));
+      const state = String(term.termState || 'NOT_STARTED');
+      const termCycle = term.cycleTermId as Record<string, any> | undefined;
+      const deadline = validDate(
+        state === 'MANAGER_REVIEW_OPEN'
+          ? termCycle?.managerReviewWindow?.endDate
+          : state === 'EMPLOYEE_ACHIEVEMENT_OPEN'
+            ? termCycle?.achievementSubmissionWindow?.dueDate || termCycle?.achievementSubmissionWindow?.endDate
+            : ['OBJECTIVE_SUBMITTED', 'OBJECTIVE_REVISION_REQUIRED'].includes(state)
+              ? termCycle?.objectiveApprovalWindow?.endDate
+              : ['OBJECTIVE_SETTING_OPEN', 'OBJECTIVE_DRAFT', 'NOT_STARTED'].includes(state)
+                ? termCycle?.objectiveSettingWindow?.endDate || termCycle?.endDate
+                : termCycle?.termFinalizationWindow?.endDate || termCycle?.endDate,
+      );
+      rows.push({
+        assignmentId: String(term.annualAssignmentId),
+        employee: term.employeeId,
+        responsiblePerson: term.assignedManagerId,
+        manager: term.assignedManagerId,
+        cycle: term.cycleId,
+        stage: state,
+        term: term.termLabel || term.assessmentTermCode,
+        pendingActivity: state === 'MANAGER_REVIEW_OPEN' ? 'Manager review' : 'Employee activity',
+        pendingSince: term.lastTransitionAt || term.updatedAt,
+        deadline,
+        overdue: Boolean(deadline && deadline < now),
+        category: state === 'MANAGER_REVIEW_OPEN' ? 'MANAGER' : 'EMPLOYEE',
+        isActorResponsible: !actorId || String(term.assignedManagerId?._id || term.assignedManagerId || '') === actorId,
+      });
+    }
+    for (const assignment of annualAssignments) {
+      const assignmentId = String(assignment._id);
+      if (incompleteTerms.has(assignmentId)) continue;
+      const cycle = assignment.cycleId as Record<string, any> | undefined;
+      const annualDeadline = validDate(
+        cycle?.appraisalWindowConfig?.endDate || cycle?.endDate,
+      );
+      const base = {
+        assignmentId,
+        employee: assignment.employeeId,
+        manager: assignment.assignedManagerId,
+        cycle: assignment.cycleId,
+        pendingSince: assignment.updatedAt,
+        deadline: annualDeadline,
+        overdue: Boolean(annualDeadline && annualDeadline < now),
+      };
+      const l2Pending = assignment.finalReviewerId && assignment.finalReviewStatus !== 'COMPLETED';
+      const l3Pending = assignment.directorReviewerId && assignment.directorReviewStatus !== 'COMPLETED';
+      const decisionPending = assignment.directorReviewStatus === 'COMPLETED' &&
+        !['FROZEN', 'VISIBILITY_ENABLED', 'CLOSED'].includes(String(assignment.finalDecisionStatus));
+      if (l2Pending) {
+        const responsibleId = String(assignment.finalReviewerId?._id || assignment.finalReviewerId || '');
+        rows.push({ ...base, responsiblePerson: assignment.finalReviewerId, stage: 'L2_REVIEW_PENDING', pendingActivity: 'L2 review', category: 'L2', isActorResponsible: !actorId || responsibleId === actorId });
+      } else if (l3Pending && assignment.finalReviewStatus === 'COMPLETED') {
+        const responsibleId = String(assignment.directorReviewerId?._id || assignment.directorReviewerId || '');
+        rows.push({ ...base, responsiblePerson: assignment.directorReviewerId, stage: 'L3_REVIEW_PENDING', pendingActivity: 'L3 review', category: 'L3', isActorResponsible: !actorId || responsibleId === actorId });
+      } else if (decisionPending) {
+        const responsibleId = String(assignment.directorReviewerId?._id || assignment.directorReviewerId || '');
+        rows.push({ ...base, responsiblePerson: assignment.directorReviewerId, stage: 'ANNUAL_DECISION_PENDING', pendingActivity: 'Annual decision', category: 'ANNUAL_DECISION', isActorResponsible: !actorId || responsibleId === actorId });
+      } else {
+        const assignmentComplete = [
+          'ANNUAL_FINALIZED', 'VISIBILITY_ENABLED', 'COMMUNICATION_READY',
+          'COMMUNICATION_SENT', 'CLOSED', 'ARCHIVED',
+        ].includes(String(assignment.annualState)) ||
+          ['FROZEN', 'VISIBILITY_ENABLED', 'CLOSED'].includes(String(assignment.finalDecisionStatus));
+        const actorOwnsAssignment = !actorId || [
+          assignment.assignedManagerId,
+          assignment.finalReviewerId,
+          assignment.directorReviewerId,
+        ].some((owner) => String(owner?._id || owner || '') === actorId);
+        if (!assignmentComplete && actorOwnsAssignment) {
+          rows.push({
+            ...base,
+            responsiblePerson: assignment.directorReviewerId || assignment.finalReviewerId || assignment.assignedManagerId,
+            stage: String(assignment.annualState || assignment.finalDecisionStatus || 'WORKFLOW_PENDING'),
+            pendingActivity: 'Workflow action/configuration required',
+            category: 'BLOCKED',
+            isActorResponsible: actorOwnsAssignment,
+          });
+        }
+      }
+    }
+    rows.sort((left, right) => {
+      if (left.overdue !== right.overdue) return left.overdue ? -1 : 1;
+      return new Date(left.deadline || left.pendingSince || 0).getTime() - new Date(right.deadline || right.pendingSince || 0).getTime();
+    });
+    return {
+      total: rows.length,
+      rows: rows.slice(0, 100),
+      counts: rows.reduce((counts, row) => {
+        counts[row.category] = (counts[row.category] || 0) + 1;
+        return counts;
+      }, {} as Record<string, number>),
     };
   }
 
@@ -916,7 +1224,7 @@ export class PmsDashboardService extends BaseService {
         }
       : { status: { $in: activeStatuses } };
 
-    const [statusRows, actionRequired, overdue, dueSoon, recent] = await Promise.all([
+    const [statusRows, actionRequired, overdue, dueSoon, pendingReviews, recent] = await Promise.all([
       PmsProbationReviewAssignment.aggregate([
         { $match: scopeFilter },
         { $group: { _id: '$status', count: { $sum: 1 } } },
@@ -938,6 +1246,15 @@ export class PmsDashboardService extends BaseService {
           { probationEndDate: { $gte: now, $lte: dueSoonAt } },
         ],
       }),
+      PmsProbationReviewAssignment.find({ $and: [scopeFilter, managerActionFilter] })
+        .select('_id employeeId manager1Id manager2Id status reviewOpenDate probationEndDate delegatedAt delegatedBy updatedAt reviewerConfiguration approvalOwnerRoleOverride')
+        .populate('employeeId', 'name employeeCode departmentId')
+        .populate('manager1Id', 'name employeeCode')
+        .populate('manager2Id', 'name employeeCode')
+        .populate('delegatedBy', 'name employeeCode')
+        .sort({ probationEndDate: 1, updatedAt: -1 })
+        .limit(100)
+        .lean(),
       PmsProbationReviewAssignment.find(scopeFilter)
         .select(
           '_id employeeId manager1Id manager2Id status reviewOpenDate probationEndDate delegatedAt delegatedBy updatedAt',
@@ -996,7 +1313,8 @@ export class PmsDashboardService extends BaseService {
       asOf: now,
       dueSoonDays: 7,
       total,
-      active: Math.max(0, total - finalized - cancelled),
+      active: statusCount(...activeStatuses),
+      pending: Math.max(0, total - finalized - cancelled),
       actionRequired,
       overdue,
       dueSoon,
@@ -1017,6 +1335,7 @@ export class PmsDashboardService extends BaseService {
           ? Math.round((finalized / eligibleForCompletion) * 100)
           : 0,
       byStatus,
+      pendingReviews,
       recent,
     };
   }

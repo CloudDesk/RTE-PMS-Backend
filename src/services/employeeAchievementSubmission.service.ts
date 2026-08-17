@@ -111,6 +111,7 @@ export interface SaveAchievementDraftInput {
 
 export interface SaveAssignedFormValuesInput {
   values?: AchievementValueInput[];
+  performanceFilling?: boolean;
 }
 
 export interface SavedAssignedFormValues {
@@ -358,15 +359,24 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   private static readonly FIELD_KEY = 'achievement_items';
   private static readonly ASSIGNED_FORM_ACHIEVEMENT_FIELDS = new Set([
     'personal_development_2_employee_term_inputs::special_achievements_and_improvements',
+    'personal_development_2_appraisee_response::appraisee_response',
+    // Retain compatibility with assignments created before Appraisee Response
+    // was moved into its own template section.
     'personal_development_2_employee_term_inputs::appraisee_response',
     'personal_development_2_employee_term_inputs::contribution_to_cfts',
+  ]);
+  private static readonly PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS = new Set([
+    'personal_development_2_objectives::performance_analysis',
   ]);
 
   constructor(context: RequestContext) {
     super(context);
   }
 
-  async getSubmission(termAssignmentId: string): Promise<AchievementSubmissionDetail> {
+  async getSubmission(
+    termAssignmentId: string,
+    performanceFilling = false,
+  ): Promise<AchievementSubmissionDetail> {
     let termAssignment = await this.getTermAssignment(termAssignmentId);
     await this.assertViewAccess(termAssignment);
 
@@ -381,26 +391,44 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       [],
     );
 
-    if (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER') {
+    if (
+      !performanceFilling &&
+      (!config.employeeAchievementEnabled || config.reviewFlowMode !== 'ACHIEVEMENT_THEN_MANAGER')
+    ) {
       throw new Error('Employee Achievement Submission is not enabled for this template');
     }
 
-    termAssignment = await this.ensureAchievementStageOpen(termAssignment, config);
+    termAssignment = performanceFilling
+      ? termAssignment
+      : await this.ensureAchievementStageOpen(termAssignment, config);
 
     const submission = await EmployeeAchievementSubmission.findOne({
       annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     }).lean();
+    const legacyPerformanceFillingValues = performanceFilling
+      ? await this.findLegacyPerformanceFillingValues(termAssignment.annualAssignmentId)
+      : [];
     const actor = this.requireActor();
     const [objectives, objectiveSettingStarted, editPolicy] = await Promise.all([
       this.getEligibleObjectives(termAssignment.annualAssignmentId),
-      this.hasAnnualObjectiveSettingStarted(termAssignment, annualAssignment),
-      this.resolveCommonAchievementEditPolicy(termAssignment, annualAssignment),
+      performanceFilling
+        ? Promise.resolve(true)
+        : this.hasAnnualObjectiveSettingStarted(termAssignment, annualAssignment),
+      performanceFilling
+        ? this.resolvePerformanceFillingAssignedFormEditPolicy(termAssignment, annualAssignment)
+        : this.resolveCommonAchievementEditPolicy(termAssignment, annualAssignment),
     ]);
     const actualColumnMetadata = await this.resolveActualColumnMetadata(
       termAssignment,
       section,
       field,
+    );
+    const submissionForResponse = this.mergeLegacyPerformanceFillingValues(
+      submission,
+      legacyPerformanceFillingValues,
+      termAssignment,
+      annualAssignment,
     );
 
     return {
@@ -429,14 +457,18 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         ),
       },
       objectives,
-      submission: submission ? this.mapSubmissionRecord(submission) : null,
+      submission: submissionForResponse
+        ? this.mapSubmissionRecord(submissionForResponse)
+        : null,
       canEdit:
         actor.actorId === termAssignment.employeeId.toString() &&
         objectiveSettingStarted &&
         editPolicy.canEdit &&
-        (!submission || submission.status !== EmployeeAchievementSubmissionStatus.LOCKED),
+        (performanceFilling ||
+          !submission ||
+          submission.status !== EmployeeAchievementSubmissionStatus.LOCKED),
       editDeadline: editPolicy.deadline?.toISOString(),
-      readOnlyReason: !objectiveSettingStarted
+      readOnlyReason: !performanceFilling && !objectiveSettingStarted
         ? 'Employee Achievement opens when Objective Setting starts for the first assessment term.'
         : editPolicy.reason,
     };
@@ -617,16 +649,12 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         valueStatus: value.valueStatus?.trim() || 'ACTIVE',
       }));
 
-    const achievementValues = normalizedInput.filter((value) =>
-      EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS.has(
-        `${value.sectionKey}::${value.fieldKey}`,
-      ),
-    );
-    if (achievementValues.length !== normalizedInput.length) {
-      throw new Error('Assigned form contains an unsupported field');
+    const isPerformanceFilling = input.performanceFilling === true;
+    if (isPerformanceFilling) {
+      await this.assertPerformanceFillingAssignedFormAccess(termAssignment);
+    } else {
+      await this.assertEmployeeEditAccess(termAssignment);
     }
-
-    await this.assertEmployeeEditAccess(termAssignment);
     const annualAssignment = await this.getAnnualAssignment(
       termAssignment.annualAssignmentId.toString(),
     );
@@ -634,20 +662,41 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       annualAssignmentId: termAssignment.annualAssignmentId,
       isDeleted: false,
     });
-    if (existingSubmission?.status === EmployeeAchievementSubmissionStatus.LOCKED) {
+    const existingAchievementValues = (existingSubmission?.achievementValues ?? [])
+      .map((value: any) => value.toObject ? value.toObject() : { ...value });
+    const allowedFields = isPerformanceFilling
+      ? new Set([
+        ...EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS,
+        ...EmployeeAchievementSubmissionService.PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS,
+        ...await this.resolvePerformanceFillingEditableFieldKeys(
+          annualAssignment,
+          termAssignment,
+          existingAchievementValues,
+        ),
+      ])
+      : EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS;
+    const assignedFormValues = normalizedInput.filter((value) =>
+      allowedFields.has(`${value.sectionKey}::${value.fieldKey}`),
+    );
+    if (assignedFormValues.length !== normalizedInput.length) {
+      throw new Error('Assigned form contains an unsupported field');
+    }
+
+    if (
+      !isPerformanceFilling &&
+      existingSubmission?.status === EmployeeAchievementSubmissionStatus.LOCKED
+    ) {
       throw new Error('Submitted employee achievement is locked and cannot be edited');
     }
 
-    const existingAchievementValues = (existingSubmission?.achievementValues ?? [])
-      .map((value: any) => value.toObject ? value.toObject() : { ...value });
     const updatedKeys = new Set(
-      achievementValues.map((value) => `${value.sectionKey}::${value.fieldKey}`),
+      assignedFormValues.map((value) => `${value.sectionKey}::${value.fieldKey}`),
     );
     const nextAchievementValues = [
       ...existingAchievementValues.filter(
         (value: any) => !updatedKeys.has(`${value.sectionKey}::${value.fieldKey}`),
       ),
-      ...achievementValues,
+      ...assignedFormValues,
     ];
     const actorObjectId = this.actorIdObject();
     const now = new Date();
@@ -693,10 +742,24 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       submission.toObject(),
     );
 
+    const savedValues = (submission.achievementValues ?? []).map((value: any) =>
+      value.toObject ? value.toObject() : { ...value },
+    );
+
     return {
-      objectiveValues: [],
-      achievementValues: (submission.achievementValues ?? []).map((value: any) =>
-        value.toObject ? value.toObject() : { ...value },
+      objectiveValues: savedValues.filter((value: any) =>
+        EmployeeAchievementSubmissionService.PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS.has(
+          `${value.sectionKey}::${value.fieldKey}`,
+        ),
+      ),
+      achievementValues: savedValues.filter((value: any) =>
+        isPerformanceFilling
+          ? !EmployeeAchievementSubmissionService.PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS.has(
+            `${value.sectionKey}::${value.fieldKey}`,
+          )
+          : EmployeeAchievementSubmissionService.ASSIGNED_FORM_ACHIEVEMENT_FIELDS.has(
+            `${value.sectionKey}::${value.fieldKey}`,
+          ),
       ),
     };
   }
@@ -2834,17 +2897,18 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('This field attachment is read-only');
     }
 
-    if (configured.config.entryStage === 'OBJECTIVE_SETTING') {
-      if (termAssignment.termState !== TermWorkflowState.OBJECTIVE_SETTING_OPEN) {
-        throw new Error(
-          'This field attachment is read-only because Objective Setting is closed.',
-        );
-      }
+    if (
+      configured.config.entryStage === 'OBJECTIVE_SETTING' &&
+      termAssignment.termState === TermWorkflowState.OBJECTIVE_SETTING_OPEN
+    ) {
       await this.assertObjectiveSettingAttachmentWindow(termAssignment);
       return;
     }
 
-    await this.assertEmployeeEditAccess(termAssignment);
+    // After Objective Setting, this evidence control belongs to Performance
+    // Filling. Its annual policy enforces employee ownership, configured dates,
+    // and the final-term/annual-finalization locks.
+    await this.assertPerformanceFillingAssignedFormAccess(termAssignment);
   }
 
   private async assertObjectiveSettingAttachmentWindow(
@@ -3055,6 +3119,38 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     return resolved.sections.flatMap((section) => section.fields);
   }
 
+  private async resolvePerformanceFillingEditableFieldKeys(
+    annualAssignment: any,
+    termAssignment: any,
+    existingValues: Array<Record<string, any>>,
+  ): Promise<Set<string>> {
+    if (!annualAssignment.templateVersionId) return new Set();
+
+    const templateService = new PmsTemplateService(this.context);
+    const resolved = await templateService.resolveTemplateVersion(
+      annualAssignment.templateVersionId.toString(),
+      {
+        role: PmsRole.EMPLOYEE,
+        workflowState: TermWorkflowState.EMPLOYEE_ACHIEVEMENT_OPEN,
+        hierarchyScope: 'self',
+        quarter: termAssignment.assessmentTermCode,
+        annualAssignmentId: termAssignment.annualAssignmentId.toString(),
+        termAssignmentId: termAssignment._id.toString(),
+        values: this.buildAchievementResolveValues(existingValues),
+      },
+    );
+
+    const keys = new Set<string>();
+    for (const section of resolved.sections) {
+      for (const field of section.fields) {
+        if (field.visible === false || field.editable !== true) continue;
+        keys.add(`${section.key}::${field.key}`);
+        if (field.id) keys.add(`${section.key}::${field.id}`);
+      }
+    }
+    return keys;
+  }
+
   private buildAchievementResolveValues(
     achievementValues: Array<Record<string, any>>,
   ): Record<string, unknown> {
@@ -3121,6 +3217,21 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       return;
     }
 
+    // Final-review workspaces use the employee achievement submission as
+    // read-only decision context. Permit only the reviewers explicitly
+    // assigned on this annual appraisal; unrelated managers remain blocked.
+    const annualAssignment = await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const finalReviewerId = annualAssignment.finalReviewerId?.toString?.() ?? '';
+    const directorReviewerId = annualAssignment.directorReviewerId?.toString?.() ?? '';
+    if (
+      actor.actorId === finalReviewerId ||
+      actor.actorId === directorReviewerId
+    ) {
+      return;
+    }
+
     const delegation = await this.getReviewDelegation(
       actor.actorId,
       termAssignment.assignedManagerId.toString(),
@@ -3169,6 +3280,220 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!editPolicy.canEdit) {
       throw new Error(editPolicy.reason || 'Employee Achievement is read-only.');
     }
+  }
+
+  private async findLegacyPerformanceFillingValues(
+    annualAssignmentId: Types.ObjectId,
+  ): Promise<Array<Record<string, any>>> {
+    const termAssignments = await TermAssignment.find({
+      annualAssignmentId,
+      isDeleted: false,
+    })
+      .select('termSummary updatedAt')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    for (const assignment of termAssignments) {
+      const summary = (assignment.termSummary as Record<string, unknown> | undefined) ?? {};
+      const values = Array.isArray(summary.objectiveTemplateValues)
+        ? (summary.objectiveTemplateValues as Array<Record<string, any>>)
+        : [];
+      const performanceValues = values.filter((value) =>
+        EmployeeAchievementSubmissionService.PERFORMANCE_FILLING_ASSIGNED_FORM_FIELDS.has(
+          `${value.sectionKey}::${value.fieldKey || value.templateFieldId}`,
+        ) && this.hasAssignedFormValue(value),
+      );
+      if (performanceValues.length > 0) return performanceValues;
+    }
+
+    return [];
+  }
+
+  private mergeLegacyPerformanceFillingValues(
+    submission: Record<string, any> | null,
+    legacyValues: Array<Record<string, any>>,
+    termAssignment: any,
+    annualAssignment: any,
+  ): Record<string, any> | null {
+    if (legacyValues.length === 0) return submission;
+
+    const storedValues = submission?.achievementValues ?? [];
+    const storedKeys = new Set(
+      storedValues.map((value: Record<string, any>) =>
+        `${value.sectionKey}::${value.fieldKey || value.templateFieldId}`,
+      ),
+    );
+    const fallbackValues = legacyValues.filter((value) =>
+      !storedKeys.has(`${value.sectionKey}::${value.fieldKey || value.templateFieldId}`),
+    );
+    if (fallbackValues.length === 0) return submission;
+
+    const now = termAssignment.updatedAt ?? termAssignment.createdAt ?? new Date();
+    return {
+      ...(submission ?? {
+        _id: termAssignment._id,
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        termAssignmentId: termAssignment._id,
+        cycleId: termAssignment.cycleId,
+        employeeId: termAssignment.employeeId,
+        managerId: termAssignment.assignedManagerId,
+        templateVersionId: annualAssignment.templateVersionId,
+        assessmentTermCode: termAssignment.assessmentTermCode,
+        status: EmployeeAchievementSubmissionStatus.DRAFT,
+        achievementItems: [],
+        createdAt: now,
+        updatedAt: now,
+      }),
+      achievementValues: [...storedValues, ...fallbackValues],
+    };
+  }
+
+  private hasAssignedFormValue(value: Record<string, any>): boolean {
+    if (value.valueJson !== undefined && value.valueJson !== null) {
+      if (typeof value.valueJson !== 'string' || value.valueJson.trim() !== '') return true;
+    }
+    if (typeof value.valueText === 'string' && value.valueText.trim() !== '') return true;
+    if (value.valueNumber !== undefined && value.valueNumber !== null) return true;
+    if (value.valueDate) return true;
+    return false;
+  }
+
+  private async assertPerformanceFillingAssignedFormAccess(termAssignment: any): Promise<void> {
+    const policy = await this.resolvePerformanceFillingAssignedFormEditPolicy(termAssignment);
+    if (!policy.canEdit) {
+      throw new Error(policy.reason || 'Performance Filling is read-only.');
+    }
+  }
+
+  private async resolvePerformanceFillingAssignedFormEditPolicy(
+    termAssignment: any,
+    providedAnnualAssignment?: any,
+  ): Promise<CommonAchievementEditPolicy> {
+    await this.assertAchievementWorkflowAllowed(termAssignment);
+
+    const actor = this.requireActor();
+    if (actor.actorId !== termAssignment.employeeId.toString()) {
+      return {
+        canEdit: false,
+        reason: 'Employee can edit only own assigned form',
+      };
+    }
+
+    const annualAssignment = providedAnnualAssignment ?? await this.getAnnualAssignment(
+      termAssignment.annualAssignmentId.toString(),
+    );
+    const closedAnnualStates = new Set<string>([
+      AnnualWorkflowState.ALL_TERMS_FINALIZED,
+      AnnualWorkflowState.APPRAISAL_WINDOW_OPEN,
+      AnnualWorkflowState.MANAGEMENT_DECISION_DRAFT,
+      AnnualWorkflowState.MANAGEMENT_DECISION_SUBMITTED,
+      AnnualWorkflowState.ANNUAL_FINALIZED,
+      AnnualWorkflowState.VISIBILITY_ENABLED,
+      AnnualWorkflowState.COMMUNICATION_READY,
+      AnnualWorkflowState.COMMUNICATION_SENT,
+      AnnualWorkflowState.CLOSED,
+      AnnualWorkflowState.ARCHIVED,
+      AnnualWorkflowState.CANCELLED,
+    ]);
+    if (closedAnnualStates.has(String(annualAssignment.annualState))) {
+      return {
+        canEdit: false,
+        reason: 'Performance Filling is read-only because the annual cycle is finalized.',
+      };
+    }
+
+    const assessmentTermType = await this.resolveAssessmentTermType(termAssignment);
+    const assessmentTerms = getAssessmentTerms(assessmentTermType) as AssessmentTermCodeType[];
+    const configuredTerms = new Set<AssessmentTermCodeType>(
+      (annualAssignment.applicableTerms ?? []) as AssessmentTermCodeType[],
+    );
+    const includedTerms = assessmentTerms.filter(
+      (term) => configuredTerms.size === 0 || configuredTerms.has(term),
+    );
+    const firstTermCode = includedTerms[0] ?? assessmentTerms[0];
+    const finalTermCode = includedTerms[includedTerms.length - 1] ?? assessmentTerms[assessmentTerms.length - 1];
+
+    const [firstTermAssignment, finalTermAssignment] = await Promise.all([
+      TermAssignment.findOne({
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        assessmentTermCode: firstTermCode,
+        isDeleted: false,
+      }).lean(),
+      TermAssignment.findOne({
+        annualAssignmentId: termAssignment.annualAssignmentId,
+        assessmentTermCode: finalTermCode,
+        isDeleted: false,
+      }).lean(),
+    ]);
+
+    const finalTerm = finalTermAssignment ?? termAssignment;
+    if (
+      finalTerm.termState === TermWorkflowState.TERM_FINALIZED ||
+      finalTerm.termState === TermWorkflowState.CLOSED_BY_ADMIN
+    ) {
+      return {
+        canEdit: false,
+        reason: 'Performance Filling is read-only because the final assessment term is finalized.',
+      };
+    }
+
+    const [firstTermCycle, finalTermCycle] = await Promise.all([
+      firstTermAssignment?.cycleTermId
+        ? TermCycle.findById(firstTermAssignment.cycleTermId).lean()
+        : TermCycle.findOne({
+            cycleId: termAssignment.cycleId,
+            assessmentTermCode: firstTermCode,
+            isDeleted: false,
+          }).lean(),
+      finalTerm.cycleTermId
+        ? TermCycle.findById(finalTerm.cycleTermId).lean()
+        : TermCycle.findOne({
+            cycleId: termAssignment.cycleId,
+            assessmentTermCode: finalTermCode,
+            isDeleted: false,
+          }).lean(),
+    ]);
+
+    const firstWindows = resolveEffectiveTermWindows(
+      firstTermAssignment ?? { assessmentTermCode: firstTermCode },
+      firstTermCycle,
+      annualAssignment,
+    );
+    const finalWindows = resolveEffectiveTermWindows(
+      finalTerm,
+      finalTermCycle,
+      annualAssignment,
+    );
+    const startDate =
+      firstTermCycle?.startDate ||
+      firstWindows.objectiveSettingWindow?.startDate;
+    const endDate =
+      finalTermCycle?.endDate ||
+      finalWindows.managerReviewWindow?.endDate ||
+      finalWindows.termFinalizationWindow?.endDate ||
+      finalWindows.achievementSubmissionWindow?.endDate;
+    if (!startDate || !endDate) {
+      return {
+        canEdit: false,
+        reason: 'Performance Filling window is not configured.',
+      };
+    }
+
+    const today = this.toDateOnlyValue(this.getCurrentDate());
+    const start = this.toDateOnlyValue(startDate);
+    const end = this.toDateOnlyValue(endDate);
+    if (today < start || today > end) {
+      return {
+        canEdit: false,
+        deadline: new Date(endDate),
+        reason: 'Performance Filling is available only within the configured annual cycle window.',
+      };
+    }
+
+    return {
+      canEdit: true,
+      deadline: new Date(endDate),
+    };
   }
 
   private async ensureAchievementStageOpen(

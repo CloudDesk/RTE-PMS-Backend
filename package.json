@@ -8,7 +8,7 @@
     "postbuild": "npm run copy-templates",
     "copy-templates": "node scripts/copy-templates.js",
     "start": "ts-node src/local.ts",
-    "dev": "nodemon src/local.ts",
+    "dev": "nodemon --watch src --ext ts,json src/local.ts",
     "test": "jest",
     "test:pms-career-profile-import:performance": "RUN_PMS_PROFILE_IMPORT_PERF=true jest --runInBand test/performance/pmsEmployeeProfileImport.performance.test.ts",
     "test:pms-delegation": "jest test/services/delegationFlow.service.test.ts",

@@ -60,8 +60,14 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
     async (request, reply) => {
       try {
         const { termAssignmentId } = request.params as { termAssignmentId: string };
+        const performanceFilling =
+          (request.query as { performanceFilling?: string | boolean } | undefined)
+            ?.performanceFilling === true ||
+          (request.query as { performanceFilling?: string | boolean } | undefined)
+            ?.performanceFilling === 'true';
         const submission = await request.container!.employeeAchievementSubmissionService.getSubmission(
           termAssignmentId,
+          performanceFilling,
         );
         return reply.send(
           successResponse('Employee achievement submission fetched successfully', submission),
@@ -80,6 +86,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         const { termAssignmentId } = request.params as { termAssignmentId: string };
         const input = request.body as SaveAssignedFormValuesInput;
         const values = input.values ?? [];
+        const performanceFilling = input.performanceFilling === true;
         const objectiveValues = values.filter(
           (value) =>
             value.sectionKey === 'personal_development_2_objectives' &&
@@ -87,15 +94,43 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         );
         const achievementValues = values.filter(
           (value) =>
-            value.sectionKey === 'personal_development_2_employee_term_inputs' &&
-            [
-              'special_achievements_and_improvements',
-              'contribution_to_cfts',
-              'appraisee_response',
-            ].includes(value.fieldKey),
+            (
+              value.sectionKey === 'personal_development_2_employee_term_inputs' &&
+              [
+                'special_achievements_and_improvements',
+                'contribution_to_cfts',
+                'appraisee_response',
+              ].includes(value.fieldKey)
+            ) ||
+            (
+              value.sectionKey === 'personal_development_2_appraisee_response' &&
+              value.fieldKey === 'appraisee_response'
+            ),
         );
-        if (objectiveValues.length + achievementValues.length !== values.length) {
+        // Performance Filling can contain additional employee-editable fields
+        // configured by the assigned template. The service resolves and
+        // authorizes those fields dynamically; retain the strict legacy list
+        // for the normal achievement-submission flow.
+        if (
+          !performanceFilling &&
+          objectiveValues.length + achievementValues.length !== values.length
+        ) {
           throw new Error('Assigned form contains an unsupported field');
+        }
+
+        // Performance Filling is one Assigned Form for the whole annual assignment.
+        // Keep the legacy split for the existing term workflow, but persist every
+        // Performance Filling field in the annual submission record.
+        if (performanceFilling) {
+          const savedValues = await request.container!.employeeAchievementSubmissionService
+            .saveAssignedFormValues(termAssignmentId, {
+              values,
+              performanceFilling: true,
+            });
+
+          return reply.send(
+            successResponse('Assigned form saved successfully', savedValues),
+          );
         }
 
         const savedObjectiveValues = objectiveValues.length > 0

@@ -60,6 +60,7 @@ export class EmailService {
             tls: {
                 servername: config.GMAIL_HOST,
                 minVersion: 'TLSv1.2',
+                rejectUnauthorized: config.GMAIL_TLS_REJECT_UNAUTHORIZED,
             },
         };
 

@@ -72,6 +72,54 @@ describe('Final Reviewer resolution', () => {
     expect(result.directorReviewerId?.toString()).toBe(directorId.toString());
   });
 
+  it('uses saved employee L2 and L3 mappings before the reporting chain', async () => {
+    const explicitL2Id = new Types.ObjectId();
+    const explicitL3Id = new Types.ObjectId();
+    const result = await resolveFinalReviewer({
+      employeeId,
+      assignedManagerId: l1Id,
+      finalReviewRequired: true,
+      findUserById: finder([
+        {
+          _id: employeeId,
+          name: 'Employee',
+          role: 'staff',
+          l2ManagerId: explicitL2Id,
+          l3ManagerId: explicitL3Id,
+          active: true,
+          portalAccess: true,
+        },
+        {
+          _id: l1Id,
+          name: 'L1',
+          role: 'manager',
+          managerId: l2Id,
+          active: true,
+          portalAccess: true,
+        },
+        {
+          _id: explicitL2Id,
+          name: 'Mapped L2',
+          role: 'manager',
+          active: true,
+          portalAccess: true,
+        },
+        {
+          _id: explicitL3Id,
+          name: 'Mapped L3',
+          role: 'director',
+          active: true,
+          portalAccess: true,
+        },
+      ]),
+    });
+
+    expect(result.finalReviewerId?.toString()).toBe(explicitL2Id.toString());
+    expect(result.finalReviewerSource).toBe(FinalReviewerSource.EMPLOYEE_L2_MAPPING);
+    expect(result.directorReviewerId?.toString()).toBe(explicitL3Id.toString());
+    expect(result.directorReviewerSource).toBe(FinalReviewerSource.EMPLOYEE_L3_MAPPING);
+  });
+
   it('uses the optional cycle fallback only when L2 is missing', async () => {
     const result = await resolveFinalReviewer({
       employeeId,

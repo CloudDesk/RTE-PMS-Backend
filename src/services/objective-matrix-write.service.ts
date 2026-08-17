@@ -10,6 +10,7 @@ import type { AssessmentTermCode as AssessmentTermCodeType } from '../constants/
 import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import { Objective } from '../models/pms-objective.model';
 import { ObjectiveValue } from '../models/pms-objective-value.model';
+import { LOV } from '../models/lov.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import type {
   ITemplateObjectiveTableColumn,
@@ -408,6 +409,7 @@ export class ObjectiveMatrixWriteService {
       throw new Error('This template uses the default objective term coverage');
     }
     if (!input.coreValues?.title?.trim()) throw new Error('Objective title is required');
+    const matrixSelection = await this.resolveMatrixSelection(input.matrixCode);
 
     const resources = await this.loadTemplateResources(annualAssignmentId);
     validateObjectiveMatrixCreateRequiredValues({
@@ -616,6 +618,8 @@ export class ObjectiveMatrixWriteService {
               employeeId: transactionAnnual.employeeId,
               assignedManagerId: transactionAnnual.assignedManagerId,
               source: input.source,
+              matrixCode: matrixSelection.matrixCode,
+              matrixLabel: matrixSelection.matrixLabel,
               title: input.coreValues.title.trim(),
               description: input.coreValues.description?.trim(),
               priority: input.coreValues.priority?.trim().toUpperCase(),
@@ -961,6 +965,20 @@ export class ObjectiveMatrixWriteService {
   private requireActor() {
     if (!this.context.user) throw new Error('Authentication required');
     return { actorId: this.context.user._id.toString(), actorRole: this.context.user.role };
+  }
+
+  private async resolveMatrixSelection(matrixCode?: string) {
+    const normalizedCode = matrixCode?.trim();
+    if (!normalizedCode) throw new Error('Matrix is required');
+    const matrixLov = await LOV.findOne({ type: 'matrix' }).lean();
+    const option = matrixLov?.values?.find((value) =>
+      value.isActive !== false && value.value?.trim() === normalizedCode,
+    );
+    if (!option?.label?.trim()) throw new Error('Select a valid active Matrix value');
+    return {
+      matrixCode: option.value.trim(),
+      matrixLabel: option.label.trim(),
+    };
   }
 
   private objectId(value: string, field: string): Types.ObjectId {

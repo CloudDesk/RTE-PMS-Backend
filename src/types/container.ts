@@ -22,6 +22,7 @@ import { ProbationReviewService } from '../services/probationReview.service';
 import { ManagerReviewPeriodService } from '../services/managerReviewPeriod.service';
 import { ObjectiveEvidenceService } from '../services/objective-evidence.service';
 import { PmsEmployeeProfileImportService } from '../services/pmsEmployeeProfileImport.service';
+import { EmployeeRolesResponsibilitiesService } from '../services/employee-roles-responsibilities.service';
 
 export interface ServiceContainer {
   requestContext: RequestContext;
@@ -48,4 +49,5 @@ export interface ServiceContainer {
   managerReviewPeriodService: ManagerReviewPeriodService;
   objectiveEvidenceService: ObjectiveEvidenceService;
   pmsEmployeeProfileImportService: PmsEmployeeProfileImportService;
+  employeeRolesResponsibilitiesService: EmployeeRolesResponsibilitiesService;
 }

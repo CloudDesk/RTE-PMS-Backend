@@ -12,6 +12,7 @@ interface Config {
   GMAIL_PORT: number;
   GMAIL_AUTH_USER: string;
   GMAIL_AUTH_PASSWORD: string;
+  GMAIL_TLS_REJECT_UNAUTHORIZED: boolean;
   NODE_ENV: string;
 
   // GCP Configuration
@@ -34,6 +35,10 @@ export const config: Config = {
   GMAIL_PORT: process.env.GMAIL_PORT ? parseInt(process.env.GMAIL_PORT, 10) : 123,
   GMAIL_AUTH_USER: process.env.GMAIL_AUTH_USER || 'default-gmail-host',
   GMAIL_AUTH_PASSWORD: process.env.GMAIL_AUTH_PASSWORD || 'default-gmail-host',
+  GMAIL_TLS_REJECT_UNAUTHORIZED:
+    process.env.GMAIL_TLS_REJECT_UNAUTHORIZED !== undefined
+      ? process.env.GMAIL_TLS_REJECT_UNAUTHORIZED.toLowerCase() !== 'false'
+      : process.env.NODE_ENV === 'production',
 
   // App configuration
   NODE_ENV: process.env.NODE_ENV || 'default-gmail-host',
@@ -42,4 +47,4 @@ export const config: Config = {
   PROJECT_ID: process.env.PROJECT_ID || '',
   GCP_STORAGE_BUCKET: process.env.GCP_STORAGE_BUCKET || '',
 
-}; 
+};

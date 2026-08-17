@@ -91,6 +91,10 @@ export interface IUser extends Document {
   departmentId: string;
   managerId?: string;
   managerName?: string;
+  l2ManagerId?: string;
+  l2ManagerName?: string;
+  l3ManagerId?: string;
+  l3ManagerName?: string;
   costCenter: string; // Mandatory
   employeeCode: string; // Employee code (mandatory and unique)
   checkinId?: string;
@@ -264,6 +268,22 @@ const userSchema = new Schema<IUser>(
       ref: 'User',
     },
     managerName: {
+      type: String,
+      maxlength: 100,
+    },
+    l2ManagerId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    l2ManagerName: {
+      type: String,
+      maxlength: 100,
+    },
+    l3ManagerId: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    l3ManagerName: {
       type: String,
       maxlength: 100,
     },
@@ -679,6 +699,8 @@ userSchema.index({ checkinId: 1 }, { unique: true, sparse: true });
 userSchema.index({ biometricId: 1 }, { unique: true, sparse: true });
 userSchema.index({ phone: 1 }, { sparse: true }); // For WhatsApp authentication
 userSchema.index({ managerId: 1 });
+userSchema.index({ l2ManagerId: 1 });
+userSchema.index({ l3ManagerId: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ active: 1 });
 userSchema.index({ country: 1 });
@@ -734,6 +756,20 @@ userSchema.pre('save', async function (next) {
   }
 });
 
+userSchema.pre('save', async function (next) {
+  if (this.l3ManagerId && (this.isModified('l3ManagerId') || !this.l3ManagerName)) {
+    try {
+      const manager = await User.findById(this.l3ManagerId).select('name');
+      this.l3ManagerName = manager?.name;
+    } catch (error: any) {
+      return next(error);
+    }
+  } else if (!this.l3ManagerId) {
+    this.l3ManagerName = undefined;
+  }
+  next();
+});
+
 // Populate manager name before saving
 userSchema.pre('save', async function (next) {
   console.log('👥 User pre-save hook: Manager name population');
@@ -760,6 +796,21 @@ userSchema.pre('save', async function (next) {
     }
   } else {
     console.log('⏭️ Skipping manager name population');
+  }
+  next();
+});
+
+// Populate the saved L2 manager name before saving.
+userSchema.pre('save', async function (next) {
+  if (this.l2ManagerId && (this.isModified('l2ManagerId') || !this.l2ManagerName)) {
+    try {
+      const manager = await User.findById(this.l2ManagerId).select('name');
+      this.l2ManagerName = manager?.name;
+    } catch (error: any) {
+      return next(error);
+    }
+  } else if (!this.l2ManagerId) {
+    this.l2ManagerName = undefined;
   }
   next();
 });

@@ -46,6 +46,21 @@ export const pmsManagementEmployeeRoutes: RouteHandler = async (
       }
     },
   );
+
+  fastify.get(
+    '/employees/:employeeId/training-identification',
+    { onRequest: [authenticate], schema: { tags: ['PMS Management Employees'] } },
+    async (request, reply) => {
+      try {
+        const { employeeId } = request.params as { employeeId: string };
+        const result = await request.container!.pmsManagementEmployeeService
+          .getEmployeeTrainingIdentification(employeeId);
+        return reply.send(successResponse('Training identification fetched successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {

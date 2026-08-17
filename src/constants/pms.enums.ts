@@ -519,6 +519,9 @@ const objectiveStatuses = Object.values(ObjectiveStatus) as string[];
 export function normalizePmsRole(value: string): string {
   const normalized = value.replace(/[ /-]/g, '_').toUpperCase();
   if (normalized === 'STAFF' || normalized === 'TRAINEE') return PmsRole.EMPLOYEE;
+  // HR keeps its own restricted administration capability set, while its
+  // normal PMS/team behavior follows manager scope when it has direct reports.
+  if (normalized === 'HR') return PmsRole.MANAGER;
   if (normalized === 'HR_ADMIN' || normalized === 'HRADMIN') return PmsRole.ADMIN;
   if (normalized === 'SUPERADMIN' || normalized === 'SUPER_ADMIN') return PmsRole.DIRECTOR;
   return normalized;

@@ -190,7 +190,7 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
     },
     finalReviewerSource: {
       type: String,
-      enum: ['REPORTING_L2', 'REPORTING_DIRECTOR', 'L1_DIRECTOR', 'CYCLE_DEFAULT'],
+      enum: ['REPORTING_L2', 'REPORTING_DIRECTOR', 'L1_DIRECTOR', 'CYCLE_DEFAULT', 'EMPLOYEE_L2_MAPPING', 'EMPLOYEE_L3_MAPPING'],
     },
     finalReviewerSnapshot: {
       type: Schema.Types.Mixed,
@@ -215,7 +215,7 @@ const annualAssignmentSchema = new Schema<IAnnualAssignment>(
     },
     directorReviewerSource: {
       type: String,
-      enum: ['REPORTING_L2', 'REPORTING_DIRECTOR', 'L1_DIRECTOR', 'CYCLE_DEFAULT'],
+      enum: ['REPORTING_L2', 'REPORTING_DIRECTOR', 'L1_DIRECTOR', 'CYCLE_DEFAULT', 'EMPLOYEE_L2_MAPPING', 'EMPLOYEE_L3_MAPPING'],
     },
     directorReviewerSnapshot: {
       type: Schema.Types.Mixed,
