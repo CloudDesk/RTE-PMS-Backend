@@ -120,6 +120,45 @@ describe('Final Reviewer resolution', () => {
     expect(result.directorReviewerSource).toBe(FinalReviewerSource.EMPLOYEE_L3_MAPPING);
   });
 
+  it('allows L1 to repeat as L2 when L1 reports directly to the mapped L3 Director', async () => {
+    const result = await resolveFinalReviewer({
+      employeeId,
+      assignedManagerId: l1Id,
+      finalReviewRequired: true,
+      findUserById: finder([
+        {
+          _id: employeeId,
+          name: 'Employee',
+          role: 'staff',
+          l2ManagerId: l1Id,
+          l3ManagerId: directorId,
+          active: true,
+          portalAccess: true,
+        },
+        {
+          _id: l1Id,
+          name: 'L1 and L2 Manager',
+          role: 'manager',
+          managerId: directorId,
+          active: true,
+          portalAccess: true,
+        },
+        {
+          _id: directorId,
+          name: 'Director',
+          role: 'director',
+          active: true,
+          portalAccess: true,
+        },
+      ]),
+    });
+
+    expect(result.finalReviewerId?.toString()).toBe(l1Id.toString());
+    expect(result.finalReviewerSource).toBe(FinalReviewerSource.EMPLOYEE_L2_MAPPING);
+    expect(result.directorReviewerId?.toString()).toBe(directorId.toString());
+    expect(result.directorReviewerSource).toBe(FinalReviewerSource.EMPLOYEE_L3_MAPPING);
+  });
+
   it('uses the optional cycle fallback only when L2 is missing', async () => {
     const result = await resolveFinalReviewer({
       employeeId,

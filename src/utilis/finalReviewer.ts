@@ -151,6 +151,11 @@ export async function resolveFinalReviewer(
   const explicitL3Id = objectIdString(employee?.l3ManagerId);
   const reportingL2Id = objectIdString(l1.managerId);
   const l1DirectorIsFinalReviewer = isDirectorRole(l1.role) && !reportingL2Id;
+  const l1RepeatedAtL2BeforeDirector = Boolean(
+    explicitL2Id === assignedManagerId &&
+    explicitL3Id &&
+    explicitL3Id === reportingL2Id,
+  );
 
   const l2CandidateId =
     explicitL2Id ?? reportingL2Id ??
@@ -173,7 +178,7 @@ export async function resolveFinalReviewer(
     await findUserById(l2CandidateId),
     employeeId,
     assignedManagerId,
-    l1DirectorIsFinalReviewer,
+    l1DirectorIsFinalReviewer || l1RepeatedAtL2BeforeDirector,
   );
 
   let directorReviewer: FinalReviewerUser | null = explicitL3Id
