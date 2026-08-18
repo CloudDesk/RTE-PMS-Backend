@@ -57,6 +57,7 @@ import { User } from '../models/user.model';
 import { LOV } from '../models/lov.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
+import { traceDatabaseOperation } from '../utilis/databaseDiagnostics';
 import { DelegationService } from './delegation.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import {
@@ -3938,16 +3939,63 @@ export class ObjectiveService extends BaseService {
 
     this.applyObjectiveEmployeeAssignmentListScope(filter, query);
 
-    const assignments = await ObjectiveEmployeeAssignment.find(filter)
-      .sort({ createdAt: -1 })
-      .populate('objectiveAssignmentPeriodId', 'name status terms fillStartDate fillEndDate termFillWindows')
-      .populate('employeeId', 'name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
-      .populate('managerId', 'name employeeName fullName email employeeCode')
-      .populate('sharedAccess.sharedWithEmployeeId', 'name employeeName fullName email employeeCode')
-      .populate('termStates.submittedBy', 'name employeeName fullName email employeeCode')
-      .lean();
+    const assignments = await traceDatabaseOperation(
+      'team-objectives.list.root',
+      { route: '/pms/objectives/employee-assignments', scope: query.scope ?? 'DEFAULT' },
+      async () => ObjectiveEmployeeAssignment.find(filter).sort({ createdAt: -1 }).lean(),
+      (records) => records.length,
+    );
 
-    return assignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
+    if (assignments.length === 0) return [];
+
+    const referenceId = (value: any): string => value?._id?.toString?.() ?? value?.toString?.() ?? '';
+    const periodIds = Array.from(new Set(
+      assignments.map((assignment) => referenceId(assignment.objectiveAssignmentPeriodId)).filter(Boolean),
+    ));
+    const userIds = Array.from(new Set(
+      assignments.flatMap((assignment) => [
+        referenceId(assignment.employeeId),
+        referenceId(assignment.managerId),
+        ...(assignment.sharedAccess ?? []).map((access) => referenceId(access.sharedWithEmployeeId)),
+        ...(assignment.termStates ?? []).map((state) => referenceId(state.submittedBy)),
+      ]).filter(Boolean),
+    ));
+
+    const [periods, users] = await traceDatabaseOperation(
+      'team-objectives.list.related-batches',
+      {
+        route: '/pms/objectives/employee-assignments',
+        scope: query.scope ?? 'DEFAULT',
+        periodCount: periodIds.length,
+        userCount: userIds.length,
+      },
+      async () => Promise.all([
+        ObjectiveAssignmentPeriod.find({ _id: { $in: periodIds } })
+          .select('name status terms fillStartDate fillEndDate termFillWindows')
+          .lean(),
+        User.find({ _id: { $in: userIds } })
+          .select('name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
+          .lean(),
+      ]),
+    );
+    const periodById = new Map(periods.map((period) => [period._id.toString(), period]));
+    const userById = new Map(users.map((user) => [user._id.toString(), user]));
+    const hydratedAssignments = assignments.map((assignment) => ({
+      ...assignment,
+      objectiveAssignmentPeriodId: periodById.get(referenceId(assignment.objectiveAssignmentPeriodId)) ?? assignment.objectiveAssignmentPeriodId,
+      employeeId: userById.get(referenceId(assignment.employeeId)) ?? assignment.employeeId,
+      managerId: userById.get(referenceId(assignment.managerId)) ?? assignment.managerId,
+      sharedAccess: (assignment.sharedAccess ?? []).map((access) => ({
+        ...access,
+        sharedWithEmployeeId: userById.get(referenceId(access.sharedWithEmployeeId)) ?? access.sharedWithEmployeeId,
+      })),
+      termStates: (assignment.termStates ?? []).map((state) => ({
+        ...state,
+        submittedBy: userById.get(referenceId(state.submittedBy)) ?? state.submittedBy,
+      })),
+    }));
+
+    return hydratedAssignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
   }
 
   private applyObjectiveEmployeeAssignmentListScope(

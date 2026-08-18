@@ -48,6 +48,7 @@ import {
   resolveEffectiveTermWindows,
 } from '../utilis/pmsAssignmentWindows';
 import { getSubordinateUserIds } from '../utilis/userHierarchy';
+import { traceDatabaseOperation } from '../utilis/databaseDiagnostics';
 import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type { ITermReview } from '../models/pms-term-review.model';
@@ -431,8 +432,12 @@ export class TermReviewService extends BaseService {
       filter.$or = managerClauses;
     }
 
-    const termAssignments = await TermAssignment.find(filter)
-      .sort({ updatedAt: -1, assessmentTermCode: 1 });
+    const termAssignments = await traceDatabaseOperation(
+      'term-reviews.list.root',
+      { route: '/pms/term-reviews/assignments', mode },
+      async () => TermAssignment.find(filter).sort({ updatedAt: -1, assessmentTermCode: 1 }),
+      (records) => records.length,
+    );
 
     if (termAssignments.length === 0) {
       return [];
@@ -481,6 +486,25 @@ export class TermReviewService extends BaseService {
     const annualAssignmentMap = new Map(
       annualAssignments.map((item) => [item._id.toString(), item]),
     );
+    const templateVersionIds = Array.from(new Set(
+      annualAssignments
+        .map((item) => item.templateVersionId?.toString?.())
+        .filter((value): value is string => Boolean(value)),
+    ));
+    const templateVersions = templateVersionIds.length > 0
+      ? await traceDatabaseOperation(
+          'term-reviews.list.template-configs',
+          { route: '/pms/term-reviews/assignments', mode, templateVersionCount: templateVersionIds.length },
+          async () => PmsTemplateVersion.find({ _id: { $in: templateVersionIds } })
+            .select('sections scoringConfig')
+            .lean(),
+          (records) => records.length,
+        )
+      : [];
+    const templateVersionMap = new Map(
+      templateVersions.map((item) => [item._id.toString(), item]),
+    );
+    const reviewConfigCache = new Map<string, TermReviewConfig>();
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
     const termCycleMap = new Map(termCycles.map((item) => [item._id.toString(), item]));
     const visibleTermAssignments = termAssignments.filter((termAssignment) =>
@@ -518,7 +542,7 @@ export class TermReviewService extends BaseService {
       objectivesByTermAssignmentId.set(key, bucket);
     }
 
-    return await Promise.all(visibleTermAssignments.map(async (termAssignment) => {
+    return visibleTermAssignments.map((termAssignment) => {
       const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
       const cycle = termAssignment.cycleId
         ? cycleMap.get(termAssignment.cycleId.toString())
@@ -528,9 +552,16 @@ export class TermReviewService extends BaseService {
         : undefined;
       const review = termReviewByTermAssignmentId.get(termAssignment._id.toString()) ?? null;
       const objectives = objectivesByTermAssignmentId.get(termAssignment._id.toString()) ?? [];
-      const reviewConfig = annualAssignment
-        ? await this.getTermReviewConfig(annualAssignment, termAssignment.assessmentTermCode)
-        : this.defaultTermReviewConfig();
+      const templateVersionId = annualAssignment?.templateVersionId?.toString?.() ?? '';
+      const reviewConfigKey = `${templateVersionId}:${termAssignment.assessmentTermCode}`;
+      let reviewConfig = reviewConfigCache.get(reviewConfigKey);
+      if (!reviewConfig) {
+        const templateVersion = templateVersionMap.get(templateVersionId);
+        reviewConfig = templateVersion
+          ? this.buildTermReviewConfig(templateVersion, termAssignment.assessmentTermCode)
+          : this.defaultTermReviewConfig();
+        reviewConfigCache.set(reviewConfigKey, reviewConfig);
+      }
 
       const actorRole = normalizePmsRole(this.requireActor().actorRole);
       let isReviewVisible = true;
@@ -619,7 +650,7 @@ export class TermReviewService extends BaseService {
           : null,
         backendConnected: true,
       };
-    }));
+    });
   }
 
   private isVisibleInManagerReviewList(
@@ -3031,6 +3062,14 @@ export class TermReviewService extends BaseService {
     if (!templateVersion) {
       return this.defaultTermReviewConfig();
     }
+
+    return this.buildTermReviewConfig(templateVersion, assessmentTermCode);
+  }
+
+  private buildTermReviewConfig(
+    templateVersion: { sections?: ITemplateSection[]; scoringConfig?: Record<string, unknown> },
+    assessmentTermCode: AssessmentTermCodeType,
+  ): TermReviewConfig {
 
     const applicableSections = (templateVersion.sections ?? []).filter((section) =>
       this.isTermReviewSectionInScope(section, assessmentTermCode),

@@ -374,6 +374,10 @@ objectiveEmployeeAssignmentSchema.index({
   isDeleted: 1,
 });
 objectiveEmployeeAssignmentSchema.index({ managerId: 1, status: 1, isDeleted: 1 });
+objectiveEmployeeAssignmentSchema.index(
+  { managerId: 1, isDeleted: 1, createdAt: -1 },
+  { name: 'idx_team_objective_manager_list' },
+);
 objectiveEmployeeAssignmentSchema.index({ selectedTerms: 1, status: 1, isDeleted: 1 });
 objectiveEmployeeAssignmentSchema.index({
   'sharedAccess.sharedWithEmployeeId': 1,

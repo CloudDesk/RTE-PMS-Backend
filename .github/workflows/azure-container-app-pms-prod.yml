@@ -75,6 +75,15 @@ jobs:
           docker run --rm \
             -e MONGODB_URI \
             -e NODE_ENV=production \
+            -e DB_MAX_POOL_SIZE=2 \
+            -e DB_MIN_POOL_SIZE=0 \
+            -e DB_MAX_IDLE_TIME_MS=120000 \
+            -e DB_SOCKET_TIMEOUT_MS=120000 \
+            -e DB_WAIT_QUEUE_TIMEOUT_MS=5000 \
+            -e DB_MAX_CONNECTING=2 \
+            -e DB_RETRY_READS=true \
+            -e DB_APP_NAME=rte-pms-migrations \
+            -e DB_AUTO_INDEX=false \
             "$IMAGE_SHA" \
             npm run db:migrate:startup:built
 
@@ -83,7 +92,18 @@ jobs:
           az containerapp update \
             --name "$AZURE_CONTAINER_APP_NAME" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
-            --image "$IMAGE_SHA"
+            --image "$IMAGE_SHA" \
+            --set-env-vars \
+              NODE_ENV=production \
+              DB_MAX_POOL_SIZE=10 \
+              DB_MIN_POOL_SIZE=0 \
+              DB_MAX_IDLE_TIME_MS=120000 \
+              DB_SOCKET_TIMEOUT_MS=120000 \
+              DB_WAIT_QUEUE_TIMEOUT_MS=5000 \
+              DB_MAX_CONNECTING=2 \
+              DB_RETRY_READS=true \
+              DB_APP_NAME=rte-pms-backend \
+              DB_AUTO_INDEX=false
 
       - name: Resolve Container App URL
         run: |

@@ -19,17 +19,31 @@ const DB_CONNECT_TIMEOUT_MS = Math.max(
 );
 const DB_SOCKET_TIMEOUT_MS = Math.max(
   1000,
-  Number(process.env.DB_SOCKET_TIMEOUT_MS || 45000),
+  Number(process.env.DB_SOCKET_TIMEOUT_MS || 120000),
 );
 // Pool sizing is per replica. With Container Apps scaling to N replicas the
 // cluster sees up to N * DB_MAX_POOL_SIZE connections, so keep the ceiling well
 // under the cluster's connection limit.
-const DB_MAX_POOL_SIZE = Math.max(1, Number(process.env.DB_MAX_POOL_SIZE || 50));
-// A warm floor means a scaled-out replica does not pay TCP + TLS + SCRAM on its
-// first requests, which is where the burst latency was coming from.
-const DB_MIN_POOL_SIZE = Math.max(0, Number(process.env.DB_MIN_POOL_SIZE || 10));
-// Long enough that a lull between bursts does not reap the warm pool.
-const DB_MAX_IDLE_TIME_MS = Math.max(0, Number(process.env.DB_MAX_IDLE_TIME_MS || 600000));
+const DB_MAX_POOL_SIZE = Math.max(1, Number(process.env.DB_MAX_POOL_SIZE || 10));
+// Do not reserve idle connections on every scaled-out replica. Keeping a warm
+// floor here can exhaust the database's worker-node connection quota.
+const DB_MIN_POOL_SIZE = Math.max(0, Number(process.env.DB_MIN_POOL_SIZE || 0));
+// Retire inactive sockets before the Azure MongoDB endpoint's idle timeout and
+// return their capacity to the cluster promptly.
+const DB_MAX_IDLE_TIME_MS = Math.max(0, Number(process.env.DB_MAX_IDLE_TIME_MS || 120000));
+// Bound connection checkout latency during bursts instead of allowing requests
+// to wait indefinitely when every pool connection is busy.
+const DB_WAIT_QUEUE_TIMEOUT_MS = Math.max(
+  0,
+  Number(process.env.DB_WAIT_QUEUE_TIMEOUT_MS || 5000),
+);
+// Limit concurrent TCP/TLS/SCRAM handshakes so replica starts do not create a
+// connection storm against the Azure MongoDB endpoint.
+const DB_MAX_CONNECTING = Math.max(1, Number(process.env.DB_MAX_CONNECTING || 2));
+const DB_RETRY_READS = process.env.DB_RETRY_READS
+  ? process.env.DB_RETRY_READS === 'true'
+  : true;
+const DB_APP_NAME = process.env.DB_APP_NAME || 'rte-pms-backend';
 // Index creation belongs to deploy (npm run db:migrate:startup), not to boot.
 // Leaving this on makes every replica issue createIndexes for ~182 declared
 // indexes while it is also trying to serve the traffic that triggered scale-out.
@@ -309,7 +323,7 @@ export const connectDB = async (): Promise<void> => {
     for (let attempt = 1; attempt <= DB_CONNECT_MAX_RETRIES; attempt += 1) {
       try {
         console.log(
-          `[DB] Connecting to MongoDB (attempt ${attempt}/${DB_CONNECT_MAX_RETRIES}, serverSelectionTimeoutMS=${DB_SERVER_SELECTION_TIMEOUT_MS}, connectTimeoutMS=${DB_CONNECT_TIMEOUT_MS}, maxPoolSize=${DB_MAX_POOL_SIZE}, minPoolSize=${DB_MIN_POOL_SIZE}, autoIndex=${DB_AUTO_INDEX})...`,
+          `[DB] Connecting to MongoDB (attempt ${attempt}/${DB_CONNECT_MAX_RETRIES}, serverSelectionTimeoutMS=${DB_SERVER_SELECTION_TIMEOUT_MS}, connectTimeoutMS=${DB_CONNECT_TIMEOUT_MS}, socketTimeoutMS=${DB_SOCKET_TIMEOUT_MS}, maxPoolSize=${DB_MAX_POOL_SIZE}, minPoolSize=${DB_MIN_POOL_SIZE}, maxIdleTimeMS=${DB_MAX_IDLE_TIME_MS}, waitQueueTimeoutMS=${DB_WAIT_QUEUE_TIMEOUT_MS}, maxConnecting=${DB_MAX_CONNECTING}, retryReads=${DB_RETRY_READS}, autoIndex=${DB_AUTO_INDEX})...`,
         );
         await mongoose.connect(config.mongoUri, {
           serverSelectionTimeoutMS: DB_SERVER_SELECTION_TIMEOUT_MS,
@@ -318,6 +332,10 @@ export const connectDB = async (): Promise<void> => {
           maxPoolSize: DB_MAX_POOL_SIZE,
           minPoolSize: DB_MIN_POOL_SIZE,
           maxIdleTimeMS: DB_MAX_IDLE_TIME_MS,
+          waitQueueTimeoutMS: DB_WAIT_QUEUE_TIMEOUT_MS,
+          maxConnecting: DB_MAX_CONNECTING,
+          retryReads: DB_RETRY_READS,
+          appName: DB_APP_NAME,
           autoIndex: DB_AUTO_INDEX,
           autoCreate: DB_AUTO_INDEX,
         });
