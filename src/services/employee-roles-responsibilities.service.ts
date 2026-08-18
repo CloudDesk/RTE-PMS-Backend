@@ -63,10 +63,13 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
     descriptionInput: unknown,
     entryId?: string,
     serialNoInput?: unknown,
+    employeeId?: string,
   ): Promise<EmployeeRolesResponsibilitiesView> {
+    this.assertCanManage();
     const description = this.description(descriptionInput, true);
     const actorId = this.actorId();
-    const record = await this.ownRecord(actorId);
+    const targetId = this.writeTargetId(employeeId, actorId);
+    const record = await this.employeeRecord(targetId, true, actorId);
     const previous = record.toObject();
     const entry = entryId
       ? this.entry(record, entryId, this.serialNo(serialNoInput))
@@ -105,10 +108,13 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
     descriptionInput: unknown,
     entryId?: string,
     serialNoInput?: unknown,
+    employeeId?: string,
   ): Promise<EmployeeRolesResponsibilitiesView> {
+    this.assertCanManage();
     const description = this.description(descriptionInput, true);
     const actorId = this.actorId();
-    const record = await this.ownRecord(actorId);
+    const targetId = this.writeTargetId(employeeId, actorId);
+    const record = await this.employeeRecord(targetId, true, actorId);
     const previous = record.toObject();
     const entry = entryId
       ? this.entry(record, entryId, this.serialNo(serialNoInput))
@@ -149,9 +155,12 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
     entryId: string,
     isVisible: boolean,
     serialNoInput?: unknown,
+    employeeId?: string,
   ): Promise<EmployeeRolesResponsibilitiesView> {
+    this.assertCanManage();
     const actorId = this.actorId();
-    const record = await this.ownRecord(actorId, false);
+    const targetId = this.writeTargetId(employeeId, actorId);
+    const record = await this.employeeRecord(targetId, false, actorId);
     const previous = record.toObject();
     const entry = this.entry(record, entryId, this.serialNo(serialNoInput));
     if (!entry) this.entryNotFound();
@@ -178,9 +187,12 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
   async deleteEntry(
     entryId: string,
     serialNoInput?: unknown,
+    employeeId?: string,
   ): Promise<EmployeeRolesResponsibilitiesView> {
+    this.assertCanManage();
     const actorId = this.actorId();
-    const record = await this.ownRecord(actorId, false);
+    const targetId = this.writeTargetId(employeeId, actorId);
+    const record = await this.employeeRecord(targetId, false, actorId);
     const previous = record.toObject();
     const entry = this.entry(record, entryId, this.serialNo(serialNoInput));
     if (!entry) this.entryNotFound();
@@ -245,11 +257,24 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
     return view.entries.length ? view : null;
   }
 
-  private async ownRecord(actorId: Types.ObjectId, create = true) {
-    let record = await EmployeeRolesResponsibilities.findOne({ employeeId: actorId });
+  async getForEmployeeManagement(
+    employeeId: string,
+  ): Promise<EmployeeRolesResponsibilitiesView> {
+    this.assertCanManage();
+    const targetId = this.employeeId(employeeId);
+    const record = await EmployeeRolesResponsibilities.findOne({ employeeId: targetId });
+    return record ? this.toView(record) : this.emptyView(targetId.toString());
+  }
+
+  private async employeeRecord(
+    employeeId: Types.ObjectId,
+    create = true,
+    actorId = employeeId,
+  ) {
+    let record = await EmployeeRolesResponsibilities.findOne({ employeeId });
     if (!record && create) {
       record = new EmployeeRolesResponsibilities({
-        employeeId: actorId,
+        employeeId,
         entries: [],
         status: EmployeeRoleResponsibilityStatus.DRAFT,
         isVisible: false,
@@ -369,6 +394,35 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
         401,
         'AUTHENTICATION_REQUIRED',
         'Authentication is required',
+      );
+    }
+    return new Types.ObjectId(value);
+  }
+
+  private assertCanManage(): void {
+    const role = String(this.context.user?.role ?? '')
+      .trim()
+      .replace(/[ /-]/g, '_')
+      .toUpperCase();
+    if (!['ADMIN', 'SUPERADMIN', 'SUPER_ADMIN', 'HR', 'HR_ADMIN', 'HRADMIN'].includes(role)) {
+      throw new EmployeeRolesResponsibilitiesError(
+        403,
+        'ROLES_RESPONSIBILITIES_WRITE_ACCESS_DENIED',
+        'Only HR or Admin users can add, edit, or delete roles and responsibilities',
+      );
+    }
+  }
+
+  private writeTargetId(employeeId: string | undefined, actorId: Types.ObjectId) {
+    return employeeId === undefined ? actorId : this.employeeId(employeeId);
+  }
+
+  private employeeId(value: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(value)) {
+      throw new EmployeeRolesResponsibilitiesError(
+        400,
+        'INVALID_EMPLOYEE_ID',
+        'A valid employee id is required',
       );
     }
     return new Types.ObjectId(value);

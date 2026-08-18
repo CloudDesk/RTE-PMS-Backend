@@ -12,6 +12,7 @@ import { uploadFileToGCP } from '../utilis/gcpStorage';
 import { getAllowedPmsReportingRoles } from '../utilis/reportingHierarchyRules';
 import {
   canonicalizeTerminalDirectorMapping,
+  isAllowedRepeatedL1AtL2,
   isDirectorRole,
 } from '../utilis/reviewerMappingRules';
 import * as fs from 'fs';
@@ -530,7 +531,15 @@ export class UserService extends BaseService {
       : subject.managerId;
     while (currentId && hierarchy.length < maxLevels) {
       const currentIdString = currentId.toString();
-      if (visited.has(currentIdString)) {
+      const isAllowedRepeatedL1AtL2 = Boolean(
+        !includeSelf &&
+        hierarchy.length === 1 &&
+        subject.managerId?.toString() === currentIdString &&
+        subject.l2ManagerId?.toString() === currentIdString &&
+        subject.l3ManagerId &&
+        hierarchy[0]?.managerId === subject.l3ManagerId.toString(),
+      );
+      if (visited.has(currentIdString) && !isAllowedRepeatedL1AtL2) {
         throw new Error('Circular reporting hierarchy detected');
       }
       visited.add(currentIdString);
@@ -1321,21 +1330,13 @@ export class UserService extends BaseService {
         delete data.l3ManagerName;
       }
 
-      const mappedIds = [
-        canonicalMapping.managerId,
-        canonicalMapping.l2ManagerId,
-        canonicalMapping.l3ManagerId,
-      ].filter(Boolean);
-      if (new Set(mappedIds).size !== mappedIds.length) {
-        throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
-      }
-
+      let l3Manager: { role?: string } | undefined;
       if (canonicalMapping.l3ManagerId) {
         if (String(data.role || '').trim().toLowerCase() === 'trainee') {
           delete data.l3ManagerId;
           delete data.l3ManagerName;
         } else {
-          const l3Manager = await this.validateMappedReviewer(
+          l3Manager = await this.validateMappedReviewer(
             canonicalMapping.l3ManagerId,
             'L3 Manager',
           );
@@ -1343,6 +1344,31 @@ export class UserService extends BaseService {
             throw new Error('L3 Manager must have the Director role');
           }
         }
+      }
+
+      const effectiveL3ManagerId =
+        String(data.role || '').trim().toLowerCase() === 'trainee'
+          ? undefined
+          : canonicalMapping.l3ManagerId;
+      const mappedIds = [
+        canonicalMapping.managerId,
+        canonicalMapping.l2ManagerId,
+        effectiveL3ManagerId,
+      ].filter(Boolean);
+      const repeatedL1AtL2IsAllowed = isAllowedRepeatedL1AtL2({
+        managerId: canonicalMapping.managerId,
+        l2ManagerId: canonicalMapping.l2ManagerId,
+        l3ManagerId: effectiveL3ManagerId,
+        reportingManagerId: reportingManager.managerId?.toString(),
+        l3ManagerRole: l3Manager?.role,
+      });
+      if (
+        new Set(mappedIds).size !== mappedIds.length &&
+        !repeatedL1AtL2IsAllowed
+      ) {
+        throw new Error(
+          'Reporting Manager, L2 Manager, and L3 Manager must be different unless L1 repeats at L2 and reports directly to the L3 Director',
+        );
       }
     }
     if (!data.joiningDate) {
@@ -1602,6 +1628,7 @@ export class UserService extends BaseService {
           data.l2ManagerId = canonicalMapping.l2ManagerId;
         }
 
+        let l3Manager: { role?: string } | undefined;
         if (
           String(nextRole || '').trim().toLowerCase() === 'trainee' ||
           !canonicalMapping.l3ManagerId
@@ -1611,7 +1638,7 @@ export class UserService extends BaseService {
           delete data.l3ManagerId;
           delete data.l3ManagerName;
         } else {
-          const l3Manager = await this.validateMappedReviewer(
+          l3Manager = await this.validateMappedReviewer(
             canonicalMapping.l3ManagerId,
             'L3 Manager',
             id,
@@ -1629,8 +1656,23 @@ export class UserService extends BaseService {
             ? undefined
             : canonicalMapping.l3ManagerId,
         ].filter(Boolean);
-        if (new Set(mappedIds).size !== mappedIds.length) {
-          throw new Error('Reporting Manager, L2 Manager, and L3 Manager must be different');
+        const repeatedL1AtL2IsAllowed = isAllowedRepeatedL1AtL2({
+          managerId: canonicalMapping.managerId,
+          l2ManagerId: canonicalMapping.l2ManagerId,
+          l3ManagerId:
+            String(nextRole || '').trim().toLowerCase() === 'trainee'
+              ? undefined
+              : canonicalMapping.l3ManagerId,
+          reportingManagerId: reportingManager.managerId?.toString(),
+          l3ManagerRole: l3Manager?.role,
+        });
+        if (
+          new Set(mappedIds).size !== mappedIds.length &&
+          !repeatedL1AtL2IsAllowed
+        ) {
+          throw new Error(
+            'Reporting Manager, L2 Manager, and L3 Manager must be different unless L1 repeats at L2 and reports directly to the L3 Director',
+          );
         }
       }
     }

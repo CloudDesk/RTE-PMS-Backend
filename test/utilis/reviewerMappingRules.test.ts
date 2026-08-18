@@ -1,5 +1,6 @@
 import {
   canonicalizeTerminalDirectorMapping,
+  isAllowedRepeatedL1AtL2,
   isDirectorRole,
 } from '../../src/utilis/reviewerMappingRules';
 
@@ -7,6 +8,33 @@ describe('reviewer mapping rules', () => {
   it('recognises the base Director role case-insensitively', () => {
     expect(isDirectorRole(' DIRECTOR ')).toBe(true);
     expect(isDirectorRole('management')).toBe(false);
+  });
+
+  it('allows L1 to repeat at L2 when L1 reports directly to the L3 Director', () => {
+    expect(isAllowedRepeatedL1AtL2({
+      managerId: 'l1',
+      l2ManagerId: 'l1',
+      l3ManagerId: 'director',
+      reportingManagerId: 'director',
+      l3ManagerRole: 'DIRECTOR',
+    })).toBe(true);
+  });
+
+  it('rejects repeated L1 at L2 when L3 is not L1\'s Director manager', () => {
+    expect(isAllowedRepeatedL1AtL2({
+      managerId: 'l1',
+      l2ManagerId: 'l1',
+      l3ManagerId: 'another-director',
+      reportingManagerId: 'director',
+      l3ManagerRole: 'director',
+    })).toBe(false);
+    expect(isAllowedRepeatedL1AtL2({
+      managerId: 'l1',
+      l2ManagerId: 'l1',
+      l3ManagerId: 'manager',
+      reportingManagerId: 'manager',
+      l3ManagerRole: 'manager',
+    })).toBe(false);
   });
 
   it('keeps a normal three-person hierarchy unchanged', () => {
