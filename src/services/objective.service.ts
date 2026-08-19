@@ -320,6 +320,13 @@ export interface ObjectiveEmployeeAssignmentListQuery {
   employeeId?: string;
   status?: string;
   scope?: 'SELF' | 'TEAM';
+  page?: number | string;
+  pageSize?: number | string;
+}
+
+export interface ObjectiveEmployeeAssignmentListPage {
+  items: ObjectiveEmployeeAssignmentRecord[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }
 
 export interface ObjectiveAssignmentPeriodReportQuery {
@@ -3919,7 +3926,7 @@ export class ObjectiveService extends BaseService {
 
   async listObjectiveEmployeeAssignments(
     query: ObjectiveEmployeeAssignmentListQuery = {},
-  ): Promise<ObjectiveEmployeeAssignmentRecord[]> {
+  ): Promise<ObjectiveEmployeeAssignmentRecord[] | ObjectiveEmployeeAssignmentListPage> {
     const filter: Record<string, unknown> = { isDeleted: false };
     if (query.objectiveAssignmentPeriodId) {
       filter.objectiveAssignmentPeriodId = this.toObjectId(query.objectiveAssignmentPeriodId, 'objectiveAssignmentPeriodId');
@@ -3939,14 +3946,34 @@ export class ObjectiveService extends BaseService {
 
     this.applyObjectiveEmployeeAssignmentListScope(filter, query);
 
-    const assignments = await traceDatabaseOperation(
+    const paginationRequested = query.page !== undefined || query.pageSize !== undefined;
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 10));
+    const assignmentQuery = ObjectiveEmployeeAssignment.find(filter).sort({ createdAt: -1 });
+    if (paginationRequested) {
+      assignmentQuery.skip((page - 1) * pageSize).limit(pageSize);
+    }
+    const [assignments, total] = await traceDatabaseOperation(
       'team-objectives.list.root',
-      { route: '/pms/objectives/employee-assignments', scope: query.scope ?? 'DEFAULT' },
-      async () => ObjectiveEmployeeAssignment.find(filter).sort({ createdAt: -1 }).lean(),
-      (records) => records.length,
+      {
+        route: '/pms/objectives/employee-assignments',
+        scope: query.scope ?? 'DEFAULT',
+        paginationRequested,
+        page: paginationRequested ? page : undefined,
+        pageSize: paginationRequested ? pageSize : undefined,
+      },
+      async () => Promise.all([
+        assignmentQuery.lean(),
+        paginationRequested ? ObjectiveEmployeeAssignment.countDocuments(filter) : Promise.resolve(0),
+      ]),
+      ([records]) => records.length,
     );
 
-    if (assignments.length === 0) return [];
+    if (assignments.length === 0) {
+      return paginationRequested
+        ? { items: [], pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } }
+        : [];
+    }
 
     const referenceId = (value: any): string => value?._id?.toString?.() ?? value?.toString?.() ?? '';
     const periodIds = Array.from(new Set(
@@ -3995,7 +4022,10 @@ export class ObjectiveService extends BaseService {
       })),
     }));
 
-    return hydratedAssignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
+    const records = hydratedAssignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
+    return paginationRequested
+      ? { items: records, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } }
+      : records;
   }
 
   private applyObjectiveEmployeeAssignmentListScope(
