@@ -257,21 +257,106 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
     return view.entries.length ? view : null;
   }
 
-  async getForEmployeeManagement(
-    employeeId: string,
-  ): Promise<EmployeeRolesResponsibilitiesView> {
-    this.assertCanManage();
-    const targetId = this.employeeId(employeeId);
+  async getForEmployeeManagement(employeeId: string): Promise<EmployeeRolesResponsibilitiesView> {
+    const targetId = await this.manageEmployee(employeeId);
     const record = await EmployeeRolesResponsibilities.findOne({ employeeId: targetId });
     return record ? this.toView(record) : this.emptyView(targetId.toString());
   }
 
-  private async employeeRecord(
-    employeeId: Types.ObjectId,
-    create = true,
-    actorId = employeeId,
-  ) {
+  async saveEmployeeEntryDraft(employeeId: string, descriptionInput: unknown, entryId?: string, serialNoInput?: unknown) {
+    return this.saveManagedEntry(employeeId, descriptionInput, entryId, serialNoInput, false);
+  }
+
+  async submitEmployeeEntry(employeeId: string, descriptionInput: unknown, entryId?: string, serialNoInput?: unknown) {
+    return this.saveManagedEntry(employeeId, descriptionInput, entryId, serialNoInput, true);
+  }
+
+  async setEmployeeEntryVisibility(employeeId: string, entryId: string, isVisible: boolean, serialNoInput?: unknown) {
+    const targetId = await this.manageEmployee(employeeId);
+    const actorId = this.actorId();
+    const record = await this.recordForEmployee(targetId, false);
+    const previous = record.toObject();
+    const entry = this.entry(record, entryId, this.serialNo(serialNoInput));
+    if (!entry) this.entryNotFound();
+    if (entry.status !== EmployeeRoleResponsibilityStatus.SUBMITTED) {
+      throw new EmployeeRolesResponsibilitiesError(409, 'ROLE_RESPONSIBILITY_NOT_SUBMITTED', 'Only a submitted responsibility can be shown or hidden');
+    }
+    entry.isVisible = isVisible;
+    await this.save(record, actorId);
+    await this.audit(isVisible ? 'EMPLOYEE_ROLE_RESPONSIBILITY_SHOWN' : 'EMPLOYEE_ROLE_RESPONSIBILITY_HIDDEN', record, previous);
+    return this.toView(record);
+  }
+
+  async deleteEmployeeEntry(employeeId: string, entryId: string, serialNoInput?: unknown) {
+    const targetId = await this.manageEmployee(employeeId);
+    const actorId = this.actorId();
+    const record = await this.recordForEmployee(targetId, false);
+    const previous = record.toObject();
+    const entry = this.entry(record, entryId, this.serialNo(serialNoInput));
+    if (!entry) this.entryNotFound();
+    if (record.entries.length <= 1) {
+      throw new EmployeeRolesResponsibilitiesError(409, 'ROLE_RESPONSIBILITY_MINIMUM_REQUIRED', 'At least one responsibility row must remain');
+    }
+    entry.deleteOne();
+    await this.save(record, actorId);
+    await this.audit('EMPLOYEE_ROLE_RESPONSIBILITY_REMOVED', record, previous);
+    return this.toView(record);
+  }
+
+  private async saveManagedEntry(employeeId: string, descriptionInput: unknown, entryId: string | undefined, serialNoInput: unknown, submitted: boolean) {
+    const targetId = await this.manageEmployee(employeeId);
+    const actorId = this.actorId();
+    const description = this.description(descriptionInput, true);
+    const record = await this.recordForEmployee(targetId);
+    const previous = record.toObject();
+    const entry = entryId ? this.entry(record, entryId, this.serialNo(serialNoInput)) : undefined;
+    if (!entry && entryId) this.entryNotFound();
+    if (!entry && record.entries.length >= MAX_ENTRIES) {
+      throw new EmployeeRolesResponsibilitiesError(400, 'ROLES_RESPONSIBILITIES_LIMIT_EXCEEDED', `A maximum of ${MAX_ENTRIES} roles and responsibilities is allowed`);
+    }
+    if (entry) {
+      entry.description = description;
+      entry.status = submitted ? EmployeeRoleResponsibilityStatus.SUBMITTED : EmployeeRoleResponsibilityStatus.DRAFT;
+      entry.isVisible = submitted;
+      entry.submittedAt = submitted ? new Date() : undefined;
+    } else {
+      record.entries.push({ _id: new Types.ObjectId(), serialNo: record.entries.length + 1, description, status: submitted ? EmployeeRoleResponsibilityStatus.SUBMITTED : EmployeeRoleResponsibilityStatus.DRAFT, isVisible: submitted, ...(submitted ? { submittedAt: new Date() } : {}) });
+    }
+    await this.save(record, actorId);
+    await this.audit(submitted ? 'EMPLOYEE_ROLE_RESPONSIBILITY_SUBMITTED' : 'EMPLOYEE_ROLE_RESPONSIBILITY_DRAFT_SAVED', record, previous);
+    return this.toView(record);
+  }
+
+  private async manageEmployee(employeeId: string): Promise<Types.ObjectId> {
+    if (!Types.ObjectId.isValid(employeeId)) {
+      throw new EmployeeRolesResponsibilitiesError(400, 'INVALID_EMPLOYEE_ID', 'A valid employee id is required');
+    }
+    const role = String(this.context.user?.role ?? '').trim().toLowerCase();
+    if (!ADMIN_ROLES.has(role)) {
+      throw new EmployeeRolesResponsibilitiesError(403, 'ROLES_RESPONSIBILITIES_ACCESS_DENIED', 'Only an administrator can manage employee roles and responsibilities');
+    }
+    const targetId = new Types.ObjectId(employeeId);
+    if (!await User.exists({ _id: targetId })) {
+      throw new EmployeeRolesResponsibilitiesError(404, 'EMPLOYEE_NOT_FOUND', 'Employee not found');
+    }
+    return targetId;
+  }
+
+  private async recordForEmployee(employeeId: Types.ObjectId, create = true) {
     let record = await EmployeeRolesResponsibilities.findOne({ employeeId });
+    if (!record && create) {
+      const actorId = this.actorId();
+      record = new EmployeeRolesResponsibilities({ employeeId, entries: [], status: EmployeeRoleResponsibilityStatus.DRAFT, isVisible: false, version: 1, createdBy: actorId, updatedBy: actorId });
+    }
+    if (!record) {
+      throw new EmployeeRolesResponsibilitiesError(404, 'ROLES_RESPONSIBILITIES_NOT_FOUND', 'Roles and responsibilities were not found');
+    }
+    this.normalizeLegacyEntries(record);
+    return record;
+  }
+
+  private async ownRecord(actorId: Types.ObjectId, create = true) {
+    let record = await EmployeeRolesResponsibilities.findOne({ employeeId: actorId });
     if (!record && create) {
       record = new EmployeeRolesResponsibilities({
         employeeId,
