@@ -81,6 +81,18 @@ export interface ObjectiveEvidenceContent {
   fileType: string;
 }
 
+export function resolveObjectiveEvidenceEditRole(input: {
+  actorId: string;
+  actorRole: string;
+  employeeId: string;
+}): string | undefined {
+  const role = normalizePmsRole(input.actorRole);
+  return input.actorId === input.employeeId &&
+    (role === PmsRole.EMPLOYEE || role === PmsRole.MANAGER)
+    ? PmsRole.EMPLOYEE
+    : undefined;
+}
+
 interface EvidenceResources {
   actorId: Types.ObjectId;
   actorRole: string;
@@ -507,7 +519,7 @@ export class ObjectiveEvidenceService extends BaseService {
     const actorRole = normalizePmsRole(
       this.context.reqRole || this.context.user?.role || '',
     );
-    if (!actorRole || actorRole !== PmsRole.EMPLOYEE) {
+    if (!actorRole || ![PmsRole.EMPLOYEE, PmsRole.MANAGER].includes(actorRole as any)) {
       throw new ObjectiveEvidenceError(
         'You cannot change documents for this objective.',
         403,
@@ -533,7 +545,12 @@ export class ObjectiveEvidenceService extends BaseService {
         'PMS_OBJECTIVE_EVIDENCE_NOT_FOUND',
       );
     }
-    if (objective.employeeId?.toString() !== actorId.toString()) {
+    const evidenceRole = resolveObjectiveEvidenceEditRole({
+      actorId: actorId.toString(),
+      actorRole,
+      employeeId: objective.employeeId?.toString() ?? '',
+    });
+    if (!evidenceRole) {
       throw new ObjectiveEvidenceError(
         'You cannot change documents for this objective.',
         403,
@@ -619,7 +636,7 @@ export class ObjectiveEvidenceService extends BaseService {
 
     return {
       actorId,
-      actorRole,
+      actorRole: evidenceRole,
       objective,
       assignment,
       annual,
