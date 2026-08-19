@@ -68,6 +68,7 @@ interface ObjectiveSettingCloseCheck {
 export interface WorkflowSyncInput {
   cycleId?: string;
   annualAssignmentId?: string;
+  annualAssignmentIds?: string[];
   assessmentTermCode?: AssessmentTermCodeType;
   dryRun?: boolean;
   reason?: string;
@@ -156,11 +157,14 @@ export class WorkflowSyncService extends BaseService {
     if (input.assessmentTermCode) {
       filter.assessmentTermCode = input.assessmentTermCode;
     }
-    if (input.annualAssignmentId) {
-      filter.annualAssignmentId = this.toObjectId(
-        input.annualAssignmentId,
-        'annualAssignmentId',
-      );
+    const scopedAnnualAssignmentIds = Array.from(new Set([
+      ...(input.annualAssignmentIds ?? []),
+      ...(input.annualAssignmentId ? [input.annualAssignmentId] : []),
+    ])).map((id) => this.toObjectId(id, 'annualAssignmentId'));
+    if (scopedAnnualAssignmentIds.length === 1) {
+      filter.annualAssignmentId = scopedAnnualAssignmentIds[0];
+    } else if (scopedAnnualAssignmentIds.length > 1) {
+      filter.annualAssignmentId = { $in: scopedAnnualAssignmentIds };
     }
 
     const [termAssignments, termCycles] = await Promise.all([
@@ -260,9 +264,11 @@ export class WorkflowSyncService extends BaseService {
         dryRun: input.dryRun === true,
         ignoreWindowDates: input.ignoreWindowDates === true,
         promoteIncludedTerms: !isAnnualManagerReviewConfig(cycle.reviewCadenceConfig),
-        ...(input.annualAssignmentId
-          ? { annualAssignmentId: input.annualAssignmentId }
-          : {}),
+        ...(input.annualAssignmentIds?.length
+          ? { annualAssignmentIds: scopedAnnualAssignmentIds.map((id) => id.toString()) }
+          : input.annualAssignmentId
+            ? { annualAssignmentId: input.annualAssignmentId }
+            : {}),
       },
     );
     result.groupedReviewPeriodsChecked = groupedReviewResult.checked;
