@@ -20,6 +20,7 @@ import {
   defaultObjectiveRowCoverage,
   normalizeObjectiveMatrixValue,
   ObjectiveMatrixWriteService,
+  resolveObjectiveMatrixCreateRole,
   validateObjectiveMatrixCreateRequiredValues,
 } from '../../src/services/objective-matrix-write.service';
 import type { AnnualObjectiveMatrixResponse } from '../../src/types/pms-objective-matrix';
@@ -60,6 +61,31 @@ describe('Objective matrix write model Phase 6', () => {
     expect(defaultObjectiveRowCoverage(PmsRole.MANAGER, AssessmentTermCode.Q2, terms)).toEqual([
       AssessmentTermCode.Q2,
     ]);
+  });
+
+  it('uses employee row permissions when a Manager-role user creates on their own assignment', () => {
+    const managerEmployeeId = new Types.ObjectId().toString();
+
+    expect(resolveObjectiveMatrixCreateRole({
+      actorId: managerEmployeeId,
+      actorRole: PmsRole.MANAGER,
+      employeeId: managerEmployeeId,
+      source: ObjectiveSource.EMPLOYEE_CREATED,
+    })).toBe(PmsRole.EMPLOYEE);
+
+    expect(resolveObjectiveMatrixCreateRole({
+      actorId: managerEmployeeId,
+      actorRole: PmsRole.MANAGER,
+      employeeId: new Types.ObjectId().toString(),
+      source: ObjectiveSource.EMPLOYEE_CREATED,
+    })).toBeUndefined();
+
+    expect(resolveObjectiveMatrixCreateRole({
+      actorId: managerEmployeeId,
+      actorRole: PmsRole.ADMIN,
+      employeeId: managerEmployeeId,
+      source: ObjectiveSource.EMPLOYEE_CREATED,
+    })).toBeUndefined();
   });
 
   it('validates only fields configured as required when adding a dynamic row', () => {

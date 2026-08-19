@@ -156,6 +156,25 @@ export function defaultObjectiveRowCoverage(
     : [currentTermCode];
 }
 
+export function resolveObjectiveMatrixCreateRole(input: {
+  actorId: string;
+  actorRole: string;
+  employeeId: string;
+  source: string;
+}): string | undefined {
+  const actorRole = normalizePmsRole(input.actorRole);
+  if (
+    input.source === ObjectiveSource.EMPLOYEE_CREATED &&
+    input.actorId === input.employeeId &&
+    (actorRole === PmsRole.EMPLOYEE || actorRole === PmsRole.MANAGER)
+  ) return PmsRole.EMPLOYEE;
+  if (
+    input.source === ObjectiveSource.MANAGER_CREATED &&
+    actorRole === PmsRole.MANAGER
+  ) return PmsRole.MANAGER;
+  return undefined;
+}
+
 export class ObjectiveMatrixWriteService {
   constructor(private readonly context: RequestContext) {}
 
@@ -167,10 +186,12 @@ export class ObjectiveMatrixWriteService {
     if (!changes.length) throw new Error('At least one matrix cell change is required');
     if (changes.length > 100) throw new Error('A maximum of 100 matrix cells can be saved at once');
     const selectedTermAssignmentId = changes[0]?.termAssignmentId;
+    const resources = await this.loadTemplateResources(annualAssignmentId);
+    const mode = this.assignmentMode(resources.annual);
     const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
       termAssignmentId: selectedTermAssignmentId,
+      mode,
     });
-    const resources = await this.loadTemplateResources(annualAssignmentId);
     if (resources.annual.templateVersionId!.toString() !== matrix.templateVersionId) {
       throw new Error('The assigned objective template changed; reload the matrix');
     }
@@ -352,6 +373,7 @@ export class ObjectiveMatrixWriteService {
     }
     const refreshed = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
       termAssignmentId: selectedTermAssignmentId,
+      mode,
     });
     const changedCellPrefixes = prepared.map((item) =>
       `${item.change.objectiveRowKey}:${item.change.termCode}:${item.change.columnId}`,
@@ -370,19 +392,22 @@ export class ObjectiveMatrixWriteService {
     annualAssignmentId: string,
     input: ObjectiveMatrixCreateRowInput,
   ): Promise<ObjectiveMatrixCreateRowResult> {
-    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
-      currentTermCode: input.currentTermCode,
-    });
     const actor = this.requireActor();
-    const role = normalizePmsRole(actor.actorRole);
-    const expectedSource = role === PmsRole.EMPLOYEE
-      ? ObjectiveSource.EMPLOYEE_CREATED
-      : role === PmsRole.MANAGER
-        ? ObjectiveSource.MANAGER_CREATED
-        : undefined;
-    if (!expectedSource || input.source !== expectedSource) {
+    const resources = await this.loadTemplateResources(annualAssignmentId);
+    const role = resolveObjectiveMatrixCreateRole({
+      actorId: actor.actorId,
+      actorRole: actor.actorRole,
+      employeeId: resources.annual.employeeId.toString(),
+      source: input.source,
+    });
+    if (!role) {
       throw new Error('Only Employee or Manager can create their own matrix objective rows');
     }
+    const mode = role === PmsRole.EMPLOYEE ? 'employee' : 'manager';
+    const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
+      currentTermCode: input.currentTermCode,
+      mode,
+    });
     if (input.currentTermCode !== matrix.currentTermCode) {
       throw new Error('Dynamic objective rows can be created only in the current term');
     }
@@ -411,7 +436,6 @@ export class ObjectiveMatrixWriteService {
     if (!input.coreValues?.title?.trim()) throw new Error('Objective title is required');
     const matrixSelection = await this.resolveMatrixSelection(input.matrixCode);
 
-    const resources = await this.loadTemplateResources(annualAssignmentId);
     validateObjectiveMatrixCreateRequiredValues({
       columns: resources.layout.columns,
       role: role!,
@@ -717,6 +741,7 @@ export class ObjectiveMatrixWriteService {
       coverage,
       matrix: await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
         currentTermCode: input.currentTermCode,
+        mode,
       }),
     };
   }
@@ -727,13 +752,15 @@ export class ObjectiveMatrixWriteService {
     input: ObjectiveMatrixDeleteRowInput,
   ): Promise<ObjectiveMatrixDeleteRowResult> {
     if (!objectiveRowKey?.trim()) throw new Error('objectiveRowKey is required');
+    const resources = await this.loadTemplateResources(annualAssignmentId);
+    const mode = this.assignmentMode(resources.annual);
     const matrix = await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
       currentTermCode: input.currentTermCode,
+      mode,
     });
     if (input.currentTermCode !== matrix.currentTermCode) {
       throw new Error('Row deletion must be requested from the current term');
     }
-    const resources = await this.loadTemplateResources(annualAssignmentId);
     const titleColumn = resources.layout.columns.find((column) => column.bindingKey === 'objective.title');
     if (!titleColumn) throw new Error('The objective table has no row identity column');
     const row = matrix.rows.find((item) => item.objectiveRowKey === objectiveRowKey);
@@ -849,6 +876,7 @@ export class ObjectiveMatrixWriteService {
       deletedTerms: targets.map((target) => target.termCode),
       matrix: await new ObjectiveMatrixService(this.context).getAnnualMatrix(annualAssignmentId, {
         currentTermCode: input.currentTermCode,
+        mode,
       }),
     };
   }
@@ -965,6 +993,14 @@ export class ObjectiveMatrixWriteService {
   private requireActor() {
     if (!this.context.user) throw new Error('Authentication required');
     return { actorId: this.context.user._id.toString(), actorRole: this.context.user.role };
+  }
+
+  private assignmentMode(annualAssignment: LeanRecord): 'employee' | undefined {
+    const actor = this.requireActor();
+    return normalizePmsRole(actor.actorRole) === PmsRole.MANAGER &&
+      annualAssignment.employeeId?.toString() === actor.actorId
+      ? 'employee'
+      : undefined;
   }
 
   private async resolveMatrixSelection(matrixCode?: string) {
