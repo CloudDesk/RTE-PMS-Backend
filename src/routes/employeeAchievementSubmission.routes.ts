@@ -388,9 +388,15 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         const { termAssignmentId } = request.params as {
           termAssignmentId: string;
         };
+        const { accessContext } = request.query as { accessContext?: string };
         const attachments =
           await request.container!.employeeAchievementSubmissionService
-            .listTemplateFieldAttachments(termAssignmentId);
+            .listTemplateFieldAttachments(
+              termAssignmentId,
+              accessContext === 'PERFORMANCE_FILLING'
+                ? 'PERFORMANCE_FILLING'
+                : undefined,
+            );
         return reply.send(
           successResponse('Template field attachments fetched successfully', attachments),
         );
@@ -410,6 +416,9 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
           sectionKey: string;
           fieldKey: string;
         };
+        const { accessContext } = request.query as {
+          accessContext?: string;
+        };
         const { files } = await parseMultipartForm(request);
         if (!files?.length) throw new Error('No attachment file uploaded');
         const cachedBuffer = (files[0] as any).__cachedBuffer as
@@ -427,6 +436,9 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
               fieldKey,
               files[0],
               fileSize,
+              accessContext === 'PERFORMANCE_FILLING'
+                ? 'PERFORMANCE_FILLING'
+                : undefined,
             );
         return reply.send(
           successResponse('Field attachment uploaded successfully', attachment),
@@ -446,9 +458,16 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
           termAssignmentId: string;
           attachmentId: string;
         };
+        const { accessContext } = request.query as { accessContext?: string };
         const result =
           await request.container!.employeeAchievementSubmissionService
-            .removeTemplateFieldAttachment(termAssignmentId, attachmentId);
+            .removeTemplateFieldAttachment(
+              termAssignmentId,
+              attachmentId,
+              accessContext === 'PERFORMANCE_FILLING'
+                ? 'PERFORMANCE_FILLING'
+                : undefined,
+            );
         return reply.send(
           successResponse('Field attachment removed successfully', result),
         );
