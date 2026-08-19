@@ -81,11 +81,8 @@ import type {
   ObjectiveMatrixWriteResult,
 } from '../types/pms-objective-matrix';
 import {
-  predefinedObjectiveSeedEntry,
   deterministicDynamicObjectiveRowKey,
   futureCoveredObjectiveTerms,
-  upsertObjectiveRowSeedEntries,
-  type ObjectiveRowSeedEntry,
 } from './objective-assignment-seeding.service';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
@@ -4486,8 +4483,6 @@ export class ObjectiveService extends BaseService {
       termAssignmentsByAnnualAssignmentId.set(key, bucket);
     }
 
-    await this.ensurePredefinedObjectivesForAssignments(annualAssignments, visibleTermAssignments);
-
     const objectiveFilter: Record<string, unknown> = {
       termAssignmentId: { $in: visibleTermAssignments.map((item) => item._id) },
       isDeleted: false,
@@ -5993,214 +5988,6 @@ export class ObjectiveService extends BaseService {
     throw new Error('Unsupported objective amendment action');
   }
 
-  private async ensurePredefinedObjectivesForAssignments(
-    annualAssignments: Array<IAnnualAssignment | Record<string, any>>,
-    termAssignments: Array<ITermAssignment | Record<string, any>>,
-  ): Promise<void> {
-    if (annualAssignments.length === 0 || termAssignments.length === 0) {
-      return;
-    }
-
-    const templateVersionIds = Array.from(
-      new Set(
-        annualAssignments
-          .map((item) => item.templateVersionId?.toString())
-          .filter((value): value is string => Boolean(value)),
-      ),
-    );
-
-    if (templateVersionIds.length === 0) {
-      return;
-    }
-
-    const termCycleIds = Array.from(
-      new Set(
-        termAssignments
-          .map((item) => item.cycleTermId?.toString())
-          .filter((value): value is string => Boolean(value)),
-      ),
-    );
-
-    const [templateVersions, existingObjectives, termCycles] = await Promise.all([
-      PmsTemplateVersion.find({
-        _id: { $in: templateVersionIds },
-        isDeleted: false,
-      }).lean(),
-      Objective.find({
-        termAssignmentId: { $in: termAssignments.map((item) => item._id) },
-        isDeleted: false,
-      })
-        .select('termAssignmentId source templateObjectiveKey objectiveNo')
-        .lean(),
-      TermCycle.find({
-        _id: { $in: termCycleIds },
-        isDeleted: false,
-      })
-        .select('achievementSubmissionWindow termFinalizationWindow')
-        .lean(),
-    ]);
-
-    const templateVersionMap = new Map(
-      templateVersions.map((item) => [item._id.toString(), item]),
-    );
-    const termCycleMap = new Map(
-      termCycles.map((item) => [item._id.toString(), item]),
-    );
-    const annualAssignmentMap = new Map(
-      annualAssignments.map((item) => [item._id.toString(), item]),
-    );
-    const predefinedKeysByTermAssignment = new Map<string, Set<string>>();
-    const maxObjectiveNoByTermAssignment = new Map<string, number>();
-
-    for (const objective of existingObjectives) {
-      const termAssignmentId = objective.termAssignmentId.toString();
-      const currentMax = maxObjectiveNoByTermAssignment.get(termAssignmentId) ?? 0;
-      maxObjectiveNoByTermAssignment.set(
-        termAssignmentId,
-        Math.max(currentMax, objective.objectiveNo ?? 0),
-      );
-
-      if (
-        objective.source === ObjectiveSource.PREDEFINED &&
-        typeof objective.templateObjectiveKey === 'string' &&
-        objective.templateObjectiveKey.trim().length > 0
-      ) {
-        const existingKeys = predefinedKeysByTermAssignment.get(termAssignmentId) ?? new Set<string>();
-        existingKeys.add(objective.templateObjectiveKey);
-        predefinedKeysByTermAssignment.set(termAssignmentId, existingKeys);
-      }
-    }
-
-    const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
-    const now = new Date();
-    const objectivePayloads: ObjectiveRowSeedEntry[] = [];
-
-    for (const termAssignment of termAssignments) {
-      const annualAssignment = annualAssignmentMap.get(termAssignment.annualAssignmentId.toString());
-      const templateVersion = annualAssignment?.templateVersionId
-        ? templateVersionMap.get(annualAssignment.templateVersionId.toString())
-        : undefined;
-      const termCycle = termAssignment.cycleTermId
-        ? termCycleMap.get(termAssignment.cycleTermId.toString())
-        : undefined;
-      const defaultDueDate =
-        termCycle?.achievementSubmissionWindow?.endDate ||
-        termCycle?.achievementSubmissionWindow?.dueDate ||
-        termCycle?.termFinalizationWindow?.endDate ||
-        undefined;
-      const objectiveConfig = templateVersion
-        ? this.resolveTemplateObjectiveConfig(templateVersion.sections ?? [], termAssignment.assessmentTermCode)
-        : undefined;
-
-      if (!objectiveConfig || objectiveConfig.predefinedObjectives.length === 0) {
-        continue;
-      }
-
-      const termAssignmentId = termAssignment._id.toString();
-      const existingKeys = predefinedKeysByTermAssignment.get(termAssignmentId) ?? new Set<string>();
-      let nextObjectiveNo = maxObjectiveNoByTermAssignment.get(termAssignmentId) ?? 0;
-
-      for (const predefinedObjective of objectiveConfig.predefinedObjectives) {
-        if (predefinedObjective.isActive === false) {
-          continue;
-        }
-        if (
-          !this.matchesPredefinedObjectiveTerm(
-            termAssignment.assessmentTermCode,
-            predefinedObjective.applicableTerms,
-          )
-        ) {
-          continue;
-        }
-
-        if (!predefinedObjective.key || !predefinedObjective.title?.trim()) {
-          continue;
-        }
-
-        const alreadyExists = existingKeys.has(predefinedObjective.key);
-        // Assignment listing is a read-heavy path. Re-upserting predefined rows
-        // that are already present turns every GET into concurrent bulk writes,
-        // which can exhaust the Cosmos DB worker/pool connection budget.
-        if (alreadyExists) {
-          continue;
-        }
-        nextObjectiveNo += 1;
-        existingKeys.add(predefinedObjective.key);
-
-        const coverage = termAssignments
-          .filter((candidate) => {
-            if (candidate.annualAssignmentId.toString() !== termAssignment.annualAssignmentId.toString()) {
-              return false;
-            }
-            const candidateConfig = templateVersion
-              ? this.resolveTemplateObjectiveConfig(
-                  templateVersion.sections ?? [],
-                  candidate.assessmentTermCode,
-                )
-              : undefined;
-            return candidateConfig?.predefinedObjectives.some(
-              (candidateObjective) =>
-                candidateObjective.key === predefinedObjective.key &&
-                candidateObjective.isActive !== false &&
-                this.matchesPredefinedObjectiveTerm(
-                  candidate.assessmentTermCode,
-                  candidateObjective.applicableTerms,
-                ),
-            ) === true;
-          })
-          .map((candidate) => candidate.assessmentTermCode);
-
-        objectivePayloads.push(predefinedObjectiveSeedEntry({
-          sectionKey: objectiveConfig.sectionKey,
-          objectiveKey: predefinedObjective.key,
-          annualAssignmentId: termAssignment.annualAssignmentId,
-          termAssignmentId: termAssignment._id,
-          assessmentTermCode: termAssignment.assessmentTermCode,
-          coverage,
-          rowGroupKey: predefinedObjective.rowGroupKey,
-          rowOrder: predefinedObjective.rowOrder,
-          columnValues: predefinedObjective.columnValues,
-          columnBindingKeyById: objectiveConfig.columnBindingKeyById,
-          columnTypeById: objectiveConfig.columnTypeById,
-          payload: {
-          termAssignmentId: termAssignment._id,
-          annualAssignmentId: termAssignment.annualAssignmentId,
-          cycleId: termAssignment.cycleId,
-          templateVersionId: annualAssignment?.templateVersionId,
-          assessmentTermCode: termAssignment.assessmentTermCode,
-          employeeId: termAssignment.employeeId,
-          assignedManagerId: termAssignment.assignedManagerId,
-          objectiveNo: nextObjectiveNo,
-          source: ObjectiveSource.PREDEFINED,
-          templateObjectiveKey: predefinedObjective.key,
-          isPredefined: true,
-          title: predefinedObjective.title.trim(),
-          description: predefinedObjective.description,
-          targetMetric: predefinedObjective.kpi,
-          targetValue: predefinedObjective.targetValue,
-          targetDate: defaultDueDate,
-          weightage: predefinedObjective.weightage,
-          successCriteria: predefinedObjective.successCriteria,
-          status: ObjectiveStatus.OBJECTIVE_APPROVED,
-          attachments: [],
-          createdByRole: 'SYSTEM',
-          createdByUserId: actorId,
-          createdBy: actorId,
-          approvedAt: now,
-          approvedBy: actorId,
-          },
-        }));
-      }
-
-      maxObjectiveNoByTermAssignment.set(termAssignmentId, nextObjectiveNo);
-      predefinedKeysByTermAssignment.set(termAssignmentId, existingKeys);
-    }
-
-    if (objectivePayloads.length > 0) {
-      await upsertObjectiveRowSeedEntries(objectivePayloads, actorId);
-    }
-  }
-
   private async buildObjectiveConfigMap(
     annualAssignments: Array<IAnnualAssignment | Record<string, any>>,
     termAssignments: Array<ITermAssignment | Record<string, any>>,
@@ -6571,21 +6358,6 @@ export class ObjectiveService extends BaseService {
     );
 
     return Array.from(new Set(normalized));
-  }
-
-  private matchesPredefinedObjectiveTerm(
-    assessmentTermCode: AssessmentTermCodeValue,
-    applicableTerms?: AssessmentTermCodeValue[],
-  ): boolean {
-    if (typeof applicableTerms === 'undefined') {
-      return true;
-    }
-
-    if (applicableTerms.length === 0) {
-      return false;
-    }
-
-    return this.assessmentTermScopeMatches(applicableTerms, assessmentTermCode);
   }
 
   private isTermLevelTemplateSection(level?: unknown): boolean {

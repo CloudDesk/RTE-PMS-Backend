@@ -10,6 +10,9 @@ import { AnnualAssignment } from '../../src/models/pms-annual-assignment.model';
 import { AnnualCycle } from '../../src/models/pms-annual-cycle.model';
 import { TermCycle } from '../../src/models/pms-term-cycle.model';
 import { Objective } from '../../src/models/pms-objective.model';
+import { ObjectiveComment } from '../../src/models/pms-objective-comment.model';
+import { ObjectiveValue } from '../../src/models/pms-objective-value.model';
+import { ObjectiveAttachment } from '../../src/models/pms-objective-attachment.model';
 import { TermReview } from '../../src/models/pms-term-review.model';
 import { TermReviewValue } from '../../src/models/pms-term-review-value.model';
 import { PmsTemplateVersion } from '../../src/models/pms-template-version.model';
@@ -202,15 +205,15 @@ describe('Cosmos list-query optimizations', () => {
     const queriedIds = queriedFilter._id.$in.map((value: string) => value.toString());
     expect(new Set(queriedIds)).toEqual(new Set([templateA.toString(), templateB.toString()]));
   });
-
-  it('does not bulk-upsert predefined objectives that already exist during assignment listing', async () => {
+  it('keeps objective assignment listing read-only', async () => {
     const actorId = new Types.ObjectId();
     const annualAssignmentId = new Types.ObjectId();
     const termAssignmentId = new Types.ObjectId();
-    const templateVersionId = new Types.ObjectId();
+    const cycleId = new Types.ObjectId();
     const termCycleId = new Types.ObjectId();
+    const managerId = new Types.ObjectId();
     const service = new ObjectiveService({
-      requestId: 'existing-predefined-objective-test',
+      requestId: 'read-only-assignment-list-test',
       reqRole: 'STAFF',
       user: {
         _id: actorId,
@@ -225,52 +228,55 @@ describe('Cosmos list-query optimizations', () => {
         portalAccess: true,
       },
     } as RequestContext) as any;
-    const annualAssignment = {
-      _id: annualAssignmentId,
-      templateVersionId,
-    };
     const termAssignment = {
       _id: termAssignmentId,
       annualAssignmentId,
+      cycleId,
       cycleTermId: termCycleId,
-      assessmentTermCode: AssessmentTermCode.Q1,
       employeeId: actorId,
-      assignedManagerId: new Types.ObjectId(),
+      assignedManagerId: managerId,
+      assessmentTermCode: AssessmentTermCode.Q1,
+      termState: TermWorkflowState.OBJECTIVE_SETTING_OPEN,
+      termSummary: { objectiveTemplateValues: [{ fieldKey: 'existing.value' }] },
     };
 
-    jest.spyOn(service, 'resolveTemplateObjectiveConfig').mockReturnValue({
-      sectionKey: 'objectives',
-      predefinedObjectives: [{
-        key: 'delivery',
-        title: 'Delivery',
-        applicableTerms: [AssessmentTermCode.Q1],
-      }],
-      columnBindingKeyById: {},
-      columnTypeById: {},
-    });
-    jest.spyOn(PmsTemplateVersion, 'find').mockReturnValue({
-      lean: jest.fn().mockResolvedValue([{ _id: templateVersionId, sections: [] }]),
+    jest.spyOn(TermAssignment, 'find').mockReturnValue({
+      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([termAssignment]) }),
     } as any);
-    jest.spyOn(Objective, 'find').mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue([{
-          termAssignmentId,
-          source: 'PREDEFINED',
-          templateObjectiveKey: 'delivery',
-          objectiveNo: 1,
-        }]),
-      }),
+    jest.spyOn(AnnualAssignment, 'find').mockReturnValue({
+      lean: jest.fn().mockResolvedValue([{
+        _id: annualAssignmentId,
+        cycleId,
+        employeeSnapshot: {},
+        managerSnapshot: {},
+      }]),
+    } as any);
+    jest.spyOn(AnnualCycle, 'find').mockReturnValue({
+      lean: jest.fn().mockResolvedValue([{ _id: cycleId, name: 'Cycle', code: 'CYCLE' }]),
     } as any);
     jest.spyOn(TermCycle, 'find').mockReturnValue({
-      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      lean: jest.fn().mockResolvedValue([{ _id: termCycleId }]),
     } as any);
-    const objectiveBulkWrite = jest.spyOn(Objective, 'bulkWrite');
-
-    await service.ensurePredefinedObjectivesForAssignments(
-      [annualAssignment],
-      [termAssignment],
+    jest.spyOn(Objective, 'find').mockReturnValue({
+      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    } as any);
+    for (const model of [ObjectiveComment, ObjectiveValue, ObjectiveAttachment]) {
+      jest.spyOn(model, 'find').mockReturnValue({
+        sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      } as any);
+    }
+    jest.spyOn(service, 'buildObjectiveConfigMap').mockResolvedValue(new Map());
+    jest.spyOn(service, 'buildAchievementSubmissionEnabledMap').mockResolvedValue(new Map());
+    jest.spyOn(service, 'getEffectiveTermStateForDisplay').mockReturnValue(
+      TermWorkflowState.OBJECTIVE_SETTING_OPEN,
     );
+    const objectiveBulkWrite = jest.spyOn(Objective, 'bulkWrite');
+    const objectiveValueBulkWrite = jest.spyOn(ObjectiveValue, 'bulkWrite');
 
+    const records = await service.listAssignments('employee');
+
+    expect(records).toHaveLength(1);
     expect(objectiveBulkWrite).not.toHaveBeenCalled();
+    expect(objectiveValueBulkWrite).not.toHaveBeenCalled();
   });
 });
