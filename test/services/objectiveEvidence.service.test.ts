@@ -12,6 +12,7 @@ import { accessService } from '../../src/services/access.service';
 import {
   ObjectiveEvidenceError,
   ObjectiveEvidenceService,
+  resolveObjectiveEvidenceEditRole,
   TERM_SUPPORTING_DOCUMENT,
 } from '../../src/services/objective-evidence.service';
 import type { RequestContext } from '../../src/types/context';
@@ -116,6 +117,26 @@ function sessionMock() {
 describe('ObjectiveEvidenceService Phase 2', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('uses employee evidence permissions only for a Manager-role user acting on their own objective', () => {
+    const managerEmployeeId = new Types.ObjectId().toString();
+
+    expect(resolveObjectiveEvidenceEditRole({
+      actorId: managerEmployeeId,
+      actorRole: 'MANAGER',
+      employeeId: managerEmployeeId,
+    })).toBe('EMPLOYEE');
+    expect(resolveObjectiveEvidenceEditRole({
+      actorId: managerEmployeeId,
+      actorRole: 'MANAGER',
+      employeeId: new Types.ObjectId().toString(),
+    })).toBeUndefined();
+    expect(resolveObjectiveEvidenceEditRole({
+      actorId: managerEmployeeId,
+      actorRole: 'ADMIN',
+      employeeId: managerEmployeeId,
+    })).toBeUndefined();
   });
 
   it('declares one active evidence record per term-specific objective', () => {
@@ -502,7 +523,7 @@ describe('ObjectiveEvidenceService Phase 2', () => {
 
   it('rejects non-employees, other employees, and closed review periods', async () => {
     const objectiveId = new Types.ObjectId();
-    await expect((new ObjectiveEvidenceService(context('MANAGER')) as any)
+    await expect((new ObjectiveEvidenceService(context('ADMIN')) as any)
       .loadEditableResources(objectiveId.toString()))
       .rejects.toMatchObject({ statusCode: 403 });
 
@@ -512,6 +533,9 @@ describe('ObjectiveEvidenceService Phase 2', () => {
       employeeId: new Types.ObjectId(),
     }));
     await expect((new ObjectiveEvidenceService(context('EMPLOYEE', actorId.toString())) as any)
+      .loadEditableResources(objectiveId.toString()))
+      .rejects.toMatchObject({ statusCode: 403 });
+    await expect((new ObjectiveEvidenceService(context('MANAGER', actorId.toString())) as any)
       .loadEditableResources(objectiveId.toString()))
       .rejects.toMatchObject({ statusCode: 403 });
     jest.restoreAllMocks();
