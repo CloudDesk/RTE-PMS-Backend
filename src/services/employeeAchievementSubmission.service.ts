@@ -1268,6 +1268,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
   async listTemplateFieldAttachments(
     termAssignmentId: string,
+    accessContext?: 'PERFORMANCE_FILLING',
   ): Promise<TemplateFieldAttachmentRecord[]> {
     const termAssignment = await this.getTermAssignment(termAssignmentId);
     await this.assertViewAccess(termAssignment);
@@ -1290,7 +1291,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
     const editableKeys = new Set<string>();
     for (const configured of configuredFields) {
-      if (await this.canActorEditConfiguredAttachment(termAssignment, configured)) {
+      if (await this.canActorEditConfiguredAttachment(termAssignment, configured, accessContext)) {
         editableKeys.add(
           `${configured.section.sectionKey}::${configured.field.fieldKey}`,
         );
@@ -1346,6 +1347,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     fieldKey: string,
     file: MultipartFile,
     fileSize?: number,
+    accessContext?: 'PERFORMANCE_FILLING',
   ): Promise<TemplateFieldAttachmentRecord> {
     const termAssignment = await this.getTermAssignment(termAssignmentId);
     const annualAssignment = await this.getAnnualAssignment(
@@ -1360,7 +1362,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       sectionKey,
       fieldKey,
     );
-    await this.assertConfiguredAttachmentEditAccess(termAssignment, configured);
+    await this.assertConfiguredAttachmentEditAccess(
+      termAssignment,
+      configured,
+      accessContext,
+    );
     this.validateTemplateFieldAttachmentFile(configured.config, file, fileSize);
 
     const actor = this.requireActor();
@@ -1465,6 +1471,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   async removeTemplateFieldAttachment(
     termAssignmentId: string,
     attachmentId: string,
+    accessContext?: 'PERFORMANCE_FILLING',
   ): Promise<{ attachmentId: string }> {
     const termAssignment = await this.getTermAssignment(termAssignmentId);
     if (!Types.ObjectId.isValid(attachmentId)) {
@@ -1489,7 +1496,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       attachment.sectionKey,
       attachment.fieldKey,
     );
-    await this.assertConfiguredAttachmentEditAccess(termAssignment, configured);
+    await this.assertConfiguredAttachmentEditAccess(
+      termAssignment,
+      configured,
+      accessContext,
+    );
     if (configured.config.allowEmployeeRemove === false) {
       throw new Error('Removing this attachment is not allowed');
     }
@@ -2859,6 +2870,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   private async canActorEditConfiguredAttachment(
     termAssignment: any,
     configured: ConfiguredEmployeeFieldAttachment,
+    accessContext?: 'PERFORMANCE_FILLING',
   ): Promise<boolean> {
     const actor = this.requireActor();
     if (actor.actorId !== termAssignment.employeeId.toString()) return false;
@@ -2866,6 +2878,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       await this.assertConfiguredAttachmentEditAccess(
         termAssignment,
         configured,
+        accessContext,
       );
       return true;
     } catch {
@@ -2876,6 +2889,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   private async assertConfiguredAttachmentEditAccess(
     termAssignment: any,
     configured: ConfiguredEmployeeFieldAttachment,
+    accessContext?: 'PERFORMANCE_FILLING',
   ): Promise<void> {
     const actor = this.requireActor();
     if (actor.actorId !== termAssignment.employeeId.toString()) {
@@ -2895,6 +2909,13 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     );
     if (employeePermission !== 'edit' && !employeeBehaviorEditable) {
       throw new Error('This field attachment is read-only');
+    }
+
+    // The Performance Filling screen explicitly requests this access context.
+    // Do not infer it from the field's original Objective Setting configuration.
+    if (accessContext === 'PERFORMANCE_FILLING') {
+      await this.assertPerformanceFillingAssignedFormAccess(termAssignment);
+      return;
     }
 
     if (
