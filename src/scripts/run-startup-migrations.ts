@@ -20,6 +20,53 @@ dotenv.config();
 import { connectDB, runStartupMigrations } from '../config/database';
 import '../models';
 
+const INDEX_BUILD_MAX_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.DB_INDEX_BUILD_MAX_ATTEMPTS || 3),
+);
+const INDEX_BUILD_RETRY_DELAY_MS = Math.max(
+  1000,
+  Number(process.env.DB_INDEX_BUILD_RETRY_DELAY_MS || 5000),
+);
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isTransientCosmosIndexError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return (
+    /worker node connections have exceeded the limit/i.test(message) ||
+    /unexpected internal error has occurred/i.test(message) ||
+    /too many requests/i.test(message) ||
+    /service unavailable/i.test(message)
+  );
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function createModelIndexes(modelName: string): Promise<void> {
+  for (let attempt = 1; attempt <= INDEX_BUILD_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await mongoose.model(modelName).createIndexes();
+      return;
+    } catch (error) {
+      const canRetry =
+        isTransientCosmosIndexError(error) && attempt < INDEX_BUILD_MAX_ATTEMPTS;
+      if (!canRetry) throw error;
+
+      const delayMs = INDEX_BUILD_RETRY_DELAY_MS * attempt;
+      console.warn(
+        `[migrate] indexes transient failure: ${modelName} — ${errorMessage(error)}; ` +
+          `retrying in ${delayMs}ms (${attempt + 1}/${INDEX_BUILD_MAX_ATTEMPTS})`,
+      );
+      await wait(delayMs);
+    }
+  }
+}
+
 async function buildIndexes(): Promise<number> {
   const modelNames = mongoose.modelNames().sort();
   let failed = 0;
@@ -27,11 +74,11 @@ async function buildIndexes(): Promise<number> {
   for (const modelName of modelNames) {
     const startedAt = Date.now();
     try {
-      await mongoose.model(modelName).createIndexes();
+      await createModelIndexes(modelName);
       console.log(`[migrate] indexes ok: ${modelName} (${Date.now() - startedAt}ms)`);
     } catch (error) {
       failed += 1;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       console.error(`[migrate] indexes FAILED: ${modelName} — ${message}`);
 
       const code = (error as { code?: number })?.code;
