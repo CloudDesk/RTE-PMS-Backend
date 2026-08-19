@@ -257,6 +257,7 @@ export const employeeRolesResponsibilitiesRoutes: RouteHandler = async (
       }
     },
   );
+
 };
 
 function sendRouteError(reply: FastifyReply, error: unknown) {

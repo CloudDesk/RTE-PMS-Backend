@@ -3,7 +3,16 @@ import { BaseService } from './base.service';
 import { AnnualDecisionService } from './annualDecision.service';
 import { EmployeeAchievementSubmissionService } from './employeeAchievementSubmission.service';
 import { normalizePmsRole, PmsRole } from '../constants/pms.enums';
-import { AnnualAssignment, AnnualCycle, AnnualDecision, TermReviewValue, User } from '../models';
+import {
+  AnnualAssignment,
+  AnnualCycle,
+  AnnualDecision,
+  AnnualDecisionValue,
+  ManagerReviewPeriodAssignment,
+  PmsTemplateVersion,
+  TermReviewValue,
+  User,
+} from '../models';
 
 export interface ManagementEmployeeListQuery {
   page?: number;
@@ -235,22 +244,85 @@ export class PmsManagementEmployeeService extends BaseService {
       'function_domain_training',
       'soft_skills_training',
     ];
-    const values = await TermReviewValue.find({
-      annualAssignmentId: { $in: assignmentIds },
-      employeeId: employeeObjectId,
-      roleCode: 'MANAGER',
-      fieldKey: { $in: trainingKeys },
-      valueStatus: 'ACTIVE',
-      submittedAt: { $exists: true, $ne: null },
-      isDeleted: false,
-    })
-      .sort({ submittedAt: -1, updatedAt: -1 })
-      .lean();
+    const templateVersionIds = assignments
+      .map((assignment) => assignment.templateVersionId)
+      .filter(Boolean);
+    const templateVersions = templateVersionIds.length
+      ? await PmsTemplateVersion.find({ _id: { $in: templateVersionIds } })
+        .select('sections.fields')
+        .lean()
+      : [];
+    const normalizedLabel = (value: unknown) => String(value ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+    const canonicalTrainingKey = (fieldKey: string, fieldLabel?: string) => {
+      const key = String(fieldKey ?? '').trim();
+      if (trainingKeys.includes(key)) return key;
+      const label = normalizedLabel(fieldLabel);
+      if (label.includes('gap from competency') || label.includes('competency mapping')) return 'competency_mapping_gap';
+      if (label.includes('training in functions') || label.includes('training in function') || label.includes('domain area')) return 'function_domain_training';
+      if (label.includes('training in personality') || label.includes('soft skills')) return 'soft_skills_training';
+      return undefined;
+    };
+    const templateKeyMap = new Map<string, string>();
+    for (const version of templateVersions) {
+      for (const section of version.sections ?? []) {
+        for (const field of section.fields ?? []) {
+          const canonical = canonicalTrainingKey(field.fieldKey, field.fieldLabel);
+          if (canonical) templateKeyMap.set(field.fieldKey, canonical);
+        }
+      }
+    }
+    const acceptedTrainingKeys = [...new Set([...trainingKeys, ...templateKeyMap.keys()])];
+    const [annualManagerReviews, managerReviewValues, annualReviewValues] = await Promise.all([
+      ManagerReviewPeriodAssignment.find({
+        annualAssignmentId: { $in: assignmentIds },
+        employeeId: employeeObjectId,
+        reviewState: { $in: ['MANAGER_REVIEW_SUBMITTED', 'FINALIZED', 'CLOSED_BY_ADMIN'] },
+        isDeleted: false,
+      })
+        .select('annualAssignmentId reviewValues submittedAt updatedAt')
+        .sort({ submittedAt: -1, updatedAt: -1 })
+        .lean(),
+      TermReviewValue.find({
+        annualAssignmentId: { $in: assignmentIds },
+        employeeId: employeeObjectId,
+        roleCode: 'MANAGER',
+        fieldKey: { $in: acceptedTrainingKeys },
+        valueStatus: 'ACTIVE',
+        submittedAt: { $exists: true, $ne: null },
+        isDeleted: false,
+      })
+        .sort({ submittedAt: -1, updatedAt: -1 })
+        .lean(),
+      AnnualDecisionValue.find({
+        annualAssignmentId: { $in: assignmentIds },
+        fieldKey: { $in: acceptedTrainingKeys },
+        roleCode: { $in: ['MANAGER', 'L2', 'DIRECTOR'] },
+        isDeleted: false,
+      })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .lean(),
+    ]);
     const valuesByAssignment = new Map<string, Map<string, any>>();
-    for (const value of values) {
+    const annualManagerReviewValues = annualManagerReviews.flatMap((review) =>
+      (review.reviewValues ?? [])
+        .map((value) => ({
+          ...value,
+          fieldKey: templateKeyMap.get(value.fieldKey) ?? canonicalTrainingKey(value.fieldKey),
+          annualAssignmentId: review.annualAssignmentId,
+        }))
+        .filter((value): value is typeof value & { fieldKey: string } => Boolean(value.fieldKey)),
+    );
+    // Annual Manager Review is the source displayed to HR after L3 completion.
+    // The historic term/decision collections remain fallbacks for older cycles.
+    for (const value of [...annualManagerReviewValues, ...managerReviewValues, ...annualReviewValues]) {
       const assignmentKey = value.annualAssignmentId.toString();
+      const canonicalKey = templateKeyMap.get(value.fieldKey) ?? canonicalTrainingKey(value.fieldKey);
+      if (!canonicalKey) continue;
       const fieldMap = valuesByAssignment.get(assignmentKey) ?? new Map<string, any>();
-      if (!fieldMap.has(value.fieldKey)) fieldMap.set(value.fieldKey, value);
+      if (!fieldMap.has(canonicalKey)) fieldMap.set(canonicalKey, value);
       valuesByAssignment.set(assignmentKey, fieldMap);
     }
     const serializedValue = (value?: any) => {
