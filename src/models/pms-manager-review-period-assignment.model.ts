@@ -198,6 +198,10 @@ managerReviewPeriodAssignmentSchema.index(
   { unique: true, name: 'idx_manager_review_period_annual_code' },
 );
 managerReviewPeriodAssignmentSchema.index({ managerId: 1, reviewState: 1 });
+managerReviewPeriodAssignmentSchema.index(
+  { managerId: 1, isDeleted: 1, updatedAt: -1, reviewCode: 1 },
+  { name: 'idx_grouped_review_manager_list' },
+);
 managerReviewPeriodAssignmentSchema.index({ cycleId: 1, reviewState: 1 });
 managerReviewPeriodAssignmentSchema.index({ includedTermAssignmentIds: 1 });
 

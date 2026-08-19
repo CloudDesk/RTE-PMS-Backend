@@ -21,6 +21,7 @@ import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
 import { PmsEmployeeCareerProfileSnapshotService } from './pmsEmployeeCareerProfileSnapshot.service';
+import { traceDatabaseOperation } from '../utilis/databaseDiagnostics';
 import { transitionTermAssignmentState } from './term-assignment-workflow.service';
 import {
   intersectGroupTerms,
@@ -248,8 +249,12 @@ export class ManagerReviewPeriodService extends BaseService {
       filter.$or = [{ managerId }, ...delegatedClauses];
     }
 
-    const reviews = await ManagerReviewPeriodAssignment.find(filter)
-      .sort({ updatedAt: -1, reviewCode: 1 });
+    const reviews = await traceDatabaseOperation(
+      'grouped-reviews.list.root',
+      { route: '/pms/manager-review-periods/assignments', mode },
+      async () => ManagerReviewPeriodAssignment.find(filter).sort({ updatedAt: -1, reviewCode: 1 }),
+      (records) => records.length,
+    );
     return this.mapRecords(reviews);
   }
 
@@ -768,25 +773,34 @@ export class ManagerReviewPeriodService extends BaseService {
       return [];
     }
 
-    const annualAssignments = await AnnualAssignment.find({
-      _id: { $in: reviews.map((review) => review.annualAssignmentId) },
-      isDeleted: false,
-    }).lean();
-    const cycles = await AnnualCycle.find({
-      _id: { $in: reviews.map((review) => review.cycleId) },
-      isDeleted: false,
-    })
-      .select({ name: 1, code: 1, startDate: 1, endDate: 1 })
-      .lean();
+    const annualAssignmentIds = reviews.map((review) => review.annualAssignmentId);
+    const cycleIds = reviews.map((review) => review.cycleId);
+    const termAssignmentIds = reviews.flatMap((review) => review.includedTermAssignmentIds);
+    const [annualAssignments, cycles, termAssignments, objectives, achievementSubmissions] =
+      await traceDatabaseOperation(
+        'grouped-reviews.list.related-batches',
+        { route: '/pms/manager-review-periods/assignments', reviewCount: reviews.length },
+        async () => Promise.all([
+          AnnualAssignment.find({ _id: { $in: annualAssignmentIds }, isDeleted: false }).lean(),
+          AnnualCycle.find({ _id: { $in: cycleIds }, isDeleted: false })
+            .select({ name: 1, code: 1, startDate: 1, endDate: 1 })
+            .lean(),
+          TermAssignment.find({ _id: { $in: termAssignmentIds }, isDeleted: false })
+            .select({ _id: 1, cycleTermId: 1 })
+            .lean(),
+          Objective.find({
+            termAssignmentId: { $in: termAssignmentIds },
+            isDeleted: false,
+            status: 'OBJECTIVE_APPROVED',
+          }).lean(),
+          EmployeeAchievementSubmission.find({
+            annualAssignmentId: { $in: annualAssignmentIds },
+            isDeleted: false,
+          }).lean(),
+        ]),
+      );
     const annualById = new Map(annualAssignments.map((item) => [item._id.toString(), item]));
     const cycleById = new Map(cycles.map((item) => [item._id.toString(), item]));
-    const termAssignmentIds = reviews.flatMap((review) => review.includedTermAssignmentIds);
-    const termAssignments = await TermAssignment.find({
-      _id: { $in: termAssignmentIds },
-      isDeleted: false,
-    })
-      .select({ _id: 1, cycleTermId: 1 })
-      .lean();
     const termCycles = await TermCycle.find({
       _id: {
         $in: termAssignments
@@ -808,15 +822,6 @@ export class ManagerReviewPeriodService extends BaseService {
     const termCycleById = new Map(
       termCycles.map((termCycle) => [termCycle._id.toString(), termCycle]),
     );
-    const objectives = await Objective.find({
-      termAssignmentId: { $in: termAssignmentIds },
-      isDeleted: false,
-      status: 'OBJECTIVE_APPROVED',
-    }).lean();
-    const achievementSubmissions = await EmployeeAchievementSubmission.find({
-      annualAssignmentId: { $in: reviews.map((review) => review.annualAssignmentId) },
-      isDeleted: false,
-    }).lean();
     const objectivesByTermId = new Map<string, typeof objectives>();
     for (const objective of objectives) {
       const key = objective.termAssignmentId.toString();

@@ -132,6 +132,10 @@ termAssignmentSchema.index(
 );
 termAssignmentSchema.index({ cycleTermId: 1, termState: 1 });
 termAssignmentSchema.index({ assignedManagerId: 1, termState: 1 });
+termAssignmentSchema.index(
+  { assignedManagerId: 1, isDeleted: 1, updatedAt: -1, assessmentTermCode: 1 },
+  { name: 'idx_term_review_manager_list' },
+);
 termAssignmentSchema.index({ employeeId: 1, cycleId: 1, assessmentTermCode: 1 });
 
 export const TermAssignment = mongoose.model<ITermAssignment>(

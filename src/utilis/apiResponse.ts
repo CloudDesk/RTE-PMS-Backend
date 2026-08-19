@@ -2,6 +2,7 @@ export interface ApiSuccessResponse<T> {
   success: true;
   message: string;
   data: T;
+  meta?: Record<string, unknown>;
 }
 
 export interface ApiErrorResponse {
@@ -15,11 +16,13 @@ export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
 export function successResponse<T>(
   message: string,
   data: T,
+  meta?: Record<string, unknown>,
 ): ApiSuccessResponse<T> {
   return {
     success: true,
     message,
     data,
+    ...(meta ? { meta } : {}),
   };
 }
 

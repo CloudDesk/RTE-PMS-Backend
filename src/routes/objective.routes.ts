@@ -783,6 +783,13 @@ export const objectiveRoutes: RouteHandler = async (
         const assignments = await request.container!.objectiveService.listObjectiveEmployeeAssignments(
           request.query as ObjectiveEmployeeAssignmentListQuery,
         );
+        if (!Array.isArray(assignments)) {
+          return reply.send(successResponse(
+            'Objective employee assignments fetched successfully',
+            assignments.items,
+            { pagination: assignments.pagination },
+          ));
+        }
         return reply.send(successResponse('Objective employee assignments fetched successfully', assignments));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
