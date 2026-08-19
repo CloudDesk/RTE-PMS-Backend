@@ -330,10 +330,12 @@ export class ObjectiveMatrixService {
     const isAssignedFinalReviewer =
       annualAssignment.finalReviewerId?.toString() === actor.actorId ||
       annualAssignment.directorReviewerId?.toString() === actor.actorId;
+    const isAssignmentEmployee = annualAssignment.employeeId.toString() === actor.actorId;
     const { mode, viewRole, permissionRole } = this.resolveView(
       actor,
       query.mode,
       isAssignedFinalReviewer,
+      isAssignmentEmployee,
     );
     const includeAudit = query.includeAudit === true || query.includeAudit === 'true';
     if (includeAudit && normalizePmsRole(actor.actorRole) !== PmsRole.ADMIN) {
@@ -922,6 +924,7 @@ export class ObjectiveMatrixService {
     actor: MatrixActor,
     requested?: ObjectiveMatrixMode,
     isAssignedFinalReviewer = false,
+    isAssignmentEmployee = false,
   ) {
     const role = normalizePmsRole(actor.actorRole);
     if (!role) throw new Error(`Role ${actor.actorRole} is not mapped for PMS access`);
@@ -949,10 +952,17 @@ export class ObjectiveMatrixService {
     const isFinalReviewerPerspective = isAssignedFinalReviewer;
     const canReadCrossPerspective =
       role === PmsRole.ADMIN || role === PmsRole.DIRECTOR || isFinalReviewerPerspective;
-    if (!canReadCrossPerspective && requestedRole !== role) {
+    // A person's functional role may be MANAGER while they are still the employee
+    // (subject) of their own PMS assignment. In that assignment only, allow the
+    // employee perspective and apply employee column/action permissions.
+    const canReadOwnEmployeePerspective =
+      role === PmsRole.MANAGER && mode === 'employee' && isAssignmentEmployee;
+    if (!canReadCrossPerspective && !canReadOwnEmployeePerspective && requestedRole !== role) {
       throw new Error(`Matrix mode ${mode} is not permitted for role ${actor.actorRole}`);
     }
-    const viewRole = canReadCrossPerspective ? requestedRole : role;
+    const viewRole = canReadCrossPerspective || canReadOwnEmployeePerspective
+      ? requestedRole
+      : role;
     return {
       mode,
       viewRole,

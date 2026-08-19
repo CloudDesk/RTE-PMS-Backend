@@ -142,6 +142,21 @@ describe('Objective matrix read model Phase 5', () => {
     });
   });
 
+  it('allows a Manager-role employee to use employee mode only for their own assignment', () => {
+    const managerEmployeeId = new Types.ObjectId().toString();
+    const service = new ObjectiveMatrixService({} as any);
+    const actor = { actorId: managerEmployeeId, actorRole: PmsRole.MANAGER };
+
+    expect((service as any).resolveView(actor, 'employee', false, true)).toEqual({
+      mode: 'employee',
+      viewRole: PmsRole.EMPLOYEE,
+      permissionRole: PmsRole.EMPLOYEE,
+    });
+
+    expect(() => (service as any).resolveView(actor, 'employee', false, false))
+      .toThrow('Matrix mode employee is not permitted for role MANAGER');
+  });
+
   it('hides manager approval actions outside the effective approval dates', () => {
     const window = {
       startDate: new Date('2026-02-01T00:00:00.000Z'),
@@ -151,6 +166,30 @@ describe('Objective matrix read model Phase 5', () => {
     expect(isObjectiveMatrixDateWindowOpen(window, new Date('2026-02-14T12:00:00.000Z'))).toBe(true);
     expect(isObjectiveMatrixDateWindowOpen(window, new Date('2026-03-01T12:00:00.000Z'))).toBe(false);
     expect(isObjectiveMatrixDateWindowOpen(undefined, new Date('2026-03-01T12:00:00.000Z'))).toBe(true);
+  });
+
+  it('keeps objective setting closed until the workflow state is open', () => {
+    const input = {
+      stage: 'OBJECTIVE_SETTING' as const,
+      assignment: {
+        assessmentTermCode: AssessmentTermCode.Y1,
+        termState: TermWorkflowState.NOT_STARTED,
+      },
+      termCycle: {
+        objectiveSettingWindow: {
+          startDate: new Date('2026-08-19T00:00:00.000Z'),
+          endDate: new Date('2026-08-25T00:00:00.000Z'),
+        },
+      },
+      annualAssignment: {},
+      now: new Date('2026-08-19T12:00:00.000Z'),
+    };
+
+    expect(isObjectiveMatrixStageWindowOpen(input)).toBe(false);
+    expect(isObjectiveMatrixStageWindowOpen({
+      ...input,
+      assignment: { ...input.assignment, termState: TermWorkflowState.OBJECTIVE_SETTING_OPEN },
+    })).toBe(true);
   });
 
   it('uses an open configured window for the current term even before workflow sync advances the stored state', () => {
