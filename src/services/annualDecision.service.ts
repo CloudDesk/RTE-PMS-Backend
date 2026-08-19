@@ -779,6 +779,7 @@ export class AnnualDecisionService extends BaseService {
     const objectiveMatrix = await this.loadObjectiveMatrixIfEnabled(
       annualAssignment,
       actorMatrixMode,
+      { allowHrWorkspaceRead: true },
     );
     const frozenMatrixSnapshot = preReopenSnapshots.find((snapshot) => {
       const finalSnapshot = snapshot.finalDecisionSnapshot as Record<string, unknown> | undefined;
@@ -2667,6 +2668,7 @@ export class AnnualDecisionService extends BaseService {
   private async loadObjectiveMatrixIfEnabled(
     annualAssignment: IAnnualAssignment,
     mode: ObjectiveMatrixMode = this.objectiveMatrixModeForActor(),
+    accessContext: { allowHrWorkspaceRead?: boolean } = {},
   ): Promise<AnnualObjectiveMatrixResponse | null> {
     if (!annualAssignment.templateVersionId) return null;
     const templateVersion = await PmsTemplateVersion.findById(annualAssignment.templateVersionId)
@@ -2683,6 +2685,7 @@ export class AnnualDecisionService extends BaseService {
         mode,
         employeeId: annualAssignment.employeeId.toString(),
       },
+      accessContext,
     );
   }
 
@@ -4869,8 +4872,9 @@ export class AnnualDecisionService extends BaseService {
   private async applyScopedAssignmentFilter(filter: Record<string, unknown>): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
 
-    if (mappedRole === PmsRole.ADMIN) {
+    if (mappedRole === PmsRole.ADMIN || rawRole === 'HR') {
       return;
     }
 
@@ -4906,8 +4910,9 @@ export class AnnualDecisionService extends BaseService {
   ): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
 
-    if (mappedRole === PmsRole.ADMIN) {
+    if (mappedRole === PmsRole.ADMIN || rawRole === 'HR') {
       return;
     }
 

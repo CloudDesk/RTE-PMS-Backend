@@ -142,6 +142,30 @@ describe('Objective matrix read model Phase 5', () => {
     });
   });
 
+  it('allows HR matrix reads for internal Assignment Workspace summaries', async () => {
+    const access = jest.spyOn(accessService, 'canPerform').mockResolvedValue({
+      allowed: false,
+      mappedRole: PmsRole.MANAGER,
+      message: 'Managers can access only assigned employee PMS records.',
+    });
+    const service = new ObjectiveMatrixService({} as any);
+    const actor = { actorId: new Types.ObjectId().toString(), actorRole: 'HR' };
+    const assignment = {
+      _id: new Types.ObjectId(),
+      employeeId: new Types.ObjectId(),
+      assignedManagerId: new Types.ObjectId(),
+      cycleId: new Types.ObjectId(),
+    };
+
+    await expect((service as any).assertAccess(
+      actor,
+      assignment,
+      'manager',
+      { allowHrWorkspaceRead: true },
+    )).resolves.toBeUndefined();
+    expect(access).not.toHaveBeenCalled();
+  });
+
   it('hides manager approval actions outside the effective approval dates', () => {
     const window = {
       startDate: new Date('2026-02-01T00:00:00.000Z'),

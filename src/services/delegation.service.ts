@@ -35,6 +35,9 @@ export class DelegationService extends BaseService {
   async createDelegation(input: CreateDelegationInput): Promise<any> {
     const actor = this.requireActor();
     const actorRole = normalizePmsRole(actor.actorRole) ?? 'UNKNOWN';
+    const hasAdminAccess =
+      actorRole === PmsRole.ADMIN ||
+      String(actor.actorRole || '').trim().toUpperCase() === 'HR';
     const actorId = actor.actorId;
 
     const delegatorId = input.delegatorUserId;
@@ -42,7 +45,7 @@ export class DelegationService extends BaseService {
 
     // Authorization: Only Admin, Super Admin, or the delegator themselves can set up a delegation.
     if (
-      actorRole !== PmsRole.ADMIN &&
+      !hasAdminAccess &&
       actorId !== delegatorId
     ) {
       throw new Error('Unauthorized to configure delegation for this delegator.');
@@ -141,9 +144,12 @@ export class DelegationService extends BaseService {
   }): Promise<any[]> {
     const actor = this.requireActor();
     const actorRole = normalizePmsRole(actor.actorRole) ?? 'UNKNOWN';
+    const hasAdminAccess =
+      actorRole === PmsRole.ADMIN ||
+      String(actor.actorRole || '').trim().toUpperCase() === 'HR';
     const filter: Record<string, any> = { isDeleted: false };
 
-    if (actorRole !== PmsRole.ADMIN) {
+    if (!hasAdminAccess) {
       filter.$or = [
         { delegatorUserId: this.toObjectId(actor.actorId, 'actorId') },
         { delegateUserId: this.toObjectId(actor.actorId, 'actorId') },
@@ -151,13 +157,13 @@ export class DelegationService extends BaseService {
     }
 
     if (query.delegatorUserId) {
-      if (actorRole !== PmsRole.ADMIN && query.delegatorUserId !== actor.actorId) {
+      if (!hasAdminAccess && query.delegatorUserId !== actor.actorId) {
         throw new Error('Unauthorized to view delegations for this delegator.');
       }
       filter.delegatorUserId = this.toObjectId(query.delegatorUserId, 'delegatorUserId');
     }
     if (query.delegateUserId) {
-      if (actorRole !== PmsRole.ADMIN && query.delegateUserId !== actor.actorId) {
+      if (!hasAdminAccess && query.delegateUserId !== actor.actorId) {
         throw new Error('Unauthorized to view delegations for this delegate.');
       }
       filter.delegateUserId = this.toObjectId(query.delegateUserId, 'delegateUserId');
@@ -203,12 +209,15 @@ export class DelegationService extends BaseService {
 
     const actor = this.requireActor();
     const actorRole = normalizePmsRole(actor.actorRole) ?? 'UNKNOWN';
+    const hasAdminAccess =
+      actorRole === PmsRole.ADMIN ||
+      String(actor.actorRole || '').trim().toUpperCase() === 'HR';
     const actorId = actor.actorId;
     const delegatorId = delegation.delegatorUserId.toString();
 
     // Authorization Check
     if (
-      actorRole !== PmsRole.ADMIN &&
+      !hasAdminAccess &&
       actorId !== delegatorId
     ) {
       throw new Error('Unauthorized to revoke this delegation.');

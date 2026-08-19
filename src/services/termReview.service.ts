@@ -3422,7 +3422,8 @@ export class TermReviewService extends BaseService {
     termAssignment: Pick<ITermAssignment, 'employeeId' | 'assignedManagerId' | 'cycleId' | 'annualAssignmentId'>,
   ): Promise<void> {
     const mappedRole = normalizePmsRole(actorRole);
-    if (mappedRole === PmsRole.ADMIN) {
+    const rawRole = String(actorRole || '').trim().toUpperCase();
+    if (mappedRole === PmsRole.ADMIN || rawRole === 'HR') {
       return;
     }
 

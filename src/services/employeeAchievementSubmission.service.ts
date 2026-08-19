@@ -3221,9 +3221,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
   private async assertViewAccess(termAssignment: any): Promise<void> {
     const actor = this.requireActor();
     const mappedRole = normalizePmsRole(actor.actorRole);
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
 
     if (
       mappedRole === PmsRole.ADMIN ||
+      rawRole === 'HR' ||
       mappedRole === PmsRole.MANAGEMENT ||
       mappedRole === PmsRole.DIRECTOR
     ) {

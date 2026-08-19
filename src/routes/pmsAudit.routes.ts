@@ -10,10 +10,11 @@ import { getSubordinateUserIds } from '../utilis/userHierarchy';
 export async function pmsAuditRoutes(fastify: FastifyInstance) {
   fastify.get('/:annualAssignmentId', { preHandler: [authenticate] }, async (request, reply) => {
     const { annualAssignmentId } = request.params as { annualAssignmentId: string };
-    const userRole = normalizePmsRole((request.user as any).role || '') ?? ((request.user as any).role || '').replace(/[ /-]/g, '_').toUpperCase();
+    const rawUserRole = String((request.user as any).role || '').replace(/[ /-]/g, '_').toUpperCase();
+    const userRole = normalizePmsRole((request.user as any).role || '') ?? rawUserRole;
     const actorId = (request.user as any)._id?.toString?.() ?? '';
     const isDirector = userRole === PmsRole.DIRECTOR;
-    const isAdmin = userRole === PmsRole.ADMIN;
+    const isAdmin = userRole === PmsRole.ADMIN || rawUserRole === 'HR';
     const isManagement = userRole === PmsRole.MANAGEMENT;
     const isManager = userRole === PmsRole.MANAGER;
     const isEmployee = userRole === PmsRole.EMPLOYEE;

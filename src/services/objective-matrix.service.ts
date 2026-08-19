@@ -48,6 +48,7 @@ import {
 
 type MatrixActor = { actorId: string; actorRole: string };
 type LeanRecord = Record<string, any>;
+type ObjectiveMatrixAccessContext = { allowHrWorkspaceRead?: boolean };
 
 export function isObjectiveMatrixStageWindowOpen(input: {
   stage: ITemplateObjectiveTableColumn['workflowStage'];
@@ -317,6 +318,7 @@ export class ObjectiveMatrixService {
   async getAnnualMatrix(
     annualAssignmentId: string,
     query: ObjectiveMatrixReadQuery = {},
+    accessContext: ObjectiveMatrixAccessContext = {},
   ): Promise<AnnualObjectiveMatrixResponse> {
     if (!Types.ObjectId.isValid(annualAssignmentId)) throw new Error('Invalid annualAssignmentId');
     const actor = this.requireActor();
@@ -325,7 +327,7 @@ export class ObjectiveMatrixService {
       isDeleted: false,
     }).lean();
     if (!annualAssignment) throw new Error('Annual assignment not found');
-    await this.assertAccess(actor, annualAssignment, query.mode);
+    await this.assertAccess(actor, annualAssignment, query.mode, accessContext);
 
     const isAssignedFinalReviewer =
       annualAssignment.finalReviewerId?.toString() === actor.actorId ||
@@ -969,7 +971,13 @@ export class ObjectiveMatrixService {
     actor: MatrixActor,
     annualAssignment: LeanRecord,
     _requestedMode?: ObjectiveMatrixMode,
+    accessContext: ObjectiveMatrixAccessContext = {},
   ): Promise<void> {
+    const rawRole = String(actor.actorRole || '').trim().toUpperCase();
+    if (accessContext.allowHrWorkspaceRead === true && rawRole === 'HR') {
+      return;
+    }
+
     // Director matrix access is global and read-only. Cell/action permissions
     // still prevent Director edits; this bypass only keeps matrix-enabled
     // assignments readable from management performance summaries.
