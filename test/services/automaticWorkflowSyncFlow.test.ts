@@ -255,6 +255,35 @@ describe('Automatic workflow sync flow', () => {
     });
   });
 
+  it('scopes an individual workflow sync to one annual assignment', async () => {
+    mockCommonQueries(TermWorkflowState.NOT_STARTED);
+    const service = createService('2026-07-09T00:00:00.000Z');
+
+    const result = await service.syncWorkflowStates(cycleId.toString(), {
+      annualAssignmentId: annualAssignmentId.toString(),
+      assessmentTermCode: 'Q2',
+      dryRun: true,
+      reason: 'Manual individual assignment workflow sync',
+      source: 'ADMIN_MANUAL_SYNC',
+    });
+
+    expect(result.totalChecked).toBe(1);
+    expect(TermAssignment.find).toHaveBeenCalledWith(expect.objectContaining({
+      cycleId,
+      annualAssignmentId,
+      assessmentTermCode: 'Q2',
+      isDeleted: false,
+    }));
+    expect(mockOpenEligiblePeriodsForCycle).toHaveBeenCalledWith(
+      cycleId.toString(),
+      expect.objectContaining({
+        dryRun: true,
+        annualAssignmentId: annualAssignmentId.toString(),
+      }),
+    );
+    expect(transitionTermAssignmentState).not.toHaveBeenCalled();
+  });
+
   it('opens normal objective setting automatically when the normal objective setting window is active', async () => {
     mockCommonQueries(TermWorkflowState.NOT_STARTED);
     const service = createService('2026-07-09T00:00:00.000Z');
