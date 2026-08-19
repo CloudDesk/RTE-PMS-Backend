@@ -355,8 +355,12 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
     return record;
   }
 
-  private async ownRecord(actorId: Types.ObjectId, create = true) {
-    let record = await EmployeeRolesResponsibilities.findOne({ employeeId: actorId });
+  private async employeeRecord(
+    employeeId: Types.ObjectId,
+    create: boolean,
+    actorId: Types.ObjectId,
+  ) {
+    let record = await EmployeeRolesResponsibilities.findOne({ employeeId });
     if (!record && create) {
       record = new EmployeeRolesResponsibilities({
         employeeId,
