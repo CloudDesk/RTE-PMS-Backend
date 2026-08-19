@@ -185,7 +185,6 @@ export const authenticate = async (
 
     // JWT authentication flow (existing)
     const token = request.cookies?.access_token;
-    console.log(token, "Token ß");
     if (!token) {
       throw new Error("No token provided");
     }

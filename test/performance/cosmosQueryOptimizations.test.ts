@@ -202,4 +202,75 @@ describe('Cosmos list-query optimizations', () => {
     const queriedIds = queriedFilter._id.$in.map((value: string) => value.toString());
     expect(new Set(queriedIds)).toEqual(new Set([templateA.toString(), templateB.toString()]));
   });
+
+  it('does not bulk-upsert predefined objectives that already exist during assignment listing', async () => {
+    const actorId = new Types.ObjectId();
+    const annualAssignmentId = new Types.ObjectId();
+    const termAssignmentId = new Types.ObjectId();
+    const templateVersionId = new Types.ObjectId();
+    const termCycleId = new Types.ObjectId();
+    const service = new ObjectiveService({
+      requestId: 'existing-predefined-objective-test',
+      reqRole: 'STAFF',
+      user: {
+        _id: actorId,
+        email: 'employee@example.test',
+        name: 'Employee',
+        role: 'STAFF',
+        departmentId: 'Engineering',
+        active: true,
+        country: 'IN',
+        currency: 'INR',
+        licenseType: 'FULL',
+        portalAccess: true,
+      },
+    } as RequestContext) as any;
+    const annualAssignment = {
+      _id: annualAssignmentId,
+      templateVersionId,
+    };
+    const termAssignment = {
+      _id: termAssignmentId,
+      annualAssignmentId,
+      cycleTermId: termCycleId,
+      assessmentTermCode: AssessmentTermCode.Q1,
+      employeeId: actorId,
+      assignedManagerId: new Types.ObjectId(),
+    };
+
+    jest.spyOn(service, 'resolveTemplateObjectiveConfig').mockReturnValue({
+      sectionKey: 'objectives',
+      predefinedObjectives: [{
+        key: 'delivery',
+        title: 'Delivery',
+        applicableTerms: [AssessmentTermCode.Q1],
+      }],
+      columnBindingKeyById: {},
+      columnTypeById: {},
+    });
+    jest.spyOn(PmsTemplateVersion, 'find').mockReturnValue({
+      lean: jest.fn().mockResolvedValue([{ _id: templateVersionId, sections: [] }]),
+    } as any);
+    jest.spyOn(Objective, 'find').mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([{
+          termAssignmentId,
+          source: 'PREDEFINED',
+          templateObjectiveKey: 'delivery',
+          objectiveNo: 1,
+        }]),
+      }),
+    } as any);
+    jest.spyOn(TermCycle, 'find').mockReturnValue({
+      select: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    } as any);
+    const objectiveBulkWrite = jest.spyOn(Objective, 'bulkWrite');
+
+    await service.ensurePredefinedObjectivesForAssignments(
+      [annualAssignment],
+      [termAssignment],
+    );
+
+    expect(objectiveBulkWrite).not.toHaveBeenCalled();
+  });
 });

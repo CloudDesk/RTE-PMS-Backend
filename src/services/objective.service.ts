@@ -6118,7 +6118,13 @@ export class ObjectiveService extends BaseService {
         }
 
         const alreadyExists = existingKeys.has(predefinedObjective.key);
-        if (!alreadyExists) nextObjectiveNo += 1;
+        // Assignment listing is a read-heavy path. Re-upserting predefined rows
+        // that are already present turns every GET into concurrent bulk writes,
+        // which can exhaust the Cosmos DB worker/pool connection budget.
+        if (alreadyExists) {
+          continue;
+        }
+        nextObjectiveNo += 1;
         existingKeys.add(predefinedObjective.key);
 
         const coverage = termAssignments
