@@ -67,6 +67,7 @@ interface ObjectiveSettingCloseCheck {
 
 export interface WorkflowSyncInput {
   cycleId?: string;
+  annualAssignmentId?: string;
   assessmentTermCode?: AssessmentTermCodeType;
   dryRun?: boolean;
   reason?: string;
@@ -154,6 +155,12 @@ export class WorkflowSyncService extends BaseService {
     };
     if (input.assessmentTermCode) {
       filter.assessmentTermCode = input.assessmentTermCode;
+    }
+    if (input.annualAssignmentId) {
+      filter.annualAssignmentId = this.toObjectId(
+        input.annualAssignmentId,
+        'annualAssignmentId',
+      );
     }
 
     const [termAssignments, termCycles] = await Promise.all([
@@ -253,6 +260,9 @@ export class WorkflowSyncService extends BaseService {
         dryRun: input.dryRun === true,
         ignoreWindowDates: input.ignoreWindowDates === true,
         promoteIncludedTerms: !isAnnualManagerReviewConfig(cycle.reviewCadenceConfig),
+        ...(input.annualAssignmentId
+          ? { annualAssignmentId: input.annualAssignmentId }
+          : {}),
       },
     );
     result.groupedReviewPeriodsChecked = groupedReviewResult.checked;

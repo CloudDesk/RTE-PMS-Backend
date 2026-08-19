@@ -266,13 +266,21 @@ export class ManagerReviewPeriodService extends BaseService {
       dryRun?: boolean;
       ignoreWindowDates?: boolean;
       promoteIncludedTerms?: boolean;
+      annualAssignmentId?: string;
     } = {},
   ): Promise<OpenEligibleManagerReviewPeriodsResult> {
     const cycleObjectId = this.toObjectId(cycleId, 'cycleId');
-    const reviews = await ManagerReviewPeriodAssignment.find({
+    const filter: Record<string, unknown> = {
       cycleId: cycleObjectId,
       isDeleted: false,
-    });
+    };
+    if (options.annualAssignmentId) {
+      filter.annualAssignmentId = this.toObjectId(
+        options.annualAssignmentId,
+        'annualAssignmentId',
+      );
+    }
+    const reviews = await ManagerReviewPeriodAssignment.find(filter);
     let opened = 0;
     let alreadyOpen = 0;
     let alreadyAdvanced = 0;
