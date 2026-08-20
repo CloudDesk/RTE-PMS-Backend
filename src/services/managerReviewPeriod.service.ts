@@ -252,7 +252,7 @@ export class ManagerReviewPeriodService extends BaseService {
     const reviews = await traceDatabaseOperation(
       'grouped-reviews.list.root',
       { route: '/pms/manager-review-periods/assignments', mode },
-      async () => ManagerReviewPeriodAssignment.find(filter).sort({ updatedAt: -1, reviewCode: 1 }),
+      async () => ManagerReviewPeriodAssignment.find(filter).sort({ updatedAt: -1, reviewCode: 1 }).lean(),
       (records) => records.length,
     );
     return this.mapRecords(reviews);

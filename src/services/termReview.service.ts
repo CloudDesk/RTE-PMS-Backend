@@ -435,7 +435,7 @@ export class TermReviewService extends BaseService {
     const termAssignments = await traceDatabaseOperation(
       'term-reviews.list.root',
       { route: '/pms/term-reviews/assignments', mode },
-      async () => TermAssignment.find(filter).sort({ updatedAt: -1, assessmentTermCode: 1 }),
+      async () => TermAssignment.find(filter).sort({ updatedAt: -1, assessmentTermCode: 1 }).lean(),
       (records) => records.length,
     );
 
@@ -1198,7 +1198,7 @@ export class TermReviewService extends BaseService {
     const termAssignments = await TermAssignment.find({
       _id: { $in: normalizedIds },
       isDeleted: false,
-    });
+    }).lean();
 
     if (termAssignments.length === 0) {
       return [];
