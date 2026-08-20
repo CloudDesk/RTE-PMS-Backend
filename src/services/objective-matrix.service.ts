@@ -331,11 +331,13 @@ export class ObjectiveMatrixService {
       annualAssignment.finalReviewerId?.toString() === actor.actorId ||
       annualAssignment.directorReviewerId?.toString() === actor.actorId;
     const isAssignmentEmployee = annualAssignment.employeeId.toString() === actor.actorId;
+    const isAssignmentManager = annualAssignment.assignedManagerId.toString() === actor.actorId;
     const { mode, viewRole, permissionRole } = this.resolveView(
       actor,
       query.mode,
       isAssignedFinalReviewer,
       isAssignmentEmployee,
+      isAssignmentManager,
     );
     const includeAudit = query.includeAudit === true || query.includeAudit === 'true';
     if (includeAudit && normalizePmsRole(actor.actorRole) !== PmsRole.ADMIN) {
@@ -925,6 +927,7 @@ export class ObjectiveMatrixService {
     requested?: ObjectiveMatrixMode,
     isAssignedFinalReviewer = false,
     isAssignmentEmployee = false,
+    isAssignmentManager = false,
   ) {
     const role = normalizePmsRole(actor.actorRole);
     if (!role) throw new Error(`Role ${actor.actorRole} is not mapped for PMS access`);
@@ -935,6 +938,8 @@ export class ObjectiveMatrixService {
       ? 'employee'
       : role === PmsRole.MANAGER
         ? 'manager'
+        : role === PmsRole.DIRECTOR && isAssignmentManager
+          ? 'manager'
         : role === PmsRole.ADMIN
           ? 'admin'
           : 'reviewer';
@@ -957,10 +962,14 @@ export class ObjectiveMatrixService {
     // employee perspective and apply employee column/action permissions.
     const canReadOwnEmployeePerspective =
       role === PmsRole.MANAGER && mode === 'employee' && isAssignmentEmployee;
-    if (!canReadCrossPerspective && !canReadOwnEmployeePerspective && requestedRole !== role) {
+    // A Director who is the employee's assigned L1 manager must receive the
+    // same matrix permissions as a normal manager for that assignment only.
+    const canActAsAssignedManager =
+      role === PmsRole.DIRECTOR && isAssignmentManager && mode === 'manager';
+    if (!canReadCrossPerspective && !canReadOwnEmployeePerspective && !canActAsAssignedManager && requestedRole !== role) {
       throw new Error(`Matrix mode ${mode} is not permitted for role ${actor.actorRole}`);
     }
-    const viewRole = canReadCrossPerspective || canReadOwnEmployeePerspective
+    const viewRole = canReadCrossPerspective || canReadOwnEmployeePerspective || canActAsAssignedManager
       ? requestedRole
       : role;
     return {
@@ -969,7 +978,8 @@ export class ObjectiveMatrixService {
       // Director can inspect another perspective's configured columns, but all
       // permission and row-action calculations must remain Director read-only.
       permissionRole:
-        role === PmsRole.DIRECTOR || isFinalReviewerPerspective
+        (role === PmsRole.DIRECTOR && !canActAsAssignedManager) ||
+        (isFinalReviewerPerspective && !canActAsAssignedManager)
           ? PmsRole.DIRECTOR
           : viewRole,
     };

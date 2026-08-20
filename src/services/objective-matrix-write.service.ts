@@ -160,6 +160,7 @@ export function resolveObjectiveMatrixCreateRole(input: {
   actorId: string;
   actorRole: string;
   employeeId: string;
+  assignedManagerId?: string;
   source: string;
 }): string | undefined {
   const actorRole = normalizePmsRole(input.actorRole);
@@ -170,7 +171,9 @@ export function resolveObjectiveMatrixCreateRole(input: {
   ) return PmsRole.EMPLOYEE;
   if (
     input.source === ObjectiveSource.MANAGER_CREATED &&
-    actorRole === PmsRole.MANAGER
+    (actorRole === PmsRole.MANAGER ||
+      (actorRole === PmsRole.DIRECTOR &&
+        input.actorId === input.assignedManagerId))
   ) return PmsRole.MANAGER;
   return undefined;
 }
@@ -398,6 +401,7 @@ export class ObjectiveMatrixWriteService {
       actorId: actor.actorId,
       actorRole: actor.actorRole,
       employeeId: resources.annual.employeeId.toString(),
+      assignedManagerId: resources.annual.assignedManagerId?.toString(),
       source: input.source,
     });
     if (!role) {
