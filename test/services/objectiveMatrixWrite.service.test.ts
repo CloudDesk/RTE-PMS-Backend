@@ -43,7 +43,7 @@ describe('Objective matrix write model Phase 6', () => {
       .toThrow('is calculated and cannot be changed');
   });
 
-  it('carries employee-created objectives through remaining terms only', () => {
+  it('carries employee- and manager-created objectives through remaining terms only', () => {
     const terms = [
       AssessmentTermCode.Q1,
       AssessmentTermCode.Q2,
@@ -60,6 +60,8 @@ describe('Objective matrix write model Phase 6', () => {
     ]);
     expect(defaultObjectiveRowCoverage(PmsRole.MANAGER, AssessmentTermCode.Q2, terms)).toEqual([
       AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
     ]);
   });
 

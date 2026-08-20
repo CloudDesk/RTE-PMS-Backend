@@ -145,15 +145,13 @@ function typedValuePayload(column: ITemplateObjectiveTableColumn, value: unknown
 }
 
 export function defaultObjectiveRowCoverage(
-  role: string,
+  _role: string,
   currentTermCode: AssessmentTermCodeType,
   termOrder: AssessmentTermCodeType[],
 ): AssessmentTermCodeType[] {
   const currentTermIndex = termOrder.indexOf(currentTermCode);
   if (currentTermIndex < 0) return [];
-  return role === PmsRole.EMPLOYEE
-    ? termOrder.slice(currentTermIndex)
-    : [currentTermCode];
+  return termOrder.slice(currentTermIndex);
 }
 
 export function resolveObjectiveMatrixCreateRole(input: {

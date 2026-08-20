@@ -203,6 +203,31 @@ describe('PMS objective matrix PDF view model', () => {
     expect(employeeReport.finalRating).toBe('N/A');
   });
 
+  it('uses the mandatory Matrix selection as the Metrics label for dynamic objectives', () => {
+    const matrix = matrixFor('EMPLOYEE', 'employee');
+    matrix.rowGroups = [{
+      rowGroupKey: 'employee-objectives',
+      label: 'Employee Objectives',
+      source: 'EMPLOYEE_CREATED',
+      displayOrder: 1,
+    }];
+    matrix.rows[0] = {
+      ...matrix.rows[0],
+      source: 'EMPLOYEE_CREATED',
+      matrixCode: 'PRODUCTIVITY',
+      matrixLabel: 'Productivity',
+      rowGroupKey: 'employee-objectives',
+    };
+
+    const report = buildObjectiveMatrixReportViewModel({
+      ...common,
+      matrix,
+      snapshotMode: 'frozen',
+    });
+
+    expect(report.columnBands[0]?.rows[0]?.rowGroup).toBe('Productivity');
+  });
+
   it('exports objective evidence once as term-labelled metadata without storage URLs', () => {
     const matrix = matrixFor('MANAGER', 'manager');
     matrix.columns[5] = {

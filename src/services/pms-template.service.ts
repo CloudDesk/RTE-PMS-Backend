@@ -2491,6 +2491,7 @@ export class PmsTemplateService extends BaseService {
             section.objectiveConfig?.tableLayout,
             {
               activationReady: true,
+              objectiveMode: section.objectiveConfig?.mode,
               predefinedObjectives: section.objectiveConfig?.predefinedObjectives ?? [],
               templateFieldKeys: (section.fields ?? []).map((field) => field.fieldKey),
               allowEmployeeCreated: section.objectiveConfig?.allowEmployeeCreated,
@@ -2815,6 +2816,7 @@ export class PmsTemplateService extends BaseService {
       config.tableLayout,
       {
         activationReady: false,
+        objectiveMode: config.mode,
         predefinedObjectives,
         templateFieldKeys: (section.fields ?? []).map((field) => field.fieldKey),
         allowEmployeeCreated: config.allowEmployeeCreated,

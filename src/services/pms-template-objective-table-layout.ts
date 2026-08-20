@@ -5,6 +5,7 @@ import {
   normalizePmsRole,
 } from '../constants/pms.enums';
 import type {
+  ITemplateObjectiveConfig,
   ITemplateObjectiveTableLayout,
   ITemplatePredefinedObjective,
 } from '../models/pms-template-version.model';
@@ -392,6 +393,7 @@ export function objectiveTableLayoutValidationErrors(
   layout: ITemplateObjectiveTableLayout | undefined,
   options: {
     activationReady: boolean;
+    objectiveMode?: ITemplateObjectiveConfig['mode'];
     predefinedObjectives?: ITemplatePredefinedObjective[];
     templateFieldKeys?: string[];
     allowEmployeeCreated?: boolean;
@@ -415,7 +417,11 @@ export function objectiveTableLayoutValidationErrors(
   if (options.activationReady && columns.length === 0) {
     errors.push(`${prefix} requires at least one column before activation`);
   }
-  if (options.activationReady && predefinedKeys.size === 0) {
+  if (
+    options.activationReady &&
+    options.objectiveMode !== 'DYNAMIC' &&
+    predefinedKeys.size === 0
+  ) {
     errors.push(`${prefix} requires at least one template row before activation`);
   }
   for (const duplicate of duplicateValues(columns.map((column) => column.columnId))) {

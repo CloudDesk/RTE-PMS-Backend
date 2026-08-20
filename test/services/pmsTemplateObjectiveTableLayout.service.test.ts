@@ -499,6 +499,19 @@ describe('PMS template objective table layout Phase 1', () => {
     ).toContain('Objective table layout requires at least one template row before activation');
   });
 
+  it('allows a dynamic table to activate without predefined template rows', () => {
+    expect(
+      objectiveTableLayoutValidationErrors(validLayout(), {
+        activationReady: true,
+        objectiveMode: 'DYNAMIC',
+        predefinedObjectives: [],
+        templateFieldKeys: ['objective_notes'],
+        allowEmployeeCreated: true,
+        allowManagerCreated: true,
+      }),
+    ).not.toContain('Objective table layout requires at least one template row before activation');
+  });
+
   it('blocks invalid references, editable formulas, and incomplete selected-term mapping', () => {
     const invalid = validLayout();
     invalid.columns[2].access = [
