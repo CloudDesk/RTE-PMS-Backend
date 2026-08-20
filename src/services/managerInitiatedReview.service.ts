@@ -936,7 +936,11 @@ export class ManagerInitiatedReviewService extends BaseService {
       throw new Error('Authentication required');
     }
     const role = String(user.role || '').toUpperCase();
-    if (role !== PmsRole.MANAGER && role !== PmsRole.ADMIN) {
+    if (
+      role !== PmsRole.MANAGER &&
+      role !== PmsRole.DIRECTOR &&
+      role !== PmsRole.ADMIN
+    ) {
       throw new Error('Only managers can use manager initiated reviews');
     }
     return user._id.toString();

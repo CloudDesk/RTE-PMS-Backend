@@ -90,6 +90,26 @@ describe('Objective matrix write model Phase 6', () => {
     })).toBeUndefined();
   });
 
+  it('uses manager row permissions only for a Director who is the assigned manager', () => {
+    const directorId = new Types.ObjectId().toString();
+
+    expect(resolveObjectiveMatrixCreateRole({
+      actorId: directorId,
+      actorRole: PmsRole.DIRECTOR,
+      employeeId: new Types.ObjectId().toString(),
+      assignedManagerId: directorId,
+      source: ObjectiveSource.MANAGER_CREATED,
+    })).toBe(PmsRole.MANAGER);
+
+    expect(resolveObjectiveMatrixCreateRole({
+      actorId: directorId,
+      actorRole: PmsRole.DIRECTOR,
+      employeeId: new Types.ObjectId().toString(),
+      assignedManagerId: new Types.ObjectId().toString(),
+      source: ObjectiveSource.MANAGER_CREATED,
+    })).toBeUndefined();
+  });
+
   it('validates only fields configured as required when adding a dynamic row', () => {
     const columns = [
       {
