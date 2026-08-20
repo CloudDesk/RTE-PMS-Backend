@@ -107,6 +107,13 @@ const FINAL_REVIEW_VISIBLE_STATUSES = [
   FinalReviewStatus.COMPLETED,
 ];
 
+const formatFinalReviewCurrentStage = (state?: string): string =>
+  String(state ?? 'NOT_STARTED')
+    .toLowerCase()
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
 export function assertFinalReviewFreezeAllowed(
   l2Status: string,
   directorStatus: string = FinalReviewStatus.NOT_REQUIRED,
@@ -569,11 +576,17 @@ export class AnnualDecisionService extends BaseService {
     const annualAssignment = await this.getAnnualAssignment(annualAssignmentId);
     await this.assertDecisionReadAccess('annualDecision.summary', annualAssignment);
 
-    const termAssignments = await TermAssignment.find({
+    const termAssignmentFilter: Record<string, unknown> = {
       annualAssignmentId: annualAssignment._id,
-      assessmentTermCode: { $in: annualAssignment.applicableTerms },
       isDeleted: false,
-    }).sort({ assessmentTermCode: 1 });
+    };
+    if ((annualAssignment.applicableTerms ?? []).length > 0) {
+      termAssignmentFilter.assessmentTermCode = {
+        $in: annualAssignment.applicableTerms,
+      };
+    }
+    const termAssignments = await TermAssignment.find(termAssignmentFilter)
+      .sort({ assessmentTermCode: 1 });
 
     const termAssignmentIds = termAssignments.map((termAssignment) => termAssignment._id);
 
@@ -1531,14 +1544,32 @@ export class AnnualDecisionService extends BaseService {
           directorReviewStatus: { $in: FINAL_REVIEW_VISIBLE_STATUSES },
         },
       ],
-      annualState: { $in: FINAL_REVIEW_QUEUE_STATES },
+      // Reviewer assignment plus its stage status is the queue authority.
+      // The annual-state roll-up can lag behind the L2/L3 stage state and
+      // must not hide a request assigned to the current reviewer.  Editing
+      // and completion still use assertFinalReviewerAccess, including the
+      // all-terms-finalized guard.
       isDeleted: false,
     }).sort({ updatedAt: -1 }).lean();
     const cycles = await AnnualCycle.find({
       _id: { $in: assignments.map((item) => item.cycleId) },
       isDeleted: false,
     }).lean();
+    const termAssignments = await TermAssignment.find({
+      annualAssignmentId: { $in: assignments.map((item) => item._id) },
+      isDeleted: false,
+    })
+      .select('annualAssignmentId assessmentTermCode termState')
+      .sort({ assessmentTermCode: 1 })
+      .lean();
     const cycleMap = new Map(cycles.map((item) => [item._id.toString(), item]));
+    const termsByAnnualAssignmentId = new Map<string, Array<Record<string, any>>>();
+    for (const termAssignment of termAssignments) {
+      const assignmentId = termAssignment.annualAssignmentId.toString();
+      const terms = termsByAnnualAssignmentId.get(assignmentId) ?? [];
+      terms.push(termAssignment);
+      termsByAnnualAssignmentId.set(assignmentId, terms);
+    }
     return assignments.map((item) => {
       const reviewStage = item.finalReviewerId?.toString() === actor.actorId
         ? 'L2'
@@ -1546,6 +1577,16 @@ export class AnnualDecisionService extends BaseService {
       const isWaitingForL2 =
         reviewStage === 'DIRECTOR' &&
         item.finalReviewStatus !== FinalReviewStatus.COMPLETED;
+      const terms = termsByAnnualAssignmentId.get(item._id.toString()) ?? [];
+      const currentTerm = terms.find((term) => !isTermFinalized(term.termState));
+      const allTermsFinalized = terms.length > 0 && !currentTerm;
+      const currentWorkflowStage = !allTermsFinalized
+        ? String(currentTerm?.termState ?? item.annualState ?? 'NOT_STARTED')
+        : isWaitingForL2
+          ? 'WAITING_FOR_L2_ASSESSMENT'
+          : reviewStage === 'L2'
+            ? 'READY_FOR_L2_ASSESSMENT'
+            : 'READY_FOR_L3_ASSESSMENT';
       return {
         annualAssignmentId: item._id.toString(),
         employeeId: item.employeeId.toString(),
@@ -1556,6 +1597,9 @@ export class AnnualDecisionService extends BaseService {
         annualState: item.annualState,
         reviewStage,
         reviewStageLabel: reviewStage === 'L2' ? 'L2 - ED / SVP' : 'L3 - Final Reviewer',
+        currentWorkflowStage,
+        currentWorkflowStageLabel: formatFinalReviewCurrentStage(currentWorkflowStage),
+        isFinalReviewReady: allTermsFinalized && !isWaitingForL2,
         finalReviewStatus: reviewStage === 'L2'
           ? item.finalReviewStatus
           : item.directorReviewStatus,
@@ -2728,7 +2772,14 @@ export class AnnualDecisionService extends BaseService {
     finalDecisionStatus: string,
     cycleOverride?: IAnnualCycle | null,
   ): Promise<AnnualDecisionReadiness> {
-    const applicableTerms = annualAssignment.applicableTerms ?? [];
+    // Older assignments can have no declared applicableTerms even though their
+    // term assignments are present and finalized.  Use those stored terms as
+    // the fallback, matching final-review routing, so L2/L3 readiness is not
+    // incorrectly reported as incomplete.
+    const declaredApplicableTerms = annualAssignment.applicableTerms ?? [];
+    const applicableTerms = declaredApplicableTerms.length > 0
+      ? declaredApplicableTerms
+      : termAssignments.map((termAssignment) => termAssignment.assessmentTermCode);
     const termByCode = new Map(
       termAssignments.map((termAssignment) => [
         termAssignment.assessmentTermCode,

@@ -14,10 +14,12 @@ export const pmsDashboardRoutes: RouteHandler = async (
       try {
         const role = normalizePmsRole(request.user.role);
         const rawRole = String(request.user.role || '').trim().toUpperCase();
-        const managerScoped = role === PmsRole.MANAGER && rawRole !== 'HR';
-        const dashboardRoleAllowed = role === PmsRole.MANAGER || role === PmsRole.ADMIN;
+        const managerScoped =
+          (role === PmsRole.MANAGER || role === PmsRole.DIRECTOR) && rawRole !== 'HR';
+        const dashboardRoleAllowed =
+          role === PmsRole.MANAGER || role === PmsRole.DIRECTOR || role === PmsRole.ADMIN;
         if (!dashboardRoleAllowed && rawRole !== 'HR') {
-          return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Manager or HR/Admin role required'));
+          return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Manager, Director, or HR/Admin role required'));
         }
         const result = await request.container!.pmsDashboardService.getTraineeDashboard(
           managerScoped ? request.user._id.toString() : undefined,
@@ -85,8 +87,8 @@ export const pmsDashboardRoutes: RouteHandler = async (
       try {
         const role = normalizePmsRole(request.user.role) ?? request.user.role?.replace(/[ /-]/g, '_').toUpperCase();
         const rawRole = String(request.user.role || '').trim().toUpperCase();
-        if (!['MANAGER', 'ADMIN', 'SUPER_ADMIN'].includes(role) && rawRole !== 'HR') {
-          return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Manager role required'));
+        if (!['MANAGER', 'DIRECTOR', 'ADMIN', 'SUPER_ADMIN'].includes(role) && rawRole !== 'HR') {
+          return reply.status(403).send(errorResponse('PMS_ACCESS_DENIED', 'Access Denied: Manager or Director role required'));
         }
 
         const managerId = request.user._id.toString();

@@ -44,6 +44,27 @@ describe('Final Review Phase 3 guards', () => {
       }],
     })).toBe(false);
   });
+
+  it('treats finalized stored terms as applicable for legacy L2 assignments', async () => {
+    const service = Object.create(AnnualDecisionService.prototype) as any;
+    service.getAppraisalWindowStatus = jest.fn().mockResolvedValue({ isOpen: true });
+
+    const readiness = await service.resolveAnnualDecisionReadiness(
+      {
+        _id: 'annual-assignment',
+        cycleId: 'cycle',
+        applicableTerms: [],
+        annualState: 'ALL_TERMS_FINALIZED',
+        finalReviewStatus: 'PENDING',
+        directorReviewStatus: 'PENDING',
+      },
+      [{ assessmentTermCode: 'Y1', termState: 'TERM_FINALIZED' }],
+      'DRAFT',
+    );
+
+    expect(readiness.termProgress).toEqual({ total: 1, completed: 1 });
+    expect(readiness.allTermsFinalized).toBe(true);
+  });
 });
 
 describe('AnnualDecisionService numeric validation', () => {
