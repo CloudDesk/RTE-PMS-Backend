@@ -109,4 +109,17 @@ describe('ProbationReviewService history', () => {
       $or: [{ manager1Id: managerId }, { manager2Id: managerId }],
     });
   });
+
+  it('scopes a director acting as a manager to only their assigned trainee reviews', async () => {
+    const directorId = new Types.ObjectId();
+    mockAssignments([]);
+    mockActors([]);
+
+    await new ProbationReviewService(context('DIRECTOR', directorId)).listHistory();
+
+    expect(PmsProbationReviewAssignment.find).toHaveBeenCalledWith({
+      isDeleted: false,
+      $or: [{ manager1Id: directorId }, { manager2Id: directorId }],
+    });
+  });
 });

@@ -1855,7 +1855,10 @@ Probation end date: ${probationEndDate}`,
 
   private isPrivilegedActor() {
     const role = String(this.context.user?.role || this.context.reqRole || '').toLowerCase();
-    return role === 'admin' || role === 'hr' || role === 'management' || role === 'director';
+    // Directors who are assigned as a reporting manager use the same trainee-review
+    // scope and action checks as Managers.  Their final-review access remains in the
+    // Director/Management flow; it must not grant access to every trainee review here.
+    return role === 'admin' || role === 'hr' || role === 'management';
   }
 
   private sameObjectId(left: Types.ObjectId, right: unknown) {
