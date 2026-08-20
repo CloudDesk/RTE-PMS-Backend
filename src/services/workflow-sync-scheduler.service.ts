@@ -48,7 +48,9 @@ export function startAutomaticWorkflowSyncScheduler(): ScheduledTask | undefined
   );
 
   console.log(`[PMS Workflow Sync] Automatic daily sync scheduled: "${schedule}" (${timezone}).`);
-  triggerAutomaticWorkflowSync('Startup');
+  if (process.env.PMS_WORKFLOW_AUTO_SYNC_ON_STARTUP === 'true') {
+    triggerAutomaticWorkflowSync('Startup');
+  }
   return scheduledTask;
 }
 

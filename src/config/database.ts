@@ -24,18 +24,17 @@ const DB_SOCKET_TIMEOUT_MS = Math.max(
 // Pool sizing is per replica. With Container Apps scaling to N replicas the
 // cluster sees up to N * DB_MAX_POOL_SIZE connections, so keep the ceiling well
 // under the cluster's connection limit.
-const DB_MAX_POOL_SIZE = Math.max(1, Number(process.env.DB_MAX_POOL_SIZE || 10));
-// Do not reserve idle connections on every scaled-out replica. Keeping a warm
-// floor here can exhaust the database's worker-node connection quota.
-const DB_MIN_POOL_SIZE = Math.max(0, Number(process.env.DB_MIN_POOL_SIZE || 0));
-// Retire inactive sockets before the Azure MongoDB endpoint's idle timeout and
+const DB_MAX_POOL_SIZE = Math.max(1, Number(process.env.DB_MAX_POOL_SIZE || 6));
+// Keep a small warm floor of connections per replica to eliminate handshake
+// latency on bursts while staying within database connection capacity.
+const DB_MIN_POOL_SIZE = Math.max(0, Number(process.env.DB_MIN_POOL_SIZE || 2));
+// Retire inactive sockets before the Azure MongoDB endpoint's 240s idle drop and
 // return their capacity to the cluster promptly.
-const DB_MAX_IDLE_TIME_MS = Math.max(0, Number(process.env.DB_MAX_IDLE_TIME_MS || 120000));
-// Bound connection checkout latency during bursts instead of allowing requests
-// to wait indefinitely when every pool connection is busy.
+const DB_MAX_IDLE_TIME_MS = Math.max(0, Number(process.env.DB_MAX_IDLE_TIME_MS || 60000));
+// Bound connection checkout latency during bursts without aggressively timing out.
 const DB_WAIT_QUEUE_TIMEOUT_MS = Math.max(
   0,
-  Number(process.env.DB_WAIT_QUEUE_TIMEOUT_MS || 5000),
+  Number(process.env.DB_WAIT_QUEUE_TIMEOUT_MS || 20000),
 );
 // Limit concurrent TCP/TLS/SCRAM handshakes so replica starts do not create a
 // connection storm against the Azure MongoDB endpoint.
