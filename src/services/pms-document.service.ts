@@ -8,7 +8,7 @@ import { PmsDocument } from '../models/pms-document.model';
 import { User } from '../models/user.model';
 import { RequestContext } from '../types/context';
 import { saveMultipartFile } from '../utilis/parseMultiPartForm';
-import { uploadFileToGCP } from '../utilis/gcpStorage';
+import { uploadFileToPmsStorage } from '../utilis/pmsStorage';
 import { BaseService } from './base.service';
 
 export interface UploadPmsDocumentInput {
@@ -41,17 +41,17 @@ export class PmsDocumentService extends BaseService {
     await saveMultipartFile(input.file as any, tempPath);
 
     try {
-      const uploadResult = await uploadFileToGCP({
+      const uploadResult = await uploadFileToPmsStorage({
         filePath: tempPath,
         fileName: storedFileName,
         employeeId: input.employeeId,
-        category: 'PMS',
         type: 'AdminUpload',
+        contentType: input.file.mimetype || undefined,
         public: true,
       });
 
       if (!uploadResult.success || !uploadResult.fileUrl) {
-        throw new Error(uploadResult.error || 'Failed to upload file to GCP');
+        throw new Error(uploadResult.error || 'Failed to upload PMS file');
       }
 
       const uploadedBy = this.context.user?._id && Types.ObjectId.isValid(this.context.user._id)

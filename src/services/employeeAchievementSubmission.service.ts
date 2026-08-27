@@ -42,7 +42,8 @@ import {
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
-import { gcpFileStorageService } from './gcp-file-storage.service';
+import { pmsFileStorageService } from './gcp-file-storage.service';
+import { isTrustedPmsFileUrl } from '../utilis/pmsStorage';
 import { PmsDocumentService } from './pms-document.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
@@ -1242,7 +1243,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('No attachment file uploaded');
     }
 
-    const attachment = await gcpFileStorageService.uploadMultipartFile({
+    const attachment = await pmsFileStorageService.uploadMultipartFile({
       file,
       employeeId: termAssignment.employeeId.toString(),
       category: 'PMS',
@@ -1578,10 +1579,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     if (!document?.fileUrl) throw new Error('Attachment not available');
 
     const parsedUrl = new URL(document.fileUrl);
-    if (
-      parsedUrl.protocol !== 'https:' ||
-      parsedUrl.hostname !== 'storage.googleapis.com'
-    ) {
+    if (!isTrustedPmsFileUrl(parsedUrl.toString())) {
       throw new Error('Attachment not available');
     }
     return {

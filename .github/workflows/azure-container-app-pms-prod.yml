@@ -105,7 +105,10 @@ jobs:
               DB_MAX_CONNECTING=2 \
               DB_RETRY_READS=true \
               DB_APP_NAME=rte-pms-backend \
-              DB_AUTO_INDEX=false
+              DB_AUTO_INDEX=false \
+              PMS_STORAGE_PROVIDER=azure \
+              PMS_AZURE_STORAGE_ACCOUNT=rteintranetfiles \
+              PMS_AZURE_STORAGE_CONTAINER=pms
 
       - name: Resolve Container App URL
         run: |

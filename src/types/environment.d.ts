@@ -9,6 +9,14 @@ declare global {
       CORS_ORIGINS: string;
       PROJECT_ID: string;
       GCP_STORAGE_BUCKET: string;
+      PMS_STORAGE_PROVIDER?: 'gcp' | 'azure';
+      PMS_GCP_STORAGE_BUCKET?: string;
+      PMS_AZURE_STORAGE_ACCOUNT?: string;
+      PMS_AZURE_STORAGE_CONTAINER?: string;
+      PMS_AZURE_STORAGE_CONNECTION_STRING?: string;
+      PMS_AZURE_STORAGE_ENDPOINT?: string;
+      PMS_AZURE_MANAGED_IDENTITY_CLIENT_ID?: string;
+      PMS_STORAGE_ALLOWED_HOSTS?: string;
       GCP_SERVICE_ACCOUNT_JSON?: string;
       GCP_CLIENT_EMAIL?: string;
       GCP_PRIVATE_KEY?: string;

@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { MultipartFile } from '@fastify/multipart';
 import { saveMultipartFile } from '../utilis/parseMultiPartForm';
-import { uploadFileToGCP } from '../utilis/gcpStorage';
+import { uploadFileToPmsStorage } from '../utilis/pmsStorage';
 
 export type StoredFileUpload = {
   fileName: string;
@@ -23,9 +23,9 @@ type UploadMultipartParams = {
   public?: boolean;
 };
 
-export class GcpFileStorageService {
+export class PmsFileStorageService {
   async uploadMultipartFile(params: UploadMultipartParams): Promise<StoredFileUpload> {
-    const { category, type, employeeId, file, public: makePublic = true } = params;
+    const { type, employeeId, file, public: makePublic = true } = params;
 
     if (!file?.filename) {
       throw new Error('No file uploaded');
@@ -38,17 +38,17 @@ export class GcpFileStorageService {
     try {
       await saveMultipartFile(file as any, tempPath);
       const fileStats = await fs.stat(tempPath);
-      const uploadResult = await uploadFileToGCP({
+      const uploadResult = await uploadFileToPmsStorage({
         filePath: tempPath,
         fileName: storedFileName,
         employeeId,
-        category,
         type,
+        contentType: file.mimetype || undefined,
         public: makePublic,
       });
 
       if (!uploadResult.success || !uploadResult.fileUrl) {
-        throw new Error(uploadResult.error || 'Failed to upload file to GCP');
+        throw new Error(uploadResult.error || 'Failed to upload PMS file');
       }
 
       return {
@@ -65,4 +65,8 @@ export class GcpFileStorageService {
   }
 }
 
-export const gcpFileStorageService = new GcpFileStorageService();
+export const pmsFileStorageService = new PmsFileStorageService();
+
+// Backward-compatible exports for callers outside the PMS service tree.
+export { PmsFileStorageService as GcpFileStorageService };
+export const gcpFileStorageService = pmsFileStorageService;

@@ -3,6 +3,7 @@ import { authenticate } from '../middleware/auth';
 import { RouteHandler } from '../types/routes';
 import { errorResponse, successResponse } from '../utilis/apiResponse';
 import { parseMultipartForm } from '../utilis/parseMultiPartForm';
+import { isTrustedPmsFileUrl } from '../utilis/pmsStorage';
 import type {
   SaveAchievementDraftInput,
   SaveAssignedFormValuesInput,
@@ -30,6 +31,10 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
 
         if (!fileUrl) {
           throw new Error('File URL is required');
+        }
+
+        if (!isTrustedPmsFileUrl(fileUrl)) {
+          throw new Error('Attachment URL is not from a configured PMS storage provider');
         }
 
         const response = await fetch(fileUrl);

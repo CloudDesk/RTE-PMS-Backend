@@ -29,6 +29,7 @@ import {
   isObjectiveMatrixStageWindowOpen,
 } from './objective-matrix.service';
 import { PmsDocumentService } from './pms-document.service';
+import { isTrustedPmsFileUrl } from '../utilis/pmsStorage';
 
 export const TERM_SUPPORTING_DOCUMENT = 'TERM_SUPPORTING_DOCUMENT';
 export const OBJECTIVE_TERM_EVIDENCE_DOCUMENT_TYPE = 'ObjectiveTermEvidence';
@@ -408,10 +409,7 @@ export class ObjectiveEvidenceService extends BaseService {
     } catch {
       throw this.contentNotAvailable();
     }
-    if (
-      parsedUrl.protocol !== 'https:' ||
-      parsedUrl.hostname !== 'storage.googleapis.com'
-    ) {
+    if (!isTrustedPmsFileUrl(parsedUrl.toString())) {
       throw this.contentNotAvailable();
     }
     return {

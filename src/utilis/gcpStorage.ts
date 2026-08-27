@@ -64,6 +64,7 @@ export interface IGCPUploadParams {
   category: string;
   type: string;
   public?: boolean;
+  bucketName?: string;
 }
 
 export interface IGCPUploadResult {
@@ -77,9 +78,18 @@ export interface IGCPUploadResult {
  */
 export async function uploadFileToGCP(params: IGCPUploadParams): Promise<IGCPUploadResult> {
   try {
-    const { filePath, fileName, employeeId, category, type, public: makePublic } = params;
+    const {
+      filePath,
+      fileName,
+      employeeId,
+      category,
+      type,
+      public: makePublic,
+      bucketName: bucketOverride,
+    } = params;
+    const targetBucketName = bucketOverride || bucketName;
 
-    if (!bucketName) {
+    if (!targetBucketName) {
       return {
         success: false,
         error: 'GCP_STORAGE_BUCKET is not configured',
@@ -93,7 +103,7 @@ export async function uploadFileToGCP(params: IGCPUploadParams): Promise<IGCPUpl
     const gcpFilePath = `${employeeId}/${folderName}/${fileName}`;
 
     // Upload file to GCP
-    const bucket = storage.bucket(bucketName);
+    const bucket = storage.bucket(targetBucketName);
     const file = bucket.file(gcpFilePath);
 
     const uploadTimeoutMs = Number(process.env.GCP_UPLOAD_TIMEOUT_MS ?? '60000'); // default 60s
@@ -127,7 +137,7 @@ export async function uploadFileToGCP(params: IGCPUploadParams): Promise<IGCPUpl
     }
 
     // Construct the public URL
-    const fileUrl = `https://storage.googleapis.com/${bucketName}/${gcpFilePath}`;
+    const fileUrl = `https://storage.googleapis.com/${targetBucketName}/${gcpFilePath}`;
     return {
       success: true,
       fileUrl,

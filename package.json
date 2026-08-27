@@ -44,6 +44,8 @@
     "full-deploy": "npm run set-project && npm run hrms-build && npm run hrms-tag && npm run hrms-push && npm run db:migrate:startup && npm run hrms-deploy"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.2",
+    "@azure/storage-blob": "^12.33.0",
     "@fastify/aws-lambda": "^3.5.0",
     "@fastify/cookie": "^11.0.1",
     "@fastify/cors": "^10.0.1",
