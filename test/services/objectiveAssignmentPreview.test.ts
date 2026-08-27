@@ -6,6 +6,8 @@ import {
   ObjectiveSource,
 } from '../../src/constants/pms.enums';
 import { ObjectiveService } from '../../src/services/objective.service';
+import { User } from '../../src/models';
+import { ObjectiveEmployeeAssignment } from '../../src/models/pms-objective-employee-assignment.model';
 import type { RequestContext } from '../../src/types/context';
 
 describe('ObjectiveService - Flexible objective assignment preview helpers', () => {
@@ -30,6 +32,11 @@ describe('ObjectiveService - Flexible objective assignment preview helpers', () 
       },
     };
     service = new ObjectiveService(context) as any;
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   it('matches rules only to configured cycle term type and labels', () => {
@@ -167,5 +174,84 @@ describe('ObjectiveService - Flexible objective assignment preview helpers', () 
         new Date('2027-03-31T00:00:00.000Z'),
       ),
     ).toThrow('Q2 fill period must come after Q1');
+  });
+
+  it('uses the real assignment date even when the request context has a future test date', async () => {
+    const realAssignmentDate = new Date('2026-08-27T07:30:00.000Z');
+    const futureTestDate = new Date('2027-09-26T12:00:00.000Z');
+    jest.useFakeTimers().setSystemTime(realAssignmentDate);
+    const serviceWithTestDate = new ObjectiveService({
+      ...(service as any).context,
+      pmsCurrentDate: futureTestDate,
+    } as RequestContext) as any;
+    const employeeId = new Types.ObjectId();
+    const period = {
+      _id: new Types.ObjectId(),
+      objectiveMasterId: new Types.ObjectId(),
+      objectiveVersionId: new Types.ObjectId(),
+      status: 'ACTIVE',
+      terms: [AssessmentTermCode.Q1],
+      fillStartDate: new Date('2026-08-27T00:00:00.000Z'),
+      fillEndDate: new Date('2026-10-19T23:59:59.999Z'),
+      termFillWindows: [
+        {
+          term: AssessmentTermCode.Q1,
+          fillStartDate: new Date('2026-08-27T00:00:00.000Z'),
+          fillEndDate: new Date('2026-10-19T23:59:59.999Z'),
+        },
+      ],
+      pastTermEntryWindows: [],
+    };
+
+    serviceWithTestDate.requireAdminForObjectiveAssignment = jest.fn().mockResolvedValue(undefined);
+    serviceWithTestDate.loadObjectiveAssignmentPeriod = jest.fn().mockResolvedValue(period);
+    serviceWithTestDate.loadActiveObjectiveVersionForPeriod = jest.fn().mockResolvedValue({});
+    jest.spyOn(User, 'find').mockReturnValue({
+      lean: jest.fn().mockResolvedValue([
+        {
+          _id: employeeId,
+          name: 'Test Employee',
+          employeeCode: 'EMP-001',
+          active: true,
+        },
+      ]),
+    } as any);
+    jest.spyOn(ObjectiveEmployeeAssignment, 'find').mockReturnValue({
+      lean: jest.fn().mockResolvedValue([]),
+    } as any);
+    const createdAssignmentId = new Types.ObjectId();
+    const createAssignment = jest
+      .spyOn(ObjectiveEmployeeAssignment, 'create')
+      .mockResolvedValue({ _id: createdAssignmentId } as any);
+    serviceWithTestDate.audit = jest.fn().mockResolvedValue(undefined);
+
+    const preview = await serviceWithTestDate.previewObjectiveAssignmentPeriodEmployees(
+      period._id.toString(),
+      { employeeIds: [employeeId.toString()] },
+    );
+    const applied = await serviceWithTestDate.applyObjectiveAssignmentPeriodEmployees(
+      period._id.toString(),
+      { employeeIds: [employeeId.toString()], confirm: true },
+    );
+
+    const [initialState] = serviceWithTestDate.buildObjectiveEmployeeAssignmentTermStates(
+      period,
+      actorId,
+      realAssignmentDate,
+    );
+
+    expect(preview.newAssignments).toBe(1);
+    expect(preview.blocked).toBe(0);
+    expect(preview.rows[0].status).toBe('NEW');
+    expect(applied.createdAssignmentIds).toEqual([createdAssignmentId.toString()]);
+    expect((createAssignment.mock.calls[0][0] as any).termStates[0].status).toBe('OPEN');
+    expect(initialState.status).toBe('OPEN');
+    expect(
+      serviceWithTestDate.resolveObjectiveEmployeeAssignmentTermWindowState(
+        period,
+        period.fillStartDate,
+        period.fillEndDate,
+      ).status,
+    ).toBe('LOCKED');
   });
 });

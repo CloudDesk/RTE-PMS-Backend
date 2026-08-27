@@ -2928,7 +2928,7 @@ export class ObjectiveService extends BaseService {
     input: ObjectiveAssignmentPeriodEmployeeInput,
   ): Promise<ObjectiveAssignmentPeriodPreviewResult> {
     await this.requireAdminForObjectiveAssignment('objectiveAssignmentPeriod.preview');
-    return this.buildObjectiveAssignmentPeriodPreview(periodId, input);
+    return this.buildObjectiveAssignmentPeriodPreview(periodId, input, new Date());
   }
 
   async applyObjectiveAssignmentPeriodEmployees(
@@ -2939,7 +2939,8 @@ export class ObjectiveService extends BaseService {
     if (input.confirm !== true) {
       throw new Error('Confirmation is required before assigning employees');
     }
-    const preview = await this.buildObjectiveAssignmentPeriodPreview(periodId, input);
+    const assignmentDate = new Date();
+    const preview = await this.buildObjectiveAssignmentPeriodPreview(periodId, input, assignmentDate);
     if (preview.blocked > 0) {
       throw new Error('Blocked employee assignments must be resolved before applying');
     }
@@ -2971,7 +2972,7 @@ export class ObjectiveService extends BaseService {
           ? new Types.ObjectId(employee.managerId)
           : undefined,
         selectedTerms: period.terms,
-        termStates: this.buildObjectiveEmployeeAssignmentTermStates(period, actorId),
+        termStates: this.buildObjectiveEmployeeAssignmentTermStates(period, actorId, assignmentDate),
         frozenObjectiveSnapshot: snapshot,
         values: {},
         status: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
@@ -11181,14 +11182,18 @@ export class ObjectiveService extends BaseService {
     };
   }
 
-  private buildObjectiveEmployeeAssignmentTermStates(period: any, actorId: Types.ObjectId) {
+  private buildObjectiveEmployeeAssignmentTermStates(
+    period: any,
+    actorId: Types.ObjectId,
+    evaluationDate = this.getCurrentDate(),
+  ) {
     const windowsByTerm = new Map(
       (period.termFillWindows ?? []).map((window: any) => [String(window.term), window]),
     );
     const pastEntryByTerm = new Map(
       (period.pastTermEntryWindows ?? []).map((window: any) => [String(window.term), window]),
     );
-    const now = this.getCurrentDate();
+    const now = evaluationDate;
     return (period.terms ?? []).map((term: string) => {
       const window: any = windowsByTerm.get(String(term));
       const pastEntry: any = pastEntryByTerm.get(String(term));
@@ -11196,6 +11201,7 @@ export class ObjectiveService extends BaseService {
         period,
         window?.fillStartDate ?? period.fillStartDate,
         window?.fillEndDate ?? period.fillEndDate,
+        evaluationDate,
       );
       const entryOverride = pastEntry
         ? {
@@ -11386,6 +11392,7 @@ export class ObjectiveService extends BaseService {
     period: any,
     fillStartDate?: Date,
     fillEndDate?: Date,
+    evaluationDate = this.getCurrentDate(),
   ): { status: string; readOnlyReason?: string } {
     if (!period) {
       return { status: 'LOCKED', readOnlyReason: 'Assignment period details are not available' };
@@ -11396,7 +11403,7 @@ export class ObjectiveService extends BaseService {
     if (!fillStartDate || !fillEndDate) {
       return { status: 'LOCKED', readOnlyReason: 'Objective fill window is not configured' };
     }
-    const now = this.getCurrentDate();
+    const now = evaluationDate;
     const startDate = fillStartDate instanceof Date ? fillStartDate : new Date(fillStartDate);
     const endDate = fillEndDate instanceof Date ? fillEndDate : new Date(fillEndDate);
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
@@ -12564,6 +12571,7 @@ export class ObjectiveService extends BaseService {
   private async buildObjectiveAssignmentPeriodPreview(
     periodId: string,
     input: ObjectiveAssignmentPeriodEmployeeInput,
+    evaluationDate: Date,
   ): Promise<ObjectiveAssignmentPeriodPreviewResult> {
     const period = await this.loadObjectiveAssignmentPeriod(periodId);
     const employeeIds = Array.from(new Set((input.employeeIds ?? []).filter(Boolean)));
@@ -12586,7 +12594,7 @@ export class ObjectiveService extends BaseService {
     const existingAssignmentsByEmployeeId = new Map(
       existingAssignments.map((assignment: any) => [assignment.employeeId.toString(), assignment]),
     );
-    const currentDate = this.getCurrentDate();
+    const currentDate = evaluationDate;
     const currentDateText = currentDate.toISOString().slice(0, 10);
     const allowedPastTermWindows = (period.pastTermEntryWindows ?? [])
       .filter((window: any) => {
