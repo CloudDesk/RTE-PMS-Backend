@@ -4474,6 +4474,11 @@ export class PmsEmployeeProfileImportService extends BaseService {
       throw new Error('Authenticated user id is invalid');
     }
 
+    // Every employee can view their own imported career history from My Profile.
+    if (actorId === employeeId) {
+      return;
+    }
+
     const role = normalizePmsRole(user.role);
     const hasGlobalManagementAccess =
       this.isEmployeeProfileAdministrator(user.role) ||

@@ -1466,6 +1466,28 @@ describe('PMS employee profile Phase 5 visibility authorization', () => {
     });
   }
 
+  it('allows an employee to view their own career profile', async () => {
+    await expect(
+      (visibilityService('EMPLOYEE') as any).assertCareerProfileViewAccess(
+        adminId.toString(),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each(['ADMIN', 'HR', 'HR_ADMIN'])(
+    'allows %s to view an employee career profile',
+    async (role) => {
+      const hierarchySpy = jest.spyOn(userHierarchy, 'getSubordinateUserIds');
+
+      await expect(
+        (visibilityService(role) as any).assertCareerProfileViewAccess(
+          new Types.ObjectId().toString(),
+        ),
+      ).resolves.toBeUndefined();
+      expect(hierarchySpy).not.toHaveBeenCalled();
+    },
+  );
+
   it('allows a direct or higher reporting manager to view a subordinate profile', async () => {
     const employeeId = new Types.ObjectId();
     jest
@@ -1508,7 +1530,7 @@ describe('PMS employee profile Phase 5 visibility authorization', () => {
     expect(hierarchySpy).not.toHaveBeenCalled();
   });
 
-  it('does not expose this management view to employees', async () => {
+  it('does not expose another employee career profile to employees', async () => {
     await expect(
       (visibilityService('EMPLOYEE') as any).assertCareerProfileViewAccess(
         new Types.ObjectId().toString(),
