@@ -459,7 +459,7 @@ describe('PMS template objective table layout Phase 1', () => {
       'Objective table layout evidence column "col-evidence" must use bindingKey "system.objectiveEvidence"',
       'Objective table layout evidence column "col-evidence" must be EMPLOYEE/EMPLOYEE_ACHIEVEMENT',
       'Objective table layout evidence column "col-evidence" must be optional',
-      'Objective table layout evidence column "col-evidence" must allow one active file per term',
+      'Objective table layout evidence column "col-evidence" must allow one or five active files per term',
       'Objective table layout evidence column "col-evidence" cannot be editable for MANAGER',
       'Objective table layout evidence column "col-evidence" must use EVERY_REVIEW_PERIOD',
     ]));

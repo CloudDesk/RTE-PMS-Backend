@@ -303,7 +303,7 @@ describe('ObjectiveEvidenceService Phase 2', () => {
     );
   });
 
-  it('replaces only the active same-term attachment and retires its document', async () => {
+  it('appends a same-term attachment without retiring the active document', async () => {
     const loaded = resources();
     const previousAttachmentId = new Types.ObjectId();
     const previousDocumentId = new Types.ObjectId();
@@ -332,10 +332,11 @@ describe('ObjectiveEvidenceService Phase 2', () => {
     const evidenceUpdate = jest.spyOn(ObjectiveEvidence, 'updateOne')
       .mockResolvedValue({ modifiedCount: 1 } as never);
     jest.spyOn(ObjectiveAttachment, 'find').mockReturnValue({
-      session: jest.fn().mockReturnValue(queryResult([{
+      lean: jest.fn().mockResolvedValue([{
         _id: previousAttachmentId,
+        fileSize: 100,
         documentId: previousDocumentId.toString(),
-      }])),
+      }]),
     } as never);
     const attachmentUpdate = jest.spyOn(ObjectiveAttachment, 'updateMany')
       .mockResolvedValue({ modifiedCount: 1 } as never);
@@ -350,26 +351,18 @@ describe('ObjectiveEvidenceService Phase 2', () => {
       expectedEvidenceVersion: 3,
     });
 
-    expect(result.operation).toBe('REPLACED');
+    expect(result.operation).toBe('UPLOADED');
     expect(result.version).toBe(4);
     expect(evidenceUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ _id: evidenceId, version: 3 }),
       expect.objectContaining({
-        $set: expect.objectContaining({ attachmentIds: [newAttachmentId] }),
+        $set: expect.objectContaining({ attachmentIds: [previousAttachmentId, newAttachmentId] }),
         $inc: { version: 1 },
       }),
       expect.any(Object),
     );
-    expect(attachmentUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: { $in: [previousAttachmentId] } }),
-      expect.objectContaining({ $set: expect.objectContaining({ isDeleted: true }) }),
-      expect.any(Object),
-    );
-    expect(documentUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: { $in: [previousDocumentId] } }),
-      { $set: { isDeleted: true } },
-      expect.any(Object),
-    );
+    expect(attachmentUpdate).not.toHaveBeenCalled();
+    expect(documentUpdate).not.toHaveBeenCalled();
   });
 
   it('rejects a stale version before uploading a new file', async () => {
@@ -412,6 +405,9 @@ describe('ObjectiveEvidenceService Phase 2', () => {
       version: 1,
       attachmentIds: [oldAttachmentId],
     }));
+    jest.spyOn(ObjectiveAttachment, 'find').mockReturnValue({
+      lean: jest.fn().mockResolvedValue([{ _id: oldAttachmentId, fileSize: 100 }]),
+    } as never);
     jest.spyOn(ObjectiveAttachment, 'create').mockResolvedValue([{
       _id: new Types.ObjectId(),
     }] as never);
@@ -647,7 +643,7 @@ describe('ObjectiveEvidenceService Phase 2', () => {
     await expect((service as any).validateFile(file('application/pdf', Buffer.alloc(0)), config()))
       .rejects.toMatchObject({ code: 'PMS_OBJECTIVE_EVIDENCE_EMPTY_FILE' });
     await expect((service as any).validateFile(
-      file('application/pdf', Buffer.alloc(1024 * 1024)),
+      file('application/pdf', Buffer.alloc(5 * 1024 * 1024 + 1)),
       config(),
     )).rejects.toMatchObject({ statusCode: 413 });
   });

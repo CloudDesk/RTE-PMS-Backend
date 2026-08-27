@@ -476,11 +476,11 @@ export function objectiveTableLayoutValidationErrors(
         if (config.displayMode !== 'ANNUAL_AGGREGATED') {
           errors.push(`${prefix} evidence column "${column.columnId}" must use ANNUAL_AGGREGATED display`);
         }
-        if (config.maxActiveFilesPerTerm !== 1) {
-          errors.push(`${prefix} evidence column "${column.columnId}" must allow one active file per term`);
+        if (![1, 5].includes(config.maxActiveFilesPerTerm)) {
+          errors.push(`${prefix} evidence column "${column.columnId}" must allow one or five active files per term`);
         }
-        if (config.replacementPolicy !== 'REPLACE_ACTIVE_TERM_DOCUMENT') {
-          errors.push(`${prefix} evidence column "${column.columnId}" must replace the active term document`);
+        if (!['REPLACE_ACTIVE_TERM_DOCUMENT', 'APPEND_ACTIVE_TERM_DOCUMENT'].includes(config.replacementPolicy)) {
+          errors.push(`${prefix} evidence column "${column.columnId}" has an invalid document policy`);
         }
         if (!Number.isInteger(config.maxFileSizeBytes) || config.maxFileSizeBytes < 1) {
           errors.push(`${prefix} evidence column "${column.columnId}" requires a positive max file size`);

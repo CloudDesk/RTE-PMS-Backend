@@ -58,6 +58,7 @@ import { LOV } from '../models/lov.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { traceDatabaseOperation } from '../utilis/databaseDiagnostics';
+import { assertPmsAttachmentLimits } from '../constants/pms-attachment-limits';
 import { DelegationService } from './delegation.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import {
@@ -7721,6 +7722,7 @@ export class ObjectiveService extends BaseService {
   }
 
   private normalizeAttachments(attachments: ObjectiveAttachmentInput[]) {
+    assertPmsAttachmentLimits(attachments, 'Objective attachments');
     return attachments.map((attachment) => ({
       fileName: attachment.fileName,
       fileUrl: attachment.fileUrl,

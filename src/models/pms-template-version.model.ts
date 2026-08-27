@@ -86,12 +86,14 @@ export interface ITemplateObjectiveTableColumnAccess {
 
 export type ObjectiveEvidenceDisplayMode = 'ANNUAL_AGGREGATED';
 export type ObjectiveEvidenceScope = 'PER_EMPLOYEE_TERM';
-export type ObjectiveEvidenceReplacementPolicy = 'REPLACE_ACTIVE_TERM_DOCUMENT';
+export type ObjectiveEvidenceReplacementPolicy =
+  | 'REPLACE_ACTIVE_TERM_DOCUMENT'
+  | 'APPEND_ACTIVE_TERM_DOCUMENT';
 
 export interface IObjectiveEvidenceColumnConfig {
   scope: ObjectiveEvidenceScope;
   displayMode: ObjectiveEvidenceDisplayMode;
-  maxActiveFilesPerTerm: 1;
+  maxActiveFilesPerTerm: 1 | 5;
   replacementPolicy: ObjectiveEvidenceReplacementPolicy;
   maxFileSizeBytes: number;
   allowedMimeTypes: string[];
@@ -409,12 +411,12 @@ const objectiveEvidenceColumnConfigSchema = new Schema<IObjectiveEvidenceColumnC
     maxActiveFilesPerTerm: {
       type: Number,
       required: true,
-      enum: [1],
+      enum: [1, 5],
     },
     replacementPolicy: {
       type: String,
       required: true,
-      enum: ['REPLACE_ACTIVE_TERM_DOCUMENT'],
+      enum: ['REPLACE_ACTIVE_TERM_DOCUMENT', 'APPEND_ACTIVE_TERM_DOCUMENT'],
     },
     maxFileSizeBytes: { type: Number, required: true, min: 1 },
     allowedMimeTypes: {

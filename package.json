@@ -1,7 +1,7 @@
 {
-  "name": "tendly-api",
+  "name": "rte-pms",
   "version": "1.0.0",
-  "description": "Tendly HRMS API Server",
+  "description": "RTE PMS Backend API Server",
   "main": "dist/lambda.js",
   "scripts": {
     "build": "tsc",
@@ -16,7 +16,7 @@
     "seed:pms-demo": "ts-node scripts/seed-pms-demo.ts",
     "seed:pms-template:cmmi-fullstack": "ts-node scripts/seed-cmmi-fullstack-template.ts",
     "package": "NODE_ENV=production npm install && NODE_ENV=production npm run build && NODE_ENV=production npm prune --production && rm -rf node_modules/argon2 && zip -r function.zip dist/* node_modules/* package.json",
-    "deploy": "NODE_ENV=production npm run package && aws lambda update-function-code --function-name tendly-api --zip-file fileb://function.zip",
+    "deploy": "NODE_ENV=production npm run package && aws lambda update-function-code --function-name rte-pms --zip-file fileb://function.zip",
     "generate-data": "ts-node scripts/generateTrainingData.ts",
     "db:verify": "node scripts/verify-database.js",
     "db:migrate:startup": "ts-node src/scripts/run-startup-migrations.ts",

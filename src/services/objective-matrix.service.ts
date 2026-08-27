@@ -637,13 +637,21 @@ export class ObjectiveMatrixService {
           explicitEditable: evidenceAccess.editable,
         });
         const evidence = input.evidenceByObjective.get(sibling._id.toString());
-        const attachmentId = evidence?.attachmentIds?.[0]?.toString();
-        const attachmentCandidate = attachmentId
-          ? input.attachmentById.get(attachmentId)
-          : undefined;
-        const attachment = attachmentCandidate?.objectiveId?.toString() === sibling._id.toString()
-          ? attachmentCandidate
-          : undefined;
+        const attachments = (evidence?.attachmentIds ?? [])
+          .map((attachmentId: Types.ObjectId) => input.attachmentById.get(attachmentId.toString()))
+          .filter((attachment: LeanRecord | undefined): attachment is LeanRecord =>
+            attachment?.objectiveId?.toString() === sibling._id.toString(),
+          )
+          .map((attachment: LeanRecord) => ({
+            id: attachment._id.toString(),
+            documentId: attachment.documentId ?? '',
+            fileName: attachment.fileName ?? '',
+            ...(attachment.fileType ? { fileType: attachment.fileType } : {}),
+            ...(attachment.fileSize !== undefined ? { fileSize: attachment.fileSize } : {}),
+            uploadedAt: new Date(attachment.uploadedAt ?? attachment.createdAt).toISOString(),
+            previewAvailable: evidenceConfig?.allowPreview === true,
+            downloadAvailable: evidenceConfig?.allowDownload === true,
+          }));
         evidenceByTerm[termCode] = {
           ...(evidence ? { evidenceId: evidence._id.toString() } : {}),
           objectiveId: sibling._id.toString(),
@@ -651,20 +659,8 @@ export class ObjectiveMatrixService {
           termCode,
           version: evidence?.version ?? 0,
           ...permission,
-          ...(attachment ? {
-            attachment: {
-              id: attachment._id.toString(),
-              documentId: attachment.documentId ?? '',
-              fileName: attachment.fileName ?? '',
-              ...(attachment.fileType ? { fileType: attachment.fileType } : {}),
-              ...(attachment.fileSize !== undefined ? { fileSize: attachment.fileSize } : {}),
-              uploadedAt: new Date(
-                attachment.uploadedAt ?? attachment.createdAt,
-              ).toISOString(),
-              previewAvailable: evidenceConfig?.allowPreview === true,
-              downloadAvailable: evidenceConfig?.allowDownload === true,
-            },
-          } : {}),
+          attachments,
+          ...(attachments[0] ? { attachment: attachments[0] } : {}),
         };
       }
     }

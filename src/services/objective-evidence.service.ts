@@ -30,6 +30,10 @@ import {
 } from './objective-matrix.service';
 import { PmsDocumentService } from './pms-document.service';
 import { isTrustedPmsFileUrl } from '../utilis/pmsStorage';
+import {
+  assertPmsAttachmentLimits,
+  PMS_ATTACHMENT_MAX_TOTAL_BYTES,
+} from '../constants/pms-attachment-limits';
 
 export const TERM_SUPPORTING_DOCUMENT = 'TERM_SUPPORTING_DOCUMENT';
 export const OBJECTIVE_TERM_EVIDENCE_DOCUMENT_TYPE = 'ObjectiveTermEvidence';
@@ -55,6 +59,7 @@ export interface ReplaceObjectiveTermEvidenceInput {
 
 export interface RemoveObjectiveTermEvidenceInput {
   objectiveId: string;
+  attachmentId?: string;
   expectedEvidenceVersion?: number;
 }
 
@@ -127,6 +132,19 @@ export class ObjectiveEvidenceService extends BaseService {
       isDeleted: false,
     }).lean();
     this.assertExpectedVersion(activeEvidence, input.expectedEvidenceVersion);
+    const activeAttachments = activeEvidence?.attachmentIds?.length
+      ? await ObjectiveAttachment.find({
+          _id: { $in: activeEvidence.attachmentIds },
+          isDeleted: false,
+        }).lean()
+      : [];
+    assertPmsAttachmentLimits(
+      [
+        ...activeAttachments.map((attachment) => ({ fileSize: attachment.fileSize })),
+        { fileSize: buffer.length },
+      ],
+      'Objective term evidence attachments',
+    );
 
     const uploaded = await this.documentService.uploadDocument({
       employeeId: resources.objective.employeeId.toString(),
@@ -178,7 +196,6 @@ export class ObjectiveEvidenceService extends BaseService {
         }], { session });
 
         let evidenceId: Types.ObjectId;
-        let retiredAttachments: LeanRecord[] = [];
         if (activeEvidence) {
           const update = await ObjectiveEvidence.updateOne(
             {
@@ -188,7 +205,7 @@ export class ObjectiveEvidenceService extends BaseService {
             },
             {
               $set: {
-                attachmentIds: [attachment._id],
+                attachmentIds: [...(activeEvidence.attachmentIds ?? []), attachment._id],
                 submittedByRole: resources.actorRole,
                 submittedBy: resources.actorId,
                 submittedAt: now,
@@ -202,11 +219,6 @@ export class ObjectiveEvidenceService extends BaseService {
             throw this.versionConflict();
           }
           evidenceId = activeEvidence._id;
-          retiredAttachments = await this.retireAttachments(
-            activeEvidence.attachmentIds ?? [],
-            resources.actorId,
-            session!,
-          );
         } else {
           const [createdEvidence] = await ObjectiveEvidence.create([{
             objectiveId: resources.objective._id,
@@ -232,25 +244,11 @@ export class ObjectiveEvidenceService extends BaseService {
         await auditService.createAuditLog({
           actorId: resources.actorId.toString(),
           actorRole: resources.actorRole,
-          action: activeEvidence
-            ? 'PMS_OBJECTIVE_TERM_EVIDENCE_REPLACED'
-            : 'PMS_OBJECTIVE_TERM_EVIDENCE_UPLOADED',
+          action: 'PMS_OBJECTIVE_TERM_EVIDENCE_UPLOADED',
           entityType: 'OBJECTIVE_EVIDENCE',
           entityId: evidenceId.toString(),
           assignmentId: resources.annual._id.toString(),
-          previousValue: activeEvidence
-            ? {
-              version: activeEvidence.version,
-              attachments: retiredAttachments.map((previous) => ({
-                attachmentId: previous._id?.toString(),
-                documentId: previous.documentId,
-                fileName: previous.fileName,
-                fileType: previous.fileType,
-                fileSize: previous.fileSize,
-                uploadedAt: previous.uploadedAt,
-              })),
-            }
-            : undefined,
+          previousValue: activeEvidence ? { version: activeEvidence.version } : undefined,
           newValue: {
             version: nextVersion,
             attachmentId: attachment._id.toString(),
@@ -282,7 +280,7 @@ export class ObjectiveEvidenceService extends BaseService {
             fileSize: buffer.length,
             uploadedAt: new Date(uploaded.uploadedAt ?? now).toISOString(),
           },
-          operation: activeEvidence ? 'REPLACED' : 'UPLOADED',
+          operation: 'UPLOADED',
         };
       });
     } catch (error: unknown) {
@@ -446,6 +444,24 @@ export class ObjectiveEvidenceService extends BaseService {
       );
     }
     this.assertExpectedVersion(evidence, input.expectedEvidenceVersion);
+    const attachmentId = input.attachmentId;
+    if (
+      attachmentId &&
+      (!Types.ObjectId.isValid(attachmentId) ||
+        !(evidence.attachmentIds ?? []).some((id: Types.ObjectId) => id.toString() === attachmentId))
+    ) {
+      throw new ObjectiveEvidenceError(
+        'No supporting document is available for this objective and review period.',
+        404,
+        'PMS_OBJECTIVE_EVIDENCE_NOT_FOUND',
+      );
+    }
+    const attachmentIdsToRemove = attachmentId
+      ? [new Types.ObjectId(attachmentId)]
+      : (evidence.attachmentIds ?? []);
+    const remainingAttachmentIds = (evidence.attachmentIds ?? []).filter(
+      (id: Types.ObjectId) => !attachmentIdsToRemove.some((target) => target.equals(id)),
+    );
 
     const session = await mongoose.startSession();
     try {
@@ -454,7 +470,8 @@ export class ObjectiveEvidenceService extends BaseService {
           { _id: evidence._id, version: evidence.version, isDeleted: false },
           {
             $set: {
-              isDeleted: true,
+              isDeleted: remainingAttachmentIds.length === 0,
+              attachmentIds: remainingAttachmentIds,
               updatedBy: resources.actorId,
               submittedAt: this.now(),
             },
@@ -464,7 +481,7 @@ export class ObjectiveEvidenceService extends BaseService {
         );
         if (update.modifiedCount !== 1) throw this.versionConflict();
         const retiredAttachments = await this.retireAttachments(
-          evidence.attachmentIds ?? [],
+          attachmentIdsToRemove,
           resources.actorId,
           session,
         );
@@ -487,7 +504,8 @@ export class ObjectiveEvidenceService extends BaseService {
             })),
           },
           newValue: {
-            isDeleted: true,
+            isDeleted: remainingAttachmentIds.length === 0,
+            attachmentIds: remainingAttachmentIds.map((id: Types.ObjectId) => id.toString()),
             version: Number(evidence.version ?? 1) + 1,
           },
           metadata: {
@@ -681,9 +699,9 @@ export class ObjectiveEvidenceService extends BaseService {
         'PMS_OBJECTIVE_EVIDENCE_EMPTY_FILE',
       );
     }
-    if (buffer.length >= config.maxFileSizeBytes) {
+    if (buffer.length > PMS_ATTACHMENT_MAX_TOTAL_BYTES) {
       throw new ObjectiveEvidenceError(
-        `The document must be smaller than ${this.fileSizeLabel(config.maxFileSizeBytes)}.`,
+        'Objective term evidence attachments must not exceed 5 MB in total.',
         413,
         'PMS_OBJECTIVE_EVIDENCE_FILE_TOO_LARGE',
       );
@@ -768,8 +786,4 @@ export class ObjectiveEvidenceService extends BaseService {
     );
   }
 
-  private fileSizeLabel(bytes: number): string {
-    if (bytes === 1024 * 1024) return '1 MB';
-    return `${bytes} bytes`;
-  }
 }

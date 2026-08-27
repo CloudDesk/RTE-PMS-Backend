@@ -47,6 +47,10 @@ import { isTrustedPmsFileUrl } from '../utilis/pmsStorage';
 import { PmsDocumentService } from './pms-document.service';
 import { PmsTemplateService, type ResolvedTemplateField } from './pms-template.service';
 import { resolveEffectiveTermWindows } from '../utilis/pmsAssignmentWindows';
+import {
+  assertPmsAttachmentLimits,
+  PMS_ATTACHMENT_MAX_TOTAL_BYTES,
+} from '../constants/pms-attachment-limits';
 
 interface AchievementAttachmentInput {
   fileName?: string;
@@ -1372,18 +1376,19 @@ export class EmployeeAchievementSubmissionService extends BaseService {
 
     const actor = this.requireActor();
     const actorId = this.toObjectId(actor.actorId, 'actorId');
-    const activeAttachment = await TemplateFieldAttachment.findOne({
+    const activeAttachments = await TemplateFieldAttachment.find({
       termAssignmentId: termAssignment._id,
       sectionKey,
       fieldKey,
       isDeleted: false,
-    }).lean();
-    if (
-      activeAttachment &&
-      configured.config.allowEmployeeReplace === false
-    ) {
-      throw new Error('Replacing this attachment is not allowed');
-    }
+    }).sort({ versionNo: 1 }).lean();
+    assertPmsAttachmentLimits(
+      [
+        ...activeAttachments.map((attachment) => ({ fileSize: attachment.fileSize })),
+        { fileSize },
+      ],
+      'Field attachments',
+    );
 
     const uploaded = await new PmsDocumentService(this.context).uploadDocument({
       employeeId: termAssignment.employeeId.toString(),
@@ -1402,7 +1407,10 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       throw new Error('Attachment storage did not return a valid document id');
     }
 
-    const nextVersion = Number(activeAttachment?.versionNo ?? 0) + 1;
+    const nextVersion = activeAttachments.reduce(
+      (highest, attachment) => Math.max(highest, Number(attachment.versionNo ?? 0)),
+      0,
+    ) + 1;
     const created = await TemplateFieldAttachment.create({
       annualAssignmentId: termAssignment.annualAssignmentId,
       termAssignmentId: termAssignment._id,
@@ -1422,32 +1430,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
       updatedBy: actorId,
     });
 
-    if (activeAttachment) {
-      await Promise.all([
-        TemplateFieldAttachment.updateOne(
-          { _id: activeAttachment._id, isDeleted: false },
-          {
-            $set: {
-              isDeleted: true,
-              updatedBy: actorId,
-            },
-            $inc: { version: 1 },
-          },
-        ),
-        PmsDocument.updateOne(
-          { _id: activeAttachment.documentId, isDeleted: false },
-          { $set: { isDeleted: true } },
-        ),
-      ]);
-    }
-
     await this.audit(
-      activeAttachment
-        ? 'PMS_TEMPLATE_FIELD_ATTACHMENT_REPLACED'
-        : 'PMS_TEMPLATE_FIELD_ATTACHMENT_UPLOADED',
+      'PMS_TEMPLATE_FIELD_ATTACHMENT_UPLOADED',
       'TEMPLATE_FIELD_ATTACHMENT',
       created._id.toString(),
-      activeAttachment,
+      undefined,
       created.toObject(),
     );
 
@@ -1735,6 +1722,7 @@ export class EmployeeAchievementSubmissionService extends BaseService {
         documentId: attachment.documentId?.trim(),
         uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
       }));
+      assertPmsAttachmentLimits(attachments, 'Achievement attachments');
 
       const isEmptyAuthored =
         itemType !== AchievementItemType.OBJECTIVE &&
@@ -2968,12 +2956,11 @@ export class EmployeeAchievementSubmissionService extends BaseService {
     fileSize?: number,
   ): void {
     if (!file?.filename) throw new Error('No attachment file uploaded');
-    const maxFileSizeBytes = Number(config.maxFileSizeBytes ?? 1024 * 1024);
     if (
       Number.isFinite(fileSize) &&
-      Number(fileSize) >= maxFileSizeBytes
+      Number(fileSize) > PMS_ATTACHMENT_MAX_TOTAL_BYTES
     ) {
-      throw new Error('Field attachments must be less than 1 MB per file.');
+      throw new Error('Field attachments must not exceed 5 MB in total.');
     }
 
     const allowedMimeTypes = new Set(config.allowedMimeTypes ?? []);

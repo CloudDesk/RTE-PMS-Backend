@@ -91,6 +91,8 @@ export interface ObjectiveTermEvidenceSummary {
   version: number;
   editable: boolean;
   denialReason?: ObjectiveMatrixCellDenialReason;
+  attachments: ObjectiveEvidenceAttachmentSummary[];
+  /** Backward-compatible first attachment for older clients. */
   attachment?: ObjectiveEvidenceAttachmentSummary;
 }
 

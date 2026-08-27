@@ -50,8 +50,12 @@ import type {
 } from '../types/pms-objective-matrix';
 import type { ObjectiveMatrixPdfQuery } from '../types/pms-objective-matrix-report';
 import { ObjectiveEvidenceError } from '../services/objective-evidence.service';
+import {
+  assertPmsAttachmentLimits,
+  PMS_ATTACHMENT_MAX_TOTAL_BYTES,
+} from '../constants/pms-attachment-limits';
 
-const MAX_OBJECTIVE_ATTACHMENT_BYTES = 1024 * 1024;
+const MAX_OBJECTIVE_ATTACHMENT_BYTES = PMS_ATTACHMENT_MAX_TOTAL_BYTES;
 
 export const objectiveRoutes: RouteHandler = async (
   fastify: FastifyInstance,
@@ -360,6 +364,7 @@ export const objectiveRoutes: RouteHandler = async (
         const body = (request.body ?? {}) as Record<string, unknown>;
         const result = await request.container!.objectiveEvidenceService.removeTermEvidence({
           objectiveId,
+          attachmentId: typeof body.attachmentId === 'string' ? body.attachmentId : undefined,
           expectedEvidenceVersion: optionalEvidenceVersion(body.expectedEvidenceVersion),
         });
         return reply.send(successResponse(
@@ -1295,14 +1300,16 @@ async function resolveObjectivePayloadWithAttachments(
       return payload;
     }
 
-    const oversizedFile = files.find((file) => {
-      const cachedBuffer = (file as any).__cachedBuffer as Buffer | undefined;
-      return (cachedBuffer?.length ?? 0) >= MAX_OBJECTIVE_ATTACHMENT_BYTES;
-    });
-
-    if (oversizedFile) {
-      throw new Error('Objective attachments must be less than 1 MB per file.');
-    }
+    const existingAttachments = (Array.isArray(payload.attachments)
+      ? payload.attachments
+      : []) as Array<{ fileSize?: number }>;
+    const incomingAttachments = files.map((file) => ({
+      fileSize: ((file as any).__cachedBuffer as Buffer | undefined)?.length ?? 0,
+    }));
+    assertPmsAttachmentLimits(
+      [...existingAttachments, ...incomingAttachments],
+      'Objective attachments',
+    );
 
     const termAssignment = await resolveTermAssignmentForObjectivePayload(payload, objectiveId);
     const termLabel = termAssignment.termLabel || termAssignment.termCode || termAssignment.assessmentTermCode;

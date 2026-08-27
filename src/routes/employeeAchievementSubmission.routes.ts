@@ -11,10 +11,11 @@ import type {
   SubmitAchievementInput,
   SubmitAchievementItemInput,
 } from '../services/employeeAchievementSubmission.service';
+import { PMS_ATTACHMENT_MAX_TOTAL_BYTES } from '../constants/pms-attachment-limits';
 
-const MAX_ACHIEVEMENT_ATTACHMENT_BYTES = 1024 * 1024;
+const MAX_ACHIEVEMENT_ATTACHMENT_BYTES = PMS_ATTACHMENT_MAX_TOTAL_BYTES;
 const ACHIEVEMENT_ATTACHMENT_SIZE_MESSAGE =
-  'Achievement attachments must be less than 1 MB per file.';
+  'Achievement attachments must not exceed 5 MB in total.';
 
 export const employeeAchievementSubmissionRoutes: RouteHandler = async (
   fastify: FastifyInstance,
@@ -365,7 +366,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
 
         const oversizedFile = files.find((file) => {
           const cachedBuffer = (file as any).__cachedBuffer as Buffer | undefined;
-          return (cachedBuffer?.length ?? 0) >= MAX_ACHIEVEMENT_ATTACHMENT_BYTES;
+          return (cachedBuffer?.length ?? 0) > MAX_ACHIEVEMENT_ATTACHMENT_BYTES;
         });
 
         if (oversizedFile) {
@@ -430,8 +431,8 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
           | Buffer
           | undefined;
         const fileSize = cachedBuffer?.length;
-        if ((fileSize ?? 0) >= MAX_ACHIEVEMENT_ATTACHMENT_BYTES) {
-          throw new Error('Field attachments must be less than 1 MB per file.');
+        if ((fileSize ?? 0) > MAX_ACHIEVEMENT_ATTACHMENT_BYTES) {
+          throw new Error('Field attachments must not exceed 5 MB in total.');
         }
         const attachment =
           await request.container!.employeeAchievementSubmissionService
@@ -505,7 +506,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
         const response = await fetch(content.fileUrl);
         if (!response.ok) throw new Error('The attachment could not be opened');
         const arrayBuffer = await response.arrayBuffer();
-        if (arrayBuffer.byteLength >= MAX_ACHIEVEMENT_ATTACHMENT_BYTES) {
+        if (arrayBuffer.byteLength > MAX_ACHIEVEMENT_ATTACHMENT_BYTES) {
           throw new Error('The attachment could not be opened');
         }
         const safeFileName = content.fileName
@@ -530,7 +531,7 @@ export const employeeAchievementSubmissionRoutes: RouteHandler = async (
 function sendRouteError(reply: FastifyReply, error: unknown) {
   reply.log.error({ err: error }, 'Route handler error');
   const message = error instanceof Error ? error.message : 'Unexpected error';
-  if (/less than 1 MB|file too large/i.test(message)) {
+  if (/5 MB|file too large|maximum of 5 files/i.test(message)) {
     return reply.status(413).send(
       errorResponse(
         'PMS_EMPLOYEE_ACHIEVEMENT_ERROR',
