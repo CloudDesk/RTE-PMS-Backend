@@ -10853,23 +10853,20 @@ export class ObjectiveService extends BaseService {
       };
     });
 
-    const windowsByStart = [...normalizedWindows].sort(
-      (left, right) => left.fillStartDate.getTime() - right.fillStartDate.getTime(),
-    );
-    for (let index = 1; index < windowsByStart.length; index += 1) {
-      if (windowsByStart[index].fillStartDate <= windowsByStart[index - 1].fillEndDate) {
+    for (let index = 1; index < normalizedWindows.length; index += 1) {
+      if (normalizedWindows[index].fillStartDate <= normalizedWindows[index - 1].fillEndDate) {
         throw new Error(
-          `${getAssessmentTermLabel(windowsByStart[index].term)} fill period cannot overlap ${getAssessmentTermLabel(
-            windowsByStart[index - 1].term,
+          `${getAssessmentTermLabel(normalizedWindows[index].term)} fill period must come after ${getAssessmentTermLabel(
+            normalizedWindows[index - 1].term,
           )}`,
         );
       }
-      const expectedStartDate = new Date(windowsByStart[index - 1].fillEndDate);
+      const expectedStartDate = new Date(normalizedWindows[index - 1].fillEndDate);
       expectedStartDate.setUTCDate(expectedStartDate.getUTCDate() + 1);
-      if (windowsByStart[index].fillStartDate.getTime() !== expectedStartDate.getTime()) {
+      if (normalizedWindows[index].fillStartDate.getTime() !== expectedStartDate.getTime()) {
         throw new Error(
-          `${getAssessmentTermLabel(windowsByStart[index].term)} fill start date must be the day after ${getAssessmentTermLabel(
-            windowsByStart[index - 1].term,
+          `${getAssessmentTermLabel(normalizedWindows[index].term)} fill start date must be the day after ${getAssessmentTermLabel(
+            normalizedWindows[index - 1].term,
           )} fill end date`,
         );
       }
@@ -10946,7 +10943,9 @@ export class ObjectiveService extends BaseService {
     if (invalidTerm) {
       throw new Error(`${getAssessmentTermLabel(invalidTerm)} is not valid for selected term type`);
     }
-    return uniqueTerms as AssessmentTermCodeType[];
+    return getAssessmentTerms(termType).filter((term) =>
+      uniqueTerms.includes(term),
+    ) as AssessmentTermCodeType[];
   }
 
   private dateKey(value: Date | string | undefined): string {

@@ -98,4 +98,74 @@ describe('ObjectiveService - Flexible objective assignment preview helpers', () 
     expect(service.mapFlexibleSourceToLegacySource(FlexibleObjectiveSourceType.EMPLOYEE_CREATED_OBJECTIVE))
       .toBe(ObjectiveSource.EMPLOYEE_CREATED);
   });
+
+  it('normalizes quarterly assignment terms into fiscal order', () => {
+    expect(
+      service.normalizePeriodTerms(AssessmentTermType.QUARTERLY, [
+        AssessmentTermCode.Q2,
+        AssessmentTermCode.Q3,
+        AssessmentTermCode.Q4,
+        AssessmentTermCode.Q1,
+      ]),
+    ).toEqual([
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ]);
+  });
+
+  it('keeps each fill window attached to its term after canonical sorting', () => {
+    const periodStart = new Date('2026-08-27T00:00:00.000Z');
+    const periodEnd = new Date('2027-03-31T00:00:00.000Z');
+    const terms = service.normalizePeriodTerms(AssessmentTermType.QUARTERLY, [
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+      AssessmentTermCode.Q1,
+    ]);
+    const windows = service.normalizeTermFillWindows(
+      terms,
+      [
+        { term: AssessmentTermCode.Q2, fillStartDate: '2026-10-20', fillEndDate: '2026-12-12' },
+        { term: AssessmentTermCode.Q3, fillStartDate: '2026-12-13', fillEndDate: '2027-02-04' },
+        { term: AssessmentTermCode.Q4, fillStartDate: '2027-02-05', fillEndDate: '2027-03-30' },
+        { term: AssessmentTermCode.Q1, fillStartDate: '2026-08-27', fillEndDate: '2026-10-19' },
+      ],
+      periodStart,
+      periodEnd,
+    );
+
+    expect(windows.map((window: any) => window.term)).toEqual([
+      AssessmentTermCode.Q1,
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+    ]);
+    expect(windows[0].fillStartDate.toISOString().slice(0, 10)).toBe('2026-08-27');
+    expect(windows[0].fillEndDate.toISOString().slice(0, 10)).toBe('2026-10-19');
+  });
+
+  it('rejects fill dates that place Q1 after Q4', () => {
+    const terms = service.normalizePeriodTerms(AssessmentTermType.QUARTERLY, [
+      AssessmentTermCode.Q2,
+      AssessmentTermCode.Q3,
+      AssessmentTermCode.Q4,
+      AssessmentTermCode.Q1,
+    ]);
+
+    expect(() =>
+      service.normalizeTermFillWindows(
+        terms,
+        [
+          { term: AssessmentTermCode.Q2, fillStartDate: '2026-10-20', fillEndDate: '2026-12-12' },
+          { term: AssessmentTermCode.Q3, fillStartDate: '2026-12-13', fillEndDate: '2027-02-04' },
+          { term: AssessmentTermCode.Q4, fillStartDate: '2027-02-05', fillEndDate: '2027-03-30' },
+          { term: AssessmentTermCode.Q1, fillStartDate: '2027-03-31', fillEndDate: '2027-03-31' },
+        ],
+        new Date('2026-08-27T00:00:00.000Z'),
+        new Date('2027-03-31T00:00:00.000Z'),
+      ),
+    ).toThrow('Q2 fill period must come after Q1');
+  });
 });
