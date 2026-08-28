@@ -536,7 +536,7 @@ function sendRouteError(reply: FastifyReply, error: unknown) {
       errorResponse(
         'PMS_EMPLOYEE_ACHIEVEMENT_ERROR',
         /field attachment/i.test(message)
-          ? 'Field attachments must be less than 1 MB per file.'
+          ? message
           : ACHIEVEMENT_ATTACHMENT_SIZE_MESSAGE,
       ),
     );

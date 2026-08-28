@@ -1389,8 +1389,8 @@ async function resolveTermAssignmentForObjectivePayload(
 function sendRouteError(reply: FastifyReply, error: unknown) {
   reply.log.error({ err: error }, 'Route handler error');
   const message = error instanceof Error ? error.message : 'Unexpected error';
-  if (/file too large|less than 1 MB/i.test(message)) {
-    return reply.status(413).send(errorResponse('PMS_OBJECTIVE_ERROR', 'Objective attachments must be less than 1 MB per file.'));
+  if (/file too large|5 MB|maximum of 5 files/i.test(message)) {
+    return reply.status(413).send(errorResponse('PMS_OBJECTIVE_ERROR', message));
   }
   return reply.status(400).send(errorResponse('PMS_OBJECTIVE_ERROR', message));
 }

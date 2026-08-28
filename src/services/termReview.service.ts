@@ -35,6 +35,7 @@ import { ManagerReviewPeriodAssignment } from '../models/pms-manager-review-peri
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import { PerformanceHistorySnapshot } from '../models/pms-performance-history-snapshot.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
+import { PmsDocument } from '../models/pms-document.model';
 import { LOV } from '../models/lov.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
@@ -53,6 +54,7 @@ import type { IAnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { ITermAssignment } from '../models/pms-term-assignment.model';
 import type { ITermReview } from '../models/pms-term-review.model';
 import type { ITemplateField, ITemplateSection } from '../models/pms-template-version.model';
+import { assertPmsAttachmentLimits } from '../constants/pms-attachment-limits';
 
 type ManagerReviewResolvedSection = {
   key?: string;
@@ -124,6 +126,7 @@ interface TermReviewAttachmentInput {
   fileName?: string;
   fileUrl?: string;
   documentId?: string;
+  fileSize?: number;
   uploadedBy?: string;
   uploadedAt?: Date | string;
 }
@@ -225,6 +228,7 @@ type TermReviewRecord = {
     fileName: string;
     fileUrl?: string;
     documentId?: string;
+    fileSize?: number;
     uploadedAt?: string;
   }>;
   reviewValues: Array<{
@@ -760,6 +764,10 @@ export class TermReviewService extends BaseService {
       approvedObjectives,
     );
     const overallRating = await this.validateManagerOverallRating(input.overallRating, false);
+    const attachments = await this.hydrateAttachmentSizes(
+      input.attachments ?? [],
+      termAssignment.employeeId,
+    );
 
     if (!RATING_ONLY_MANAGER_REVIEW) {
       this.validateDraftInput(input, approvedObjectives, reviewConfig, scoringResolution.overallScore);
@@ -833,7 +841,7 @@ export class TermReviewService extends BaseService {
       recommendation: input.recommendation?.trim(),
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
-      attachments: this.normalizeAttachments(input.attachments ?? []),
+      attachments: this.normalizeAttachments(attachments),
       actingDelegateUserId,
       originalOwnerUserId,
       updatedBy: this.actorIdObject(),
@@ -945,6 +953,10 @@ export class TermReviewService extends BaseService {
       approvedObjectives,
     );
     const overallRating = await this.validateManagerOverallRating(input.overallRating, true);
+    const attachments = await this.hydrateAttachmentSizes(
+      input.attachments ?? [],
+      termAssignment.employeeId,
+    );
     if (RATING_ONLY_MANAGER_REVIEW) {
       this.validateRatingOnlyReviewInput(input);
     } else {
@@ -1020,7 +1032,7 @@ export class TermReviewService extends BaseService {
       recommendation: input.recommendation?.trim(),
       achievements: input.achievements?.trim(),
       developmentObservations: input.developmentObservations?.trim(),
-      attachments: this.normalizeAttachments(input.attachments ?? []),
+      attachments: this.normalizeAttachments(attachments),
       actingDelegateUserId,
       originalOwnerUserId,
       submittedAt: submissionTimestamp,
@@ -1489,6 +1501,7 @@ export class TermReviewService extends BaseService {
         fileName: attachment.fileName ?? '',
         fileUrl: attachment.fileUrl,
         documentId: attachment.documentId,
+        fileSize: attachment.fileSize,
         uploadedAt: attachment.uploadedAt
           ? new Date(attachment.uploadedAt).toISOString()
           : undefined,
@@ -2154,14 +2167,42 @@ export class TermReviewService extends BaseService {
   }
 
   private normalizeAttachments(attachments: TermReviewAttachmentInput[]) {
+    assertPmsAttachmentLimits(attachments, 'Term review attachments');
     return attachments.map((attachment) => ({
       fileName: attachment.fileName,
       fileUrl: attachment.fileUrl,
       documentId: attachment.documentId,
+      fileSize: attachment.fileSize,
       uploadedBy: attachment.uploadedBy && Types.ObjectId.isValid(attachment.uploadedBy)
         ? new Types.ObjectId(attachment.uploadedBy)
         : undefined,
       uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
+    }));
+  }
+
+  private async hydrateAttachmentSizes(
+    attachments: TermReviewAttachmentInput[],
+    employeeId: Types.ObjectId,
+  ): Promise<TermReviewAttachmentInput[]> {
+    const documentIds = attachments
+      .map((attachment) => attachment.documentId)
+      .filter((documentId): documentId is string =>
+        Boolean(documentId && Types.ObjectId.isValid(documentId)),
+      );
+    if (!documentIds.length) return attachments;
+    const documents = await PmsDocument.find({
+      _id: { $in: documentIds.map((documentId) => new Types.ObjectId(documentId)) },
+      employeeId,
+      isDeleted: false,
+    }).select('_id fileSize').lean();
+    const sizeByDocumentId = new Map(
+      documents.map((document) => [document._id.toString(), document.fileSize]),
+    );
+    return attachments.map((attachment) => ({
+      ...attachment,
+      fileSize: attachment.documentId
+        ? sizeByDocumentId.get(attachment.documentId) ?? attachment.fileSize
+        : attachment.fileSize,
     }));
   }
 

@@ -17,6 +17,7 @@ import { Objective } from '../models/pms-objective.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
 import { LOV } from '../models/lov.model';
+import { PmsDocument } from '../models/pms-document.model';
 import { accessService } from './access.service';
 import { auditService } from './audit.service';
 import { DelegationService } from './delegation.service';
@@ -36,6 +37,7 @@ import type {
   AssessmentTermCode as AssessmentTermCodeType,
   ManagerReviewPeriodState as ManagerReviewPeriodStateType,
 } from '../constants/pms.enums';
+import { assertPmsAttachmentLimits } from '../constants/pms-attachment-limits';
 
 interface ReviewValueInput {
   templateFieldId?: string;
@@ -60,6 +62,7 @@ interface AttachmentInput {
   fileName?: string;
   fileUrl?: string;
   documentId?: string;
+  fileSize?: number;
   uploadedAt?: Date | string;
 }
 
@@ -392,7 +395,11 @@ export class ManagerReviewPeriodService extends BaseService {
     await this.assertIncludedTermsReadyForManagerReview(review);
 
     const overallRating = await this.validateManagerOverallRating(input.overallRating, false);
-    this.applyReviewInput(review, { ...input, overallRating }, false);
+    const attachments = await this.hydrateAttachmentSizes(
+      input.attachments ?? [],
+      review.employeeId,
+    );
+    this.applyReviewInput(review, { ...input, overallRating, attachments }, false);
     await review.save();
     await this.audit(
       'PMS_MANAGER_REVIEW_PERIOD_DRAFT_SAVED',
@@ -423,6 +430,10 @@ export class ManagerReviewPeriodService extends BaseService {
       throw new Error('Grouped manager review comments are required');
     }
     const overallRating = await this.validateManagerOverallRating(input.overallRating, true);
+    const attachments = await this.hydrateAttachmentSizes(
+      input.attachments ?? [],
+      review.employeeId,
+    );
 
     await new PmsEmployeeCareerProfileSnapshotService(
       this.context,
@@ -431,7 +442,7 @@ export class ManagerReviewPeriodService extends BaseService {
       EmployeeCareerProfileSnapshotTrigger.FIRST_MANAGER_REVIEW_SUBMISSION,
     );
 
-    this.applyReviewInput(review, { ...input, overallRating }, true);
+    this.applyReviewInput(review, { ...input, overallRating, attachments }, true);
     review.previousReviewState = review.reviewState;
     review.reviewState = ManagerReviewPeriodState.MANAGER_REVIEW_SUBMITTED;
     review.submittedAt = new Date();
@@ -983,6 +994,7 @@ export class ManagerReviewPeriodService extends BaseService {
             fileName: attachment.fileName,
             fileUrl: attachment.fileUrl,
             documentId: attachment.documentId,
+            fileSize: attachment.fileSize,
             uploadedAt: attachment.uploadedAt?.toISOString(),
           })),
           reviewValues: review.reviewValues.map((value) => ({
@@ -1248,11 +1260,39 @@ export class ManagerReviewPeriodService extends BaseService {
   }
 
   private normalizeAttachments(attachments: AttachmentInput[]) {
+    assertPmsAttachmentLimits(attachments, 'Manager review attachments');
     return attachments.map((attachment) => ({
       fileName: attachment.fileName,
       fileUrl: attachment.fileUrl,
       documentId: attachment.documentId,
+      fileSize: attachment.fileSize,
       uploadedAt: attachment.uploadedAt ? new Date(attachment.uploadedAt) : undefined,
+    }));
+  }
+
+  private async hydrateAttachmentSizes(
+    attachments: AttachmentInput[],
+    employeeId: Types.ObjectId,
+  ): Promise<AttachmentInput[]> {
+    const documentIds = attachments
+      .map((attachment) => attachment.documentId)
+      .filter((documentId): documentId is string =>
+        Boolean(documentId && Types.ObjectId.isValid(documentId)),
+      );
+    if (!documentIds.length) return attachments;
+    const documents = await PmsDocument.find({
+      _id: { $in: documentIds.map((documentId) => new Types.ObjectId(documentId)) },
+      employeeId,
+      isDeleted: false,
+    }).select('_id fileSize').lean();
+    const sizeByDocumentId = new Map(
+      documents.map((document) => [document._id.toString(), document.fileSize]),
+    );
+    return attachments.map((attachment) => ({
+      ...attachment,
+      fileSize: attachment.documentId
+        ? sizeByDocumentId.get(attachment.documentId) ?? attachment.fileSize
+        : attachment.fileSize,
     }));
   }
 

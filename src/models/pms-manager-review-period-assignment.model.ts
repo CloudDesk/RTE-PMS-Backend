@@ -31,6 +31,7 @@ interface IManagerReviewPeriodAttachment {
   fileName?: string;
   fileUrl?: string;
   documentId?: string;
+  fileSize?: number;
   uploadedBy?: Types.ObjectId;
   uploadedAt?: Date;
 }
@@ -101,6 +102,7 @@ const attachmentSchema = new Schema<IManagerReviewPeriodAttachment>(
     fileName: String,
     fileUrl: String,
     documentId: String,
+    fileSize: { type: Number, min: 0 },
     uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     uploadedAt: Date,
   },
