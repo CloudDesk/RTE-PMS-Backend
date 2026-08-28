@@ -496,6 +496,21 @@ interface ObjectiveSheetLayoutInput {
     startRowId?: string;
     endRowId?: string;
   }>;
+  cellMerges?: Array<{
+    id?: string;
+    startRowId?: string;
+    endRowId?: string;
+    startColumnId?: string;
+    endColumnId?: string;
+  }>;
+  cellSplits?: Array<{
+    id?: string;
+    rowId?: string;
+    columnId?: string;
+    parentSide?: string;
+    leftValue?: string;
+    rightValues?: string[];
+  }>;
   formulas?: Array<{
     id?: string;
     kind?: string;
@@ -551,6 +566,21 @@ interface NormalizedObjectiveSheetLayout {
     label: string;
     startRowId: string;
     endRowId: string;
+  }>;
+  cellMerges: Array<{
+    id: string;
+    startRowId: string;
+    endRowId: string;
+    startColumnId: string;
+    endColumnId: string;
+  }>;
+  cellSplits: Array<{
+    id: string;
+    rowId: string;
+    columnId: string;
+    parentSide: 'LEFT' | 'RIGHT';
+    leftValue: string;
+    rightValues: string[];
   }>;
   formulas: Array<{
     id: string;
@@ -2950,6 +2980,11 @@ export class ObjectiveService extends BaseService {
       throw new Error('Only Active Objective Assignment Periods can be assigned to employees');
     }
     const version = await this.loadActiveObjectiveVersionForPeriod(period.objectiveVersionId.toString());
+    const master = await ObjectiveMaster.findOne({
+      _id: period.objectiveMasterId,
+      isDeleted: false,
+    }).select('sourceType').lean();
+    const contextOnly = this.isCompanyContextOnlySource(master?.sourceType);
     const actorId = this.toObjectId(this.requireActor().actorId, 'actorId');
     const employeeIds = preview.rows
       .filter((row) => row.status === 'NEW')
@@ -2959,7 +2994,11 @@ export class ObjectiveService extends BaseService {
       : [];
     const employeesById = new Map(employees.map((employee: any) => [employee._id.toString(), employee]));
     const createdAssignmentIds: string[] = [];
-    const snapshot = this.buildObjectiveAssignmentFrozenSnapshot(version);
+    const snapshot = {
+      ...this.buildObjectiveAssignmentFrozenSnapshot(version),
+      sourceType: master?.sourceType,
+      contextOnly,
+    };
 
     for (const row of preview.rows.filter((item) => item.status === 'NEW')) {
       const employee = employeesById.get(row.employeeId);
@@ -2972,8 +3011,8 @@ export class ObjectiveService extends BaseService {
         managerId: employee.managerId && Types.ObjectId.isValid(employee.managerId)
           ? new Types.ObjectId(employee.managerId)
           : undefined,
-        selectedTerms: period.terms,
-        termStates: this.buildObjectiveEmployeeAssignmentTermStates(period, actorId, assignmentDate),
+        selectedTerms: contextOnly ? [] : period.terms,
+        termStates: contextOnly ? [] : this.buildObjectiveEmployeeAssignmentTermStates(period, actorId, assignmentDate),
         frozenObjectiveSnapshot: snapshot,
         values: {},
         status: ObjectiveEmployeeAssignmentStatus.ASSIGNED,
@@ -3002,6 +3041,7 @@ export class ObjectiveService extends BaseService {
     input: SaveObjectiveEmployeeAssignmentValuesInput,
   ): Promise<ObjectiveEmployeeAssignmentRecord> {
     const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    await this.assertObjectiveEmployeeAssignmentIsFillable(assignment);
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
     this.syncObjectiveManagerAssignmentTerms(assignment, period);
@@ -3064,6 +3104,7 @@ export class ObjectiveService extends BaseService {
     input: SaveObjectiveEmployeeAssignmentValuesInput = { values: {} },
   ): Promise<ObjectiveEmployeeAssignmentRecord> {
     const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    await this.assertObjectiveEmployeeAssignmentIsFillable(assignment);
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
     this.syncObjectiveManagerAssignmentTerms(assignment, period);
@@ -3299,6 +3340,7 @@ export class ObjectiveService extends BaseService {
   ): Promise<ObjectiveEmployeeAssignmentRecord> {
     const actor = this.requireActor();
     const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    await this.assertObjectiveEmployeeAssignmentIsFillable(assignment);
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     await this.syncObjectiveEmployeeAssignmentTerms(assignment, period, true);
     this.assertObjectiveEmployeeAssignmentVersion(assignment, input.expectedVersion);
@@ -3978,6 +4020,9 @@ export class ObjectiveService extends BaseService {
     const periodIds = Array.from(new Set(
       assignments.map((assignment) => referenceId(assignment.objectiveAssignmentPeriodId)).filter(Boolean),
     ));
+    const masterIds = Array.from(new Set(
+      assignments.map((assignment) => referenceId(assignment.objectiveMasterId)).filter(Boolean),
+    ));
     const userIds = Array.from(new Set(
       assignments.flatMap((assignment) => [
         referenceId(assignment.employeeId),
@@ -3987,7 +4032,7 @@ export class ObjectiveService extends BaseService {
       ]).filter(Boolean),
     ));
 
-    const [periods, users] = await traceDatabaseOperation(
+    const [periods, users, masters] = await traceDatabaseOperation(
       'team-objectives.list.related-batches',
       {
         route: '/pms/objectives/employee-assignments',
@@ -4002,12 +4047,24 @@ export class ObjectiveService extends BaseService {
         User.find({ _id: { $in: userIds } })
           .select('name employeeName fullName email employeeCode department departmentName departmentId specificRole role designation')
           .lean(),
+        ObjectiveMaster.find({ _id: { $in: masterIds }, isDeleted: false })
+          .select('sourceType')
+          .lean(),
       ]),
     );
     const periodById = new Map(periods.map((period) => [period._id.toString(), period]));
     const userById = new Map(users.map((user) => [user._id.toString(), user]));
-    const hydratedAssignments = assignments.map((assignment) => ({
+    const masterById = new Map(masters.map((master) => [master._id.toString(), master]));
+    const hydratedAssignments = assignments.map((assignment) => {
+      const master = masterById.get(referenceId(assignment.objectiveMasterId));
+      const contextOnly = this.isCompanyContextOnlySource(master?.sourceType);
+      return ({
       ...assignment,
+      frozenObjectiveSnapshot: {
+        ...(assignment.frozenObjectiveSnapshot ?? {}),
+        sourceType: master?.sourceType ?? (assignment.frozenObjectiveSnapshot as any)?.sourceType,
+        contextOnly,
+      },
       objectiveAssignmentPeriodId: periodById.get(referenceId(assignment.objectiveAssignmentPeriodId)) ?? assignment.objectiveAssignmentPeriodId,
       employeeId: userById.get(referenceId(assignment.employeeId)) ?? assignment.employeeId,
       managerId: userById.get(referenceId(assignment.managerId)) ?? assignment.managerId,
@@ -4019,7 +4076,8 @@ export class ObjectiveService extends BaseService {
         ...state,
         submittedBy: userById.get(referenceId(state.submittedBy)) ?? state.submittedBy,
       })),
-    }));
+    });
+    });
 
     const records = hydratedAssignments.map((assignment) => this.mapObjectiveEmployeeAssignmentRecord(assignment));
     return paginationRequested
@@ -4099,6 +4157,7 @@ export class ObjectiveService extends BaseService {
     assignmentId: string,
   ): Promise<ObjectiveFinalRecordResponse> {
     const assignment = await this.loadObjectiveEmployeeAssignment(assignmentId);
+    await this.assertObjectiveEmployeeAssignmentIsFillable(assignment);
     const viewAs = this.resolveObjectiveFinalRecordViewActor(assignment);
     const period = await this.loadObjectiveAssignmentPeriod(assignment.objectiveAssignmentPeriodId.toString());
     const termStates = this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
@@ -7992,6 +8051,14 @@ export class ObjectiveService extends BaseService {
     return normalized;
   }
 
+  private isCompanyContextOnlySource(sourceType?: string): boolean {
+    const normalized = String(sourceType ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/_OBJECTIVE$/, '');
+    return normalized === 'COMPANY';
+  }
+
   private sameScopeValue(left?: string, right?: string): boolean {
     return String(left ?? '').trim().toLowerCase() === String(right ?? '').trim().toLowerCase();
   }
@@ -8263,6 +8330,12 @@ export class ObjectiveService extends BaseService {
     const inputRowGroups = Array.isArray(layout?.rowGroups)
       ? layout.rowGroups
       : fallback.rowGroups;
+    const inputCellMerges = Array.isArray(layout?.cellMerges)
+      ? layout.cellMerges
+      : fallback.cellMerges;
+    const inputCellSplits = Array.isArray(layout?.cellSplits)
+      ? layout.cellSplits
+      : fallback.cellSplits;
     const inputFormulas = Array.isArray(layout?.formulas)
       ? layout.formulas
       : fallback.formulas;
@@ -8401,6 +8474,70 @@ export class ObjectiveService extends BaseService {
           endRowId: group.endRowId,
         });
       });
+
+    const cellMerges: NormalizedObjectiveSheetLayout['cellMerges'] = [];
+    const occupiedMergeCells = new Set<string>();
+    inputCellMerges.forEach((merge, index) => {
+      const startRowIndex = rowIndexByKey.get(this.normalizeSheetKey(merge?.startRowId, ''));
+      const endRowIndex = rowIndexByKey.get(this.normalizeSheetKey(merge?.endRowId, ''));
+      const startColumnIndex = columnIndexByKey.get(this.normalizeSheetKey(merge?.startColumnId, ''));
+      const endColumnIndex = columnIndexByKey.get(this.normalizeSheetKey(merge?.endColumnId, ''));
+      if (
+        startRowIndex === undefined || endRowIndex === undefined || startRowIndex > endRowIndex ||
+        startColumnIndex === undefined || endColumnIndex === undefined || startColumnIndex > endColumnIndex
+      ) {
+        throw new Error(`Cell merge ${index + 1} has an invalid row or column range.`);
+      }
+      if (startRowIndex === endRowIndex && startColumnIndex === endColumnIndex) return;
+      const mergeCells: string[] = [];
+      for (let rowIndex = startRowIndex; rowIndex <= endRowIndex; rowIndex += 1) {
+        for (let columnIndex = startColumnIndex; columnIndex <= endColumnIndex; columnIndex += 1) {
+          mergeCells.push(`${rowIndex}:${columnIndex}`);
+        }
+      }
+      if (mergeCells.some((key) => occupiedMergeCells.has(key))) {
+        throw new Error(`Cell merge ${index + 1} overlaps another merged range.`);
+      }
+      mergeCells.forEach((key) => occupiedMergeCells.add(key));
+      cellMerges.push({
+        id: this.normalizeSheetKey(merge?.id, `cell_merge_${index + 1}`),
+        startRowId: rows[startRowIndex].id,
+        endRowId: rows[endRowIndex].id,
+        startColumnId: columns[startColumnIndex].id,
+        endColumnId: columns[endColumnIndex].id,
+      });
+    });
+
+    const cellSplits: NormalizedObjectiveSheetLayout['cellSplits'] = [];
+    const occupiedSplitCells = new Set<string>();
+    inputCellSplits.forEach((split, index) => {
+      const rowIndex = rowIndexByKey.get(this.normalizeSheetKey(split?.rowId, ''));
+      const columnIndex = columnIndexByKey.get(this.normalizeSheetKey(split?.columnId, ''));
+      if (rowIndex === undefined || columnIndex === undefined) {
+        throw new Error(`Split cell ${index + 1} references an invalid row or column.`);
+      }
+      const key = `${rows[rowIndex].id}:${columns[columnIndex].id}`;
+      if (occupiedSplitCells.has(key)) {
+        throw new Error(`Split cell ${index + 1} duplicates another split configuration.`);
+      }
+      const leftValue = String(split?.leftValue ?? '').trim();
+      const parentSide = String(split?.parentSide ?? 'LEFT').trim().toUpperCase() === 'RIGHT'
+        ? 'RIGHT' as const
+        : 'LEFT' as const;
+      const rightValues = (Array.isArray(split?.rightValues) ? split.rightValues : [])
+        .map((item) => String(item ?? '').trim())
+        .filter(Boolean);
+      if (!leftValue && rightValues.length === 0) return;
+      occupiedSplitCells.add(key);
+      cellSplits.push({
+        id: this.normalizeSheetKey(split?.id, `cell_split_${index + 1}`),
+        rowId: rows[rowIndex].id,
+        columnId: columns[columnIndex].id,
+        parentSide,
+        leftValue,
+        rightValues,
+      });
+    });
 
     type CalculationColumnType = 'NUMBER' | 'PERCENTAGE';
     const isCalculationColumnType = (type?: string): type is CalculationColumnType =>
@@ -8726,7 +8863,7 @@ export class ObjectiveService extends BaseService {
       columns.findIndex((column) => column.id === b.columnId),
     );
 
-    return { columns, rows, cellValues, headerGroups, rowGroups, formulas, fillPermissions, termAvailability };
+    return { columns, rows, cellValues, headerGroups, rowGroups, cellMerges, cellSplits, formulas, fillPermissions, termAvailability };
   }
 
   private normalizeSheetKey(value: unknown, fallback: string): string {
@@ -8802,6 +8939,8 @@ export class ObjectiveService extends BaseService {
       cellValues: {},
       headerGroups: [],
       rowGroups: [],
+      cellMerges: [],
+      cellSplits: [],
       formulas: [
         {
           id: 'formula_actual',
@@ -11057,6 +11196,25 @@ export class ObjectiveService extends BaseService {
     return assignment;
   }
 
+  private async assertObjectiveEmployeeAssignmentIsFillable(assignment: any): Promise<void> {
+    if (assignment.frozenObjectiveSnapshot?.contextOnly === true) {
+      throw new Error('Company objectives are view-only');
+    }
+    if (this.isCompanyContextOnlySource(assignment.frozenObjectiveSnapshot?.sourceType)) {
+      throw new Error('Company objectives are view-only');
+    }
+    if (assignment?.constructor?.modelName !== ObjectiveEmployeeAssignment.modelName) {
+      return;
+    }
+    const master = await ObjectiveMaster.findOne({
+      _id: assignment.objectiveMasterId,
+      isDeleted: false,
+    }).select('sourceType').lean();
+    if (this.isCompanyContextOnlySource(master?.sourceType)) {
+      throw new Error('Company objectives are view-only');
+    }
+  }
+
   private async loadObjectiveEmployeeAssignmentForResponse(assignmentId: string) {
     const assignment = await ObjectiveEmployeeAssignment.findOne({
       _id: this.toObjectId(assignmentId, 'assignmentId'),
@@ -11110,9 +11268,12 @@ export class ObjectiveService extends BaseService {
     if (period.status !== ObjectiveAssignmentPeriodStatus.ACTIVE) {
       throw new Error('Objective Assignment Period must be active to share');
     }
-    const selectedTerms = assignment.selectedTerms?.length
-      ? assignment.selectedTerms
-      : period?.terms ?? [];
+    const contextOnly = assignment.frozenObjectiveSnapshot?.contextOnly === true;
+    const selectedTerms = contextOnly
+      ? []
+      : assignment.selectedTerms?.length
+        ? assignment.selectedTerms
+        : period?.terms ?? [];
     const terms = this.normalizeObjectiveEmployeeAssignmentShareTerms(input.terms);
     terms.forEach((term) => {
       if (!selectedTerms.includes(term)) {
@@ -12420,14 +12581,17 @@ export class ObjectiveService extends BaseService {
     const employeeId = employee?._id || assignment.employeeId;
     const managerId = manager?._id || assignment.managerId;
     const periodId = period?._id || assignment.objectiveAssignmentPeriodId;
+    const contextOnly = assignment.frozenObjectiveSnapshot?.contextOnly === true;
     const editState = this.resolveObjectiveEmployeeAssignmentEditState(assignment, period);
     const managerEditState = this.resolveObjectiveManagerAssignmentEditState(assignment, period);
-    const termStates = this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
+    const termStates = contextOnly ? [] : this.resolveObjectiveEmployeeAssignmentTermStates(assignment, period);
     const finalRecordReadiness = this.resolveObjectiveFinalRecordReadiness(assignment, termStates);
     const actor = this.requireActor();
-    const selectedTerms = assignment.selectedTerms?.length
-      ? assignment.selectedTerms
-      : period?.terms ?? [];
+    const selectedTerms = contextOnly
+      ? []
+      : assignment.selectedTerms?.length
+        ? assignment.selectedTerms
+        : period?.terms ?? [];
     const mappedSharedAccess = this.mapObjectiveEmployeeAssignmentSharedAccess(assignment);
     const sharedAccessForMe = mappedSharedAccess.filter(
       (access) =>
@@ -12458,7 +12622,7 @@ export class ObjectiveService extends BaseService {
       managerName: manager?.name || manager?.employeeName || manager?.fullName || manager?.email,
       selectedTerms,
       termStates,
-      managerTermStates: this.resolveObjectiveManagerAssignmentTermStates(assignment, period),
+      managerTermStates: contextOnly ? [] : this.resolveObjectiveManagerAssignmentTermStates(assignment, period),
       sharedAccess: canViewAllSharedAccess ? mappedSharedAccess : sharedAccessForMe,
       sharedAccessForMe,
       sharedWithMe: sharedTermsWithMe.length > 0,
@@ -12532,6 +12696,9 @@ export class ObjectiveService extends BaseService {
     assignment: any,
     period?: any,
   ): { canEdit: boolean; readOnlyReason?: string } {
+    if (assignment.frozenObjectiveSnapshot?.contextOnly === true) {
+      return { canEdit: false, readOnlyReason: 'Company objectives are view-only' };
+    }
     if (assignment.status !== ObjectiveEmployeeAssignmentStatus.ASSIGNED) {
       return { canEdit: false, readOnlyReason: 'Submitted or closed objective assignments are read-only' };
     }
@@ -12554,6 +12721,9 @@ export class ObjectiveService extends BaseService {
     assignment: any,
     period?: any,
   ): { canEdit: boolean; readOnlyReason?: string } {
+    if (assignment.frozenObjectiveSnapshot?.contextOnly === true) {
+      return { canEdit: false, readOnlyReason: 'Company objectives are view-only' };
+    }
     if (assignment.status === ObjectiveEmployeeAssignmentStatus.CLOSED) {
       return { canEdit: false, readOnlyReason: 'Objective assignment is closed' };
     }

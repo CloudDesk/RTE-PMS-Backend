@@ -8,6 +8,7 @@ import {
 import { ObjectiveService } from '../../src/services/objective.service';
 import { User } from '../../src/models';
 import { ObjectiveEmployeeAssignment } from '../../src/models/pms-objective-employee-assignment.model';
+import { ObjectiveMaster } from '../../src/models/pms-objective-master.model';
 import type { RequestContext } from '../../src/types/context';
 
 describe('ObjectiveService - Flexible objective assignment preview helpers', () => {
@@ -206,6 +207,11 @@ describe('ObjectiveService - Flexible objective assignment preview helpers', () 
     serviceWithTestDate.requireAdminForObjectiveAssignment = jest.fn().mockResolvedValue(undefined);
     serviceWithTestDate.loadObjectiveAssignmentPeriod = jest.fn().mockResolvedValue(period);
     serviceWithTestDate.loadActiveObjectiveVersionForPeriod = jest.fn().mockResolvedValue({});
+    jest.spyOn(ObjectiveMaster, 'findOne').mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ sourceType: FlexibleObjectiveSourceType.MANAGER_CREATED_OBJECTIVE }),
+      }),
+    } as any);
     jest.spyOn(User, 'find').mockReturnValue({
       lean: jest.fn().mockResolvedValue([
         {
