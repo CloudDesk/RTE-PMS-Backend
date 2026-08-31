@@ -1197,6 +1197,37 @@ export class AnnualDecisionService extends BaseService {
         employeeSubmissions: employeeSubmissions.map((submission) => ({
           termAssignmentId: submission.termAssignmentId?.toString(),
           assessmentTermCode: submission.assessmentTermCode,
+          status: submission.status,
+          submittedAt: submission.submittedAt
+            ? new Date(submission.submittedAt).toISOString()
+            : undefined,
+          lockedAt: submission.lockedAt
+            ? new Date(submission.lockedAt).toISOString()
+            : undefined,
+          achievementItems: (submission.achievementItems ?? []).map((item: any) => ({
+            itemId: item.itemId,
+            type: item.type,
+            subject: item.subject,
+            description: item.description,
+            employeeSelfRating: item.employeeSelfRating,
+            employeeSelfRatingComments: item.employeeSelfRatingComments,
+            outcome: item.outcome,
+            objectiveSnapshot: item.objectiveSnapshot,
+            relatedObjectiveSnapshot: item.relatedObjectiveSnapshot,
+            itemStatus: item.itemStatus,
+            submittedAt: item.submittedAt
+              ? new Date(item.submittedAt).toISOString()
+              : undefined,
+            attachments: (item.attachments ?? []).map((attachment: any) => ({
+              fileName: attachment.fileName,
+              fileType: attachment.fileType,
+              fileSize: attachment.fileSize,
+              documentId: attachment.documentId,
+              uploadedAt: attachment.uploadedAt
+                ? new Date(attachment.uploadedAt).toISOString()
+                : undefined,
+            })),
+          })),
           achievementValues: (submission.achievementValues ?? []).map((value: any) => ({
             templateFieldId: value.templateFieldId,
             fieldKey: value.fieldKey,
