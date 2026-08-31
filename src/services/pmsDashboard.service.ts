@@ -335,6 +335,7 @@ export class PmsDashboardService extends BaseService {
       termAssignmentId: { $in: managerTermAssignmentIds },
       assignedManagerId: managerObjectId,
       status: 'OBJECTIVE_APPROVED',
+      source: 'EMPLOYEE_CREATED',
       isDeleted: false,
     })
       .populate('employeeId', 'name email employeeCode')
