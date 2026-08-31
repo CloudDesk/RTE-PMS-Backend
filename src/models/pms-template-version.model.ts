@@ -50,6 +50,8 @@ export interface ITemplatePredefinedObjective {
   columnValues?: Record<string, unknown>;
   rowGroupKey?: string;
   rowOrder?: number;
+  matrixCode?: string;
+  matrixLabel?: string;
 }
 
 export type TemplateObjectiveColumnType =
@@ -356,7 +358,7 @@ const gridColumnSchema = new Schema<IGridColumn>(
 const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
   {
     objectiveKey: { type: String, required: true, trim: true },
-    title: { type: String, required: true, trim: true },
+    title: { type: String, trim: true, default: '' },
     description: { type: String, trim: true },
     kpi: { type: String, trim: true },
     targetValue: { type: String, trim: true },
@@ -382,6 +384,8 @@ const predefinedObjectiveSchema = new Schema<ITemplatePredefinedObjective>(
     columnValues: { type: Schema.Types.Mixed, default: {} },
     rowGroupKey: { type: String, trim: true },
     rowOrder: { type: Number, min: 0 },
+    matrixCode: { type: String, trim: true },
+    matrixLabel: { type: String, trim: true },
   },
   { _id: false },
 );

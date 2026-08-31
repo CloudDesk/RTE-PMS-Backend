@@ -25,6 +25,7 @@ import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { AnnualDecision } from '../models/pms-annual-decision.model';
 import { AssignmentExceptionQueue } from '../models/pms-assignment-exception-queue.model';
 import { AuditLog } from '../models/audit-log.model';
+import { LOV } from '../models/lov.model';
 import { CorrectionLayer } from '../models/pms-correction-layer.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { TermCycle } from '../models/pms-term-cycle.model';
@@ -1378,6 +1379,11 @@ export class AssignmentService extends BaseService {
       nextObjectiveNoByTermAssignment.set(termAssignmentId, nextObjectiveNo);
     }
 
+    const matrixLov = await LOV.findOne({ type: 'matrix' }).lean();
+    const matrixLabelByCode = new Map(
+      (matrixLov?.values ?? []).map((entry) => [entry.value?.trim().toLowerCase(), entry.label?.trim()]),
+    );
+
     for (const termAssignment of termAssignments) {
       const termCycle = termAssignment.cycleTermId
         ? termCycleById.get(termAssignment.cycleTermId.toString())
@@ -1438,6 +1444,11 @@ export class AssignmentService extends BaseService {
             ) === true;
           })
           .map((candidate) => candidate.assessmentTermCode);
+        const rawMatrixCode = predefinedObjective.matrixCode?.trim();
+        const matrixCode = rawMatrixCode || undefined;
+        const matrixLabel = (matrixCode ? matrixLabelByCode.get(matrixCode.toLowerCase()) : undefined) ||
+          predefinedObjective.matrixLabel?.trim();
+
         objectivePayloads.push(predefinedObjectiveSeedEntry({
           sectionKey: config.sectionKey,
           objectiveKey: templateObjectiveKey,
@@ -1447,6 +1458,8 @@ export class AssignmentService extends BaseService {
           coverage,
           rowGroupKey: predefinedObjective.rowGroupKey,
           rowOrder: predefinedObjective.rowOrder,
+          matrixCode,
+          matrixLabel,
           columnValues: predefinedObjective.columnValues,
           columnBindingKeyById: config.columnBindingKeyById,
           columnTypeById: config.columnTypeById,
@@ -1469,6 +1482,8 @@ export class AssignmentService extends BaseService {
           targetDate,
           weightage: predefinedObjective.weightage,
           successCriteria: predefinedObjective.successCriteria,
+          matrixCode,
+          matrixLabel,
           status: ObjectiveStatus.OBJECTIVE_APPROVED,
           attachments: [],
           createdByRole: 'SYSTEM',
@@ -1767,6 +1782,8 @@ export class AssignmentService extends BaseService {
           columnValues: objective.columnValues,
           rowGroupKey: objective.rowGroupKey ?? rowAssignment?.rowGroupKey,
           rowOrder: objective.rowOrder ?? rowAssignment?.displayOrder ?? index,
+          matrixCode: objective.matrixCode,
+          matrixLabel: objective.matrixLabel,
         });
         },
       ),

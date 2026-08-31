@@ -10,6 +10,7 @@ import {
   type ITemplateObjectiveTableLayout,
   type ITemplateSection,
 } from '../../src/models/pms-template-version.model';
+import { LOV } from '../../src/models/lov.model';
 import {
   normalizeObjectiveTableLayout,
   objectiveTableLayoutAuditSummary,
@@ -145,6 +146,8 @@ function objectiveSection(layout: ITemplateObjectiveTableLayout): ITemplateSecti
         {
           objectiveKey: 'on-time-delivery',
           title: 'On-Time Delivery',
+          matrixCode: 'delivery',
+          matrixLabel: 'Delivery',
           columnValues: { 'custom.actual': 0 },
           rowGroupKey: 'predefined',
           rowOrder: 1,
@@ -299,6 +302,10 @@ describe('PMS template objective table layout Phase 1', () => {
     expect(persisted.tableLayout).toMatchObject(layout);
     expect(persisted.predefinedObjectives?.[0].columnValues).toEqual({ 'custom.actual': 0 });
     expect(persisted.predefinedObjectives?.[0].rowGroupKey).toBe('predefined');
+    expect(persisted.predefinedObjectives?.[0]).toMatchObject({
+      matrixCode: 'delivery',
+      matrixLabel: 'Delivery',
+    });
   });
 
   it('wires layout normalization into template section saves', () => {
@@ -320,6 +327,10 @@ describe('PMS template objective table layout Phase 1', () => {
       'col-achievement',
     ]);
     expect(config.predefinedObjectives?.[0].columnValues).toEqual({ 'custom.actual': 0 });
+    expect(config.predefinedObjectives?.[0]).toMatchObject({
+      matrixCode: 'delivery',
+      matrixLabel: 'Delivery',
+    });
   });
 
   it('preserves the complete layout through template-version cloning', () => {
@@ -499,6 +510,44 @@ describe('PMS template objective table layout Phase 1', () => {
     ).toContain('Objective table layout requires at least one template row before activation');
   });
 
+  it('requires a Metric selection on active predefined template objectives before activation', () => {
+    expect(
+      objectiveTableLayoutValidationErrors(validLayout(), {
+        activationReady: true,
+        predefinedObjectives: [
+          {
+            objectiveKey: 'no-metric-row',
+            title: 'Customer Satisfaction',
+            columnValues: {},
+            isActive: true,
+          },
+        ],
+        templateFieldKeys: ['objective_notes'],
+        allowEmployeeCreated: true,
+        allowManagerCreated: true,
+      }),
+    ).toContain('Objective table layout objective "Customer Satisfaction" requires a Metric selection');
+  });
+
+  it('allows an intentionally empty objective row without a Metric selection', () => {
+    const errors = objectiveTableLayoutValidationErrors(validLayout(), {
+      activationReady: true,
+      predefinedObjectives: [
+        {
+          objectiveKey: 'empty-template-row',
+          title: '',
+          columnValues: {},
+          isActive: true,
+        },
+      ],
+      templateFieldKeys: ['objective_notes'],
+      allowEmployeeCreated: true,
+      allowManagerCreated: true,
+    });
+
+    expect(errors.some((error) => error.includes('requires a Metric selection'))).toBe(false);
+  });
+
   it('allows a dynamic table to activate without predefined template rows', () => {
     expect(
       objectiveTableLayoutValidationErrors(validLayout(), {
@@ -594,6 +643,13 @@ describe('PMS template objective table layout Phase 1', () => {
   });
 
   it('prevents activation when an enabled layout is incomplete', async () => {
+    const matrixLovSpy = jest.spyOn(LOV, 'findOne').mockReturnValue({
+      select: () => ({
+        lean: async () => ({
+          values: [{ value: 'delivery', label: 'Delivery', isActive: true }],
+        }),
+      }),
+    } as any);
     const service = new PmsTemplateService(context()) as unknown as {
       validateTemplateVersionForActivation(version: Record<string, unknown>): Promise<void>;
     };
@@ -604,11 +660,44 @@ describe('PMS template objective table layout Phase 1', () => {
     incomplete.formulas = [];
     const section = objectiveSection(incomplete);
 
-    await expect(
-      service.validateTemplateVersionForActivation({
-        sections: [section],
-        annualScoringConfig: {},
+    try {
+      await expect(
+        service.validateTemplateVersionForActivation({
+          sections: [section],
+          annualScoringConfig: {},
+        }),
+      ).rejects.toThrow('Objective table layout requires at least one column before activation');
+    } finally {
+      matrixLovSpy.mockRestore();
+    }
+  });
+
+  it('rejects an unknown or inactive Metric code during backend activation', async () => {
+    const matrixLovSpy = jest.spyOn(LOV, 'findOne').mockReturnValue({
+      select: () => ({
+        lean: async () => ({
+          values: [
+            { value: 'delivery', label: 'Delivery', isActive: true },
+            { value: 'retired', label: 'Retired', isActive: false },
+          ],
+        }),
       }),
-    ).rejects.toThrow('Objective table layout requires at least one column before activation');
+    } as any);
+    const service = new PmsTemplateService(context()) as unknown as {
+      validateTemplateVersionForActivation(version: Record<string, unknown>): Promise<void>;
+    };
+    const section = objectiveSection(validLayout());
+    section.objectiveConfig!.predefinedObjectives![0]!.matrixCode = 'retired';
+
+    try {
+      await expect(
+        service.validateTemplateVersionForActivation({
+          sections: [section],
+          annualScoringConfig: {},
+        }),
+      ).rejects.toThrow('has an invalid or inactive Metric selection');
+    } finally {
+      matrixLovSpy.mockRestore();
+    }
   });
 });

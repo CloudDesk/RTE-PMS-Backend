@@ -85,7 +85,103 @@ const CORE_BINDINGS = new Set([
   'objective.successCriteria',
   'objective.status',
   'objective.source',
+  'objective.matrixCode',
 ]);
+
+export const OBJECTIVE_SERIAL_NUMBER_BINDING = 'system.serialNo';
+export const OBJECTIVE_METRICS_BINDING = 'objective.matrixCode';
+
+function compactColumnIdentity(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+export function isObjectiveMetricsColumn(
+  column: Partial<ITemplateObjectiveTableLayout['columns'][number]> | Record<string, unknown>,
+): boolean {
+  const binding = compactColumnIdentity(column.bindingKey);
+  const label = compactColumnIdentity(column.label);
+  const columnId = compactColumnIdentity(column.columnId);
+  return binding === 'objectivematrixcode' ||
+    binding === 'matrixcode' ||
+    binding === 'metrics' ||
+    binding === 'metric' ||
+    label === 'metrics' ||
+    label === 'metric' ||
+    columnId === 'columnmetrics' ||
+    columnId === 'columnmetric';
+}
+
+export function isObjectiveSerialNumberColumn(
+  column: Partial<ITemplateObjectiveTableLayout['columns'][number]> | Record<string, unknown>,
+): boolean {
+  const binding = compactColumnIdentity(column.bindingKey);
+  const label = compactColumnIdentity(column.label);
+  const columnId = compactColumnIdentity(column.columnId);
+  return binding === 'systemserialno' ||
+    binding === 'customsno' ||
+    binding === 'customserialno' ||
+    label === 'sno' ||
+    label === 'serialno' ||
+    columnId === 'columnsno' ||
+    columnId === 'columnserialno';
+}
+
+export function normalizeObjectiveSerialNumberColumns(
+  layout: ITemplateObjectiveTableLayout,
+): ITemplateObjectiveTableLayout {
+  const serialColumnIds = new Set(
+    layout.columns.filter(isObjectiveSerialNumberColumn).map((column) => column.columnId),
+  );
+  if (serialColumnIds.size === 0) return layout;
+
+  const roles = Object.values(PmsRole);
+  const columns = layout.columns.map((column) => {
+    if (!serialColumnIds.has(column.columnId)) return column;
+    const visibilityByRole = new Map(
+      (column.access ?? []).map((entry) => [entry.role, entry.visible !== false]),
+    );
+    return {
+      ...column,
+      bindingKey: OBJECTIVE_SERIAL_NUMBER_BINDING,
+      label: column.label?.trim() || 'S.No',
+      type: 'SYSTEM_DISPLAY' as const,
+      required: false,
+      fillOwner: 'SYSTEM' as const,
+      workflowStage: 'CALCULATED' as const,
+      options: undefined,
+      evidenceConfig: undefined,
+      access: roles.map((role) => ({
+        role,
+        visible: visibilityByRole.get(role) !== false,
+        editable: false,
+        required: false,
+      })),
+    };
+  });
+  const termPolicies = layout.termPolicies.map((policy) =>
+    serialColumnIds.has(policy.columnId)
+      ? { columnId: policy.columnId, mode: 'SHARED_ANNUAL' as const }
+      : policy,
+  );
+  for (const columnId of serialColumnIds) {
+    if (!termPolicies.some((policy) => policy.columnId === columnId)) {
+      termPolicies.push({ columnId, mode: 'SHARED_ANNUAL' });
+    }
+  }
+  return { ...layout, columns, termPolicies };
+}
+
+export function objectiveSerialNumberValueKeys(rawLayout: unknown): Set<string> {
+  if (!rawLayout || typeof rawLayout !== 'object' || Array.isArray(rawLayout)) return new Set();
+  const columns = Array.isArray((rawLayout as Record<string, unknown>).columns)
+    ? (rawLayout as Record<string, any>).columns as Array<Record<string, unknown>>
+    : [];
+  return new Set(columns.filter(isObjectiveSerialNumberColumn).flatMap((column) => [
+    String(column.columnId ?? '').trim(),
+    String(column.bindingKey ?? '').trim(),
+    OBJECTIVE_SERIAL_NUMBER_BINDING,
+  ]).filter(Boolean));
+}
 
 function cloneValue<T>(value: T): T {
   if (value === undefined || value === null) return value;
@@ -297,7 +393,7 @@ export function normalizeObjectiveTableLayout(
     }),
   );
 
-  return {
+  return normalizeObjectiveSerialNumberColumns({
     enabled: layout.enabled === true,
     layoutVersion: Number.isInteger(Number(layout.layoutVersion)) && Number(layout.layoutVersion) > 0
       ? Number(layout.layoutVersion)
@@ -316,7 +412,7 @@ export function normalizeObjectiveTableLayout(
       allowEmployeeTermChoice: layout.dynamicRowPolicy?.allowEmployeeTermChoice === true,
       allowManagerTermChoice: layout.dynamicRowPolicy?.allowManagerTermChoice === true,
     },
-  };
+  });
 }
 
 function duplicateValues(values: string[]): string[] {
@@ -573,6 +669,9 @@ export function objectiveTableLayoutValidationErrors(
     }
   }
   for (const objective of options.predefinedObjectives ?? []) {
+    if (options.activationReady && objective.isActive !== false && objective.title?.trim() && !objective.matrixCode?.trim()) {
+      errors.push(`${prefix} objective "${objective.title || objective.objectiveKey}" requires a Metric selection`);
+    }
     if (rowGroupingEnabled && objective.rowGroupKey && !rowGroupKeys.has(objective.rowGroupKey)) {
       errors.push(`${prefix} objective "${objective.objectiveKey}" references missing row group "${objective.rowGroupKey}"`);
     }

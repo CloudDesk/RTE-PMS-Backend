@@ -20,6 +20,7 @@ import { ObjectiveAttachment } from '../models/pms-objective-attachment.model';
 import { ObjectiveEvidence } from '../models/pms-objective-evidence.model';
 import { Objective } from '../models/pms-objective.model';
 import { ObjectiveValue } from '../models/pms-objective-value.model';
+import { LOV } from '../models/lov.model';
 import { PmsTemplateVersion } from '../models/pms-template-version.model';
 import type {
   ITemplateObjectiveTableColumn,
@@ -45,6 +46,10 @@ import {
   type ObjectiveMatrixFormulaResult,
   type ObjectiveMatrixFormulaSourceCell,
 } from './objective-matrix-formula.service';
+import {
+  isObjectiveSerialNumberColumn,
+  normalizeObjectiveSerialNumberColumns,
+} from './pms-template-objective-table-layout';
 
 type MatrixActor = { actorId: string; actorRole: string };
 type LeanRecord = Record<string, any>;
@@ -296,6 +301,7 @@ function objectiveCoreValue(objective: LeanRecord, fieldKey: string): unknown {
     'objective.successCriteria': objective.successCriteria,
     'objective.status': objective.status,
     'objective.source': objective.source,
+    'objective.matrixCode': objective.matrixCode,
   };
   return values[fieldKey];
 }
@@ -310,6 +316,34 @@ function typedStoredValue(value?: LeanRecord): unknown {
   if (value.valueDate !== undefined) return new Date(value.valueDate).toISOString();
   if (value.valueText !== undefined) return value.valueText;
   return value.valueJson;
+}
+
+export function applyObjectiveMatrixSerialNumbers(
+  rows: ObjectiveMatrixRow[],
+  columns: ITemplateObjectiveTableColumn[],
+): ObjectiveMatrixRow[] {
+  const serialColumnIds = new Set(
+    columns.filter(isObjectiveSerialNumberColumn).map((column) => column.columnId),
+  );
+  const numberCell = (cell: ObjectiveMatrixCell, serialNo: number): ObjectiveMatrixCell =>
+    serialColumnIds.has(cell.columnId)
+      ? { ...cell, value: serialNo, editable: false, required: false, denialReason: 'SYSTEM_CALCULATED' }
+      : cell;
+
+  return rows.map((row, index) => {
+    const serialNo = index + 1;
+    return {
+      ...row,
+      serialNo,
+      sharedCells: row.sharedCells.map((cell) => numberCell(cell, serialNo)),
+      termCells: Object.fromEntries(
+        Object.entries(row.termCells).map(([termCode, cells]) => [
+          termCode,
+          cells?.map((cell) => numberCell(cell, serialNo)),
+        ]),
+      ) as ObjectiveMatrixRow['termCells'],
+    };
+  });
 }
 
 export class ObjectiveMatrixService {
@@ -359,8 +393,9 @@ export class ObjectiveMatrixService {
       (section) => section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
         section.objectiveConfig?.tableLayout?.enabled === true,
     );
-    const layout = objectiveSection?.objectiveConfig?.tableLayout;
-    if (!layout) throw new Error('Objective table layout is not enabled for this assignment');
+    const storedLayout = objectiveSection?.objectiveConfig?.tableLayout;
+    if (!storedLayout) throw new Error('Objective table layout is not enabled for this assignment');
+    const layout = normalizeObjectiveSerialNumberColumns(storedLayout);
 
     const assessmentTermType = this.assessmentTermType(termAssignments, annualAssignment.applicableTerms);
     const configuredOrder = getAssessmentTerms(assessmentTermType);
@@ -478,6 +513,13 @@ export class ObjectiveMatrixService {
       termOrder,
     });
     this.attachFormulaCells(rows, formulaEvaluation.results, layout, visibleColumnIds);
+    const matrixLov = await LOV.findOne({ type: 'matrix' }).lean();
+    const matrixRankByCode = new Map(
+      (matrixLov?.values ?? [])
+        .filter((option) => option.isActive !== false)
+        .map((option, index) => [option.value?.trim().toLowerCase(), index]),
+    );
+
     // Row groups are an optional presentation choice. Layouts keep their source
     // groups for row identity and future configuration, but the employee table
     // must not expose them unless the admin explicitly enabled row grouping.
@@ -489,10 +531,21 @@ export class ObjectiveMatrixService {
         .sort((left, right) => left.displayOrder - right.displayOrder)
       : [];
     rows.sort((left, right) => {
-      const leftGroup = rowGroups.find((group) => group.rowGroupKey === left.rowGroupKey)?.displayOrder ?? 9999;
-      const rightGroup = rowGroups.find((group) => group.rowGroupKey === right.rowGroupKey)?.displayOrder ?? 9999;
-      return leftGroup - rightGroup || left.rowOrder - right.rowOrder || left.objectiveRowKey.localeCompare(right.objectiveRowKey);
+      const leftMetricRank = matrixRankByCode.get(left.matrixCode?.trim().toLowerCase() ?? '') ?? 9999;
+      const rightMetricRank = matrixRankByCode.get(right.matrixCode?.trim().toLowerCase() ?? '') ?? 9999;
+      const leftOrder = Number.isFinite(left.rowOrder) ? Number(left.rowOrder) : 9999;
+      const rightOrder = Number.isFinite(right.rowOrder) ? Number(right.rowOrder) : 9999;
+
+      // Matrix is the canonical annual-table grouping. Source row groups are
+      // retained as metadata, but must never split one Matrix group or make
+      // Employee/Manager/Template rows render in a different sequence.
+      return (
+        leftMetricRank - rightMetricRank ||
+        leftOrder - rightOrder ||
+        left.objectiveRowKey.localeCompare(right.objectiveRowKey)
+      );
     });
+    const numberedRows = applyObjectiveMatrixSerialNumbers(rows, visibleColumns);
     const visibleFormulaIds = new Set(
       layout.formulas.filter((formula) => visibleColumnIds.has(formula.targetColumnId)).map((formula) => formula.formulaId),
     );
@@ -513,7 +566,7 @@ export class ObjectiveMatrixService {
       dynamicRowPolicy: layout.dynamicRowPolicy,
       showRowGroups,
       rowGroups,
-      rows: JSON.parse(JSON.stringify(rows, (key, value) => key === 'audit' ? undefined : value)),
+      rows: JSON.parse(JSON.stringify(numberedRows, (key, value) => key === 'audit' ? undefined : value)),
       formulaResults,
       calculatedRows,
     };
@@ -536,7 +589,7 @@ export class ObjectiveMatrixService {
       dynamicRowPolicy: layout.dynamicRowPolicy,
       showRowGroups,
       rowGroups,
-      rows,
+      rows: numberedRows,
       formulaResults,
       calculatedRows,
       evaluationOrder: formulaEvaluation.evaluationOrder,
@@ -724,7 +777,11 @@ export class ObjectiveMatrixService {
       rowOriginTermCode: origin,
       rowCoverage: coverage,
       rowGroupKey: first.rowGroupKey,
-      rowOrder: first.rowOrder ?? first.objectiveNo ?? 0,
+      // Template rows use their configured order. Dynamic rows have no saved
+      // rowOrder, so place them after template rows in the same Matrix group
+      // and keep their creation order deterministic.
+      rowOrder: first.rowOrder ?? first.objectiveNo ??
+        (first.createdAt ? new Date(first.createdAt).getTime() : Number.MAX_SAFE_INTEGER),
       siblings: coverage.map((termCode) => {
         const sibling = siblingByTerm.get(termCode)!;
         return {

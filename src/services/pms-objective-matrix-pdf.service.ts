@@ -286,10 +286,8 @@ function statusFor(row: ObjectiveMatrixRow, matrix: AnnualObjectiveMatrixRespons
 }
 
 function rowGroupFor(row: ObjectiveMatrixRow, matrix: AnnualObjectiveMatrixResponse): string {
-  if (row.source !== 'PREDEFINED') {
-    const matrixSelection = row.matrixLabel?.trim() || row.matrixCode?.trim();
-    if (matrixSelection) return matrixSelection;
-  }
+  const matrixSelection = row.matrixLabel?.trim() || row.matrixCode?.trim();
+  if (matrixSelection) return matrixSelection;
   return matrix.rowGroups.find((group) => group.rowGroupKey === row.rowGroupKey)?.label ||
     (row.source === 'PREDEFINED' ? 'Template objectives' :
       row.source === 'MANAGER_CREATED' ? 'Manager objectives' : 'Employee objectives');
