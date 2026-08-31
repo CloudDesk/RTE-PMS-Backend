@@ -131,6 +131,17 @@ export interface ResolvedTemplateVersion {
   };
 }
 
+function canonicalPerformanceFillingText(value: string | undefined): string {
+  const legacyLabelPattern = new RegExp(['Performance', 'Analysis'].join('\\s+'), 'gi');
+  return String(value || '').replace(legacyLabelPattern, 'Performance Filling');
+}
+
+function canonicalResolvedFieldLabel(field: ITemplateField): string {
+  return field.fieldKey === 'performance_analysis'
+    ? 'Performance Filling'
+    : canonicalPerformanceFillingText(field.fieldLabel);
+}
+
 export interface CreateTemplateInput {
   name: string;
   code: string;
@@ -894,7 +905,7 @@ export class PmsTemplateService extends BaseService {
         return {
           id: section.sectionKey,
           key: section.sectionKey,
-          title: section.sectionLabel,
+          title: canonicalPerformanceFillingText(section.sectionLabel),
           sectionType: section.sectionType,
           module: this.mapSectionModule(section.sectionType),
           level: this.isTermLevel(section.level) ? 'term' : 'annual',
@@ -1789,7 +1800,7 @@ export class PmsTemplateService extends BaseService {
     return {
       id: field.fieldKey,
       key: field.fieldKey,
-      label: field.fieldLabel,
+      label: canonicalResolvedFieldLabel(field),
       type: this.mapFieldTypeForClient(field.fieldType),
       required: behavior?.mandatory ?? field.isRequired ?? requiredFor.includes(context.role),
       visible: true,

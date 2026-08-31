@@ -603,7 +603,7 @@ describe('EmployeeAchievementSubmissionService - annual common submission', () =
     expect(saved.achievementValues).toHaveLength(3);
   });
 
-  it('uses the newest non-empty legacy Performance Analysis only when annual data is absent', async () => {
+  it('uses the newest non-empty legacy Performance Filling value only when annual data is absent', async () => {
     const service = createService();
     const annualAssignmentId = new Types.ObjectId();
     jest.spyOn(TermAssignment, 'find').mockReturnValue(queryResult([
