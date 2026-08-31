@@ -331,6 +331,16 @@ export class PmsDashboardService extends BaseService {
       .sort({ updatedAt: -1, objectiveNo: 1 })
       .lean();
 
+    const approvedObjectives = await Objective.find({
+      termAssignmentId: { $in: managerTermAssignmentIds },
+      assignedManagerId: managerObjectId,
+      status: 'OBJECTIVE_APPROVED',
+      isDeleted: false,
+    })
+      .populate('employeeId', 'name email employeeCode')
+      .sort({ approvedAt: -1, updatedAt: -1, objectiveNo: 1 })
+      .lean();
+
     // 2. Quarter Review Queue
     const termReviewQueue = await TermAssignment.find({
       assignedManagerId: managerObjectId,
@@ -340,6 +350,12 @@ export class PmsDashboardService extends BaseService {
     })
       .populate('employeeId', 'name email employeeCode')
       .lean();
+
+    const completedReviewQueue = managerTermAssignments.filter((assignment) =>
+      ['MANAGER_REVIEW_SUBMITTED', 'TERM_FINALIZED', 'CLOSED_BY_ADMIN'].includes(
+        String(assignment.termState || '').toUpperCase(),
+      ),
+    );
 
     // 3. Overdue SLA triggers owned by this manager
     const overdueSlas = await SlaEvent.find({
@@ -491,14 +507,18 @@ export class PmsDashboardService extends BaseService {
         totalTermAssignmentsCount,
         finalizedQuartersCount,
         pendingApprovalsCount: pendingObjectives.length,
+        approvedObjectivesCount: approvedObjectives.length,
         pendingReviewsCount: termReviewQueue.length,
+        completedReviewsCount: completedReviewQueue.length,
         overdueItemsCount: overdueSlas.length,
         activeDelegationsIn,
         activeDelegationsOut,
       },
       queues: {
         pendingObjectives,
+        approvedObjectives,
         termReviewQueue,
+        completedReviewQueue,
         overdueSlas,
         recentReassignments,
       },
