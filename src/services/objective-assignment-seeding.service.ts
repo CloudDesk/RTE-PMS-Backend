@@ -297,6 +297,8 @@ export function predefinedObjectiveSeedEntry(input: {
   coverage: AssessmentTermCodeType[];
   rowGroupKey?: string;
   rowOrder?: number;
+  matrixCode?: string;
+  matrixLabel?: string;
   columnValues?: Record<string, unknown>;
   columnBindingKeyById?: Record<string, string>;
   columnTypeById?: Record<string, string>;
@@ -329,6 +331,8 @@ export function predefinedObjectiveSeedEntry(input: {
       rowCoverage: coverage,
       rowGroupKey: input.rowGroupKey,
       rowOrder: input.rowOrder,
+      matrixCode: input.matrixCode,
+      matrixLabel: input.matrixLabel,
       isPredefined: true,
     },
   };

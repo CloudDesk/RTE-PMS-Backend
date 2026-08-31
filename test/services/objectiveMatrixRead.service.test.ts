@@ -18,6 +18,7 @@ import { ObjectiveValue } from '../../src/models/pms-objective-value.model';
 import { PmsTemplateVersion } from '../../src/models/pms-template-version.model';
 import { TermAssignment } from '../../src/models/pms-term-assignment.model';
 import { TermCycle } from '../../src/models/pms-term-cycle.model';
+import { LOV } from '../../src/models/lov.model';
 import { accessService } from '../../src/services/access.service';
 import {
   isObjectiveMatrixDateWindowOpen,
@@ -35,6 +36,22 @@ const permissionFixture = JSON.parse(fs.readFileSync(path.resolve(
 ), 'utf8')) as any;
 
 describe('Objective matrix read model Phase 5', () => {
+  beforeEach(() => {
+    jest.spyOn(LOV, 'findOne').mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        type: 'matrix',
+        values: [
+          { value: 'productivity', label: 'Productivity', isActive: true },
+          { value: 'quality', label: 'Quality', isActive: true },
+          { value: 'cost', label: 'Cost', isActive: true },
+          { value: 'delivery', label: 'Delivery', isActive: true },
+          { value: 'safety', label: 'Safety', isActive: true },
+          { value: 'morale', label: 'Morale', isActive: true },
+        ],
+      }),
+    } as never);
+  });
+
   afterEach(() => jest.restoreAllMocks());
 
   it('matches the frozen role/state/date permission truth table', () => {
@@ -701,5 +718,184 @@ describe('Objective matrix read model Phase 5', () => {
       expect(directorSourceCells.every((cell) => cell.editable === false)).toBe(true);
       expect(directorSourceCells.every((cell) => cell.required === false)).toBe(true);
     }
+  });
+
+  it('sorts objective rows using canonical Metrics LOV order and assigns gapless serialNo (1...N)', async () => {
+    const annualAssignmentId = new Types.ObjectId();
+    const employeeId = new Types.ObjectId();
+    const managerId = new Types.ObjectId();
+    const templateVersionId = new Types.ObjectId();
+    const termAssignmentId = new Types.ObjectId();
+
+    const annual = {
+      _id: annualAssignmentId,
+      cycleId: new Types.ObjectId(),
+      employeeId,
+      assignedManagerId: managerId,
+      templateVersionId,
+      applicableTerms: [AssessmentTermCode.Q1],
+      isDeleted: false,
+    };
+
+    const term = {
+      _id: termAssignmentId,
+      annualAssignmentId,
+      assessmentTermCode: AssessmentTermCode.Q1,
+      cycleTermId: new Types.ObjectId(),
+      employeeId,
+      assignedManagerId: managerId,
+      isDeleted: false,
+    };
+
+    const layout = {
+      enabled: true,
+      layoutVersion: 1,
+      columns: [
+        {
+          columnId: 'column-serialno',
+          bindingKey: 'system.serialNo',
+          label: 'S.No',
+          type: 'SYSTEM_DISPLAY',
+          displayOrder: 1,
+          required: false,
+          fillOwner: 'SYSTEM',
+          workflowStage: 'CALCULATED',
+          access: [{ role: PmsRole.EMPLOYEE, visible: true, editable: false }],
+        },
+        {
+          columnId: 'column-objective',
+          bindingKey: 'objective.title',
+          label: 'Objective',
+          type: 'SHORT_TEXT',
+          displayOrder: 2,
+          required: true,
+          fillOwner: 'ROW_CREATOR',
+          workflowStage: 'OBJECTIVE_SETTING',
+          access: [{ role: PmsRole.EMPLOYEE, visible: true, editable: true }],
+        },
+      ],
+      columnGroups: [],
+      rowGroups: [
+        { rowGroupKey: 'delivery-first', label: 'Delivery source', source: ObjectiveSource.PREDEFINED, displayOrder: 1 },
+        { rowGroupKey: 'quality-second', label: 'Quality source', source: ObjectiveSource.PREDEFINED, displayOrder: 2 },
+        { rowGroupKey: 'productivity-last', label: 'Productivity source', source: ObjectiveSource.PREDEFINED, displayOrder: 3 },
+      ],
+      rowAssignments: [],
+      termPolicies: [
+        { columnId: 'column-serialno', mode: 'SHARED_ANNUAL' },
+        { columnId: 'column-objective', mode: 'SHARED_ANNUAL' },
+      ],
+      formulas: [],
+      calculatedRows: [],
+      dynamicRowPolicy: {
+        employeeDefaultScope: 'CURRENT_TERM',
+        managerDefaultScope: 'CURRENT_TERM',
+        allowEmployeeTermChoice: false,
+        allowManagerTermChoice: false,
+      },
+    };
+
+    const objectives = [
+      {
+        _id: new Types.ObjectId(),
+        annualAssignmentId,
+        termAssignmentId,
+        assessmentTermCode: AssessmentTermCode.Q1,
+        objectiveRowKey: 'row-delivery',
+        title: 'Delivery Objective',
+        matrixCode: 'delivery',
+        matrixLabel: 'Delivery',
+        rowGroupKey: 'delivery-first',
+        source: ObjectiveSource.PREDEFINED,
+        status: ObjectiveStatus.OBJECTIVE_APPROVED,
+        isDeleted: false,
+      },
+      {
+        _id: new Types.ObjectId(),
+        annualAssignmentId,
+        termAssignmentId,
+        assessmentTermCode: AssessmentTermCode.Q1,
+        objectiveRowKey: 'row-productivity',
+        title: 'Productivity Objective',
+        matrixCode: 'productivity',
+        matrixLabel: 'Productivity',
+        rowGroupKey: 'productivity-last',
+        source: ObjectiveSource.PREDEFINED,
+        status: ObjectiveStatus.OBJECTIVE_APPROVED,
+        isDeleted: false,
+      },
+      {
+        _id: new Types.ObjectId(),
+        annualAssignmentId,
+        termAssignmentId,
+        assessmentTermCode: AssessmentTermCode.Q1,
+        objectiveRowKey: 'row-quality',
+        title: 'Quality Objective',
+        matrixCode: 'quality',
+        matrixLabel: 'Quality',
+        rowGroupKey: 'quality-second',
+        source: ObjectiveSource.PREDEFINED,
+        status: ObjectiveStatus.OBJECTIVE_APPROVED,
+        isDeleted: false,
+      },
+    ];
+
+    jest.spyOn(accessService, 'canPerform').mockResolvedValue({ allowed: true, mappedRole: PmsRole.EMPLOYEE });
+    jest.spyOn(AnnualAssignment, 'findOne').mockReturnValue({ lean: jest.fn().mockResolvedValue(annual) } as never);
+    jest.spyOn(PmsTemplateVersion, 'findById').mockReturnValue({ lean: jest.fn().mockResolvedValue({
+      _id: templateVersionId,
+      sections: [{
+        sectionType: PmsTemplateSectionType.OBJECTIVES,
+        metadata: { objectiveTableShowRowGroups: true },
+        objectiveConfig: { tableLayout: layout },
+      }],
+    }) } as never);
+    jest.spyOn(TermAssignment, 'find').mockReturnValue({ lean: jest.fn().mockResolvedValue([term]) } as never);
+    jest.spyOn(TermCycle, 'find').mockReturnValue({ lean: jest.fn().mockResolvedValue([]) } as never);
+    jest.spyOn(Objective, 'find').mockReturnValue({
+      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(objectives) }),
+    } as never);
+    jest.spyOn(ObjectiveValue, 'find').mockReturnValue({
+      sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+    } as never);
+    jest.spyOn(LOV, 'findOne').mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        type: 'matrix',
+        values: [
+          { value: 'productivity', label: 'Productivity', isActive: true },
+          { value: 'quality', label: 'Quality', isActive: true },
+          { value: 'delivery', label: 'Delivery', isActive: true },
+        ],
+      }),
+    } as never);
+
+    const service = new ObjectiveMatrixService({
+      reqRole: PmsRole.EMPLOYEE,
+      requestId: 'metrics-order-test',
+      user: {
+        _id: employeeId,
+        email: 'employee@example.test',
+        name: 'Employee',
+        role: PmsRole.EMPLOYEE,
+        departmentId: 'ops',
+        active: true,
+        country: 'IN',
+        currency: 'INR',
+        licenseType: 'FULL',
+        portalAccess: true,
+      },
+    });
+
+    const matrix = await service.getAnnualMatrix(annualAssignmentId.toString(), { mode: 'employee' });
+
+    expect(matrix.rows).toHaveLength(3);
+    // Rows should be ordered by LOV rank: Productivity (1) -> Quality (2) -> Delivery (3)
+    expect(matrix.rows.map((row) => row.matrixCode)).toEqual(['productivity', 'quality', 'delivery']);
+    expect(matrix.rows.map((row) => row.serialNo)).toEqual([1, 2, 3]);
+
+    // Check S.No cell value in each row
+    expect(matrix.rows[0].sharedCells.find((c) => c.columnId === 'column-serialno')?.value).toBe(1);
+    expect(matrix.rows[1].sharedCells.find((c) => c.columnId === 'column-serialno')?.value).toBe(2);
+    expect(matrix.rows[2].sharedCells.find((c) => c.columnId === 'column-serialno')?.value).toBe(3);
   });
 });

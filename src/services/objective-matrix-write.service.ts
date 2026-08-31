@@ -40,6 +40,7 @@ import {
   ObjectiveMatrixService,
   resolveObjectiveMatrixCellPermission,
 } from './objective-matrix.service';
+import { normalizeObjectiveSerialNumberColumns } from './pms-template-objective-table-layout';
 
 type LeanRecord = Record<string, any>;
 
@@ -989,7 +990,12 @@ export class ObjectiveMatrixWriteService {
       item.sectionType === PmsTemplateSectionType.OBJECTIVES && item.objectiveConfig?.tableLayout?.enabled,
     );
     if (!section?.objectiveConfig?.tableLayout) throw new Error('Objective table layout is not enabled');
-    return { annual, assignments, section, layout: section.objectiveConfig.tableLayout };
+    return {
+      annual,
+      assignments,
+      section,
+      layout: normalizeObjectiveSerialNumberColumns(section.objectiveConfig.tableLayout),
+    };
   }
 
   private requireActor() {

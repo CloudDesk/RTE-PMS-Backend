@@ -108,6 +108,8 @@ export interface ObjectiveMatrixRowActions {
 
 export interface ObjectiveMatrixRow {
   objectiveRowKey: string;
+  /** Gapless one-based position derived by the backend after canonical row sorting. */
+  serialNo?: number;
   source: string;
   matrixCode?: string;
   matrixLabel?: string;

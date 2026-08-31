@@ -29,6 +29,7 @@ import {
 import { AnnualCycle } from '../models/pms-annual-cycle.model';
 import { TermAssignment } from '../models/pms-term-assignment.model';
 import { Delegation } from '../models/pms-delegation.model';
+import { LOV } from '../models/lov.model';
 import { PmsEmployeeCareerProfile } from '../models/pms-employee-career-profile.model';
 import type { IPmsTemplate } from '../models/pms-template.model';
 import type {
@@ -44,6 +45,7 @@ import {
   normalizeObjectiveTableLayout,
   objectiveTableLayoutAuditSummary,
   objectiveTableLayoutValidationErrors,
+  objectiveSerialNumberValueKeys,
 } from './pms-template-objective-table-layout';
 import { permissionPolicyValidationErrors } from './pms-template-permission-policy';
 import { validateFinalReviewTemplateSections } from '../utilis/finalReviewTemplate';
@@ -127,6 +129,17 @@ export interface ResolvedTemplateVersion {
     quarter?: AssessmentTermCodeType;
     visibilityFlags: string[];
   };
+}
+
+function canonicalPerformanceFillingText(value: string | undefined): string {
+  const legacyLabelPattern = new RegExp(['Performance', 'Analysis'].join('\\s+'), 'gi');
+  return String(value || '').replace(legacyLabelPattern, 'Performance Filling');
+}
+
+function canonicalResolvedFieldLabel(field: ITemplateField): string {
+  return field.fieldKey === 'performance_analysis'
+    ? 'Performance Filling'
+    : canonicalPerformanceFillingText(field.fieldLabel);
 }
 
 export interface CreateTemplateInput {
@@ -892,7 +905,7 @@ export class PmsTemplateService extends BaseService {
         return {
           id: section.sectionKey,
           key: section.sectionKey,
-          title: section.sectionLabel,
+          title: canonicalPerformanceFillingText(section.sectionLabel),
           sectionType: section.sectionType,
           module: this.mapSectionModule(section.sectionType),
           level: this.isTermLevel(section.level) ? 'term' : 'annual',
@@ -1233,6 +1246,7 @@ export class PmsTemplateService extends BaseService {
     }
 
     const config = rawConfig as Record<string, any>;
+    const serialNumberValueKeys = objectiveSerialNumberValueKeys(config.tableLayout);
     let mode = ['PREDEFINED', 'DYNAMIC', 'HYBRID'].includes(config.mode)
       ? config.mode
       : 'DYNAMIC';
@@ -1272,7 +1286,10 @@ export class PmsTemplateService extends BaseService {
           : undefined,
         columnValues:
           objective.columnValues && typeof objective.columnValues === 'object'
-            ? JSON.parse(JSON.stringify(objective.columnValues))
+            ? Object.fromEntries(
+              Object.entries(JSON.parse(JSON.stringify(objective.columnValues)))
+                .filter(([key]) => !serialNumberValueKeys.has(key)),
+            )
             : {},
         rowGroupKey: objective.rowGroupKey
           ? String(objective.rowGroupKey).trim()
@@ -1281,6 +1298,12 @@ export class PmsTemplateService extends BaseService {
           objective.rowOrder === undefined || objective.rowOrder === ''
             ? undefined
             : Number(objective.rowOrder),
+        matrixCode: objective.matrixCode
+          ? String(objective.matrixCode).trim()
+          : undefined,
+        matrixLabel: objective.matrixLabel
+          ? String(objective.matrixLabel).trim()
+          : undefined,
       }))
       : [];
     const hasActivePredefinedObjectives = predefinedObjectives.some(
@@ -1777,7 +1800,7 @@ export class PmsTemplateService extends BaseService {
     return {
       id: field.fieldKey,
       key: field.fieldKey,
-      label: field.fieldLabel,
+      label: canonicalResolvedFieldLabel(field),
       type: this.mapFieldTypeForClient(field.fieldType),
       required: behavior?.mandatory ?? field.isRequired ?? requiredFor.includes(context.role),
       visible: true,
@@ -2374,6 +2397,36 @@ export class PmsTemplateService extends BaseService {
   private async validateTemplateVersionForActivation(version: IPmsTemplateVersion): Promise<void> {
     const errors: string[] = [];
 
+    const metricObjectives = (version.sections ?? []).flatMap((section) =>
+      section.sectionType === PmsTemplateSectionType.OBJECTIVES &&
+      section.objectiveConfig?.tableLayout?.enabled === true
+        ? (section.objectiveConfig.predefinedObjectives ?? [])
+          .filter((objective) => objective.isActive !== false && Boolean(objective.title?.trim()))
+          .map((objective) => ({ section, objective }))
+        : [],
+    );
+    if (metricObjectives.length > 0) {
+      const matrixLov = await LOV.findOne({ type: 'matrix' }).select({ values: 1 }).lean();
+      const activeMetricByCode = new Map(
+        (matrixLov?.values ?? [])
+          .filter((option) => option.isActive !== false && option.value?.trim())
+          .map((option) => [option.value.trim().toLowerCase(), option]),
+      );
+      for (const { section, objective } of metricObjectives) {
+        const matrixCode = objective.matrixCode?.trim();
+        if (!matrixCode) continue;
+        const canonicalMetric = activeMetricByCode.get(matrixCode.toLowerCase());
+        if (!canonicalMetric) {
+          errors.push(
+            `Objective table layout objective "${objective.title || objective.objectiveKey}" has an invalid or inactive Metric selection in section "${section.sectionLabel || section.sectionKey}"`,
+          );
+          continue;
+        }
+        objective.matrixCode = canonicalMetric.value.trim();
+        objective.matrixLabel = canonicalMetric.label?.trim() || canonicalMetric.value.trim();
+      }
+    }
+
     // Check 1: Section existence
     if (!version.sections || version.sections.length === 0) {
       errors.push('Template version must contain at least one section before activation');
@@ -2796,9 +2849,6 @@ export class PmsTemplateService extends BaseService {
     for (const objective of predefinedObjectives) {
       if (!objective.objectiveKey?.trim()) {
         throw new Error(`Predefined objective key is required in section ${section.sectionKey}`);
-      }
-      if (!objective.title?.trim()) {
-        throw new Error(`Predefined objective title is required in section ${section.sectionKey}`);
       }
       if (objectiveKeys.has(objective.objectiveKey)) {
         throw new Error(`Duplicate predefined objective key ${objective.objectiveKey} in section ${section.sectionKey}`);
