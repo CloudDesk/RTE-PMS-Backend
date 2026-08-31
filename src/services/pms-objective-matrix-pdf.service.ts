@@ -387,8 +387,8 @@ export function buildObjectiveMatrixReportViewModel(input: {
   return {
     documentTitle: 'Annual Objective Matrix Report',
     official: input.snapshotMode === 'frozen',
-    watermark: input.snapshotMode === 'live' ? 'DRAFT - LIVE DATA' : undefined,
-    snapshotModeLabel: input.snapshotMode === 'frozen' ? 'Official frozen record' : 'Draft live preview',
+    watermark: input.snapshotMode === 'live' ? 'RTE' : undefined,
+    snapshotModeLabel: input.snapshotMode === 'frozen' ? 'Official frozen record' : 'Current objective record',
     viewLabel: `${titleCase(matrix.mode)} / ${titleCase(matrix.viewRole)}`,
     employeeName: stringValue(employee.name, 'Employee'),
     employeeCode: stringValue(employee.employeeCode, 'N/A'),
