@@ -8917,49 +8917,26 @@ export class ObjectiveService extends BaseService {
 
   private defaultObjectiveSheetLayout(): NormalizedObjectiveSheetLayout {
     const columns: NormalizedObjectiveSheetLayout['columns'] = [
-      { id: 'objective', label: 'Objective', type: 'LONG_TEXT', width: 'LARGE', required: true },
-      { id: 'uom', label: 'UOM', type: 'DROPDOWN', width: 'SMALL', required: false, options: ['%', 'Nos', 'Minutes', 'Hours'] },
-      { id: 'bm', label: 'BM', type: 'PERCENTAGE', width: 'SMALL', required: false },
-      { id: 'target', label: 'Target', type: 'PERCENTAGE', width: 'SMALL', required: false },
-      { id: 'q1_actual', label: 'Q1 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-      { id: 'q2_actual', label: 'Q2 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-      { id: 'q3_actual', label: 'Q3 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-      { id: 'q4_actual', label: 'Q4 Actual', type: 'PERCENTAGE', width: 'SMALL', required: false },
-      { id: 'actual', label: 'Actual', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Shows latest filled term actual' },
-      { id: 'gap', label: 'Gap', type: 'FORMULA', width: 'SMALL', required: false, helpText: 'Calculated from target and actual' },
-      { id: 'remarks', label: 'Remarks', type: 'LONG_TEXT', width: 'LARGE', required: false },
+      { id: 'resulting_area', label: 'Resulting area', type: 'TEXT', width: 'SMALL', required: false },
+      { id: 'annual_obj_ref', label: 'Annual obj. ref.', type: 'TEXT', width: 'SMALL', required: false },
+      { id: 'description', label: 'Description', type: 'LONG_TEXT', width: 'LARGE', required: true },
+      { id: 'uom', label: 'Unit of Measurement', type: 'TEXT', width: 'MEDIUM', required: false },
+      { id: 'bm', label: 'BM 2025-26', type: 'TEXT', width: 'SMALL', required: false },
+      { id: 'target', label: 'Target for 2026-27', type: 'TEXT', width: 'SMALL', required: false },
     ];
     return {
       columns: [
         ...columns,
       ],
       rows: [
-        { id: 'row_1', label: 'Objective line 1' },
+        { id: 'row_1', label: 'Row 1' },
       ],
       cellValues: {},
       headerGroups: [],
       rowGroups: [],
       cellMerges: [],
       cellSplits: [],
-      formulas: [
-        {
-          id: 'formula_actual',
-          kind: 'ACTUAL',
-          label: 'Actual',
-          targetColumnId: 'actual',
-          mode: 'LATEST_FILLED_TERM',
-          sourceColumnIds: ['q1_actual', 'q2_actual', 'q3_actual', 'q4_actual'],
-        },
-        {
-          id: 'formula_gap',
-          kind: 'GAP',
-          label: 'Gap',
-          targetColumnId: 'gap',
-          mode: 'TARGET_MINUS_ACTUAL',
-          leftColumnId: 'target',
-          rightColumnId: 'actual',
-        },
-      ],
+      formulas: [],
       fillPermissions: this.defaultObjectiveSheetFillPermissions(columns),
       termAvailability: this.defaultObjectiveSheetTermAvailability(columns),
     };
