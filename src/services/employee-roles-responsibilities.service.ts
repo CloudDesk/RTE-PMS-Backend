@@ -5,6 +5,7 @@ import {
   type IEmployeeRolesResponsibilities,
 } from '../models/employee-roles-responsibilities.model';
 import { User } from '../models/user.model';
+import { AnnualAssignment } from '../models/pms-annual-assignment.model';
 import type { RequestContext } from '../types/context';
 import { auditService } from './audit.service';
 import { BaseService } from './base.service';
@@ -227,7 +228,9 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
     const isOwnRecord = actorId.equals(targetId);
 
     if (!isOwnRecord && !ADMIN_ROLES.has(role)) {
-      const employee = await User.findById(targetId).select('managerId').lean();
+      const employee = await User.findById(targetId)
+        .select('managerId l2ManagerId l3ManagerId')
+        .lean();
       if (!employee) {
         throw new EmployeeRolesResponsibilitiesError(
           404,
@@ -235,11 +238,31 @@ export class EmployeeRolesResponsibilitiesService extends BaseService {
           'Employee not found',
         );
       }
-      if (String(employee.managerId ?? '') !== actorId.toString()) {
+      const actorIdString = actorId.toString();
+      const isHierarchyReviewer = [
+        employee.managerId,
+        employee.l2ManagerId,
+        employee.l3ManagerId,
+      ].some((reviewerId) => String(reviewerId ?? '') === actorIdString);
+      const isAssignedAnnualReviewer = isHierarchyReviewer
+        ? false
+        : Boolean(
+            await AnnualAssignment.exists({
+              employeeId: targetId,
+              isDeleted: { $ne: true },
+              $or: [
+                { assignedManagerId: actorId },
+                { finalReviewerId: actorId },
+                { directorReviewerId: actorId },
+              ],
+            }),
+          );
+
+      if (!isHierarchyReviewer && !isAssignedAnnualReviewer) {
         throw new EmployeeRolesResponsibilitiesError(
           403,
           'ROLES_RESPONSIBILITIES_ACCESS_DENIED',
-          'Only the employee’s direct manager or an administrator can view this information',
+          'Only an assigned reviewer or an administrator can view this information',
         );
       }
     }
