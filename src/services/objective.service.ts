@@ -8056,7 +8056,7 @@ export class ObjectiveService extends BaseService {
       .trim()
       .toUpperCase()
       .replace(/_OBJECTIVE$/, '');
-    return normalized === 'COMPANY';
+    return normalized === 'COMPANY' || normalized === 'CELL' || normalized === 'DEPARTMENT';
   }
 
   private sameScopeValue(left?: string, right?: string): boolean {
