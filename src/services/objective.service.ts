@@ -5762,31 +5762,33 @@ export class ObjectiveService extends BaseService {
           status: ObjectiveStatus.OBJECTIVE_DRAFT,
           isDeleted: false,
         });
-        for (const linked of linkedDrafts) {
-          const linkedPreviousState = linked.status;
-          linked.status = ObjectiveStatus.OBJECTIVE_APPROVED;
-          if (input.weightage !== undefined) linked.weightage = input.weightage;
-          linked.approvedAt = objective.approvedAt;
-          linked.approvedBy = actorObjectId;
-          linked.updatedBy = actorObjectId;
-          if (actingDelegateUserId) {
-            linked.actingDelegateUserId = actingDelegateUserId;
-            linked.originalOwnerUserId = originalOwnerUserId;
-          }
-          linked.version += 1;
-          await linked.save();
-          await this.audit(
-            'PMS_OBJECTIVE_LINKED_TERM_APPROVED',
-            'OBJECTIVE',
-            linked._id.toString(),
-            { status: linkedPreviousState },
-            {
-              status: linked.status,
-              approvedWithObjectiveId: objective._id.toString(),
-              originTerm: objective.assessmentTermCode,
-            },
-          );
-        }
+        await Promise.all(
+          linkedDrafts.map(async (linked) => {
+            const linkedPreviousState = linked.status;
+            linked.status = ObjectiveStatus.OBJECTIVE_APPROVED;
+            if (input.weightage !== undefined) linked.weightage = input.weightage;
+            linked.approvedAt = objective.approvedAt;
+            linked.approvedBy = actorObjectId;
+            linked.updatedBy = actorObjectId;
+            if (actingDelegateUserId) {
+              linked.actingDelegateUserId = actingDelegateUserId;
+              linked.originalOwnerUserId = originalOwnerUserId;
+            }
+            linked.version += 1;
+            await linked.save();
+            await this.audit(
+              'PMS_OBJECTIVE_LINKED_TERM_APPROVED',
+              'OBJECTIVE',
+              linked._id.toString(),
+              { status: linkedPreviousState },
+              {
+                status: linked.status,
+                approvedWithObjectiveId: objective._id.toString(),
+                originTerm: objective.assessmentTermCode,
+              },
+            );
+          }),
+        );
       }
     }
 
