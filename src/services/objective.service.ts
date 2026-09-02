@@ -260,6 +260,15 @@ export interface ApproveObjectiveInput {
   weightage?: number;
 }
 
+export interface BulkApproveObjectivesInput {
+  objectiveIds: string[];
+}
+
+export interface BulkApproveObjectivesResult {
+  approvedCount: number;
+  approvedIds: string[];
+}
+
 export interface AddObjectiveCommentInput {
   commentText: string;
   commentType?: string;
@@ -5803,6 +5812,143 @@ export class ObjectiveService extends BaseService {
     );
 
     return objective;
+  }
+
+  async bulkApproveObjectives(
+    input: BulkApproveObjectivesInput,
+  ): Promise<BulkApproveObjectivesResult> {
+    const rawIds = Array.from(new Set(input.objectiveIds ?? [])).filter(Boolean);
+    if (rawIds.length === 0) {
+      throw new Error('At least one objective ID is required for bulk approval');
+    }
+
+    const objectIds = rawIds.map((id) => this.toObjectId(id, 'objectiveId'));
+    const objectives = await Objective.find({
+      _id: { $in: objectIds },
+      isDeleted: false,
+    });
+
+    if (objectives.length === 0) {
+      throw new Error('No matching objectives found');
+    }
+
+    const actor = this.requireActor();
+    const actorObjectId = this.toObjectId(actor.actorId, 'actorId');
+    const approvedIds: string[] = [];
+    const termAssignmentIdsToUpdate = new Set<string>();
+    const termAssignmentCache = new Map<string, ITermAssignment>();
+
+    for (const objective of objectives) {
+      if (objective.status !== ObjectiveStatus.OBJECTIVE_SUBMITTED) {
+        continue;
+      }
+
+      const termAssignmentIdStr = objective.termAssignmentId.toString();
+      let termAssignment = termAssignmentCache.get(termAssignmentIdStr);
+      if (!termAssignment) {
+        termAssignment = await this.getTermAssignment(termAssignmentIdStr);
+        termAssignmentCache.set(termAssignmentIdStr, termAssignment);
+        await this.assertObjectiveWindow(termAssignment, 'approval');
+      }
+
+      await this.assertObjectiveAccess('objective.approve', objective, false);
+
+      let actingDelegateUserId: Types.ObjectId | undefined;
+      let originalOwnerUserId: Types.ObjectId | undefined;
+
+      if (actor.actorId !== objective.assignedManagerId.toString()) {
+        const delegation = await this.getObjectiveDelegation(
+          actor.actorId,
+          objective.assignedManagerId.toString(),
+          objective.cycleId?.toString(),
+          objective.annualAssignmentId?.toString(),
+        );
+
+        if (delegation) {
+          actingDelegateUserId = actorObjectId;
+          originalOwnerUserId = objective.assignedManagerId;
+        }
+      }
+
+      const previousState = objective.status;
+      objective.status = ObjectiveStatus.OBJECTIVE_APPROVED;
+      objective.approvedAt = new Date();
+      objective.approvedBy = actorObjectId;
+      objective.updatedBy = actorObjectId;
+      if (actingDelegateUserId) {
+        objective.actingDelegateUserId = actingDelegateUserId;
+        objective.originalOwnerUserId = originalOwnerUserId;
+      }
+      objective.version += 1;
+      await objective.save();
+
+      if (
+        objective.source === ObjectiveSource.EMPLOYEE_CREATED &&
+        objective.annualAssignmentId &&
+        objective.objectiveRowKey &&
+        objective.assessmentTermCode
+      ) {
+        const futureTerms = futureCoveredObjectiveTerms(
+          objective.rowCoverage ?? [],
+          objective.assessmentTermCode,
+        );
+        if (futureTerms.length > 0) {
+          const linkedDrafts = await Objective.find({
+            _id: { $ne: objective._id },
+            annualAssignmentId: objective.annualAssignmentId,
+            objectiveRowKey: objective.objectiveRowKey,
+            assessmentTermCode: { $in: futureTerms },
+            source: ObjectiveSource.EMPLOYEE_CREATED,
+            status: ObjectiveStatus.OBJECTIVE_DRAFT,
+            isDeleted: false,
+          });
+          for (const linked of linkedDrafts) {
+            const linkedPreviousState = linked.status;
+            linked.status = ObjectiveStatus.OBJECTIVE_APPROVED;
+            linked.approvedAt = objective.approvedAt;
+            linked.approvedBy = actorObjectId;
+            linked.updatedBy = actorObjectId;
+            if (actingDelegateUserId) {
+              linked.actingDelegateUserId = actingDelegateUserId;
+              linked.originalOwnerUserId = originalOwnerUserId;
+            }
+            linked.version += 1;
+            await linked.save();
+            await this.audit(
+              'PMS_OBJECTIVE_LINKED_TERM_APPROVED',
+              'OBJECTIVE',
+              linked._id.toString(),
+              { status: linkedPreviousState },
+              {
+                status: linked.status,
+                approvedWithObjectiveId: objective._id.toString(),
+                originTerm: objective.assessmentTermCode,
+              },
+            );
+          }
+        }
+      }
+
+      termAssignmentIdsToUpdate.add(termAssignmentIdStr);
+      approvedIds.push(objective._id.toString());
+
+      await this.audit(
+        'PMS_OBJECTIVE_APPROVED',
+        'OBJECTIVE',
+        objective._id.toString(),
+        { status: previousState },
+        { status: objective.status },
+      );
+    }
+
+    for (const termAssignmentId of termAssignmentIdsToUpdate) {
+      await this.updateTermStateAfterApproval(termAssignmentId);
+    }
+
+    return {
+      approvedCount: approvedIds.length,
+      approvedIds,
+    };
   }
 
   async returnObjective(objectiveId: string, input: ReturnObjectiveInput): Promise<IObjective> {

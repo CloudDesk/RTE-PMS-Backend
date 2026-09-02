@@ -13,6 +13,7 @@ import type {
   AmendFlexibleObjectiveInput,
   ApplyObjectiveAssignmentsInput,
   ApplyObjectiveAssignmentPeriodInput,
+  BulkApproveObjectivesInput,
   BulkCreateManagerObjectiveInput,
   CloseObjectiveSettingInput,
   CreateObjectiveAssignmentPeriodInput,
@@ -119,6 +120,21 @@ export const objectiveRoutes: RouteHandler = async (
           request.body as BulkCreateManagerObjectiveInput,
         );
         return reply.status(201).send(successResponse('Manager objectives assigned successfully', result));
+      } catch (error: unknown) {
+        return sendRouteError(reply, error);
+      }
+    },
+  );
+
+  fastify.post(
+    '/bulk-approve',
+    { onRequest: [authenticate], schema: { tags: ['PMS Objective Management'] } },
+    async (request, reply) => {
+      try {
+        const result = await request.container!.objectiveService.bulkApproveObjectives(
+          request.body as BulkApproveObjectivesInput,
+        );
+        return reply.send(successResponse('Objectives approved successfully', result));
       } catch (error: unknown) {
         return sendRouteError(reply, error);
       }
